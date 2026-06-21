@@ -4,11 +4,25 @@ site_url = "https://nitish-raj.github.io/datasluice/"
 repo_url = "https://github.com/nitish-raj/datasluice"
 repo_name = "nitish-raj/datasluice"
 
+[project.theme]
+logo = "assets/datasluice.png"
+favicon = "assets/datasluice.png"
+
 nav = [
   { "Home" = "index.md" },
-  { "Installation" = "installation.md" },
-  { "Usage" = "usage.md" },
+  { "Installation" = "install.md" },
+  { "Architecture" = "architecture.md" },
+  { "Adapters" = "adapters.md" },
+  { "Supported Portals" = "supported-portals.md" },
   { "API Reference" = "api.md" },
+  { "Examples" = [
+      { "CKAN" = "examples/ckan.md" },
+      { "data.gouv.fr" = "examples/datagouv.md" },
+      { "Socrata" = "examples/socrata.md" },
+      { "pandas" = "examples/pandas.md" },
+      { "dlt" = "examples/dlt.md" },
+      { "Airflow" = "examples/airflow.md" },
+    ] },
 ]
 
 [[project.theme.palette]]

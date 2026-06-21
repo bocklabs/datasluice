@@ -27,7 +27,7 @@ jobs:
         - language: python
           build-mode: none
           queries: security-extended
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:

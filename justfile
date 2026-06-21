@@ -4,6 +4,14 @@
 list:
     @just --list
 
+# Install pre-commit hooks
+pre-commit-install:
+    uv run pre-commit install
+
+# Run pre-commit on all files
+pre-commit:
+    uv run pre-commit run --all-files
+
 alias b := build
 alias c := clean
 alias d := docs-serve

@@ -30,6 +30,7 @@ dev = [
     { include-group = "lint" },
     { include-group = "test" },
     { include-group = "typecheck" },
+    "pre-commit",
 ]
 lint = [
     "ruff",
@@ -46,6 +47,24 @@ docs = [
     "mkdocstrings-python",
 ]
 
+[project.optional-dependencies]
+pandas = ["pandas"]
+polars = ["polars"]
+dlt = ["dlt"]
+duckdb = ["duckdb"]
+airflow = ["apache-airflow"]
+parquet = ["pyarrow"]
+xlsx = ["openpyxl"]
+all = [
+    "pandas",
+    "polars",
+    "dlt",
+    "duckdb",
+    "apache-airflow",
+    "pyarrow",
+    "openpyxl",
+]
+
 [project.urls]
 bugs = "https://github.com/nitish-raj/datasluice/issues"
 changelog = "https://github.com/nitish-raj/datasluice/releases"
@@ -53,7 +72,7 @@ documentation = "https://nitish-raj.github.io/datasluice/"
 homepage = "https://github.com/nitish-raj/datasluice"
 
 [project.scripts]
-datasluice = "datasluice.cli:app"
+datasluice = "datasluice.cli.app:app"
 
 [tool.ty]
 # All rules are enabled as "error" by default; no need to specify unless overriding.
