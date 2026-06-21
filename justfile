@@ -1,4 +1,4 @@
-# Justfile for openharvest
+# Justfile for datasluice
 
 # Show available commands
 list:

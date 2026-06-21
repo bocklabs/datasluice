@@ -1,7 +1,7 @@
 # Usage
 
-To use OpenHarvest in a project:
+To use DataSluice in a project:
 
 ```python
-import openharvest
+import datasluice
 ```
