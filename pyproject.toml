@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "openharvest"
+name = "datasluice"
 version = "0.1.0"
 description = "One Python interface for open-data discovery, extraction, format normalization, and pipeline integration"
 readme = "README.md"
@@ -47,13 +47,13 @@ docs = [
 ]
 
 [project.urls]
-bugs = "https://github.com/nitish-raj/openharvest/issues"
-changelog = "https://github.com/nitish-raj/openharvest/releases"
-documentation = "https://nitish-raj.github.io/openharvest/"
-homepage = "https://github.com/nitish-raj/openharvest"
+bugs = "https://github.com/nitish-raj/datasluice/issues"
+changelog = "https://github.com/nitish-raj/datasluice/releases"
+documentation = "https://nitish-raj.github.io/datasluice/"
+homepage = "https://github.com/nitish-raj/datasluice"
 
 [project.scripts]
-openharvest = "openharvest.cli:app"
+datasluice = "datasluice.cli:app"
 
 [tool.ty]
 # All rules are enabled as "error" by default; no need to specify unless overriding.

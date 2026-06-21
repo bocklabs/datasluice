@@ -2,37 +2,37 @@
 
 ## Stable release
 
-To install OpenHarvest, run this command in your terminal:
+To install DataSluice, run this command in your terminal:
 
 ```sh
-uv add openharvest
+uv add datasluice
 ```
 
 Or if you prefer to use `pip`:
 
 ```sh
-pip install openharvest
+pip install datasluice
 ```
 
 ## From source
 
-The source files for OpenHarvest can be downloaded from the [Github repo](https://github.com/nitish-raj/openharvest).
+The source files for DataSluice can be downloaded from the [Github repo](https://github.com/nitish-raj/datasluice).
 
 You can either clone the public repository:
 
 ```sh
-git clone https://github.com/nitish-raj/openharvest
+git clone https://github.com/nitish-raj/datasluice
 ```
 
-Or download the [tarball](https://github.com/nitish-raj/openharvest/tarball/main):
+Or download the [tarball](https://github.com/nitish-raj/datasluice/tarball/main):
 
 ```sh
-curl -OJL https://github.com/nitish-raj/openharvest/tarball/main
+curl -OJL https://github.com/nitish-raj/datasluice/tarball/main
 ```
 
 Once you have a copy of the source, you can install it with:
 
 ```sh
-cd openharvest
+cd datasluice
 uv sync
 ```

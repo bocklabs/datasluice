@@ -1,8 +1,8 @@
 [project]
-site_name = "OpenHarvest"
-site_url = "https://nitish-raj.github.io/openharvest/"
-repo_url = "https://github.com/nitish-raj/openharvest"
-repo_name = "nitish-raj/openharvest"
+site_name = "DataSluice"
+site_url = "https://nitish-raj.github.io/datasluice/"
+repo_url = "https://github.com/nitish-raj/datasluice"
+repo_name = "nitish-raj/datasluice"
 
 nav = [
   { "Home" = "index.md" },

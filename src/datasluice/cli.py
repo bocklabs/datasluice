@@ -1,9 +1,9 @@
-"""Console script for openharvest."""
+"""Console script for datasluice."""
 
 import typer
 from rich.console import Console
 
-from openharvest import utils
+from datasluice import utils
 
 app = typer.Typer()
 console = Console()
@@ -11,8 +11,8 @@ console = Console()
 
 @app.command()
 def main() -> None:
-    """Console script for openharvest."""
-    console.print("Replace this message by putting your code into openharvest.cli.main")
+    """Console script for datasluice."""
+    console.print("Replace this message by putting your code into datasluice.cli.main")
     console.print("See Typer documentation at https://typer.tiangolo.com/")
     utils.do_something_useful()
 

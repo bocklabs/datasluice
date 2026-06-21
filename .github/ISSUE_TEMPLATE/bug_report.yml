@@ -16,7 +16,7 @@ body:
       label: Steps to reproduce
       description: Minimal steps to trigger the bug.
       placeholder: |
-        1. Install with `uv pip install openharvest`
+        1. Install with `uv pip install datasluice`
         2. Run `...`
         3. See error
     validations:
@@ -30,7 +30,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: "OpenHarvest version"
+      label: "DataSluice version"
       placeholder: "0.1.0"
     validations:
       required: true
