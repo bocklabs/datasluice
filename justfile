@@ -77,10 +77,6 @@ build:
     rm -rf dist
     uv build
 
-# Tag, push, and create a GitHub release
-release:
-    uv run scripts/release.py
-
 # Remove all build, test, coverage and Python artifacts
 clean: clean-build clean-pyc clean-test
 
@@ -105,8 +101,3 @@ clean-test:
 	rm -f .coverage.*
 	rm -fr htmlcov/
 	rm -fr .pytest_cache
-
-# Publish to PyPI (manual alternative to GitHub Actions)
-publish:
-    uv build
-    uv publish

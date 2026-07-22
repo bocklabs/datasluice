@@ -1,4 +1,4 @@
-.PHONY: help install build test test-all coverage qa type-check format lint clean clean-build clean-pyc clean-test docs-serve docs-build release publish pre-commit pre-commit-install
+.PHONY: help install build test test-all coverage qa type-check format lint clean clean-build clean-pyc clean-test docs-serve docs-build pre-commit pre-commit-install
 
 help:
 	@echo "DataSluice - available make targets:"
@@ -51,9 +51,6 @@ docs-serve:
 docs-build:
 	uv run --group docs zensical build --clean
 
-release:
-	uv run scripts/release.py
-
 clean: clean-build clean-pyc clean-test
 
 clean-build:
@@ -70,7 +67,3 @@ clean-pyc:
 clean-test:
 	rm -f .coverage .coverage.*
 	rm -fr htmlcov/ .pytest_cache
-
-publish:
-	uv build
-	uv publish

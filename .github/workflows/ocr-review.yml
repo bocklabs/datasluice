@@ -32,5 +32,5 @@ jobs:
           llm_extra_body: '{"enable_thinking": true}'
           github_token: ${{ secrets.GITHUB_TOKEN }}
           sticky_summary: 'true'
-          incremental: 'false'
+          incremental: 'true'
           upload_artifacts: 'true'

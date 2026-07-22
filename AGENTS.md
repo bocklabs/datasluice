@@ -43,7 +43,7 @@ Pre-commit includes **local hooks** for `ty check` and `pytest` (see `.pre-commi
 ## Architecture
 
 - **Entry point**: `datasluice.cli.app:app` (Typer app). Not `datasluice.cli:app`.
-- **Version**: lives in `datasluice/_version.py` — do NOT move it into `__init__.py`. It's separate to break a circular import with `transport/user_agent.py`.
+- **Version**: source of truth is `version` in `pyproject.toml` (bumped by **Release Please** via `release-please-config.json`); `datasluice/_version.py` exposes it at runtime via `importlib.metadata` (no second copy to sync). `_version.py` stays a separate module to break a circular import with `transport/user_agent.py` — do NOT move it into `__init__.py`.
 - **Adapters auto-register**: importing `datasluice.adapters` triggers side-effect registration of all built-in adapters (CKAN, data.gouv, Socrata, custom) into the module-level `registry`.
 - **Adapter pattern**: each adapter subpackage has `adapter.py`, `mapper.py`, `pagination.py`, `errors.py`. Mappers translate portal-native JSON into `datasluice.domain` models.
 - **Lazy imports**: `formats/` and `integrations/` import heavy optional deps (pyarrow, openpyxl, pandas, etc.) inside functions, not at module top-level. Keep it that way.
@@ -64,6 +64,20 @@ Built with **Zensical** (MkDocs Material wrapper). Config is `zensical.toml`, no
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`):
+- Runs on pull requests and push to `main`.
 - **type-check job** uses `uv run --all-extras ty check .` — if you add new optional deps, the CI must install them.
 - Tests run on Python 3.12, 3.13, and 3.14 matrix.
+- **build** job builds the dist, runs `twine check`, and uploads the artifact.
+- **smoke-test** job installs the built wheel in a fresh venv and imports `datasluice`.
 - Coverage threshold: 50% (`fail_under` in pyproject.toml).
+
+## Release
+
+Automated by **Release Please** (`.github/workflows/release-please.yml`). Commits **must** use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, …). On push to `main`, Release Please maintains a release PR that bumps `version` in `pyproject.toml` and updates `CHANGELOG.md`. Merging that PR tags the release and creates a GitHub Release.
+
+Publishing (`.github/workflows/publish.yml`) triggers on `release: published`:
+1. **Build** — builds, validates (`twine check`), attests provenance, uploads the artifact.
+2. **TestPyPI** (`test-pypi` env, secret `TEST_PYPI_API_KEY`) — publishes automatically.
+3. **PyPI** (`pypi` env, secret `PYPI_API_KEY`) — `needs` TestPyPI to pass, then **waits for approval** (required reviewers on the `pypi` environment) before publishing.
+
+- **No manual tagging.** Config lives in `release-please-config.json` + `.release-please-manifest.json`.
