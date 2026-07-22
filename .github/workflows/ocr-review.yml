@@ -23,7 +23,7 @@ jobs:
     if: github.event_name == 'pull_request_target'
     steps:
       - name: Run OpenCodeReview
-        uses: alibaba/open-code-review@802af6b461d17408856fac0d07a18f9b17d6d38c # v1.7.7
+        uses: alibaba/open-code-review@f58b0f2924fecbe1e4361d048b9be4d32d9269ff # v1.7.10
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
