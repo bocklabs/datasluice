@@ -53,7 +53,7 @@ class DataSluiceOperator:
         from datasluice import DataSluice
         from datasluice.domain import Query
 
-        class _Operator(BaseOperator):  # type: ignore[misc, valid-type, unsupported-base]
+        class _Operator(BaseOperator):  # ty: ignore[unsupported-base]
             template_fields = ("portal", "query", "dest_dir")
 
             def __init__(self, **kw: Any) -> None:

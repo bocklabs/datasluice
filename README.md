@@ -19,6 +19,38 @@
 * Created by [Nitish Raj](https://rajnitish.com/) | GitHub [@nitish-raj](https://github.com/nitish-raj) | PyPI [@nitish-raj](https://pypi.org/user/nitish-raj/)
 * MIT License
 
+## Installation
+
+```bash
+pip install datasluice
+```
+
+Optional extras for format and integration support:
+
+```bash
+pip install "datasluice[pandas,polars,parquet,xlsx]"
+pip install "datasluice[all]"          # everything
+```
+
+## Quick Start
+
+```python
+from datasluice import DataSluice
+
+ds = DataSluice()
+results = ds.search("climate", portal="data.gouv")
+for dataset in results:
+    print(dataset.title, dataset.resources)
+```
+
+CLI:
+
+```bash
+datasluice search "climate" --portal data.gouv
+datasluice detect https://demo.ckan.org
+datasluice download <resource-url> --format csv
+```
+
 ## Features
 
 * **Unified API** — one interface for CKAN, data.gouv.fr, Socrata, and custom portals
@@ -78,3 +110,16 @@ Run quality checks (format, lint, type check, test):
 ```bash
 just qa
 ```
+
+## Release Process
+
+Releases are automated with [Release Please](https://github.com/googleapis/release-please). There is no manual version bumping or tagging.
+
+1. Use [**Conventional Commits**](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, …) — see [CONTRIBUTING.md](CONTRIBUTING.md) for the full list.
+2. Release Please maintains a **release PR** on `main` that bumps the version and updates the changelog.
+3. **Merge the release PR** → Release Please creates a Git tag and a **GitHub Release**.
+4. The GitHub Release auto-triggers **publishing to [TestPyPI](https://test.pypi.org/project/datasluice/)**, then **waits for approval** before publishing to [PyPI](https://pypi.org/project/datasluice/).
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions, and the release workflow. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
