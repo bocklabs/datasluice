@@ -114,6 +114,7 @@ exclude_also = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.uv]
 package = true

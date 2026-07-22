@@ -1,137 +1,141 @@
-# Contributing
+# Contributing to DataSluice
 
 Contributions are welcome, and they are greatly appreciated! Every little bit helps, and credit will always be given.
 
-You can contribute in many ways:
+---
 
-## Types of Contributions
+## Conventional Commits
 
-### Report Bugs
+This project uses [Conventional Commits](https://www.conventionalcommits.org/). Every commit message **must** start with a type prefix so [Release Please](https://github.com/googleapis/release-please) can generate versions and changelogs automatically.
 
-Report bugs at https://github.com/nitish-raj/datasluice/issues.
+```
+<type>(<optional scope>): <description>
 
-If you are reporting a bug, please include:
+[optional body]
 
-- Your operating system name and version.
-- Any details about your local setup that might be helpful in troubleshooting.
-- Detailed steps to reproduce the bug.
-
-### Fix Bugs
-
-Look through the GitHub issues for bugs. Anything tagged with "bug" and "help wanted" is open to whoever wants to implement it.
-
-### Implement Features
-
-Look through the GitHub issues for features. Anything tagged with "enhancement" and "help wanted" is open to whoever wants to implement it.
-
-### Write Documentation
-
-DataSluice could always use more documentation, whether as part of the official docs, in docstrings, or even on the web in blog posts, articles, and such.
-
-To preview the docs locally:
-
-```sh
-just docs-serve
+[optional footer(s)]
 ```
 
-This starts a local server at http://localhost:8000 with live reload. Edit files in `docs/` or add docstrings to your code (the API reference page is auto-generated).
+### Supported types
 
-### Submit Feedback
+| Type       | Bump      | Section in changelog   |
+|------------|-----------|------------------------|
+| `feat`     | minor     | Features               |
+| `fix`      | patch     | Bug Fixes              |
+| `perf`     | patch     | Performance            |
+| `revert`   | *reverts* | Reverts                |
+| `docs`     | none      | Documentation          |
+| `refactor` | none      | Code Refactoring       |
+| `test`     | none      | Tests                  |
+| `build`    | none      | Build System           |
+| `ci`       | none      | Continuous Integration |
+| `chore`    | none      | Miscellaneous Chores   |
 
-The best way to send feedback is to file an issue at https://github.com/nitish-raj/datasluice/issues.
+> **Breaking change:** add `!` after the type/scope (e.g. `feat!: drop Python 3.11`) or a `BREAKING CHANGE:` footer. This triggers a **major** version bump.
 
-If you are proposing a feature:
+### Examples
 
-- Explain in detail how it would work.
-- Keep the scope as narrow as possible, to make it easier to implement.
-- Remember that this is a volunteer-driven project, and that contributions are welcome :)
+```
+feat: add Socrata resource format detection
+fix(ckan): handle paginated package_search results
+docs: document optional dependency extras
+ci: add wheel smoke test to CI
+```
 
-## Get Started!
+---
 
-Ready to contribute? Here's how to set up datasluice for local development.
+## Branching Strategy
 
-1. Fork the datasluice repo on GitHub.
-2. Clone your fork locally:
+| Branch            | Purpose                                              | Lifetime |
+|-------------------|------------------------------------------------------|----------|
+| `main`            | Production branch — always releasable                | Permanent|
+| `feat/*`          | New features                                         | Temporary|
+| `fix/*`           | Bug fixes                                            | Temporary|
+| `docs/*`          | Documentation improvements                           | Temporary|
+| `refactor/*`      | Code refactoring (no behavior change)                | Temporary|
+| `chore/*`         | Tooling, deps, maintenance                           | Temporary|
+| `test/*`          | Test additions/improvements                          | Temporary|
 
-   ```sh
-   git clone git@github.com:your_name_here/datasluice.git
+**All pull requests target `main`.** There are no `develop`, `staging`, or `release` branches — release state is represented by Git tags created by Release Please.
+
+---
+
+## Development Setup
+
+1. **Fork & clone:**
+
+   ```bash
+   git clone git@github.com:your-username/datasluice.git
+   cd datasluice
    ```
 
-3. Install your local copy with uv:
+2. **Install dependencies** (including all optional extras for type checking and dev):
 
-   ```sh
-   cd datasluice/
-   uv sync
+   ```bash
+   uv sync --all-extras
    ```
 
-4. Create a branch for local development:
+3. **Install pre-commit hooks:**
 
-   ```sh
-   git checkout -b name-of-your-bugfix-or-feature
+   ```bash
+   uv run pre-commit install
    ```
 
-   Now you can make your changes locally.
+4. **Install `just`** (task runner — optional but recommended):
 
-5. When you're done making changes, check that your changes pass linting and the tests:
-
-   ```sh
-   just qa
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to .venv/bin
    ```
 
-   Or run the tests alone:
+   If `just` is missing, `make` works as a zero-dependency fallback (same targets).
 
-   ```sh
-   just test
-   ```
+---
 
-6. Commit your changes and push your branch to GitHub:
+## Quality Checks
 
-   ```sh
-   git add .
-   git commit -m "Your detailed description of your changes."
-   git push origin name-of-your-bugfix-or-feature
-   ```
+| Task | Command |
+|------|---------|
+| Full QA (format → lint → typecheck → test) | `just qa` or `make qa` |
+| Format only | `uv run ruff format .` |
+| Lint only | `uv run ruff check . --fix` |
+| Type check | `uv run --all-extras ty check .` |
+| Tests | `uv run pytest` |
+| Build distribution | `uv build` |
+| Validate distribution | `uvx twine check dist/*` |
 
-7. Submit a pull request through the GitHub website.
+CI runs the full pipeline on every pull request and push to `main`, plus a wheel build, twine check, and smoke-test install — so **`pre-commit run --all-files` passing locally is a good proxy for CI**.
+
+---
 
 ## Pull Request Guidelines
 
-Before you submit a pull request, check that it meets these guidelines:
+- Use a **Conventional Commit** message (the squash-merge commit becomes the changelog entry).
+- Include tests for new or changed behavior.
+- Keep the diff focused on a single concern.
+- Ensure `pre-commit run --all-files` passes.
+- Update docstrings and docs where relevant.
 
-1. The pull request should include tests.
-2. If the pull request adds functionality, the docs should be updated. Put your new functionality into a function with a docstring, and add the feature to the list in README.md.
-3. The pull request should work for Python 3.12, 3.13, and 3.14. Tests run in GitHub Actions on every pull request to the main branch, make sure that the tests pass for all supported Python versions.
+---
 
-## Tips
+## Release Process (Release Please)
 
-To run a subset of tests:
+Releases are **fully automated** — there is no manual version bumping or tagging.
 
-```sh
-uv run pytest tests/
-```
+1. **Conventional commits** land on `main` via pull requests.
+2. **Release Please** maintains a running **"release PR"** that accumulates changes, bumps the version in `pyproject.toml`, and updates `CHANGELOG.md`.
+3. **Merge the release PR** when you're ready to ship. Release Please then:
+   - creates a Git tag (`vX.Y.Z`),
+   - creates a **GitHub Release** with the generated changelog.
+4. The GitHub Release (`published` event) **triggers `publish.yml`**, which:
+   - builds the distribution and validates it (`twine check`),
+   - **auto-publishes to [TestPyPI](https://test.pypi.org/project/datasluice/)** (`test-pypi` environment),
+   - **pauses** — the `pypi` environment has required reviewers, so a maintainer must **approve** the deployment,
+   - on approval, **publishes to [PyPI](https://pypi.org/project/datasluice/)**.
 
-## Releasing a New Version
+> **No manual tagging.** The version source of truth is `pyproject.toml`, bumped by Release Please. The `.release-please-manifest.json` file tracks the last released version.
 
-1. **Bump the version** and **write the changelog:**
-   ```bash
-   uv version <version>        # or: uv version --bump minor
-   ```
-   Then write `CHANGELOG/<version>.md`. See previous entries for the format.
-2. **Commit:**
-   ```bash
-   git add pyproject.toml uv.lock CHANGELOG/
-   git commit -m "Release <version>"
-   ```
-3. **Release:**
-   ```bash
-   just release
-   ```
-   This creates an annotated `v*` tag, pushes it to GitHub, and creates a
-   GitHub Release with the changelog contents as release notes. The tag
-   push triggers `.github/workflows/publish.yml`, which builds the package,
-   generates SLSA provenance attestations, and publishes to PyPI via
-   trusted publishing.
+---
 
 ## Code of Conduct
 
-Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project you agree to abide by its terms.
+Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating you agree to abide by its terms.
