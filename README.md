@@ -37,18 +37,31 @@ pip install "datasluice[all]"          # everything
 ```python
 from datasluice import DataSluice
 
-ds = DataSluice()
-results = ds.search("climate", portal="data.gouv")
+# Point at any supported portal — the portal type is auto-detected
+ds = DataSluice("https://www.data.gouv.fr")
+
+# Search for datasets
+results = ds.search("climate")
 for dataset in results:
-    print(dataset.title, dataset.resources)
+    print(dataset.title, len(dataset.resources))
+
+# Inspect a dataset and list its resources
+dataset = ds.get_dataset("some-dataset-id")
+for resource in dataset.resources:
+    print(resource.format, resource.url)
+
+# Download a resource
+path = ds.download(dataset.resources[0], "data/")
+print(path)
 ```
 
 CLI:
 
 ```bash
-datasluice search "climate" --portal data.gouv
+datasluice search "climate" --portal https://www.data.gouv.fr
+datasluice inspect -p https://www.data.gouv.fr <dataset-id>
 datasluice detect https://demo.ckan.org
-datasluice download <resource-url> --format csv
+datasluice download -p https://www.data.gouv.fr <dataset-id> --format csv
 ```
 
 ## Features
@@ -64,7 +77,7 @@ datasluice download <resource-url> --format csv
 
 Documentation is built with [Zensical](https://zensical.org/) and deployed to GitHub Pages.
 
-* **Live site:** https://datasluice.rajnitish.com
+* **Live site:** https://nitish-raj.github.io/datasluice/
 * **Preview locally:** `just docs-serve` (serves at http://localhost:8000)
 * **Build:** `just docs-build`
 
