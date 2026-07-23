@@ -2,24 +2,64 @@
 
 from __future__ import annotations
 
+import email.utils
 import json as json_module
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from datasluice.auth import NoAuth
 from datasluice.config.defaults import DEFAULT_TIMEOUT
-from datasluice.exceptions import PortalError, RateLimitError
+from datasluice.exceptions import PortalError, RateLimitError, RetryableHTTPError
 from datasluice.logging import get_logger
 from datasluice.transport.rate_limit import RateLimiter
+from datasluice.transport.redirect import CredentialAwareRedirectHandler
 from datasluice.transport.retry import RetryPolicy, with_retry
 from datasluice.transport.user_agent import build_user_agent
 
 if TYPE_CHECKING:
     from datasluice.auth import BaseAuth
+    from datasluice.domain import CredentialScope
 
 logger = get_logger("transport.http")
+
+
+def _parse_retry_after(raw: str | None) -> float | None:
+    """Parse a ``Retry-After`` header into a delay in seconds.
+
+    Supports both delta-seconds and HTTP-date formats. Returns ``None`` when the
+    value is missing or cannot be parsed.
+    """
+    if raw is None:
+        return None
+    text = raw.strip()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    try:
+        parsed_date = email.utils.parsedate_to_datetime(text)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed_date is None:
+        return None
+    if parsed_date.tzinfo is None:
+        parsed_date = parsed_date.replace(tzinfo=UTC)
+    delay = (parsed_date - datetime.now(UTC)).total_seconds()
+    return max(delay, 0.0)
+
+
+def _truncate_body(body: Any, limit: int = 200) -> str:
+    """Render *body* as text, truncating to *limit* characters."""
+    if isinstance(body, bytes):
+        text = body.decode("utf-8", errors="replace")
+    else:
+        text = str(body)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
 
 
 class HttpClient:
@@ -31,6 +71,9 @@ class HttpClient:
         retry_policy: Retry configuration.
         rate_limiter: Optional rate limiter.
         user_agent: Custom User-Agent string.
+        credential_scope: Optional host-scoped credential policy applied to
+            redirects. When omitted, any cross-host redirect strips credentials
+            (zero-config safety).
     """
 
     def __init__(
@@ -41,12 +84,15 @@ class HttpClient:
         retry_policy: RetryPolicy | None = None,
         rate_limiter: RateLimiter | None = None,
         user_agent: str | None = None,
+        credential_scope: CredentialScope | None = None,
     ) -> None:
         self.auth = auth or NoAuth()
         self.timeout = timeout
         self.retry_policy = retry_policy or RetryPolicy()
         self.rate_limiter = rate_limiter
         self.user_agent = user_agent or build_user_agent()
+        self._credential_scope = credential_scope
+        self._opener = urllib.request.build_opener(CredentialAwareRedirectHandler(self._credential_scope))
 
     def request(
         self,
@@ -62,6 +108,7 @@ class HttpClient:
         Raises:
             PortalError: On non-2xx responses.
             RateLimitError: On HTTP 429.
+            RetryableHTTPError: On HTTP 5xx responses.
         """
         headers = dict(headers or {})
         headers.setdefault("User-Agent", self.user_agent)
@@ -81,7 +128,7 @@ class HttpClient:
             req = urllib.request.Request(url, data=body, headers=headers, method=method)
             logger.debug("%s %s", method, url)
             try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                with self._opener.open(req, timeout=self.timeout) as resp:
                     return resp.read()
             except urllib.error.HTTPError as exc:
                 raw = exc.read()
@@ -91,10 +138,12 @@ class HttpClient:
                     parsed = raw.decode("utf-8", errors="replace")
                 if exc.code == 429:
                     retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                    raise RateLimitError(
-                        f"Rate limited by {url}", retry_after=float(retry_after) if retry_after else None
+                    raise RateLimitError(f"Rate limited by {url}", retry_after=_parse_retry_after(retry_after)) from exc
+                if exc.code >= 500:
+                    raise RetryableHTTPError(
+                        f"HTTP {exc.code} from {url}: {_truncate_body(parsed)}", status_code=exc.code
                     ) from exc
-                raise PortalError(f"HTTP {exc.code} from {url}: {parsed}") from exc
+                raise PortalError(f"HTTP {exc.code} from {url}: {_truncate_body(parsed)}") from exc
             except urllib.error.URLError as exc:
                 raise PortalError(f"Connection error for {url}: {exc.reason}") from exc
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from datasluice.exceptions import DownloadError
 from datasluice.io.local import ensure_dir, save_bytes
 
 
@@ -40,7 +41,12 @@ class LocalStorage(Storage):
         self.base_dir = ensure_dir(base_dir)
 
     def write(self, data: bytes, key: str) -> str:
-        path = self.base_dir / key
+        base_resolved = self.base_dir.resolve()
+        path = (self.base_dir / key).resolve()
+        try:
+            path.relative_to(base_resolved)
+        except ValueError:
+            raise DownloadError(f"Path traversal detected: {key!r} escapes base directory") from None
         return str(save_bytes(data, path))
 
     def read(self, key: str) -> bytes:

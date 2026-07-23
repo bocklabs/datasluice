@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from datasluice.exceptions import RateLimitError
+from datasluice.exceptions import RateLimitError, RetryableHTTPError
 from datasluice.logging import get_logger
 
 logger = get_logger("transport.retry")
+
+
+def _full_jitter_delay(base: float, cap: float, attempt: int) -> float:
+    """Return a full-jitter sleep in ``[0, min(cap, base * 2**attempt)]``."""
+    return random.uniform(0, min(cap, base * (2**attempt)))
 
 
 @dataclass(frozen=True)
@@ -28,7 +34,7 @@ class RetryPolicy:
     base_delay: float = 1.0
     max_delay: float = 60.0
     backoff_factor: float = 2.0
-    retry_on: tuple[type[Exception], ...] = (RateLimitError, OSError)
+    retry_on: tuple[type[Exception], ...] = (RateLimitError, RetryableHTTPError, OSError)
 
 
 def with_retry[T](
@@ -48,7 +54,6 @@ def with_retry[T](
         The last exception if all attempts are exhausted.
     """
     policy = policy or RetryPolicy()
-    delay = policy.base_delay
     last_exc: Exception = RuntimeError("No retries attempted")
 
     for attempt in range(1, policy.max_attempts + 1):
@@ -59,8 +64,7 @@ def with_retry[T](
             if isinstance(exc, RateLimitError) and exc.retry_after is not None:
                 sleep = min(exc.retry_after, policy.max_delay)
             elif attempt < policy.max_attempts:
-                sleep = min(delay, policy.max_delay)
-                delay *= policy.backoff_factor
+                sleep = _full_jitter_delay(policy.base_delay, policy.max_delay, attempt - 1)
             else:
                 break
             logger.warning("Attempt %d/%d failed: %s — retrying in %.1fs", attempt, policy.max_attempts, exc, sleep)
