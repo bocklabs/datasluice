@@ -33,7 +33,7 @@ def download(
 
     console.print(f"[bold]Downloading {len(resources)} resource(s) to {dest}...[/bold]")
     dest.mkdir(parents=True, exist_ok=True)
-    paths = ds.download_all(dataset, dest)
+    paths = ds.downloader.download_many(resources, dest)
     console.print(f"[green]Downloaded {len(paths)} file(s)[/green]")
     for path in paths:
         console.print(f"  {path}")
