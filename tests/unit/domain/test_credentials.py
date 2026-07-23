@@ -8,10 +8,10 @@ from http.client import HTTPMessage
 from io import BytesIO
 
 import pytest
-from datasluice.transport.redirect import CredentialAwareRedirectHandler
 
 from datasluice.domain import CredentialScope
 from datasluice.exceptions import PortalError, RetryableHTTPError
+from datasluice.transport.redirect import CredentialAwareRedirectHandler
 
 
 def test_credential_scope_defaults() -> None:
@@ -24,7 +24,7 @@ def test_credential_scope_defaults() -> None:
 def test_credential_scope_is_frozen() -> None:
     scope = CredentialScope()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        scope.send_on_redirect = True
+        scope.send_on_redirect = True  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
 
 
 def test_credential_scope_custom_values() -> None:

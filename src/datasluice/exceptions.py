@@ -35,6 +35,14 @@ class RateLimitError(PortalError):
         self.retry_after = retry_after
 
 
+class RetryableHTTPError(PortalError):
+    """Raised on HTTP 5xx responses that should be retried."""
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class NotFoundError(PortalError):
     """Raised when a requested dataset or resource does not exist."""
 
