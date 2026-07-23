@@ -20,6 +20,9 @@ class BasicAuth(BaseAuth):
         self.username = username
         self.password = password
 
+    def __repr__(self) -> str:
+        return f"<BasicAuth username={self.username!r} password=***>"
+
     def apply(
         self, headers: dict[str, str], params: dict[str, Any] | None = None
     ) -> tuple[dict[str, str], dict[str, Any]]:

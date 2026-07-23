@@ -39,6 +39,12 @@ class APIKeyAuth(BaseAuth):
         self.in_header = in_header
         self.in_query = in_query
 
+    def __repr__(self) -> str:
+        return (
+            f"<APIKeyAuth header_name={self.header_name!r} param_name={self.param_name!r} "
+            f"in_header={self.in_header!r} in_query={self.in_query!r} api_key=***>"
+        )
+
     def apply(
         self, headers: dict[str, str], params: dict[str, Any] | None = None
     ) -> tuple[dict[str, str], dict[str, Any]]:

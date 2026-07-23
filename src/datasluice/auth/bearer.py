@@ -19,6 +19,9 @@ class BearerAuth(BaseAuth):
         self.token = token
         self.scheme = scheme
 
+    def __repr__(self) -> str:
+        return f"<BearerAuth scheme={self.scheme!r} token=***>"
+
     def apply(
         self, headers: dict[str, str], params: dict[str, Any] | None = None
     ) -> tuple[dict[str, str], dict[str, Any]]:

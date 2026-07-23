@@ -20,6 +20,9 @@ class HeadersAuth(BaseAuth):
     def __init__(self, headers: dict[str, str]) -> None:
         self._headers = dict(headers)
 
+    def __repr__(self) -> str:
+        return "<HeadersAuth headers=***>"
+
     def apply(
         self, headers: dict[str, str], params: dict[str, Any] | None = None
     ) -> tuple[dict[str, str], dict[str, Any]]:
