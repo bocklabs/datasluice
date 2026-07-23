@@ -1,0 +1,26 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Maintain release PR / cut release
+    runs-on: ubuntu-latest
+    steps:
+      # Manifest-driven: reads release-please-config.json + .release-please-manifest.json.
+      # On every push to main it maintains a "release PR" that bumps the version,
+      # updates CHANGELOG.md, and — once merged — tags the release and creates a
+      # GitHub Release (which triggers publish-pypi.yml).
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0

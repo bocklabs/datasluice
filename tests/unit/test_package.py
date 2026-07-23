@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 import datasluice
 
 
 def test_version() -> None:
-    assert datasluice.__version__ == "0.1.0"
+    assert re.match(r"^\d+\.\d+\.\d+", datasluice.__version__)
 
 
 def test_public_api_exports() -> None:
