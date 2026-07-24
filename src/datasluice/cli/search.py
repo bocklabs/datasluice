@@ -17,10 +17,10 @@ def search(
     limit: int = typer.Option(20, "--limit", "-n", help="Maximum results"),
 ) -> None:
     """Search for datasets on an open-data portal."""
-    from datasluice import DataSluice
+    from datasluice import DataSluiceSession
 
-    ds = DataSluice(portal)
-    result = ds.search(Query(text=query, limit=limit))
+    ds = DataSluiceSession()
+    result = ds.portal(portal).search(Query(text=query, limit=limit))
 
     table = Table(title=f"Search: {query or '(all)'} on {portal}")
     table.add_column("ID", style="cyan", no_wrap=True)

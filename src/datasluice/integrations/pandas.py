@@ -40,8 +40,8 @@ def dataset_to_dataframes(
     **kwargs: Any,
 ) -> dict[str, pd.DataFrame]:
     """Return a ``{resource_name: DataFrame}`` mapping for a dataset."""
-    from datasluice import DataSluice
+    from datasluice import DataSluiceSession
 
-    ds = DataSluice(portal_url)
-    dataset = ds.get_dataset(dataset_id)
+    ds = DataSluiceSession()
+    dataset = ds.portal(portal_url).get_dataset(dataset_id)
     return {(r.name or r.id): resource_to_dataframe(r, **kwargs) for r in dataset.resources if r.url}

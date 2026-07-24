@@ -35,13 +35,13 @@ def datasluice_source(
     except ImportError as exc:
         raise ImportError("dlt integration requires 'dlt'. Install with: pip install datasluice[dlt]") from exc
 
-    from datasluice import DataSluice
+    from datasluice import DataSluiceSession
     from datasluice.domain import Query
 
     @dlt.resource(name="datasets", write_disposition="replace")
     def _datasets() -> Any:
-        ds = DataSluice(portal, **kwargs)
-        result = ds.search(Query(text=query, limit=limit))
+        ds = DataSluiceSession()
+        result = ds.search(portal, Query(text=query, limit=limit))
         for dataset in result.datasets:
             yield {
                 "id": dataset.id,

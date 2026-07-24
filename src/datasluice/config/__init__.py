@@ -9,11 +9,8 @@ from datasluice.config.defaults import (
     DEFAULT_RETRIES,
     DEFAULT_TIMEOUT,
 )
-from datasluice.config.settings import Settings, load_settings
 
 __all__ = [
-    "Settings",
-    "load_settings",
     "DEFAULT_TIMEOUT",
     "DEFAULT_RETRIES",
     "DEFAULT_RATE_LIMIT",

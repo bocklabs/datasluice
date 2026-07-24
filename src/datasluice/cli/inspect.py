@@ -15,10 +15,10 @@ def inspect(
     dataset_id: str = typer.Argument(..., help="Dataset ID"),
 ) -> None:
     """Inspect a single dataset in detail."""
-    from datasluice import DataSluice
+    from datasluice import DataSluiceSession
 
-    ds = DataSluice(portal)
-    dataset = ds.get_dataset(dataset_id)
+    ds = DataSluiceSession()
+    dataset = ds.portal(portal).get_dataset(dataset_id)
 
     console.print(
         Panel(

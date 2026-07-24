@@ -12,7 +12,7 @@ def test_version() -> None:
 
 
 def test_public_api_exports() -> None:
-    assert hasattr(datasluice, "DataSluice")
+    assert hasattr(datasluice, "DataSluiceSession")
     assert hasattr(datasluice, "Dataset")
     assert hasattr(datasluice, "Resource")
     assert hasattr(datasluice, "Organization")

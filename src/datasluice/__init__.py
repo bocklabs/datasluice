@@ -3,8 +3,26 @@ format normalization, and pipeline integration.
 """
 
 from datasluice._version import __version__
-from datasluice.client import DataSluice
-from datasluice.domain import Dataset, License, Organization, Query, Resource, SearchResult
+from datasluice.domain import (
+    Artifact,
+    CatalogCapabilities,
+    CredentialScope,
+    Dataset,
+    DetectionResult,
+    HttpDownload,
+    License,
+    LocalFile,
+    ObjectStorage,
+    Organization,
+    Query,
+    QueryAccess,
+    Resource,
+    ResourceAccess,
+    Schema,
+    SearchResult,
+    StreamAccess,
+    SyncState,
+)
 from datasluice.exceptions import (
     AdapterError,
     AdapterNotFoundError,
@@ -19,10 +37,11 @@ from datasluice.exceptions import (
     PortalError,
     RateLimitError,
 )
+from datasluice.runtime.session import DataSluiceSession
 
 __all__ = [
     "__version__",
-    "DataSluice",
+    "DataSluiceSession",
     # Domain models
     "Dataset",
     "Resource",
@@ -30,6 +49,18 @@ __all__ = [
     "License",
     "Query",
     "SearchResult",
+    "Artifact",
+    "CatalogCapabilities",
+    "CredentialScope",
+    "DetectionResult",
+    "HttpDownload",
+    "LocalFile",
+    "ObjectStorage",
+    "QueryAccess",
+    "ResourceAccess",
+    "Schema",
+    "StreamAccess",
+    "SyncState",
     # Exceptions
     "DataSluiceError",
     "PortalError",

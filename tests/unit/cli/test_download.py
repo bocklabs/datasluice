@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -39,18 +40,22 @@ class _RecordingDownloader:
 def _patch_client(monkeypatch: pytest.MonkeyPatch, dataset: Dataset) -> _RecordingDownloader:
     downloader = _RecordingDownloader()
 
-    class FakeDataSluice:
-        def __init__(self, portal: str) -> None:
-            self.portal = portal
+    class FakeConnector:
+        def __init__(self, url: str) -> None:
+            self.url = url
             self.downloader = downloader
 
         def get_dataset(self, dataset_id: str) -> Dataset:
             return dataset
 
-        def download_all(self, dataset: Dataset, dest: str | Path) -> list[Path]:
-            return self.downloader.download_many(dataset.resources, dest)
+    class FakeDataSluiceSession:
+        def __init__(self, **kwargs: Any) -> None:
+            self._transport = None
 
-    monkeypatch.setattr(datasluice, "DataSluice", FakeDataSluice)
+        def portal(self, url: str) -> FakeConnector:
+            return FakeConnector(url)
+
+    monkeypatch.setattr(datasluice, "DataSluiceSession", FakeDataSluiceSession)
     return downloader
 
 

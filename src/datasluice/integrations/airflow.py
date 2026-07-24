@@ -5,7 +5,7 @@ Requires ``apache-airflow``: install with ``pip install datasluice[airflow]``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from datasluice.logging import get_logger
 
@@ -50,7 +50,7 @@ class DataSluiceOperator:
         **kwargs: Any,
     ) -> type:
         BaseOperator = _import_operator()
-        from datasluice import DataSluice
+        from datasluice import DataSluiceSession
         from datasluice.domain import Query
 
         class _Operator(BaseOperator):  # ty: ignore[unsupported-base]
@@ -60,12 +60,16 @@ class DataSluiceOperator:
                 super().__init__(**kw)
 
             def execute(self, context: dict[str, Any]) -> Any:
-                ds = DataSluice(portal)
-                result = ds.search(Query(text=query, limit=limit))
+                ds = DataSluiceSession()
+                result = ds.search(portal, Query(text=query, limit=limit))
                 paths: list[str] = []
                 for dataset in result.datasets:
                     if dest_dir:
-                        paths.extend(str(p) for p in ds.download_all(dataset, dest_dir))
+                        resources = dataset.resources
+                        from datasluice.io.downloader import Downloader
+
+                        downloader = Downloader(cast("Any", ds._transport))
+                        paths.extend(str(p) for p in downloader.download_many(resources, dest_dir))
                 return paths
 
         return _Operator
