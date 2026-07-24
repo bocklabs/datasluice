@@ -1,8 +1,9 @@
-"""Custom adapter subpackage.
+"""Custom connector subpackage.
 
-Provides a template for implementing adapters for portals not yet
-supported by DataSluice.  Subclass :class:`BaseAdapter` and register your
-adapter with :data:`datasluice.connectors.registry`.
+Provides a template for implementing connectors for portals not yet
+supported by DataSluice.  Subclass :class:`BaseAdapter`, declare a factory
+function, and register it under the ``datasluice.connectors`` entry-points
+group in your distribution metadata.
 """
 
 from datasluice.connectors.custom.adapter import CustomAdapter
