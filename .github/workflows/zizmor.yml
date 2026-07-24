@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - ".github/workflows/**"
+      - uv.lock
+      - pyproject.toml
   pull_request:
     types:
       - opened
@@ -14,6 +16,8 @@ on:
       - ready_for_review
     paths:
       - ".github/workflows/**"
+      - uv.lock
+      - pyproject.toml
 
 permissions: {}
 

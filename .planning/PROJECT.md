@@ -31,15 +31,17 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 - ✓ Lazy optional dependency imports — existing
 - ✓ CI/CD pipeline (lint, typecheck, test, publish) — existing
 - ✓ Documentation site (Zensical/MkDocs Material) — existing
+- ✓ README examples valid + stale repo URLs corrected — Phase 1 (CORR-01/02)
+- ✓ CLI `download --format` filters resources before download — Phase 1 (CORR-03)
+- ✓ Credentials host-scoped via `CredentialScope` + cross-host redirect header stripping — Phase 1 (SEC-01/02)
+- ✓ Auth secrets redacted in `repr()` — Phase 1 (SEC-04)
+- ✓ Retry classification: 5xx/429/connection retry w/ jitter; 4xx fail-fast — Phase 1 (SEC-05)
+- ✓ URL-derived cache filenames replaced with SHA-256 hashes — Phase 1 (SEC-06)
+- ✓ DuckDB SQL injection fixed (Python relation API + validated identifiers) — Phase 1 (SEC-03)
 
 ### Active
 
-- [ ] Correct README examples and stale repository URLs
-- [ ] Fix CLI `download --format` filtering bug
-- [ ] Scope credentials to hosts (prevent cross-host token leakage)
-- [ ] Fix retry classification (retry 5xx, connection errors)
 - [ ] Wire or remove dead settings (page_size, cache_dir, cache_ttl, api_key, bearer_token)
-- [ ] Replace URL-derived cache filenames with content hashes
 - [ ] Introduce `DataSluiceSession` runtime object (composition root)
 - [ ] Split `CatalogPort` from `ResourceReader` (separate catalog from resource access)
 - [ ] Introduce capability metadata (`CatalogCapabilities`) with reject/warn policy for unsupported filters
@@ -57,7 +59,6 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 - [ ] Consistent terminal conversions (to_arrow, to_pandas, to_polars, to_duckdb) consuming shared `BatchStream`
 - [ ] Rebuild dlt integration to yield actual resource data
 - [ ] Separate Airflow provider distribution (`apache-airflow-provider-datasluice`)
-- [ ] Fix DuckDB SQL injection vulnerability (parameterized queries / validated identifiers)
 - [ ] Artifact-oriented outputs (`Artifact` dataclass with URI, media_type, checksum)
 - [ ] ETag/Last-Modified state for files
 - [ ] Cursor/watermark state for API resources
@@ -111,6 +112,8 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 | Python entry_points for plugin discovery | Standard packaging mechanism; enables separately distributed connectors | — Pending |
 | Separate Airflow provider distribution | Avoids forcing core CI to install full Airflow stack | — Pending |
 | Keep modular monolith (not microrepos) | Simplicity; entry-point contract allows external distribution when needed | — Pending |
+| DuckDB Python relation API (not f-string SQL) for injection-proofing | URL flows as a C-string bind arg, never parsed as SQL; table_name regex-validated | ✓ Done — Phase 1 |
+| Credential scoping via frozen `CredentialScope` + opener-based redirect handler | Credentials never leak cross-host or on scheme downgrade; zero-config safe default | ✓ Done — Phase 1 |
 
 ## Evolution
 
@@ -130,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-23 after initialization*
+*Last updated: 2026-07-24 after Phase 1*
