@@ -9,7 +9,15 @@ from typing import Any, Protocol, runtime_checkable
 class Transport(Protocol):
     """Transport boundary Protocol satisfied structurally by HTTP clients."""
 
-    def request(self, url: str, *, method: str = "GET", **kwargs: Any) -> bytes: ...
+    def request(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        body: bytes | None = None,
+    ) -> bytes: ...
 
     def get_json(self, url: str, **kwargs: Any) -> dict[str, Any]: ...
 

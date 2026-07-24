@@ -2,9 +2,9 @@
 
 Provides a template for implementing adapters for portals not yet
 supported by DataSluice.  Subclass :class:`BaseAdapter` and register your
-adapter with :data:`datasluice.adapters.registry`.
+adapter with :data:`datasluice.connectors.registry`.
 """
 
-from datasluice.adapters.custom.adapter import CustomAdapter
+from datasluice.connectors.custom.adapter import CustomAdapter
 
 __all__ = ["CustomAdapter"]

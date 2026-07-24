@@ -7,18 +7,20 @@ transport, IO, and format reading behind a single, consistent interface.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from datasluice.adapters.factory import create_adapter
 from datasluice.auth import BaseAuth
 from datasluice.config.settings import Settings, load_settings
 from datasluice.domain import Dataset, Organization, Query, Resource, SearchResult
 from datasluice.io.downloader import Downloader
 from datasluice.logging import configure_logging, get_logger
+from datasluice.runtime import ConnectorContext, PluginManager
 from datasluice.transport import HttpClient, RateLimiter, RetryPolicy
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Callable
+
+    from datasluice.connectors.base import BaseAdapter
 
 logger = get_logger("client")
 
@@ -57,8 +59,7 @@ class DataSluice:
 
         self.auth = auth
         self._transport = transport or self._build_transport()
-        self.adapter = create_adapter(portal_url, portal_type=portal_type, auth=auth)
-        self.adapter._transport = self._transport
+        self.adapter = self._resolve_adapter(portal_url, portal_type=portal_type, auth=auth)
 
         self._downloader: Downloader | None = None
         logger.debug("Initialised DataSluice for %s (%s)", portal_url, self.adapter.portal_type)
@@ -74,6 +75,27 @@ class DataSluice:
             rate_limiter=rate_limiter,
             user_agent=self.settings.user_agent,
         )
+
+    def _resolve_adapter(
+        self,
+        portal_url: str,
+        *,
+        portal_type: str | None,
+        auth: BaseAuth | None,
+    ) -> BaseAdapter:
+        """Resolve a connector via the registry-free :class:`PluginManager`.
+
+        Auto-detects the portal type when *portal_type* is omitted and injects
+        the configured transport through the factory (no post-hoc ``_transport``
+        mutation), keeping the legacy facade functional until the
+        :class:`DataSluiceSession` composition root replaces it.
+        """
+        from datasluice.discovery import detect_portal_type
+
+        name = portal_type or detect_portal_type(portal_url)
+        factory = cast("Callable[[ConnectorContext], BaseAdapter]", PluginManager().get(name))
+        ctx = ConnectorContext(base_url=portal_url, transport=self._transport, auth=auth)
+        return factory(ctx)
 
     @property
     def downloader(self) -> Downloader:

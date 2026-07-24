@@ -39,13 +39,14 @@ def detect_portal_type(base_url: str) -> str:
     """
     normalized = _normalize_base_url(base_url)
 
-    from datasluice.adapters.registry import registry
+    from datasluice.runtime.plugin_manager import PluginManager
     from datasluice.transport import HttpClient
 
     client = HttpClient()
+    pm = PluginManager()
 
     for path, portal_type in PATH_FINGERPRINTS.items():
-        if not registry.has(portal_type):
+        if portal_type not in pm.list_connectors():
             continue
         probe_url = f"{normalized}{path}"
         try:

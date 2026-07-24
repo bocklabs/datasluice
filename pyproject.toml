@@ -74,6 +74,11 @@ homepage = "https://github.com/nitish-raj/datasluice"
 [project.scripts]
 datasluice = "datasluice.cli.app:app"
 
+[project.entry-points."datasluice.connectors"]
+ckan = "datasluice.connectors.ckan.factory:create_ckan_connector"
+datagouv = "datasluice.connectors.datagouv.factory:create_datagouv_connector"
+socrata = "datasluice.connectors.socrata.factory:create_socrata_connector"
+
 [tool.ty]
 # All rules are enabled as "error" by default; no need to specify unless overriding.
 # Example override: relax a rule for the entire project (uncomment if needed).

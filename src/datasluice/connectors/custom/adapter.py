@@ -6,7 +6,7 @@ support a new portal platform.
 
 from __future__ import annotations
 
-from datasluice.adapters.base import BaseAdapter
+from datasluice.connectors.base import BaseAdapter
 from datasluice.domain import Dataset, Organization, Query, Resource, SearchResult
 
 

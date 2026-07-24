@@ -4,6 +4,6 @@ Socrata (Tyler Technologies) powers many US city, county, and state
 open-data portals.
 """
 
-from datasluice.adapters.socrata.adapter import SocrataAdapter
+from datasluice.connectors.socrata.adapter import SocrataAdapter
 
 __all__ = ["SocrataAdapter"]

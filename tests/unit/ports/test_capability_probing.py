@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datasluice.adapters.ckan import CKANAdapter
-from datasluice.adapters.socrata import SocrataAdapter
+from datasluice.connectors.ckan import CKANAdapter
+from datasluice.connectors.socrata import SocrataAdapter
 from datasluice.ports import CatalogPort, OrganizationCatalog, SearchableCatalog
 
 

@@ -5,9 +5,9 @@ Communicates with the udata REST API at ``{base_url}/api/1/``.
 
 from __future__ import annotations
 
-from datasluice.adapters.base import BaseAdapter
-from datasluice.adapters.datagouv.mapper import map_dataset, map_organization
-from datasluice.adapters.datagouv.pagination import DataGouvPage
+from datasluice.connectors.base import BaseAdapter
+from datasluice.connectors.datagouv.mapper import map_dataset, map_organization
+from datasluice.connectors.datagouv.pagination import DataGouvPage
 from datasluice.domain import Dataset, Organization, Query, Resource, SearchResult
 
 

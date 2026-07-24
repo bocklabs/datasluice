@@ -5,9 +5,9 @@ Communicates with the Socrata Discovery API and SODA2 endpoints.
 
 from __future__ import annotations
 
-from datasluice.adapters.base import BaseAdapter
-from datasluice.adapters.socrata.mapper import map_dataset
-from datasluice.adapters.socrata.pagination import SocrataPage
+from datasluice.connectors.base import BaseAdapter
+from datasluice.connectors.socrata.mapper import map_dataset
+from datasluice.connectors.socrata.pagination import SocrataPage
 from datasluice.domain import Dataset, Organization, Query, Resource, SearchResult
 
 

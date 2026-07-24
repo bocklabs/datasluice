@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datasluice.adapters.ckan.mapper import map_dataset, map_resource
+from datasluice.connectors.ckan.mapper import map_dataset, map_resource
 
 
 def test_map_resource_basic() -> None:

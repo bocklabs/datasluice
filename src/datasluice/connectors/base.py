@@ -9,7 +9,7 @@ from datasluice.domain import Dataset, Organization, Query, Resource, SearchResu
 
 if TYPE_CHECKING:
     from datasluice.auth import BaseAuth
-    from datasluice.transport import HttpClient
+    from datasluice.ports import Transport
 
 
 class BaseAdapter(ABC):
@@ -30,15 +30,15 @@ class BaseAdapter(ABC):
         base_url: str,
         *,
         auth: BaseAuth | None = None,
-        transport: HttpClient | None = None,
+        transport: Transport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.auth = auth
-        self._transport = transport
+        self._transport: Transport | None = transport
 
     @property
-    def transport(self) -> HttpClient:
-        """Lazily initialised HTTP client."""
+    def transport(self) -> Transport:
+        """Lazily initialised HTTP transport."""
         if self._transport is None:
             from datasluice.transport import HttpClient
 

@@ -5,9 +5,9 @@ Communicates with the CKAN Action API (``/api/3/action/``).
 
 from __future__ import annotations
 
-from datasluice.adapters.base import BaseAdapter
-from datasluice.adapters.ckan.mapper import map_dataset, map_organization
-from datasluice.adapters.ckan.pagination import CKANPage
+from datasluice.connectors.base import BaseAdapter
+from datasluice.connectors.ckan.mapper import map_dataset, map_organization
+from datasluice.connectors.ckan.pagination import CKANPage
 from datasluice.domain import Dataset, Organization, Query, Resource, SearchResult
 
 
