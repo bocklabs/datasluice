@@ -7,6 +7,7 @@ from datasluice.io.local import ensure_dir, safe_filename, save_bytes
 from datasluice.io.storage import LocalStorage, Storage
 
 __all__ = [
+    "ContentCache",
     "Downloader",
     "FileCache",
     "FsspecStorage",
@@ -24,11 +25,18 @@ __all__ = [
 
 
 def __getattr__(name: str):  # PEP 562
-    """Lazily export FsspecStorage and open_filesystem (D-P3-01 lazy discipline).
+    """Lazily export ContentCache, FsspecStorage, and open_filesystem (D-P3-01 lazy discipline).
 
-    Importing either eagerly would pull fsspec at package import time and break
-    bare installs. Both symbols are resolved on first attribute access.
+    Importing any of these eagerly would pull optional deps (fsspec for the
+    storage pair; sqlite3 is stdlib so ContentCache is cheap, but the lazy
+    discipline keeps the io surface uniform) at package import time and break
+    bare installs. All three symbols are resolved on first attribute access.
     """
+    if name == "ContentCache":
+        from datasluice.io.content_cache import ContentCache
+
+        globals()["ContentCache"] = ContentCache
+        return ContentCache
     if name == "FsspecStorage":
         from datasluice.io.fsspec_storage import FsspecStorage
 
