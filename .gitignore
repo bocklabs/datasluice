@@ -29,6 +29,7 @@ coverage.xml
 .env
 .envrc
 .venv
+.opencode
 
 # uv
 #   Generally recommended to include uv.lock in version control for
@@ -60,8 +61,14 @@ site/
 # Data
 */data/
 
-# Unrelated scratch projects in the working tree (keeps `ty check .` focused)
-city-vibe/
-
 # Notebooks
 notebook/
+
+
+# Graphify
+graphify-out/cost.json
+graphify-out/cache/
+.graphify_python
+.graphify_root
+.graphify_uncached.txt
+.graphify_semantic_new.json
