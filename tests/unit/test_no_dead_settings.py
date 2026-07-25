@@ -3,13 +3,21 @@
 Scans every ``.py`` file under ``src/datasluice/`` for the string
 ``DATASLUICE_`` (environment variable references) and verifies that
 ``Settings`` and ``load_settings`` are no longer importable.
+
+The single legitimate ``DATASLUICE_``-prefixed env var in v1 is
+``DATASLUICE_NO_REDACT`` (the RedactingFilter escape hatch, INFRA-06 / D-P3-18);
+it is allowlisted here so the scan still flags any other ``DATASLUICE_``
+substring while permitting this one.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
+
+ALLOWED_DATASLUICE_ENV_VARS = frozenset({"DATASLUICE_NO_REDACT"})
 
 
 def test_no_datasluice_env_vars_in_source() -> None:
@@ -19,9 +27,11 @@ def test_no_datasluice_env_vars_in_source() -> None:
         if "__pycache__" in py_file.parts:
             continue
         content = py_file.read_text(encoding="utf-8")
-        if "DATASLUICE_" in content:
-            offending.append(str(py_file))
-    assert not offending, f"DATASLUICE_ env var references found in: {offending}"
+        found = set(re.findall(r"DATASLUICE_[A-Z_]+", content))
+        unexpected = found - ALLOWED_DATASLUICE_ENV_VARS
+        if unexpected:
+            offending.append(f"{py_file}: {sorted(unexpected)}")
+    assert not offending, f"Unexpected DATASLUICE_ env var references found in: {offending}"
 
 
 def test_settings_module_removed() -> None:

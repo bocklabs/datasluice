@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 from typing import IO, TYPE_CHECKING
 
-from datasluice.logging import get_logger
+from datasluice.logging import SENSITIVE_HEADERS, get_logger
 
 if TYPE_CHECKING:
     from http.client import HTTPMessage
@@ -14,8 +14,6 @@ if TYPE_CHECKING:
     from datasluice.domain.credentials import CredentialScope
 
 logger = get_logger("transport.redirect")
-
-SENSITIVE_HEADERS = frozenset({"authorization", "cookie", "x-api-key", "x-auth-token"})
 
 
 class CredentialAwareRedirectHandler(urllib.request.HTTPRedirectHandler):
