@@ -81,10 +81,10 @@ def test_all_protocols_importable_individually() -> None:
         assert hasattr(ports, name), f"{name} missing from datasluice.ports"
 
 
-def test_ports_all_contains_ten_names() -> None:
+def test_ports_all_contains_eleven_names() -> None:
     import datasluice.ports as ports
 
-    assert len(ports.__all__) == 10
+    assert len(ports.__all__) == 11
 
 
 def test_transport_declares_request_get_json_download() -> None:

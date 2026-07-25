@@ -60,5 +60,8 @@ site/
 # Data
 */data/
 
+# Unrelated scratch projects in the working tree (keeps `ty check .` focused)
+city-vibe/
+
 # Notebooks
 notebook/
