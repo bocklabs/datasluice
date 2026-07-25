@@ -683,6 +683,8 @@ all = [
     { name = "apache-airflow" },
     { name = "dlt" },
     { name = "duckdb" },
+    { name = "fsspec" },
+    { name = "httpx" },
     { name = "openpyxl" },
     { name = "pandas" },
     { name = "polars" },
@@ -694,6 +696,9 @@ dlt = [
 duckdb = [
     { name = "duckdb" },
 ]
+http = [
+    { name = "httpx" },
+]
 pandas = [
     { name = "pandas" },
 ]
@@ -702,6 +707,9 @@ parquet = [
 ]
 polars = [
     { name = "polars" },
+]
+storage = [
+    { name = "fsspec" },
 ]
 xlsx = [
     { name = "openpyxl" },
@@ -738,6 +746,10 @@ requires-dist = [
     { name = "dlt", marker = "extra == 'dlt'" },
     { name = "duckdb", marker = "extra == 'all'" },
     { name = "duckdb", marker = "extra == 'duckdb'" },
+    { name = "fsspec", marker = "extra == 'all'", specifier = ">=2025.1" },
+    { name = "fsspec", marker = "extra == 'storage'", specifier = ">=2025.1" },
+    { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27" },
     { name = "openpyxl", marker = "extra == 'all'" },
     { name = "openpyxl", marker = "extra == 'xlsx'" },
     { name = "pandas", marker = "extra == 'all'" },
@@ -749,7 +761,7 @@ requires-dist = [
     { name = "rich" },
     { name = "typer" },
 ]
-provides-extras = ["pandas", "polars", "dlt", "duckdb", "airflow", "parquet", "xlsx", "all"]
+provides-extras = ["pandas", "polars", "dlt", "duckdb", "airflow", "parquet", "xlsx", "http", "storage", "all"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -3,10 +3,16 @@
 Replaces the former ``DataSluice._build_transport`` method by reading the
 ``DEFAULT_*`` constants from :mod:`datasluice.config.defaults` directly (D-14)
 instead of the removed ``Settings`` dataclass.
+
+Phase 3 (D-P3-01): the factory now picks :class:`HttpxTransport` when httpx is
+importable and falls back to the urllib :class:`HttpClient` for bare installs
+(D-P3-03). The return type widens to the :class:`Transport` port so callers
+treat either backend uniformly.
 """
 
 from __future__ import annotations
 
+import importlib.util
 from typing import TYPE_CHECKING
 
 from datasluice.auth import NoAuth
@@ -16,22 +22,52 @@ from datasluice.transport.user_agent import build_user_agent
 
 if TYPE_CHECKING:
     from datasluice.auth import BaseAuth
+    from datasluice.ports import CredentialProvider, Transport
 
 
-def create_default_transport(auth: BaseAuth | None = None) -> HttpClient:
-    """Construct a default :class:`HttpClient` from ``DEFAULT_*`` constants.
+def create_default_transport(
+    auth: BaseAuth | None = None,
+    *,
+    credential_provider: CredentialProvider | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    retries: int = DEFAULT_RETRIES,
+    rate_limit: float | None = DEFAULT_RATE_LIMIT,
+) -> Transport:
+    """Construct a default transport from ``DEFAULT_*`` constants.
+
+    Picks :class:`HttpxTransport` when httpx is importable (D-P3-01), falling
+    back to the urllib :class:`HttpClient` for bare installs (D-P3-03). The
+    httpx availability check uses ``importlib.util.find_spec`` so the module is
+    never eagerly imported at this call site (keeps bare installs clean).
 
     Args:
         auth: Optional auth strategy; defaults to :class:`NoAuth` when omitted.
+        credential_provider: Optional credential provider forwarded to
+            :class:`HttpxTransport` for 401/403 eviction (D-P3-15).
+        timeout: Request timeout in seconds.
+        retries: Maximum number of attempts for the retry policy.
+        rate_limit: Optional requests-per-second cap (``None`` disables).
 
     Returns:
-        A configured :class:`HttpClient` instance.
+        A transport instance satisfying the :class:`Transport` port.
     """
-    rate_limiter = RateLimiter(requests_per_second=DEFAULT_RATE_LIMIT) if DEFAULT_RATE_LIMIT else None
-    retry_policy = RetryPolicy(max_attempts=DEFAULT_RETRIES)
-    return HttpClient(
+
+    retry_policy = RetryPolicy(max_attempts=retries)
+    rate_limiter = RateLimiter(requests_per_second=rate_limit) if rate_limit else None
+    if importlib.util.find_spec("httpx") is None:
+        return HttpClient(
+            auth=auth or NoAuth(),
+            timeout=timeout,
+            retry_policy=retry_policy,
+            rate_limiter=rate_limiter,
+            user_agent=build_user_agent(),
+        )
+    from datasluice.transport.httpx_transport import HttpxTransport
+
+    return HttpxTransport(
         auth=auth or NoAuth(),
-        timeout=DEFAULT_TIMEOUT,
+        credential_provider=credential_provider,
+        timeout=timeout,
         retry_policy=retry_policy,
         rate_limiter=rate_limiter,
         user_agent=build_user_agent(),

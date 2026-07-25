@@ -196,15 +196,15 @@ def test_stream_yields_bytes_and_headers() -> None:
 
 # HostCredentialProvider ships in wave-1 plan 03-04. Until it lands the
 # eviction path is correct-by-design but cannot be exercised against a real
-# provider type — these tests skip cleanly so the suite stays green.
-_host_provider = pytest.importorskip("datasluice.credentials.host_provider")
-HostCredentialProvider = _host_provider.HostCredentialProvider  # type: ignore[attr-defined]
+# provider type — the importorskip below is inside the helper (NOT module
+# level) so its absence only skips the two 401 tests, not the whole module.
 
 
 def _evicting_provider(refreshed_auth) -> MagicMock:
     """Build a mock that satisfies ``isinstance(_, HostCredentialProvider)``."""
 
-    provider = MagicMock(spec=HostCredentialProvider)
+    host_provider = pytest.importorskip("datasluice.credentials.host_provider")
+    provider = MagicMock(spec=host_provider.HostCredentialProvider)
     provider.resolve.return_value = refreshed_auth
     return provider
 
