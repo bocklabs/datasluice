@@ -20,6 +20,12 @@ jobs:
     timeout-minutes: 15
     if: ${{ github.actor != 'renovate[bot]' }}
     steps:
+      - name: Set up UV
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Install Graphifyy
+        run: uv tool install graphifyy
+
       - name: PR Agent /describe
         uses: the-pr-agent/pr-agent@6ad7cf75d95cb3bbb54cf2ad92050eb03804964a # v0.40.0
         env:

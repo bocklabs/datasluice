@@ -22,6 +22,12 @@ jobs:
     timeout-minutes: 30
     if: github.event_name == 'pull_request_target' && github.actor != 'renovate[bot]'
     steps:
+      - name: Set up UV
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Install Graphify
+        run: uv tool install graphifyy
+
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@802af6b461d17408856fac0d07a18f9b17d6d38c # v1.7.7
         with:
