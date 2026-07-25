@@ -38,17 +38,18 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 - ✓ Retry classification: 5xx/429/connection retry w/ jitter; 4xx fail-fast — Phase 1 (SEC-05)
 - ✓ URL-derived cache filenames replaced with SHA-256 hashes — Phase 1 (SEC-06)
 - ✓ DuckDB SQL injection fixed (Python relation API + validated identifiers) — Phase 1 (SEC-03)
+- ✓ Dead `Settings` system removed (no `DATASLUICE_` env vars; defaults demoted to plain constants) — Phase 2 (CORR-04)
+- ✓ `DataSluiceSession` composition root (zero-config facade, wires PluginManager + transport + auth) — Phase 2 (ARCH-03)
+- ✓ Narrow Protocol ports: `CatalogPort`/`SearchableCatalog`/`OrganizationCatalog` split from `ResourceReader`; plus `Transport`, `CredentialProvider`, `StoragePort`, `CachePort`, `StateStore`, `PortalDetector` — Phase 2 (ARCH-02, ARCH-07)
+- ✓ Six new frozen domain models: `Schema`, `ResourceAccess` + 5 access kinds, `DetectionResult`, `Artifact`, `SyncState`, `CatalogCapabilities` — Phase 2 (ARCH-01)
+- ✓ `PluginManager` with entry-point discovery + per-entry error isolation replaces global side-effect registry — Phase 2 (ARCH-04, ARCH-05, ARCH-06, QUAL-09)
+- ✓ Python entry-points (`datasluice.connectors` group) for third-party connector discovery — Phase 2 (ARCH-04)
+- ✓ `adapters/` renamed to `connectors/` with per-connector factory functions — Phase 2 (D-03, D-04, D-13)
 
 ### Active
 
-- [ ] Wire or remove dead settings (page_size, cache_dir, cache_ttl, api_key, bearer_token)
-- [ ] Introduce `DataSluiceSession` runtime object (composition root)
-- [ ] Split `CatalogPort` from `ResourceReader` (separate catalog from resource access)
 - [ ] Introduce capability metadata (`CatalogCapabilities`) with reject/warn policy for unsupported filters
-- [ ] Replace global side-effect registry with injected `PluginManager`
-- [ ] Add Python entry-point discovery for third-party connectors
 - [ ] Remove the non-functioning `CustomAdapter`
-- [ ] Make portal detection injectable and evidence-based (`DetectionResult` with confidence + evidence)
 - [ ] Streaming HTTP responses (bounded memory)
 - [ ] Adopt fsspec for storage (local, S3, GCS, Azure Blob, HTTP)
 - [ ] `ResourceAccess` descriptors (HttpDownload, ObjectStorage, Query, Stream, LocalFile)
@@ -133,4 +134,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-24 after Phase 1*
+*Last updated: 2026-07-25 after Phase 2 — composition root, port Protocols, connectors rename, and dead-Settings removal complete. 187 tests passing.*
