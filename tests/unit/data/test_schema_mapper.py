@@ -10,8 +10,12 @@ GREEN lands the mapper.
 from __future__ import annotations
 
 import importlib
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from datasluice.domain import Schema
 
 pytest.importorskip("pyarrow")
 
@@ -22,10 +26,10 @@ except ImportError:
     pytest.skip("datasluice.data.schema not yet implemented (RED → GREEN within task 04-01)", allow_module_level=True)
 
 
-def _make_schema(columns: list[dict]) -> object:
-    from datasluice.domain import Schema
+def _make_schema(columns: list[dict]) -> Schema:
+    from datasluice.domain.schema import Schema as _Schema
 
-    return Schema(name="test", columns=columns)
+    return _Schema(name="test", columns=columns)
 
 
 def test_known_type_mappings() -> None:
