@@ -44,3 +44,7 @@ class BatchStream:
 
     def __exit__(self, *exc: Any) -> None:
         raise NotImplementedError
+
+    def __arrow_c_stream__(self, requested_schema: Any = None) -> Any:
+        """Zero-copy Arrow C stream capsule for Phase 6 interop (Task 2)."""
+        raise NotImplementedError
