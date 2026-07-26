@@ -13,13 +13,20 @@ from __future__ import annotations
 
 from datasluice.data.readers.base import BaseFormatReader
 from datasluice.data.readers.csv import CSVReader
+from datasluice.data.readers.geojson import GeoJSONReader
 from datasluice.data.readers.json import JSONReader
+from datasluice.data.readers.parquet import ParquetReader
+from datasluice.data.readers.xlsx import XLSXReader
 
 READERS: dict[str, type[BaseFormatReader]] = {
     "CSV": CSVReader,
     "JSON": JSONReader,
     "JSONL": JSONReader,
     "NDJSON": JSONReader,
+    "XLSX": XLSXReader,
+    "XLS": XLSXReader,
+    "PARQUET": ParquetReader,
+    "GEOJSON": GeoJSONReader,
 }
 
 
@@ -46,6 +53,9 @@ __all__ = [
     "BaseFormatReader",
     "CSVReader",
     "JSONReader",
+    "XLSXReader",
+    "ParquetReader",
+    "GeoJSONReader",
     "READERS",
     "get_reader",
 ]
