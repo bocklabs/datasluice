@@ -22,11 +22,19 @@ class MockResponse:
         status: HTTP status code.
         headers: Response headers (e.g. ``{"Location": ...}``).
         body: Raw response bytes.
+        chunk_size: When set, the handler emits the body using HTTP/1.1
+            ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
+            each ``chunk_size``-byte slice is written as ``<hex-size> CRLF
+            <bytes> CRLF`` followed by the terminating ``0 CRLF CRLF`` frame.
+            This simulates a real streaming HTTP server for DATA-05 tests
+            (D-P4-19). Mutually exclusive with a pre-set ``Content-Length``
+            header (the spec forbids both).
     """
 
     status: int = 200
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes = b"OK"
+    chunk_size: int | None = None
 
 
 class _CapturingServer(ThreadingHTTPServer):
@@ -51,10 +59,33 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
         server.captured.append({k.lower(): v for k, v in self.headers.items()})
         self.send_response(resp.status)
         for name, value in resp.headers.items():
+            if name.lower() in ("content-length", "transfer-encoding"):
+                continue
             self.send_header(name, value)
-        self.send_header("Content-Length", str(len(resp.body)))
-        self.end_headers()
-        self.wfile.write(resp.body)
+        if resp.chunk_size is not None:
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self._write_chunked(resp.body, resp.chunk_size)
+        else:
+            self.send_header("Content-Length", str(len(resp.body)))
+            self.end_headers()
+            self.wfile.write(resp.body)
+
+    def _write_chunked(self, body: bytes, chunk_size: int) -> None:
+        """Emit *body* using HTTP/1.1 chunked transfer-encoding (D-P4-19)."""
+
+        if chunk_size <= 0:
+            chunk_size = 1
+        offset = 0
+        while offset < len(body):
+            chunk = body[offset : offset + chunk_size]
+            self.wfile.write(f"{len(chunk):X}\r\n".encode("ascii"))
+            self.wfile.write(chunk)
+            self.wfile.write(b"\r\n")
+            self.wfile.flush()
+            offset += chunk_size
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
 
     def log_message(self, format: str, *args: Any) -> None:
         return
