@@ -64,11 +64,12 @@ def test_local_file_dispatch_yields_batch_stream(tmp_path) -> None:
 def test_default_http_download_when_access_is_none() -> None:
     """resource.access=None defaults to HttpDownload(url=resource.url) (D-P4-06)."""
 
-    from datasluice.domain import Resource
+    from datasluice.domain import HttpDownload, Resource
 
     resource = Resource(id="r1", url="https://example.com/data.csv", format="CSV", access=None)
     reader = DataPlaneResourceReader(transport=None)
     resolved = reader._resolve_access(resource)
+    assert isinstance(resolved, HttpDownload)
     assert resolved.kind == "http_download"
     assert resolved.url == "https://example.com/data.csv"
 
