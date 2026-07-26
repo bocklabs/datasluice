@@ -1,122 +1,182 @@
 # External Integrations
 
-**Analysis Date:** 2026-07-05
+**Analysis Date:** 2026-07-26
+
+DataSluice is a Python library/CLI that **integrates with external open-data portals over HTTP** and bridges into data-processing ecosystems (pandas, polars, dlt, DuckDB, Airflow). It makes only **outbound** calls; it does not expose servers, webhooks, or inbound endpoints.
 
 ## APIs & External Services
 
-The library speaks to open-data portals over plain HTTPS using Python's stdlib `urllib` (no `requests`/`httpx`/`aiohttp`). All HTTP traffic flows through `src/datasluice/transport/http_client.py:HttpClient`.
+### Open-data portals (catalog APIs)
 
-**Open-Data Portals (built-in adapters, auto-registered in `src/datasluice/adapters/__init__.py`):**
+All portal adapters extend `BaseAdapter` (`src/datasluice/connectors/base.py`) and translate portal-native JSON into `datasluice.domain` models. Each adapter has a sibling `mapper.py`, `pagination.py`, `errors.py`, and `factory.py`.
 
-- **CKAN** — Action API at `{base_url}/api/3/action/`
-  - Adapter: `src/datasluice/adapters/ckan/adapter.py:CKANAdapter` (`portal_type = "ckan"`)
-  - Endpoints used: `package_search`, `package_show`, `organization_show`
-  - Mapper: `src/datasluice/adapters/ckan/mapper.py` · Pagination: `src/datasluice/adapters/ckan/pagination.py:CKANPage`
-  - Detection fingerprints: `/api/3/action/package_search`, `/api/3/action/group_list` (`src/datasluice/discovery/fingerprints.py`)
+**CKAN:**
+- Service: CKAN Action API at `{base_url}/api/3/action/`
+- Implementation: `src/datasluice/connectors/ckan/adapter.py` (`CKANAdapter`)
+- Endpoints used: `package_search`, `package_show`, `organization_show`
+- Mapper: `src/datasluice/connectors/ckan/mapper.py`
+- Entry-point: `ckan = "datasluice.connectors.ckan.factory:create_ckan_connector"` (`pyproject.toml`)
 
-- **data.gouv.fr / udata** — REST API at `{base_url}/api/1/`
-  - Adapter: `src/datasluice/adapters/datagouv/adapter.py:DataGouvAdapter` (`portal_type = "datagouv"`)
-  - Endpoints used: `datasets/`, `datasets/{id}/`, `organizations/{slug}/`
-  - Mapper: `src/datasluice/adapters/datagouv/mapper.py` · Pagination: `DataGouvPage`
-  - Detection fingerprints: `/api/1/datasets/`, `/api/1/organizations/`
+**data.gouv.fr / udata:**
+- Service: udata REST API at `{base_url}/api/1/`
+- Implementation: `src/datasluice/connectors/datagouv/adapter.py` (`DataGouvAdapter`)
+- Endpoints used: `datasets/`, `organizations/{slug}/`
+- Entry-point: `datagouv = "datasluice.connectors.datagouv.factory:create_datagouv_connector"`
 
-- **Socrata** — Discovery API at `{base_url}/api/catalog/v1`
-  - Adapter: `src/datasluice/adapters/socrata/adapter.py:SocrataAdapter` (`portal_type = "socrata"`)
-  - Endpoints used: catalog search by `q`/`tags`/`ids`
-  - Mapper: `src/datasluice/adapters/socrata/mapper.py` · Pagination: `SocrataPage`
-  - Detection fingerprints: `/api/catalog/v1`, `/api/views.json`
-  - Note: `get_organization()` returns a stub — Socrata has no dedicated org endpoint.
+**Socrata:**
+- Service: Socrata Discovery API at `{base_url}/api/catalog/v1` (SODA2)
+- Implementation: `src/datasluice/connectors/socrata/adapter.py` (`SocrataAdapter`)
+- Note: Socrata exposes no dedicated organizations endpoint — `get_organization` returns a minimal stub.
+- Entry-point: `socrata = "datasluice.connectors.socrata.factory:create_socrata_connector"`
 
-- **Custom (template)** — `src/datasluice/adapters/custom/adapter.py:CustomAdapter` (`portal_type = "custom"`). All methods raise `NotImplementedError`; intended as a copy-and-override base for unsupported portals.
+**Custom (extension point):**
+- Skeleton adapter at `src/datasluice/connectors/custom/adapter.py` (`CustomAdapter`) — all methods `raise NotImplementedError`. Copy, rename, and implement to support a new portal platform.
 
-**Portal Auto-Detection:**
-- `src/datasluice/discovery/detector.py:detect_portal_type()` probes URL paths from `PATH_FINGERPRINTS` and returns the first match registered in the `registry`. Raises `PortalDetectionError` if none match. `HTML_FINGERPRINTS` are declared but not yet wired into the detector.
+**Portal auto-detection:**
+- `src/datasluice/discovery/detector.py` — `detect_portal_type(url)` probes well-known paths.
+- Fingerprints in `src/datasluice/discovery/fingerprints.py` map API paths / HTML signatures to portal types (e.g. `/api/3/action/package_search` → `ckan`).
 
-**No SDK clients:** Each adapter calls `self.transport.get_json(url, params=...)` directly; there is no CKAN/Socrata SDK dependency.
+**Plugin discovery model:**
+- Connectors are registered under the `datasluice.connectors` entry-points group in `pyproject.toml` (`[project.entry-points."datasluice.connectors"]`).
+- `PluginManager` (`src/datasluice/runtime/plugin_manager.py`) loads them eagerly via `importlib.metadata.entry_points`. A broken third-party plugin is captured as a `PluginFailure` and never crashes session creation.
+- `DataSluiceSession.portal(url)` (`src/datasluice/runtime/session.py`) auto-detects the portal type, resolves the factory through `PluginManager`, and constructs the adapter with an injected `ConnectorContext`.
+
+### HTTP transport (the integration substrate)
+
+Two interchangeable backends satisfy the `Transport` / `StreamingTransport` ports (`src/datasluice/ports/transport.py`):
+
+- **urllib `HttpClient`** (`src/datasluice/transport/http_client.py`) — stdlib default for bare installs (no extras).
+- **`HttpxTransport`** (`src/datasluice/transport/httpx_transport.py`) — preferred when the `http` extra is installed; auto-selected by `src/datasluice/runtime/defaults.py` via `importlib.util.find_spec("httpx")`.
+
+Both backends share:
+- `RetryPolicy` with full-jitter exponential backoff (`src/datasluice/transport/retry.py`) — retries on `RateLimitError`, `RetryableHTTPError`, `OSError`; honours `Retry-After` on HTTP 429.
+- `RateLimiter` requests-per-second cap (`src/datasluice/transport/rate_limit.py`).
+- `CredentialAwareRedirectHandler` (`src/datasluice/transport/redirect.py`) — manual redirect loop that strips sensitive headers (`authorization`, `cookie`, `x-api-key`, `x-auth-token`) on cross-host or `https`→`http` hops per the `CredentialScope` policy.
+- `build_user_agent()` (`src/datasluice/transport/user_agent.py`) — sends `datasluice/{version} (Python {py}; {os})`.
+
+The httpx backend additionally supports streaming responses via `HttpxTransport.stream()` → `StreamResponse` and a single-flight 401/403 credential eviction path.
 
 ## Data Storage
 
 **Databases:**
-- None. DataSluice is stateless and stores no persistent metadata.
+- Embedded **SQLite** (stdlib `sqlite3`) used ONLY for the content-cache metadata index — no server, no external connection string.
+  - Location: `src/datasluice/io/content_cache.py` (`ContentCache`)
+  - File: `{cache_dir}/cache.db`, WAL journal mode, `busy_timeout=5000`.
+  - Two-phase atomic writes (`writing` → `ready` status) with lazy sweep of stale/orphaned entries.
 
 **File Storage:**
-- Local filesystem only via `src/datasluice/io/storage.py:LocalStorage` (writes under a configurable `base_dir`). The `Storage` ABC (`write`/`read`/`exists`) is designed so S3, GCS, etc. can be plugged in without touching the download pipeline — see the module docstring in `src/datasluice/io/storage.py`.
-- Local helpers: `src/datasluice/io/local.py` (`ensure_dir`, `save_bytes`, `safe_filename`).
-- Downloader: `src/datasluice/io/downloader.py:Downloader` orchestrates fetch → optional cache → optional checksum verify → storage/disk.
+- **Local filesystem** (default): `src/datasluice/io/storage.py` (`LocalStorage`) + `src/datasluice/io/local.py`. Path-traversal guarded (`path.relative_to` check).
+- **fsspec backends** (opt-in via `storage` extra): `src/datasluice/io/fsspec_storage.py` (`FsspecStorage`) wraps any `fsspec.AbstractFileSystem`. Supports URI schemes `s3://`, `gs://`, `az://`, `abfs://`, `file://`, `http://`, `https://`, `memory://`.
+  - Centralised factory: `src/datasluice/io/filesystem.py` → `open_filesystem(uri, credentials=)` delegates to `fsspec.core.url_to_fs`.
+  - Credential precedence: explicit `credentials=` dict → URI-embedded creds → backend defaults (env vars / config files / IAM).
+- **Downloader**: `src/datasluice/io/downloader.py` (`Downloader`) — fetches resource bytes via the transport, optional checksum verification (`verify_hash`, `hash_algorithm`), optional cache + storage injection.
 
 **Caching:**
-- `src/datasluice/io/cache.py:FileCache` — time-based (TTL), key = resource URL, stored on local disk under `DATASLUICE_CACHE_DIR` (default `.datasluice/cache`). Not injected by default; callers pass an instance to `Downloader`.
+- `FileCache` (`src/datasluice/io/cache.py`) — simple time-based, SHA-256-keyed file cache (TTL default 3600s).
+- `ContentCache` (`src/datasluice/io/content_cache.py`) — content-addressed cache with SQLite WAL index + ETag/Last-Modified sidecar (enables future conditional GETs). Satisfies `CachePort`.
 
 ## Authentication & Identity
 
-**Auth Provider:**
-- Custom, pluggable strategy pattern (`src/datasluice/auth/base.py:BaseAuth` ABC). Strategies mutate request headers and/or query params via `apply(headers, params) -> (headers, params)`.
-- Implementations (`src/datasluice/auth/__init__.py`):
-  - `NoAuth` — default, no-op (`src/datasluice/auth/none.py`).
-  - `APIKeyAuth` — header (default `X-Api-Key`) and/or query param (`src/datasluice/auth/api_key.py`).
-  - `BearerAuth` — `Authorization: Bearer <token>` (`src/datasluice/auth/bearer.py`).
-  - `BasicAuth` — HTTP Basic via base64 (`src/datasluice/auth/basic.py`).
-  - `HeadersAuth` — arbitrary static header bag (`src/datasluice/auth/headers.py`).
-- Auth strategy is passed to `DataSluice(portal_url, auth=...)` or configured via `DATASLUICE_API_KEY` / `DATASLUICE_BEARER_TOKEN` env vars (`src/datasluice/config/settings.py`).
-- No OAuth flow, no token refresh, no session management.
+**Auth Provider:** Custom — no OAuth/SaaS identity provider integrated. All auth is pluggable and caller-supplied.
+
+**Strategies** (`src/datasluice/auth/`):
+- `NoAuth` (default) — `src/datasluice/auth/none.py`.
+- `APIKeyAuth` — `src/datasluice/auth/api_key.py`; key via header (`X-Api-Key`) and/or query param.
+- `BearerAuth` — `src/datasluice/auth/bearer.py`; OAuth 2.0 / JWT in `Authorization: Bearer <token>`.
+- `BasicAuth` — `src/datasluice/auth/basic.py`; HTTP Basic.
+- `HeadersAuth` — `src/datasluice/auth/headers.py`; arbitrary header injection.
+- Base protocol: `BaseAuth` (`src/datasluice/auth/base.py`) with `apply(headers, params) -> (headers, params)`.
+
+**Host-scoped credential resolution:**
+- `HostCredentialProvider` (`src/datasluice/credentials/host_provider.py`) — caches `BaseAuth` per host with single-flight refresh (`threading.Lock` per host, double-checked expiry). Optional `refresher` callable `(host) -> (BaseAuth, expires_at | None)` is the future OAuth2 plug-in seam (v1 passes `None` → never expires).
+- `HttpxTransport` evicts + refreshes exactly once on 401/403 (capability-checked via `isinstance`, lazily resolved via `importlib`).
+
+**Auth wiring in the session:**
+- `DataSluiceSession(auth=...)` wraps a static auth in `_StaticCredentialProvider`. Pass `credential_provider=` to override. No env-var-based auth lookup.
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None (no Sentry, no external APM). Errors surface through the typed exception hierarchy in `src/datasluice/exceptions.py` (`DataSluiceError` base → `PortalError`, `AdapterError`, `AuthenticationError`, `RateLimitError`, `NotFoundError`, `DownloadError`, `ChecksumMismatchError`, `FormatError`, `ConfigError`, `PortalDetectionError`, `AdapterNotFoundError`).
+- None (no Sentry, Datadog, or equivalent). Errors surface as the exception hierarchy in `src/datasluice/exceptions.py` (`PortalError`, `RateLimitError`, `RetryableHTTPError`, `AuthenticationError`, `DownloadError`, `ChecksumMismatchError`, `FormatError`, `PortalDetectionError`, `AdapterNotFoundError`, `ConfigError`, `NotFoundError`).
 
 **Logs:**
-- Python `logging` stdlib via `src/datasluice/logging.py`. All modules obtain a sub-logger with `get_logger("<area>")` (e.g. `transport.http`, `io.downloader`, `discovery`).
-- `configure_logging(level)` attaches a single `StreamHandler` to the `datasluice` root logger the first time it runs; format `%(asctime)s [%(name)s] %(levelname)s: %(message)s`. Level driven by `DATASLUICE_LOG_LEVEL`.
-- HTTP 429 responses are decoded and surfaced as `RateLimitError` with `retry_after` honoured by `RetryPolicy` (`src/datasluice/transport/retry.py`).
+- Python stdlib `logging` via `src/datasluice/logging.py`. Package logger name: `datasluice` (sub-loggers via `get_logger("subsystem")`).
+- `RedactingFilter` redacts known sensitive keys (`authorization`, `cookie`, `x-api-key`, `token`, `secret`, `password`, …) from log records. Disable with `DATASLUICE_NO_REDACT=1`.
+- `SENSITIVE_HEADERS` frozenset is the single source of truth shared with the redirect handler (lifted into `logging.py` to avoid a circular import).
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- Source: GitHub (`github.com/nitish-raj/datasluice`).
-- Distribution: [PyPI](https://pypi.org/project/datasluice/) via trusted publishing (OIDC `id-token: write`).
-- Docs: GitHub Pages at https://nitish-raj.github.io/datasluice/ and custom domain https://datasluice.rajnitish.com (`CNAME` file).
+- Source: GitHub (`https://github.com/nitish-raj/datasluice`).
+- Distribution: [PyPI](https://pypi.org/project/datasluice/) (+ [TestPyPI](https://test.pypi.org/project/datasluice/)).
+- Docs: GitHub Pages at `https://nitish-raj.github.io/datasluice/`.
 
-**CI Pipeline (GitHub Actions, `.github/workflows/`):**
-- `ci.yml` — on push to `main` and PRs. Jobs:
-  - **lint** — `uv run ruff format --check .` and `ruff check .`
-  - **type-check** — `uv run --all-extras ty check .`
-  - **test** — matrix Python 3.12 / 3.13 / 3.14 with `coverage run -m pytest`, uploads `.coverage.*` artifacts
-  - **coverage** — combines artifacts, posts report to `$GITHUB_STEP_SUMMARY`
-  - **all-checks-pass** — `re-actors/alls-green` gate
-- `publish.yml` — on `v*` tags. Builds with `uv build`, attests build provenance (`actions/attest-build-provenance`), publishes to PyPI environment `pypi` (requires reviewer approval).
-- `docs.yml` — on push to `main`. Builds Zensical docs, deploys to GitHub Pages (`site/` artifact).
-- `release.yml` — manual `workflow_dispatch` with `version` input; runs `scripts/release.py` to tag and create GitHub release notes.
-- `codeql.yml`, `zizmor.yml` — security scanning (CodeQL + GitHub Actions security analyzer).
-- All workflows pin third-party actions by SHA digest and use `permissions: {}` (least privilege). `publish.yml` disables the uv cache to prevent cache-poisoning.
+**CI Pipeline:** GitHub Actions (`.github/workflows/`).
+- `ci.yml` — lint, type-check, test matrix, coverage, build, smoke-test.
+- `docs.yml` — build + deploy docs to GitHub Pages.
+- `codeql.yml` — GitHub CodeQL scanning (`python` + `actions`).
+- `zizmor.yml` — workflow-security analysis.
+- `pr-agent.yml` + `ocr-review.yml` — AI PR tooling (see *External AI Tooling*).
 
-**Local CI equivalent:**
-- `just qa` / `make qa` → `ruff format` → `ruff check --fix` → `ty check` (concise) → `pytest`.
+**Release Pipeline:**
+- Automated by **Release Please** (`release-please-config.json`, `.github/workflows/release-please.yml`). Conventional Commits required.
+- Publishing (`.github/workflows/publish.yml`): on `release: published` → build → `twine check` → attest build provenance → TestPyPI (auto) → PyPI (await approval, secret `PYPI_API_KEY` / `TEST_PYPI_API_KEY`).
+
+**External AI Tooling (CI integrations, not runtime):**
+- **PR-Agent** (`the-pr-agent/pr-agent` v0.40.0) — auto PR descriptions. Configured to an OpenAI-compatible endpoint via secrets `OCR_LLM_URL`, `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_MODEL`.
+- **OpenCodeReview** (`alibaba/open-code-review` v1.7.7) — AI code review on PRs. Same `OCR_LLM_*` secret family; also `OCR_LLM_USE_ANTHROPIC` for Anthropic models.
+- **Graphifyy** (`uv tool install graphifyy`) — installed in both AI workflows (knowledge-graph tooling).
 
 ## Environment Configuration
 
-**Required env vars:**
-- None strictly required — every value has a default in `src/datasluice/config/defaults.py`.
+**Required env vars:** None at runtime. The library is zero-config (no `Settings`, no required env vars). Optional `DATASLUICE_NO_REDACT=1` toggles log redaction.
 
-**Optional env vars (see `.env.example` — do not read `.env`):**
-- `DATASLUICE_HTTP_TIMEOUT`, `DATASLUICE_HTTP_RETRIES`, `DATASLUICE_HTTP_RATE_LIMIT`
-- `DATASLUICE_PAGE_SIZE`
-- `DATASLUICE_CACHE_DIR`, `DATASLUICE_CACHE_TTL`
-- `DATASLUICE_LOG_LEVEL`
-- `DATASLUICE_API_KEY`, `DATASLUICE_BEARER_TOKEN` (portal credentials)
-- `DATASLUICE_USER_AGENT` (override the auto-built UA string)
+**CI secrets** (GitHub Actions, in repo settings — never in code):
+- `PYPI_API_KEY`, `TEST_PYPI_API_KEY` — publishing.
+- `OCR_LLM_URL`, `OCR_LLM_AUTH_TOKEN`, `OCR_LLM_MODEL`, `OCR_LLM_USE_ANTHROPIC` — AI review tooling.
+- `GITHUB_TOKEN` — standard action token.
 
 **Secrets location:**
-- Secrets are supplied via process environment variables at runtime; no secret files are committed. `.env.example` is a template only — the real `.env` is gitignored.
+- GitHub Actions encrypted secrets (referenced in workflow files).
+- `.env.example` present at repo root (template only — contents intentionally not read for this audit).
+- Cloud object-store credentials flow through `open_filesystem(uri, credentials=)` to fsspec's per-backend resolver (env vars / config files / IAM), never through `HostCredentialProvider`.
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- None. DataSluice is a pull-only client library; it does not expose an HTTP server.
+- None. DataSluice is a library + CLI; it does not expose an HTTP server or webhook receiver.
 
 **Outgoing:**
-- None. No outbound webhooks are dispatched. The only outbound network calls are HTTPS GETs to open-data portal APIs and resource download URLs (driven entirely by `HttpClient` in `src/datasluice/transport/http_client.py`).
+- Outbound HTTP GET requests to:
+  - Portal catalog APIs (CKAN `/api/3/action/`, udata `/api/1/`, Socrata `/api/catalog/v1`).
+  - Resource download URLs (arbitrary, discovered per-dataset).
+  - Portal well-known endpoints during auto-detection (`src/datasluice/discovery/detector.py`).
+- Outbound object-store I/O (when `storage` extra + cloud URI configured) via fsspec.
+
+## Data-Processing Integrations (bridges, not external services)
+
+These are opt-in adapter modules under `src/datasluice/integrations/` that hand portal data off to third-party libraries (installed via the matching extra):
+
+| Integration | Module | Extra | What it does |
+|-------------|--------|-------|--------------|
+| pandas | `integrations/pandas.py` | `pandas` | `resource_to_dataframe`, `dataset_to_dataframes` |
+| Polars | `integrations/polars.py` | `polars` | `resource_to_dataframe` (lazy/eager) |
+| dlt | `integrations/dlt.py` | `dlt` | `datasluice_source(...)` → `dlt.resource` |
+| DuckDB | `integrations/duckdb.py` | `duckdb` | `resource_to_relation`, `query_resource` (SQL-injection-safe table-name validation) |
+| Apache Airflow | `integrations/airflow.py` | `airflow` | `DataSluiceOperator` — dynamic `BaseOperator` subclass |
+
+## Format Readers (normalisation layer)
+
+`src/datasluice/formats/` — read remote resource files into `list[dict]`. Registry in `formats/__init__.py` (`READERS` dict + `get_reader(name)`).
+
+| Format | Reader | Extra |
+|--------|--------|-------|
+| CSV | `csv.py` (`CSVReader`) | stdlib |
+| JSON / JSONL / NDJSON | `json.py` (`JSONReader`) | stdlib |
+| XLSX / XLS | `xlsx.py` (`XLSXReader`) | `xlsx` (`openpyxl`) |
+| Parquet | `parquet.py` (`ParquetReader`) | `parquet` (`pyarrow`) |
+| GeoJSON | `geojson.py` (`GeoJSONReader`) | stdlib |
 
 ---
 
-*Integration audit: 2026-07-05*
+*Integration audit: 2026-07-26*

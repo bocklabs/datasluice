@@ -56,14 +56,13 @@ site/
 
 # GSD planning
 .planning/
-
+!.planning/codebase/*
 
 # Data
 */data/
 
 # Notebooks
 notebook/
-
 
 # Graphify
 graphify-out/cost.json
