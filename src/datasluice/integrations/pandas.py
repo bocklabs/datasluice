@@ -1,47 +1,12 @@
-"""Pandas integration: load resources into DataFrames.
+"""Pandas integration (awaiting Phase 6 rebuild over the shared BatchStream).
 
-Requires ``pandas``: install with ``pip install datasluice[pandas]``.
+The v0.1.0 ``resource_to_dataframe`` / ``dataset_to_dataframes`` helpers
+have been removed per D-P4-18: they relied on the deleted
+``datasluice.formats`` read path. Phase 6 rebuilds them over the shared
+:class:`datasluice.data.BatchStream`, producing DataFrames via
+zero-copy Arrow interop.
+
+This module is intentionally kept as an importable placeholder so that
+existing ``import datasluice.integrations.pandas`` calls do not break
+import-time; calling the (removed) helpers raises a clear ``AttributeError``.
 """
-
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import pandas as pd
-
-    from datasluice.domain.resource import Resource
-
-
-def resource_to_dataframe(resource: Resource, **kwargs: Any) -> pd.DataFrame:
-    """Read a :class:`Resource` into a pandas :class:`~pandas.DataFrame`.
-
-    Args:
-        resource: The resource to read.
-        **kwargs: Extra keyword arguments passed to the format reader or
-            ``pandas`` reader.
-    """
-    import pandas as pd
-
-    from datasluice.formats import get_reader
-
-    fmt = (resource.format or "CSV").upper()
-    if fmt in ("CSV", "JSON", "JSONL", "PARQUET", "XLSX", "GEOJSON"):
-        reader = get_reader(fmt)
-        records = reader.read(resource.url or "")
-        return pd.DataFrame(records, **kwargs)
-
-    return pd.read_csv(resource.url or "", **kwargs)  # type: ignore[no-any-return]
-
-
-def dataset_to_dataframes(
-    dataset_id: str,
-    portal_url: str,
-    **kwargs: Any,
-) -> dict[str, pd.DataFrame]:
-    """Return a ``{resource_name: DataFrame}`` mapping for a dataset."""
-    from datasluice import DataSluiceSession
-
-    ds = DataSluiceSession()
-    dataset = ds.portal(portal_url).get_dataset(dataset_id)
-    return {(r.name or r.id): resource_to_dataframe(r, **kwargs) for r in dataset.resources if r.url}

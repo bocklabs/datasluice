@@ -69,15 +69,19 @@ users can pass a portal URL without knowing its software.
 File downloading, caching, checksum verification, and storage abstraction for
 materializing resources locally.
 
-### 7. Formats (`datasluice.formats`)
+### 7. Data plane (`datasluice.data`)
 
-Format-specific readers that normalize CSV, JSON, XLSX, Parquet, and GeoJSON
-into common in-memory representations.
+Streaming format readers that decode CSV, JSON, JSONL, XLSX, Parquet, and
+GeoJSON into Arrow ``RecordBatch`` objects via a shared
+:class:`~datasluice.data.BatchStream` contract. Phase 4 replaced the v0.1.0
+buffering ``datasluice.formats`` package with this streaming package.
 
 ### 8. Integrations (`datasluice.integrations`)
 
-Optional integrations with the broader data ecosystem: pandas, Polars, dlt,
-Apache Airflow, and DuckDB.
+Optional integrations with the broader data ecosystem: pandas, dlt, Apache
+Airflow, and DuckDB. The v0.1.0 Polars integration and the independent
+per-integration read paths were removed in Phase 4; Phase 6 rebuilds all
+terminals over the shared :class:`~datasluice.data.BatchStream`.
 
 ## Design Principles
 
