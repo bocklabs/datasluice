@@ -1,16 +1,16 @@
 # Graph Report - datasluice  (2026-07-26)
 
 ## Corpus Check
-- 109 files · ~17,793 words
+- 110 files · ~21,458 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1388 nodes · 2620 edges · 85 communities (71 shown, 14 thin omitted)
-- Extraction: 91% EXTRACTED · 9% INFERRED · 0% AMBIGUOUS · INFERRED: 236 edges (avg confidence: 0.73)
+- 1461 nodes · 2676 edges · 117 communities (82 shown, 35 thin omitted)
+- Extraction: 91% EXTRACTED · 9% INFERRED · 0% AMBIGUOUS · INFERRED: 230 edges (avg confidence: 0.73)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `f5d8900a`
+- Built from commit: `fbaca100`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -60,15 +60,23 @@
 - Retry & Backoff
 - Sync State Model
 - HTTP Retry Errors
+- test_fsspec_storage.py
+- FormatError
+- test_retry.py
 - Download CLI Tests
 - Brand Logo Assets
 - Detect CLI Command
 - HTTPX Transport Client
 - Transport Protocol Tests
+- host_provider.py
 - Abstract Storage Backend
+- JSONReader
 - Socrata Factory & Context
+- .search
+- CSVReader
 - Custom Adapter Skeleton
 - Pre-commit Tooling
+- BasicAuth
 - Test Fixtures Config
 - Dead Settings Tests
 - Package API Tests
@@ -76,6 +84,7 @@
 - PR Automation Workflows
 - Layer Architecture Concepts
 - Release Please Config
+- HeadersAuth
 - Domain Purity Tests
 - Integration Import Tests
 - No Global State Tests
@@ -89,20 +98,43 @@
 - Funding Config
 - Issue Template Config
 - Pyproject Metadata
-- ._send_with_redirects
-- Artifact
+- BasicAuth
+- paginate
+- HeadersAuth
+- _ErrorTranslatingReader
 - CatalogCapabilities
 - Schema
-- _ScriptableHandler
+- Path
+- Path
+- Path
+- _StubStorage
 - Any
 - Protocol
+- Any
+- .read
+- Path
+- Any
+- Any
+- DataFrame
+- Any
+- DataFrame
+- PeekableReader
+- data/access.py
+- host_provider.py
+- ._open_http_download
+- BasicAuth
+- HeadersAuth
+- Resource
+- to_arrow_schema
+- RateLimiter
+- config/defaults.py
 
 ## God Nodes (most connected - your core abstractions)
-1. `DataSluiceSession` - 38 edges
-2. `ContentCache` - 36 edges
-3. `Resource` - 35 edges
-4. `BaseAuth` - 33 edges
-5. `HttpClient` - 32 edges
+1. `ContentCache` - 36 edges
+2. `DataSluiceSession` - 36 edges
+3. `BaseAuth` - 33 edges
+4. `HttpClient` - 32 edges
+5. `Resource` - 31 edges
 6. `Dataset` - 30 edges
 7. `HttpxTransport` - 30 edges
 8. `BearerAuth` - 26 edges
@@ -134,31 +166,31 @@
 - **DataSluice unified open-data portal access pattern** — datasluice_class, portal_ckan, portal_datagouv, portal_socrata [INFERRED 0.95]
 - **Pre-commit quality gate pipeline (format, lint, typecheck, test)** — precommit_config, lib_ruff, lib_ty, lib_pytest [EXTRACTED 1.00]
 
-## Communities (85 total, 14 thin omitted)
+## Communities (117 total, 35 thin omitted)
 
 ### Community 0 - "HTTP Transport Layer"
-Cohesion: 0.12
-Nodes (37): HttpxTransport, HTTP transport backed by httpx, satisfying Transport + StreamingTransport., _CapturingServer, MockResponse, Reusable local HTTP test server for transport and integration tests.  Spawns a :, Configurable HTTP response.      Attributes:         status: HTTP status code., ThreadingHTTPServer that records received requests and exposes the script., Start a scriptable test HTTP server on an ephemeral port.      Args:         res (+29 more)
+Cohesion: 0.05
+Nodes (62): BaseHTTPRequestHandler, Response, Lazily initialised HTTP transport., HttpClient, Any, Perform an HTTP request and return the raw response body.          Raises:, GET *url* and return the response as text., GET *url* and return the response as parsed JSON. (+54 more)
 
 ### Community 1 - "Content Cache"
 Cohesion: 0.06
-Nodes (50): Connection, ContentCache, Any, Content-addressed cache backed by a SQLite WAL index + content files (INFRA-03)., Return the SHA-256 hexdigest of *key* (SEC-06 carry-forward, D-P3-09)., Return the absolute content-file path for a SHA-256 digest., Return cached bytes for *key*, or ``None`` on miss / expiry / writing., Store *data* under *key* (CachePort signature UNCHANGED, D-P3-12). (+42 more)
+Nodes (49): Connection, ContentCache, Any, Return the SHA-256 hexdigest of *key* (SEC-06 carry-forward, D-P3-09)., Return the absolute content-file path for a SHA-256 digest., Return cached bytes for *key*, or ``None`` on miss / expiry / writing., Store *data* under *key* (CachePort signature UNCHANGED, D-P3-12)., Store *data* under *key* with ETag/Last-Modified sidecar (D-P3-12).          Pha (+41 more)
 
 ### Community 2 - "CLI Search & Runtime"
 Cohesion: 0.09
 Nodes (20): Any, Tests for DataSluiceSession Phase 3 kwargs + injectables (Success Criterion 5)., An injected StoragePort is stored on the session (D-P3-20)., ConnectorContext fields stay exactly (base_url, transport, auth, page_size) (D-P, The session stays portal()/search()-only (D-P3-22)., User-defined transport stub satisfying the Transport Protocol structurally., Stub satisfying the StoragePort Protocol., Stub satisfying the CredentialProvider Protocol. (+12 more)
 
 ### Community 3 - "Authentication Strategies"
-Cohesion: 0.25
-Nodes (8): CatalogPort, OrganizationCatalog, Protocol, Catalog port Protocols for portal catalog connectors., Marker base protocol all catalog connectors share.      Attributes:         port, Capability protocol for dataset search., Capability protocol for organization lookup., SearchableCatalog
+Cohesion: 0.14
+Nodes (6): RawIOBase, IterableBytesIO, Mark the stream closed and exhaust the iterator., Wrap an ``Iterable[bytes]`` into a non-seekable ``BinaryIO``.      The canonical, Read up to ``len(b)`` bytes into the provided buffer.          Args:, Read up to ``n`` bytes; ``n=-1`` reads all remaining bytes.          Args:
 
 ### Community 4 - "Bearer Auth & Credentials"
-Cohesion: 0.08
-Nodes (32): Lock, Refresher, BearerAuth, Any, Authenticate requests using a bearer token in the ``Authorization`` header., HostCredentialProvider, Drop the cached credential for *host* (off-port; D-P3-15).          Called by :c, Resolve a :class:`BaseAuth` per host with cached expiry and single-flight refres (+24 more)
+Cohesion: 0.07
+Nodes (34): datetime, Lock, Refresher, BearerAuth, Any, Authenticate requests using a bearer token in the ``Authorization`` header., HostCredentialProvider, Host-scoped credential resolver with single-flight refresh (INFRA-04).  ``HostCr (+26 more)
 
 ### Community 5 - "Base Adapter & Connectors"
-Cohesion: 0.11
-Nodes (19): Socrata adapter implementation.  Communicates with the Socrata Discovery API and, map_dataset(), map_organization(), map_resource(), Any, Mapping functions to convert Socrata-native JSON into domain models., Convert a Socrata view/resource dict into a :class:`Resource`., Convert a Socrata customer/owner dict into an :class:`Organization`. (+11 more)
+Cohesion: 0.18
+Nodes (10): IO, IterableBytesIO — adapt an ``Iterable[bytes]`` into a non-seekable BinaryIO (D-P, ParquetReader, Any, BaseFormatReader, Streaming Parquet reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).  Mig, Stream a Parquet ``BinaryIO`` source into Arrow ``RecordBatch`` objects.      On, Yield ``RecordBatch`` objects by streaming Parquet row groups.          Args: (+2 more)
 
 ### Community 6 - "Project Docs & Contributing"
 Cohesion: 0.10
@@ -168,13 +200,9 @@ Nodes (28): Conventional Commits, DataSluice (Public API class), datasluice_sour
 Cohesion: 0.08
 Nodes (20): APIKeyAuth, Any, Authenticate requests using an API key.      Args:         api_key: The API key, BasicAuth, Any, Authenticate requests using HTTP Basic credentials.      Args:         username:, HeadersAuth, Any (+12 more)
 
-### Community 8 - "Resource Mapping"
-Cohesion: 0.15
-Nodes (13): Resource model representing a single downloadable file within a dataset., dataset_to_dataframes(), Any, DataFrame, Pandas integration: load resources into DataFrames.  Requires ``pandas``: instal, Read a :class:`Resource` into a pandas :class:`~pandas.DataFrame`.      Args:, Return a ``{resource_name: DataFrame}`` mapping for a dataset., resource_to_dataframe() (+5 more)
-
 ### Community 9 - "Access & Detection Models"
-Cohesion: 0.23
-Nodes (16): HttpDownload, LocalFile, ObjectStorage, QueryAccess, ResourceAccess sum-type describing how a resource is reached., Base descriptor for how a resource is accessed.      Subclasses discriminate on, Resource fetched over HTTP(S).      Attributes:         url: Absolute URL to dow, Resource stored in object storage (S3, GCS, Azure Blob).      Attributes: (+8 more)
+Cohesion: 0.13
+Nodes (23): HttpDownload, LocalFile, ObjectStorage, QueryAccess, ResourceAccess sum-type describing how a resource is reached., Base descriptor for how a resource is accessed.      Subclasses discriminate on, Resource fetched over HTTP(S).      Attributes:         url: Absolute URL to dow, Resource stored in object storage (S3, GCS, Azure Blob).      Attributes: (+15 more)
 
 ### Community 10 - "Artifact & Catalog Models"
 Cohesion: 0.22
@@ -186,47 +214,47 @@ Nodes (24): DataGouvAdapter, data.gouv.fr (udata) adapter implementation.  Commu
 
 ### Community 12 - "Credentials & Redirect"
 Cohesion: 0.13
-Nodes (22): HTTPMessage, CredentialScope, Credential scoping model for host-bound credential policy., Host-scoped policy controlling where credentials may be sent.      Attributes:, CredentialAwareRedirectHandler, Request, Redirect handling that strips credentials on cross-origin or scheme-downgrade re, Strip sensitive headers when a redirect crosses origins or downgrades to plain H (+14 more)
+Nodes (21): HTTPMessage, CredentialScope, Credential scoping model for host-bound credential policy., Host-scoped policy controlling where credentials may be sent.      Attributes:, CredentialAwareRedirectHandler, Request, Redirect handling that strips credentials on cross-origin or scheme-downgrade re, Strip sensitive headers when a redirect crosses origins or downgrades to plain H (+13 more)
 
 ### Community 13 - "Transport Retry & Pagination"
-Cohesion: 0.07
-Nodes (38): Raised on HTTP 5xx responses that should be retried., RetryableHTTPError, _parse_retry_after(), Parse a ``Retry-After`` header into a delay in seconds.      Supports both delta, __getattr__(), Transport layer: HTTP client, retry, rate-limiting, and pagination.  ``HttpxTran, Lazily resolve httpx-backed symbols on first attribute access (PEP 562)., paginate() (+30 more)
+Cohesion: 0.12
+Nodes (22): __getattr__(), Transport layer: HTTP client, retry, rate-limiting, and pagination.  ``HttpxTran, Lazily resolve httpx-backed symbols on first attribute access (PEP 562)., paginate(), PaginationConfig, T, Generic pagination helpers shared across adapters., Common pagination parameters.      Attributes:         page_size: Number of item (+14 more)
 
 ### Community 14 - "Dataset & License Models"
-Cohesion: 0.13
-Nodes (14): Dataset, Dataset model representing a collection of related open-data resources., A dataset is a logical grouping of one or more resources.      Attributes:, License, License model representing the license under which data is published., A license under which an open-data resource or dataset is published.      Attrib, Organization model representing a dataset publisher., Result container for paginated search responses. (+6 more)
+Cohesion: 0.12
+Nodes (17): Socrata adapter implementation.  Communicates with the Socrata Discovery API and, map_dataset(), map_organization(), map_resource(), Any, Mapping functions to convert Socrata-native JSON into domain models., Convert a Socrata view/resource dict into a :class:`Resource`., Convert a Socrata customer/owner dict into an :class:`Organization`. (+9 more)
 
 ### Community 15 - "File Cache"
-Cohesion: 0.14
-Nodes (17): FileCache, Path, Simple file-based cache for downloaded resources., A time-based file cache.      Args:         cache_dir: Directory to store cached, Return cached bytes for *key*, or ``None`` if missing/expired., Store *data* under *key* and return the cache file path., Return ``True`` if *key* is cached and not expired., Remove all entries from the cache. (+9 more)
+Cohesion: 0.15
+Nodes (16): FileCache, Path, A time-based file cache.      Args:         cache_dir: Directory to store cached, Return cached bytes for *key*, or ``None`` if missing/expired., Store *data* under *key* and return the cache file path., Return ``True`` if *key* is cached and not expired., Remove all entries from the cache., Path (+8 more)
 
 ### Community 16 - "Cache Port Protocol"
-Cohesion: 0.14
-Nodes (12): HTTP client with retry, rate-limiting, and authentication support., Render *body* as text, truncating to *limit* characters., _truncate_body(), httpx-backed HTTP transport satisfying the Transport + StreamingTransport Protoc, RateLimiter, Rate-limiting to stay within portal request quotas., Thread-safe token-bucket rate limiter.      Args:         requests_per_second: M, Block until the next request is permitted. (+4 more)
+Cohesion: 0.21
+Nodes (12): _batch_from_rows(), _fmt_coord(), GeoJSONReader, Any, BaseFormatReader, Streaming GeoJSON reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-11).  Mig, Format a coordinate value: integers without trailing ``.0``; floats as-is., Stream a GeoJSON ``BinaryIO`` source into Arrow ``RecordBatch`` objects.      Ea (+4 more)
 
 ### Community 17 - "Rate Limit & Config"
 Cohesion: 0.10
-Nodes (18): API-key authentication strategy.  Supports passing the key via a header (default, BaseAuth, ABC, Any, Abstract base for authentication strategies., Protocol for pluggable authentication.      Each strategy knows how to decorate, Return a copy of *headers* (and optionally *params*) with credentials applied., HTTP Basic authentication strategy. (+10 more)
+Nodes (23): API-key authentication strategy.  Supports passing the key via a header (default, BaseAuth, ABC, Abstract base for authentication strategies., Protocol for pluggable authentication.      Each strategy knows how to decorate, HTTP Basic authentication strategy., Bearer-token (OAuth 2.0 / JWT) authentication strategy., Custom-headers authentication strategy.  Useful for portals that expect a non-st (+15 more)
 
 ### Community 18 - "Architecture Docs"
 Cohesion: 0.11
 Nodes (17): Adapter isolation principle, Adapter 4-module pattern (adapter/mapper/pagination/errors), Adapters Layer (datasluice.adapters), Auth Layer (datasluice.auth), BaseAdapter protocol, CKAN adapter, CKAN portal platform, Composable transport (decorators) principle (+9 more)
 
 ### Community 19 - "CKAN Mapper"
-Cohesion: 0.12
-Nodes (19): CKAN adapter implementation.  Communicates with the CKAN Action API (``/api/3/ac, map_dataset(), map_license(), map_organization(), map_resource(), Any, Mapping functions to convert CKAN-native JSON into domain models., Convert a CKAN license dict into a :class:`License`. (+11 more)
+Cohesion: 0.19
+Nodes (12): _parse_retry_after(), Parse a ``Retry-After`` header into a delay in seconds.      Supports both delta, _full_jitter_delay(), Return a full-jitter sleep in ``[0, min(cap, base * 2**attempt)]``., Unit tests for retry classification, full-jitter backoff, and Retry-After parsin, test_full_jitter_delay_caps_at_max_delay(), test_full_jitter_delay_within_range(), test_parse_retry_after_delta_seconds() (+4 more)
 
 ### Community 20 - "Filesystem Layer"
 Cohesion: 0.06
-Nodes (41): AbstractFileSystem, inspect(), ``datasluice inspect`` command., Inspect a single dataset in detail., open_filesystem(), Any, Centralised filesystem factory (INFRA-05).  All fsspec backend instantiation flo, Instantiate the correct fsspec backend for *uri* (INFRA-05, D-P3-20).      Deleg (+33 more)
+Nodes (38): AbstractFileSystem, open_filesystem(), Any, Centralised filesystem factory (INFRA-05).  All fsspec backend instantiation flo, Instantiate the correct fsspec backend for *uri* (INFRA-05, D-P3-20).      Deleg, __getattr__(), Lazily export ContentCache, FsspecStorage, and open_filesystem (D-P3-01 lazy dis, Unit tests for the ``open_filesystem`` factory (INFRA-05, D-P3-19/D-P3-20).  The (+30 more)
 
 ### Community 21 - "Socrata Adapter"
-Cohesion: 0.08
-Nodes (22): CKANAdapter, Adapter for CKAN-powered open-data portals.      Uses the CKAN Action API at ``{, Call a CKAN Action API endpoint and return the ``result`` dict., Search datasets via ``package_search``., Fetch a dataset via ``package_show``., Return resources for *dataset_id*., Fetch organization metadata via ``organization_show``., CKAN portal adapter.  CKAN is the world's most widely deployed open-data platfor (+14 more)
+Cohesion: 0.07
+Nodes (23): CKANAdapter, Adapter for CKAN-powered open-data portals.      Uses the CKAN Action API at ``{, Call a CKAN Action API endpoint and return the ``result`` dict., Search datasets via ``package_search``., Fetch a dataset via ``package_show``., Return resources for *dataset_id*., Fetch organization metadata via ``organization_show``., CKAN portal adapter.  CKAN is the world's most widely deployed open-data platfor (+15 more)
 
 ### Community 22 - "Checksums & Errors"
-Cohesion: 0.28
-Nodes (11): compute_hash(), compute_md5(), compute_sha256(), Path, Checksum (hash) computation and verification., Compute the hex digest of *file_path* using *algorithm*., Return the SHA-256 hex digest of *file_path*., Return the MD5 hex digest of *file_path*. (+3 more)
+Cohesion: 0.10
+Nodes (19): ABC, BaseFormatReader, Any, Abstract base class for streaming format readers (D-P4-10).  Each reader receive, Protocol for decoding a single file format into Arrow ``RecordBatch`` objects., Read *source* and yield Arrow ``RecordBatch`` objects.          Args:, CSVReader, Any (+11 more)
 
 ### Community 23 - "Logging & Redaction"
 Cohesion: 0.16
@@ -236,41 +264,41 @@ Nodes (19): configure_logging(), Any, LogRecord, Redact known sensitive keys fro
 Cohesion: 0.16
 Nodes (19): Conventional Commits Release Pipeline (release-please -> publish), uv package manager (used across all workflows), Dependabot Config (github-actions + pip weekly), CI Workflow, CI All checks pass gate (alls-green), CI Build & validate package job (uv build + twine), CI Coverage job (combine + report), CI Lint & format job (ruff) (+11 more)
 
-### Community 25 - "Format Readers Base"
-Cohesion: 0.05
-Nodes (47): IO, DecompressionError, FormatError, Raised when a resource cannot be parsed in the expected format., Raised when a compressed resource cannot be decompressed (D-P4-21).      Compres, BaseFormatReader, ABC, Any (+39 more)
-
 ### Community 26 - "Storage & Downloaders"
-Cohesion: 0.32
-Nodes (6): BaseOperator, DataSluiceOperator, _import_operator(), Any, Import the Airflow BaseOperator lazily., Factory that returns an Airflow ``BaseOperator`` subclass.      Usage::
+Cohesion: 0.27
+Nodes (7): BaseOperator, DataSluiceOperator, _import_operator(), Any, Apache Airflow integration: DataSluice operators for DAGs.  Requires ``apache-ai, Import the Airflow BaseOperator lazily., Factory that returns an Airflow ``BaseOperator`` subclass.      Usage::
 
 ### Community 27 - "DuckDB Integration"
-Cohesion: 0.17
-Nodes (17): Any, query_resource(), DuckDB integration: query resources directly with DuckDB.  Requires ``duckdb``:, Validate that *table_name* is a safe SQL identifier.      Args:         table_na, Register a remote resource as a DuckDB relation.      The URL flows through Duck, Run arbitrary *sql* against a resource and return the result.      Warning:, resource_to_relation(), _validate_table_name() (+9 more)
+Cohesion: 0.18
+Nodes (9): DuckDB integration (read paths removed per D-P4-18; SEC-03 utility preserved)., Validate that *table_name* is a safe SQL identifier.      Args:         table_na, _validate_table_name(), Path, SQL injection regression tests for the DuckDB integration (SEC-03/QUAL-07)., test_query_resource_is_opt_in_passthrough(), test_relation_api_reads_real_csv(), test_table_name_injection_rejected() (+1 more)
 
 ### Community 28 - "CLI App Core"
-Cohesion: 0.25
-Nodes (7): Argument, help, Option, download(), Path, ``datasluice download`` command., Download all resources from a dataset.
+Cohesion: 0.10
+Nodes (19): main(), Main Typer application for the DataSluice CLI., DataSluice — unified open-data toolkit., Command-line interface for DataSluice., ``datasluice search`` command., Search for datasets on an open-data portal., search(), Query (+11 more)
 
 ### Community 29 - "CKAN Adapter & Factory"
-Cohesion: 0.11
-Nodes (19): Lazily initialised HTTP transport., HttpClient, Any, Perform an HTTP request and return the raw response body.          Raises:, GET *url* and return the response as text., GET *url* and return the response as parsed JSON., GET *url* and return the raw bytes (for file downloads)., Thin HTTP client wrapping :mod:`urllib` with auth, retry, and rate-limiting. (+11 more)
+Cohesion: 0.12
+Nodes (19): CKAN adapter implementation.  Communicates with the CKAN Action API (``/api/3/ac, map_dataset(), map_license(), map_organization(), map_resource(), Any, Mapping functions to convert CKAN-native JSON into domain models., Convert a CKAN license dict into a :class:`License`. (+11 more)
 
 ### Community 30 - "Portal Error Mapping"
-Cohesion: 0.08
-Nodes (31): Exception, map_ckan_error(), CKAN-specific error mapping., Map a CKAN HTTP error response to a DataSluice exception.      Args:         sta, map_datagouv_error(), data.gouv.fr (udata) specific error mapping., Map a udata HTTP error response to a DataSluice exception., map_socrata_error() (+23 more)
+Cohesion: 0.21
+Nodes (15): map_ckan_error(), CKAN-specific error mapping., Map a CKAN HTTP error response to a DataSluice exception.      Args:         sta, map_datagouv_error(), data.gouv.fr (udata) specific error mapping., Map a udata HTTP error response to a DataSluice exception., map_socrata_error(), Socrata-specific error mapping. (+7 more)
 
 ### Community 31 - "Fsspec Storage"
-Cohesion: 0.16
-Nodes (9): FsspecStorage, Any, fsspec-backed storage adapter satisfying :class:`StoragePort` (INFRA-02, CORR-05, Adapter wrapping an fsspec ``AbstractFileSystem`` to satisfy ``StoragePort`` (CO, Persist *data* under *path* and return the resulting URI string.          Args:, Read and return the bytes stored under *path*., Return ``True`` if *path* exists in this filesystem., Return the backend-native path for *path*.          Absolute URIs pass through u (+1 more)
+Cohesion: 0.19
+Nodes (8): FsspecStorage, Any, Adapter wrapping an fsspec ``AbstractFileSystem`` to satisfy ``StoragePort`` (CO, Persist *data* under *path* and return the resulting URI string.          Args:, Read and return the bytes stored under *path*., Return ``True`` if *path* exists in this filesystem., Return the backend-native path for *path*.          Absolute URIs pass through u, Reconstruct a URI string for *path* (CORR-05).
 
 ### Community 32 - "Discovery & Airflow"
-Cohesion: 0.12
-Nodes (19): NoAuth, Any, Authentication strategy that adds no credentials.      Suitable for portals that, Default configuration constants., Configuration for DataSluice., create_default_transport(), Default transport factory for the DataSluiceSession composition root.  Replaces, Construct a default transport from ``DEFAULT_*`` constants.      Picks :class:`H (+11 more)
+Cohesion: 0.33
+Nodes (5): Artifact, Artifact model — the materialized output reference (INTG-10)., A materialized artifact produced by the data plane.      Attributes:         uri, test_artifact_defaults(), test_artifact_is_frozen()
+
+### Community 33 - "Host Credential Provider"
+Cohesion: 0.30
+Nodes (11): Any, apply_compression(), _detect_format(), Transparent decompression decorator pipeline (DATA-06, D-P4-12).  Sits BETWEEN a, Return the compression format key from magic bytes or content-encoding hint., Spool ZIP body to BytesIO, extract the largest member (RESEARCH Pitfall 2 + OQ5), Wrap *source* so compressed bytes are transparently decompressed (DATA-06)., _wrap_bzip2() (+3 more)
 
 ### Community 34 - "DataGouv Mapper"
-Cohesion: 0.05
-Nodes (28): Protocol, RawIOBase, Schema, BatchStream, Any, BatchStream — context-managed Arrow RecordBatch stream (DATA-01, DATA-02, D-P4-1, Context-managed Arrow RecordBatch stream.      Wraps a ``pa.RecordBatchReader``, The pa.Schema for batches yielded by this stream. (+20 more)
+Cohesion: 0.13
+Nodes (12): Protocol, BatchStream, Any, BatchStream — context-managed Arrow RecordBatch stream (DATA-01, DATA-02, D-P4-1, Context-managed Arrow RecordBatch stream.      Wraps a ``pa.RecordBatchReader``, The pa.Schema for batches yielded by this stream., Yield Arrow ``RecordBatch`` objects from the wrapped source.          Raises:, Release the underlying reader; idempotent (safe to call multiple times). (+4 more)
 
 ### Community 35 - "Plugin Manager"
 Cohesion: 0.10
@@ -281,32 +309,40 @@ Cohesion: 0.11
 Nodes (13): AbstractContextManager, Port Protocol interfaces for DataSluice — unstable boundary contracts., Protocol, Storage port Protocol returning URI references (CORR-05)., Boundary protocol for byte storage addressed by path/URI strings., StoragePort, Any, Protocol (+5 more)
 
 ### Community 38 - "Fsspec Storage Tests"
-Cohesion: 0.15
-Nodes (11): main(), Main Typer application for the DataSluice CLI., DataSluice — unified open-data toolkit., Command-line interface for DataSluice., ``datasluice search`` command., Search for datasets on an open-data portal., search(), Query (+3 more)
+Cohesion: 0.17
+Nodes (13): inspect(), ``datasluice inspect`` command., Inspect a single dataset in detail., Composition root and plugin machinery for DataSluice., DataSluiceSession, Public facade and composition root for DataSluice.      Wires the :class:`Plugin, Unit tests for the DataSluiceSession composition root (ARCH-03).  Covers zero-co, test_auth_param() (+5 more)
 
 ### Community 39 - "Local Storage"
-Cohesion: 0.23
-Nodes (10): LocalStorage, Path, Local-filesystem storage backend.      Args:         base_dir: Root directory fo, Path, Unit tests for LocalStorage path-traversal containment., test_storage_rejects_dotdot_segment(), test_storage_rejects_path_traversal(), test_storage_round_trip() (+2 more)
+Cohesion: 0.24
+Nodes (13): ChecksumMismatchError, Raised when a downloaded file's checksum does not match., compute_hash(), compute_md5(), compute_sha256(), Path, Checksum (hash) computation and verification., Compute the hex digest of *file_path* using *algorithm*. (+5 more)
 
 ### Community 40 - "Portal Detection Fingerprints"
-Cohesion: 0.10
-Nodes (19): detect(), ``datasluice detect`` command., Auto-detect the platform type of an open-data portal., detect_portal(), detect_portal_type(), _normalize_base_url(), Auto-detection of portal type from a URL.  The detector probes well-known API en, Ensure *url* has a scheme and no trailing slash. (+11 more)
+Cohesion: 0.15
+Nodes (9): detect_portal(), Alias for :func:`detect_portal_type`., Portal type fingerprints for auto-detection.  Each entry maps a fingerprint (URL, Portal type discovery and auto-detection., PortalMetadata, Portal metadata describing known portal instances., Metadata about a detected or known portal.      Attributes:         portal_type:, Unit tests for discovery fingerprints. (+1 more)
 
 ### Community 41 - "Adapter Exceptions"
 Cohesion: 0.20
 Nodes (5): CachePort, Protocol, Cache port Protocol for content-addressed byte caching., Boundary protocol for a simple key/byte cache., Lazily construct the default ContentCache (plan 03-03) if importable.          R
 
 ### Community 42 - "Retry & Backoff"
-Cohesion: 0.24
-Nodes (11): Sanitise *name* for use as a filename., safe_filename(), Path, Unit tests for IO utilities (checksums, cache, local, storage)., test_compute_sha256(), test_ensure_dir(), test_file_cache(), test_local_storage() (+3 more)
+Cohesion: 0.15
+Nodes (18): Exception, AdapterError, ConfigError, DataSluiceError, DecompressionError, FormatError, PortalDetectionError, Exception hierarchy for DataSluice. (+10 more)
 
 ### Community 43 - "Sync State Model"
 Cohesion: 0.16
 Nodes (9): SyncState model for incremental sync cursors and watermarks (SYNC-03)., Incremental synchronization state for a resource or connector.      Attributes:, SyncState, Protocol, State store port Protocol for incremental sync state (SYNC-01)., Boundary protocol for persisting incremental sync state., StateStore, test_sync_state_defaults() (+1 more)
 
 ### Community 44 - "HTTP Retry Errors"
-Cohesion: 0.16
-Nodes (11): datetime, Logger, Host-scoped credential resolver with single-flight refresh (INFRA-04).  ``HostCr, Apache Airflow integration: DataSluice operators for DAGs.  Requires ``apache-ai, datasluice_source(), Any, dlt (data load tool) integration: use DataSluice as a dlt source.  Requires ``dl, Return a dlt source that yields datasets from *portal*.      Args:         porta (+3 more)
+Cohesion: 0.13
+Nodes (14): Logger, _normalize_base_url(), Auto-detection of portal type from a URL.  The detector probes well-known API en, Ensure *url* has a scheme and no trailing slash., datasluice_source(), Any, dlt (data load tool) integration: use DataSluice as a dlt source.  Requires ``dl, Return a dlt source that yields datasets from *portal*.      Args:         porta (+6 more)
+
+### Community 45 - "test_fsspec_storage.py"
+Cohesion: 0.23
+Nodes (10): LocalStorage, Path, Local-filesystem storage backend.      Args:         base_dir: Root directory fo, Path, Unit tests for LocalStorage path-traversal containment., test_storage_rejects_dotdot_segment(), test_storage_rejects_path_traversal(), test_storage_round_trip() (+2 more)
+
+### Community 47 - "test_retry.py"
+Cohesion: 0.17
+Nodes (7): Raised on HTTP 5xx responses that should be retried., RetryableHTTPError, Yield a :class:`StreamResponse` for streaming the response body (D-P3-06/D-P3-07, Backend-agnostic streaming response wrapper (D-P3-07).      Iterable for byte ch, Release the underlying httpx response., StreamResponse, test_retryable_http_error_carries_status_code()
 
 ### Community 48 - "Download CLI Tests"
 Cohesion: 0.35
@@ -321,7 +357,7 @@ Cohesion: 0.22
 Nodes (8): DetectionResult, Outcome of portal auto-detection with confidence and evidence.      Attributes:, PortalDetector, Protocol, Portal detector port Protocol., Detection seam protocol returning evidence-based portal identification., test_detection_result_defaults(), test_detection_result_is_frozen()
 
 ### Community 51 - "HTTPX Transport Client"
-Cohesion: 0.28
+Cohesion: 0.24
 Nodes (6): _host_credential_provider_type(), Any, Perform an HTTP request and return the raw response body.          Raises:, GET *url* and return the response as parsed JSON (non-dicts wrapped under ``"dat, GET *url* and return the raw bytes (for file downloads)., Lazily resolve ``HostCredentialProvider`` (plan 03-04), returning ``None`` if it
 
 ### Community 52 - "Transport Protocol Tests"
@@ -329,20 +365,28 @@ Cohesion: 0.20
 Nodes (9): Protocol-level tests for the Transport and StreamingTransport ports.  These comp, Transport must keep its runtime-checkable flag (carry-forward)., StreamingTransport must be a @runtime_checkable Protocol (INFRA-07)., StreamingTransport Protocol surface must declare ``stream``., HttpxTransport must satisfy Transport AND StreamingTransport (INFRA-01).      Th, test_httpx_transport_satisfies_both_protocols(), test_streaming_transport_protocol_declares_stream(), test_streaming_transport_protocol_is_runtime_checkable() (+1 more)
 
 ### Community 54 - "Abstract Storage Backend"
-Cohesion: 0.10
-Nodes (25): ChecksumMismatchError, DownloadError, Raised when a resource download fails., Raised when a downloaded file's checksum does not match., Raised when a resource's access kind has no reader implementation (D-P4-09)., UnsupportedAccessError, Downloader, Path (+17 more)
+Cohesion: 0.13
+Nodes (18): DownloadError, Raised when a resource download fails., Raised when a resource's access kind has no reader implementation (D-P4-09)., UnsupportedAccessError, Resource downloader with caching and checksum verification., ensure_dir(), Path, Local filesystem helpers for saving downloaded resources. (+10 more)
 
 ### Community 56 - "Socrata Factory & Context"
-Cohesion: 0.12
-Nodes (15): create_ckan_connector(), Factory for the CKAN connector (entry-point target).  ``create_ckan_connector``, Construct a :class:`CKANAdapter` wired to the context's transport/auth., create_datagouv_connector(), Factory for the data.gouv.fr connector (entry-point target).  ``create_datagouv_, Construct a :class:`DataGouvAdapter` wired to the context's transport/auth., create_socrata_connector(), Factory for the Socrata connector (entry-point target).  ``create_socrata_connec (+7 more)
+Cohesion: 0.17
+Nodes (12): create_ckan_connector(), Factory for the CKAN connector (entry-point target).  ``create_ckan_connector``, Construct a :class:`CKANAdapter` wired to the context's transport/auth., create_datagouv_connector(), Factory for the data.gouv.fr connector (entry-point target).  ``create_datagouv_, Construct a :class:`DataGouvAdapter` wired to the context's transport/auth., create_socrata_connector(), Factory for the Socrata connector (entry-point target).  ``create_socrata_connec (+4 more)
+
+### Community 57 - ".search"
+Cohesion: 0.33
+Nodes (5): CatalogCapabilities, CatalogCapabilities model — query-field-level capability contract (D-07)., Capabilities a catalog connector advertises to the runtime.      Phase 5's rejec, test_catalog_capabilities_defaults(), test_catalog_capabilities_is_frozen()
 
 ### Community 59 - "Custom Adapter Skeleton"
-Cohesion: 0.09
-Nodes (16): BaseAdapter, ABC, Abstract base class for all portal adapters., Protocol that every portal adapter must implement.      Subclasses translate por, Search for datasets matching *query*., Fetch a single dataset by its portal-native *dataset_id*., Return all downloadable resources for *dataset_id*., Fetch publisher metadata for *organization_id*. (+8 more)
+Cohesion: 0.07
+Nodes (25): BaseAdapter, ABC, Abstract base class for all portal adapters., Protocol that every portal adapter must implement.      Subclasses translate por, Search for datasets matching *query*., Fetch a single dataset by its portal-native *dataset_id*., Return all downloadable resources for *dataset_id*., Fetch publisher metadata for *organization_id*. (+17 more)
 
 ### Community 60 - "Pre-commit Tooling"
 Cohesion: 0.50
 Nodes (5): pre-commit-hooks (basic hooks), pytest testing framework, Ruff linter and formatter, ty type checker (Astral), Pre-commit Configuration
+
+### Community 61 - "BasicAuth"
+Cohesion: 0.19
+Nodes (10): BatchStream, Resource, DataPlaneResourceReader, Dispatch to the format reader and wrap output in BatchStream., HttpDownload: stream via StreamingTransport or buffer via urllib fallback (D-P4-, ObjectStorage: open via open_filesystem().open() (D-P4-07)., LocalFile: open(path, 'rb')., Concrete ``ResourceReader`` implementing access-kind dispatch (DATA-04).      Ar (+2 more)
 
 ### Community 62 - "Test Fixtures Config"
 Cohesion: 0.40
@@ -381,48 +425,80 @@ Cohesion: 0.67
 Nodes (3): Bug Report Issue Template, Feature Request Issue Template, Pull Request Template (affected areas + AI provenance)
 
 ### Community 76 - "Auth Apply Method"
-Cohesion: 0.25
-Nodes (4): An injected CachePort is stored as the session cache (D-P3-02)., Stub satisfying the CachePort Protocol., _StubCache, test_cache_injectable()
+Cohesion: 0.20
+Nodes (8): detect(), ``datasluice detect`` command., Auto-detect the platform type of an open-data portal., detect_portal_type(), Auto-detect the platform type for *base_url*.      Probes common API endpoints a, Any, Resolve and construct a connector for *url*.          Auto-detects the portal ty, Convenience method: resolve a portal and search in one call.          Args:
 
-### Community 89 - "._send_with_redirects"
-Cohesion: 0.33
-Nodes (3): Response, Return whether sensitive headers must be stripped on this redirect hop., Drive the manual redirect loop, stripping sensitive headers per hop (Pattern 1).
-
-### Community 90 - "Artifact"
-Cohesion: 0.33
-Nodes (5): Artifact, Artifact model — the materialized output reference (INTG-10)., A materialized artifact produced by the data plane.      Attributes:         uri, test_artifact_defaults(), test_artifact_is_frozen()
-
-### Community 91 - "CatalogCapabilities"
-Cohesion: 0.33
-Nodes (5): CatalogCapabilities, CatalogCapabilities model — query-field-level capability contract (D-07)., Capabilities a catalog connector advertises to the runtime.      Phase 5's rejec, test_catalog_capabilities_defaults(), test_catalog_capabilities_is_frozen()
-
-### Community 92 - "Schema"
+### Community 87 - "BasicAuth"
 Cohesion: 0.33
 Nodes (5): Schema model describing the column-level shape of a resource., Schema describing the columns of a tabular resource.      Attributes:         na, Schema, test_schema_defaults(), test_schema_is_frozen()
 
-### Community 93 - "_ScriptableHandler"
+### Community 88 - "paginate"
+Cohesion: 0.24
+Nodes (8): _batch_from_rows(), Any, BaseFormatReader, Streaming XLSX reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).  Migrat, Stream an XLSX ``BinaryIO`` source into Arrow ``RecordBatch`` objects., Yield ``RecordBatch`` objects by chunking openpyxl ``iter_rows``.          Args:, Build a single ``RecordBatch`` from a chunk of row dicts., XLSXReader
+
+### Community 89 - "HeadersAuth"
+Cohesion: 0.22
+Nodes (8): Downloader, Path, Download multiple *resources* into *dest*., Downloads resources to local or pluggable storage.      Args:         transport:, Download a single *resource* and return the local file path.          Args:, Sanitise *name* for use as a filename., safe_filename(), test_safe_filename()
+
+### Community 90 - "_ErrorTranslatingReader"
+Cohesion: 0.17
+Nodes (3): BaseException, _ErrorTranslatingReader, Wrap a decompressed stream, translating stdlib decode errors to DecompressionErr
+
+### Community 96 - "_StubStorage"
+Cohesion: 0.36
+Nodes (8): Path, Unit tests for IO utilities (checksums, cache, local, storage)., test_compute_sha256(), test_ensure_dir(), test_file_cache(), test_local_storage(), test_verify_checksum_mismatch(), test_verify_checksum_ok()
+
+### Community 107 - "PeekableReader"
+Cohesion: 0.21
+Nodes (4): PeekableReader, Read up to *n* bytes into the buffer WITHOUT consuming them.          The peeked, Wrap a ``BinaryIO`` byte source with one-chunk lookahead.      Buffers peeked by, WriteableBuffer
+
+### Community 108 - "data/access.py"
+Cohesion: 0.18
+Nodes (9): _chain(), _content_encoding_from_headers(), Concrete ``ResourceReader`` implementation with access-kind dispatch (DATA-04, D, Extract a lowercased Content-Encoding value from response headers., Strip the fsspec storage scheme from *uri* to produce the path component., _strip_scheme(), __getattr__(), Streaming data-plane package: BatchStream, byte-source adapter, schema mapper. (+1 more)
+
+### Community 109 - "host_provider.py"
+Cohesion: 0.25
+Nodes (7): Argument, help, Option, download(), Path, ``datasluice download`` command., Download all resources from a dataset.
+
+### Community 110 - "._open_http_download"
+Cohesion: 0.33
+Nodes (3): IterableBytesIO, IterableBytesIO that releases the StreamResponse + transport context on close., _StreamClosingBytesIO
+
+### Community 111 - "BasicAuth"
+Cohesion: 0.25
+Nodes (4): An injected CachePort is stored as the session cache (D-P3-02)., Stub satisfying the CachePort Protocol., _StubCache, test_cache_injectable()
+
+### Community 112 - "HeadersAuth"
 Cohesion: 0.40
-Nodes (3): BaseHTTPRequestHandler, Any, _ScriptableHandler
+Nodes (4): get_reader(), BaseFormatReader, Streaming format readers yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).  Reg, Return a format reader instance for *format_name*.      Args:         format_nam
+
+### Community 116 - "to_arrow_schema"
+Cohesion: 0.29
+Nodes (6): Schema, Domain Schema → Arrow Schema mapper and batch unification helper.  The :func:`to, Derive a ``pa.Schema`` from a domain :class:`Schema` for display.      Maps know, Concatenate ``RecordBatch`` objects under a unified ``pa.Schema`` (DATA-08, D-P4, to_arrow_schema(), unify_batches()
+
+### Community 117 - "RateLimiter"
+Cohesion: 0.13
+Nodes (14): HTTP client with retry, rate-limiting, and authentication support., Render *body* as text, truncating to *limit* characters., _truncate_body(), httpx-backed HTTP transport satisfying the Transport + StreamingTransport Protoc, RateLimiter, Rate-limiting to stay within portal request quotas., Thread-safe token-bucket rate limiter.      Args:         requests_per_second: M, Block until the next request is permitted. (+6 more)
 
 ## Knowledge Gaps
 - **25 isolated node(s):** `datasluice`, `$schema`, `bootstrap-sha`, `packages`, `Funding Config (Buy Me a Coffee: nitishraj)` (+20 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **14 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **35 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Resource` connect `Base Adapter & Connectors` to `DataGouv Mapper`, `Resource Mapping`, `Access & Detection Models`, `DataGouv Adapter`, `Dataset & License Models`, `Download CLI Tests`, `CKAN Mapper`, `Socrata Adapter`, `Abstract Storage Backend`, `Custom Adapter Skeleton`?**
-  _High betweenness centrality (0.069) - this node is a cross-community bridge._
-- **Why does `DataSluiceSession` connect `Discovery & Airflow` to `CLI Search & Runtime`, `Plugin Manager`, `Fsspec Storage Tests`, `Resource Mapping`, `Access & Detection Models`, `Adapter Exceptions`, `HTTP Retry Errors`, `Auth Apply Method`, `Rate Limit & Config`, `Filesystem Layer`, `Socrata Factory & Context`, `CLI App Core`?**
-  _High betweenness centrality (0.064) - this node is a cross-community bridge._
-- **Why does `HttpClient` connect `CKAN Adapter & Factory` to `Discovery & Airflow`, `HTTP Transport Layer`, `Portal Detection Fingerprints`, `Credentials & Redirect`, `Transport Retry & Pagination`, `Cache Port Protocol`, `Abstract Storage Backend`, `Custom Adapter Skeleton`, `Portal Error Mapping`?**
-  _High betweenness centrality (0.046) - this node is a cross-community bridge._
+- **Why does `DownloadError` connect `Abstract Storage Backend` to `Content Cache`, `Local Storage`, `Access & Detection Models`, `Retry & Backoff`, `HTTP Retry Errors`, `test_fsspec_storage.py`, `HeadersAuth`, `Fsspec Storage`?**
+  _High betweenness centrality (0.061) - this node is a cross-community bridge._
+- **Why does `Resource` connect `Custom Adapter Skeleton` to `DataGouv Mapper`, `Access & Detection Models`, `DataGouv Adapter`, `Dataset & License Models`, `Download CLI Tests`, `Socrata Adapter`, `Abstract Storage Backend`, `HeadersAuth`, `CKAN Adapter & Factory`?**
+  _High betweenness centrality (0.043) - this node is a cross-community bridge._
+- **Why does `HttpClient` connect `HTTP Transport Layer` to `HTTP Retry Errors`, `Auth Apply Method`, `Credentials & Redirect`, `test_retry.py`, `Transport Retry & Pagination`, `Rate Limit & Config`, `RateLimiter`, `Abstract Storage Backend`, `HeadersAuth`, `Custom Adapter Skeleton`, `Portal Error Mapping`?**
+  _High betweenness centrality (0.042) - this node is a cross-community bridge._
 - **Are the 6 inferred relationships involving `DataSluiceSession` (e.g. with `ConnectorContext` and `PluginManager`) actually correct?**
   _`DataSluiceSession` has 6 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 3 inferred relationships involving `Resource` (e.g. with `Dataset` and `Downloader`) actually correct?**
-  _`Resource` has 3 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 6 inferred relationships involving `BaseAuth` (e.g. with `APIKeyAuth` and `BasicAuth`) actually correct?**
   _`BaseAuth` has 6 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 16 inferred relationships involving `HttpClient` (e.g. with `PortalError` and `RateLimitError`) actually correct?**
   _`HttpClient` has 16 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 3 inferred relationships involving `Resource` (e.g. with `Dataset` and `Downloader`) actually correct?**
+  _`Resource` has 3 INFERRED edges - model-reasoned connections that need verification._

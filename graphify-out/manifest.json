@@ -299,45 +299,10 @@
     "ast_hash": "868238975bca91d98b53656e552f5f2d",
     "semantic_hash": ""
   },
-  "src/datasluice/formats/__init__.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "9367c72d01a1a2ae17a41b99b1ef8b1a",
-    "semantic_hash": "9367c72d01a1a2ae17a41b99b1ef8b1a"
-  },
-  "src/datasluice/formats/base.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "b0b92bd967e6711d217550753b763bce",
-    "semantic_hash": "b0b92bd967e6711d217550753b763bce"
-  },
-  "src/datasluice/formats/csv.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "4384912279961368e14e0fa919c72d73",
-    "semantic_hash": "4384912279961368e14e0fa919c72d73"
-  },
-  "src/datasluice/formats/geojson.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "b461ba3e12d7853c0355c1a2ef15cf4e",
-    "semantic_hash": "b461ba3e12d7853c0355c1a2ef15cf4e"
-  },
-  "src/datasluice/formats/json.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "307fe4636c8dba4a0c8d5ea79c7be161",
-    "semantic_hash": "307fe4636c8dba4a0c8d5ea79c7be161"
-  },
-  "src/datasluice/formats/parquet.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "82d51d26203da82d26f278ae726a138b",
-    "semantic_hash": "82d51d26203da82d26f278ae726a138b"
-  },
-  "src/datasluice/formats/xlsx.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "a70db0869a86b7c10888dce473b720c0",
-    "semantic_hash": "a70db0869a86b7c10888dce473b720c0"
-  },
   "src/datasluice/integrations/__init__.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "dd80ebc99a65906e6d2f054dde09a34c",
-    "semantic_hash": "dd80ebc99a65906e6d2f054dde09a34c"
+    "mtime": 1785069131.8458447,
+    "ast_hash": "222e0ad9170ed7cc6045b5fcb24ddb79",
+    "semantic_hash": ""
   },
   "src/datasluice/integrations/airflow.py": {
     "mtime": 1784931869.249422,
@@ -350,19 +315,14 @@
     "semantic_hash": "06d80c87c6ae331426357b10d8eb2711"
   },
   "src/datasluice/integrations/duckdb.py": {
-    "mtime": 1784918294.678302,
-    "ast_hash": "9c7a7c4c205605801c1c5988f5671637",
-    "semantic_hash": "9c7a7c4c205605801c1c5988f5671637"
+    "mtime": 1785069122.2335727,
+    "ast_hash": "2dfa0be4d83a8876715c87ca766ba072",
+    "semantic_hash": ""
   },
   "src/datasluice/integrations/pandas.py": {
-    "mtime": 1784931869.249422,
-    "ast_hash": "9c2bc5d0d3f5bbc2e52feb3c2e6de824",
-    "semantic_hash": "9c2bc5d0d3f5bbc2e52feb3c2e6de824"
-  },
-  "src/datasluice/integrations/polars.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "bd79f235b84b8ef8bc9ad67ebfd8a4db",
-    "semantic_hash": "bd79f235b84b8ef8bc9ad67ebfd8a4db"
+    "mtime": 1785069104.900058,
+    "ast_hash": "57d1322876baf0562ca4404c6a63d7d5",
+    "semantic_hash": ""
   },
   "src/datasluice/io/__init__.py": {
     "mtime": 1784999773.6772175,
@@ -525,8 +485,8 @@
     "semantic_hash": "eb5ff9c3710f8092b920c65dab8bf699"
   },
   "src/datasluice/data/__init__.py": {
-    "mtime": 1785049989.3249404,
-    "ast_hash": "13225b954db7cdf37f8971753f3d1d7a",
+    "mtime": 1785070535.1951873,
+    "ast_hash": "be2f602e3117a6c86fd6bd027174fa93",
     "semantic_hash": ""
   },
   "src/datasluice/data/batch_stream.py": {
@@ -540,8 +500,53 @@
     "semantic_hash": ""
   },
   "src/datasluice/data/schema.py": {
-    "mtime": 1785049848.0196505,
-    "ast_hash": "acb0918140964a1d20f904524e5fac24",
+    "mtime": 1785072102.9409363,
+    "ast_hash": "41ab5b3ab18dca2c11d83cebc99b66d8",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/readers/__init__.py": {
+    "mtime": 1785068959.904512,
+    "ast_hash": "84eac8b546bc3f9564d2d3521ad5eaee",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/readers/base.py": {
+    "mtime": 1785068559.0267947,
+    "ast_hash": "7c179646b4562c2e78026156f69f45fb",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/readers/csv.py": {
+    "mtime": 1785068598.6287243,
+    "ast_hash": "f057c54795e5e1c5aca002429bc3516b",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/readers/json.py": {
+    "mtime": 1785068619.7056649,
+    "ast_hash": "92902e8567443460f8b410f8d3f21cfb",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/readers/geojson.py": {
+    "mtime": 1785068940.0090568,
+    "ast_hash": "76db3fad21d38f54431325cdde7a78b1",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/readers/parquet.py": {
+    "mtime": 1785068894.541138,
+    "ast_hash": "04b5ee2d18364ff14189c71ce299940d",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/readers/xlsx.py": {
+    "mtime": 1785068973.8022015,
+    "ast_hash": "24146c5fbb8c3b9452ec023eaadafb96",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/compression.py": {
+    "mtime": 1785070142.787442,
+    "ast_hash": "774541790ac8a3ab00bf938d60fbf8c9",
+    "semantic_hash": ""
+  },
+  "src/datasluice/data/access.py": {
+    "mtime": 1785070662.5525448,
+    "ast_hash": "d56fc8c6dadde3e239661e9024ff1129",
     "semantic_hash": ""
   }
 }
