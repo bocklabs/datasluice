@@ -1,0 +1,157 @@
+"""QUAL-05 peak-RSS subprocess memory-bound test for the streaming data plane.
+
+Proves that the streaming data plane keeps memory bounded on large inputs —
+the core promise of Phase 4. Two tests:
+
+- ``test_peak_rss_bounded``: streams ~5M rows of synthetic CSV through the
+  production ``IterableBytesIO`` adapter into ``pyarrow.csv.open_csv``. The
+  input is generated lazily row-by-row (never materialised) so peak RSS
+  reflects only pyarrow's batch buffers + Python interpreter baseline, NOT
+  the full input size. A regression that switched the data plane to
+  full-buffer semantics would push peak RSS well above the threshold.
+- ``test_json_peak_rss_bounded``: parses ~200K rows of synthetic JSONL via
+  ``pyarrow.json.read_json``. JSON is inherently non-streaming (the reader
+  materialises a full ``Table`` internally — documented in
+  ``data/readers/json.py``), so the threshold accommodates the parsed
+  Table in addition to the input bytes; the test catches accidental
+  double-buffering regressions.
+
+CRITICAL: uses ``resource.getrusage(RUSAGE_SELF).ru_maxrss`` in a subprocess
+— NOT ``tracemalloc``. RESEARCH Pitfall 5 verified that pyarrow allocates
+from the mimalloc native pool which ``tracemalloc`` does NOT track; a
+tracemalloc-based test would pass trivially even when pyarrow buffers a
+multi-GB file. ``ru_maxrss`` is a process-lifetime high-water mark that
+includes native allocations; the subprocess isolates the measurement from
+accumulated pytest process memory.
+
+Both tests run in the DEFAULT pytest suite (NOT marked ``slow``) per
+D-P4-16 so CI catches buffering regressions every run.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+
+import pytest
+
+pytest.importorskip("pyarrow")
+
+_CSV_SUBPROCESS_CODE = """
+import resource
+import sys
+sys.path.insert(0, "src")
+from datasluice.data._byte_source import IterableBytesIO
+import pyarrow.csv as pacsv
+
+
+def _gen(n_rows):
+    yield b"id,name,value\\n"
+    for i in range(n_rows):
+        yield f"{i},item_{i},{i*1.5}\\n".encode()
+
+
+# ~145 MB of CSV if materialised; the generator never materialises it.
+src = IterableBytesIO(_gen(5_000_000))
+reader = pacsv.open_csv(src)
+total = 0
+for batch in reader:
+    total += batch.num_rows
+peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(f"rows={total}")
+print(f"peak_rss_kb={peak_kb}")
+"""
+
+_JSON_SUBPROCESS_CODE = """
+import io
+import resource
+import pyarrow.json as paj
+
+
+def _gen_jsonl(n_rows):
+    for i in range(n_rows):
+        yield f'{{"id":{i},"name":"item_{i}","value":{i*1.5}}}\\n'.encode()
+
+
+# ~10 MB of JSONL input. JSON inherently materialises a full Table
+# (documented in data/readers/json.py); the test catches double-buffering.
+n_rows = 200_000
+data = b"".join(_gen_jsonl(n_rows))
+input_bytes = len(data)
+read_options = paj.ReadOptions(block_size=1 << 20)
+table = paj.read_json(io.BytesIO(data), read_options=read_options)
+peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(f"rows={table.num_rows}")
+print(f"input_bytes={input_bytes}")
+print(f"peak_rss_kb={peak_kb}")
+"""
+
+
+def _parse_output(stdout: str) -> dict[str, int]:
+    """Parse ``key=value`` lines from the subprocess stdout into a dict."""
+    out: dict[str, int] = {}
+    for line in stdout.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            out[key.strip()] = int(value)
+    return out
+
+
+def test_peak_rss_bounded() -> None:
+    """Streaming ~145MB of synthetic CSV through IterableBytesIO keeps peak RSS well below input (QUAL-05).
+
+    The threshold of 200 MB accommodates Python interpreter baseline (~40 MB),
+    pyarrow native runtime (~15 MB), and streaming batch buffers. A regression
+    that materialised the full input as Python ``bytes`` would push peak RSS
+    to ~290 MB+ (str + bytes + BytesIO) — comfortably above this threshold.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _CSV_SUBPROCESS_CODE],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, f"subprocess failed: {result.stderr}"
+
+    values = _parse_output(result.stdout)
+    assert values["rows"] == 5_000_000, f"expected 5M rows, got {values['rows']}"
+    peak_rss_kb = values["peak_rss_kb"]
+
+    threshold_kb = 200_000  # 200 MB; baseline+streaming actual is ~90 MB, regression is ~290 MB+
+    assert peak_rss_kb < threshold_kb, (
+        f"peak RSS {peak_rss_kb} KB ({peak_rss_kb / 1024:.1f} MB) exceeds "
+        f"{threshold_kb} KB ({threshold_kb / 1024:.0f} MB) bound for ~145 MB streaming CSV input "
+        "— the data plane is buffering rather than streaming (regression)"
+    )
+
+
+def test_json_peak_rss_bounded() -> None:
+    """Parsing ~10MB of synthetic JSONL keeps peak RSS below the bound (QUAL-05 cross-format).
+
+    JSON parsing is inherently non-streaming (``pa.json.read_json`` materialises
+    a full ``Table``); the threshold accommodates input bytes + parsed Table
+    + pyarrow baseline. A double-buffering regression (e.g. holding the input
+    AND a separate decoded copy) would push peak RSS well above this bound.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _JSON_SUBPROCESS_CODE],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"subprocess failed: {result.stderr}"
+
+    values = _parse_output(result.stdout)
+    assert values["rows"] == 200_000, f"expected 200K rows, got {values['rows']}"
+    peak_rss_kb = values["peak_rss_kb"]
+    input_bytes = values["input_bytes"]
+
+    threshold_kb = 250_000  # 250 MB; actual is ~100 MB for 10 MB JSON input, regression is ~300+ MB
+    assert peak_rss_kb < threshold_kb, (
+        f"peak RSS {peak_rss_kb} KB ({peak_rss_kb / 1024:.1f} MB) exceeds "
+        f"{threshold_kb} KB ({threshold_kb / 1024:.0f} MB) bound for "
+        f"{input_bytes / (1024 * 1024):.1f} MB JSONL input "
+        "— the JSON reader is double-buffering (regression)"
+    )
