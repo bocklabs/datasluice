@@ -155,3 +155,45 @@ def test_iterable_bytes_io_chunks() -> None:
     assert bio.read(3) == b"def"
     assert bio.read() == b""
     bio.close()
+
+
+@pytest.mark.skipif(
+    not __import__("sys").platform.startswith("linux"),
+    reason="/proc/self/fd fd-accounting check is Linux-only",
+)
+def test_no_fd_leak_under_repeated_reads(tmp_path) -> None:
+    """DATA-02 stability: repeated open/consume/close cycles do not leak file descriptors.
+
+    Uses a real OS file handle so ``/proc/self/fd`` reflects true fd
+    accounting. An unclosed handle per iteration would grow the count by ~50;
+    the ``+2`` slack tolerates interpreter background allocations.
+    """
+    import os
+
+    import pyarrow.csv as pacsv
+
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("id,name\n1,alpha\n2,beta\n3,gamma\n")
+
+    fd_dir = "/proc/self/fd"
+    before = set(os.listdir(fd_dir))
+
+    for _ in range(50):
+        fh = open(csv_path, "rb")
+        try:
+            reader = pacsv.open_csv(fh)
+            with BatchStream(reader, reader.schema) as bs:
+                batches = list(bs.iter_batches())
+                assert len(batches) >= 1
+        finally:
+            fh.close()
+
+    import gc
+
+    gc.collect()
+
+    after = set(os.listdir(fd_dir))
+    leaked = after - before
+    assert len(after) <= len(before) + 2, (
+        f"fd leak detected: before={len(before)}, after={len(after)}, leaked_fds={leaked}"
+    )
