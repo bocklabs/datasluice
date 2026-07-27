@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
-from datasluice.domain import Dataset, Organization, Query, Resource, SearchResult
+from datasluice.domain import Dataset, Query, Resource, SearchResult
 
 if TYPE_CHECKING:
     from datasluice.auth import BaseAuth
@@ -17,6 +17,14 @@ class BaseAdapter(ABC):
 
     Subclasses translate portal-native API responses into DataSluice's
     portal-agnostic :mod:`datasluice.domain` models.
+
+    ``get_organization`` is intentionally NOT declared here (D-P5-19 feed,
+    Pitfall 1): it lives only on the :class:`OrganizationCatalog` Protocol.
+    Declaring it on ``BaseAdapter`` (as ``@abstractmethod`` or a default)
+    would let PEP 544 ``runtime_checkable`` ``isinstance`` short-circuit on
+    the base class, so every adapter would incorrectly satisfy
+    ``OrganizationCatalog`` regardless of whether it actually implements the
+    method (python/typing#800).
 
     Attributes:
         portal_type: Canonical name for the portal platform (e.g. ``"ckan"``).
@@ -56,10 +64,6 @@ class BaseAdapter(ABC):
     @abstractmethod
     def list_resources(self, dataset_id: str) -> list[Resource]:
         """Return all downloadable resources for *dataset_id*."""
-
-    @abstractmethod
-    def get_organization(self, organization_id: str) -> Organization:
-        """Fetch publisher metadata for *organization_id*."""
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}({self.portal_type!r}, {self.base_url!r})>"

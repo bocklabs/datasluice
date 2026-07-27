@@ -5,19 +5,44 @@ Communicates with the CKAN Action API (``/api/3/action/``).
 
 from __future__ import annotations
 
+from typing import ClassVar
+
+from datasluice.connectors._reject import _reject_unsupported_fields
 from datasluice.connectors.base import BaseAdapter
 from datasluice.connectors.ckan.mapper import map_dataset, map_organization
 from datasluice.connectors.ckan.pagination import CKANPage
-from datasluice.domain import Dataset, Organization, Query, Resource, SearchResult
+from datasluice.domain import (
+    CatalogCapabilities,
+    Dataset,
+    Organization,
+    Query,
+    Resource,
+    SearchResult,
+)
+
+_CKAN_SUPPORTED_QUERY_FIELDS: frozenset[str] = frozenset(
+    {"text", "tags", "organizations", "groups", "res_format", "license_id", "sort"}
+)
 
 
 class CKANAdapter(BaseAdapter):
     """Adapter for CKAN-powered open-data portals.
 
     Uses the CKAN Action API at ``{base_url}/api/3/action/``.
+
+    Attributes:
+        capabilities: Published catalog capability contract (D-P5-23). CKAN's
+            ``package_search`` honors all six ``Query`` filter fields via Solr
+            ``fq`` clauses (COVERAGE.md CKAN row).
     """
 
     portal_type = "ckan"
+    capabilities: ClassVar[CatalogCapabilities] = CatalogCapabilities(
+        supports_search=True,
+        supports_organizations=True,
+        supports_faceted_search=True,
+        supported_query_fields=_CKAN_SUPPORTED_QUERY_FIELDS,
+    )
 
     def _action(self, action: str, **params: object) -> dict:
         """Call a CKAN Action API endpoint and return the ``result`` dict."""
@@ -28,6 +53,7 @@ class CKANAdapter(BaseAdapter):
     def search(self, query: Query | None = None) -> SearchResult:
         """Search datasets via ``package_search``."""
         query = query or Query()
+        _reject_unsupported_fields(query, self.capabilities.supported_query_fields, "ckan")
         page = CKANPage(start=query.offset, rows=query.limit)
         params: dict[str, object] = {"q": query.text or "*:*", **page.to_params()}
         if query.sort:
