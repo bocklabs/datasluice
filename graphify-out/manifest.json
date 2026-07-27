@@ -90,9 +90,9 @@
     "semantic_hash": "caba8ac8971625dea7510bcbd1c94f57"
   },
   "src/datasluice/connectors/base.py": {
-    "mtime": 1784930787.7793794,
-    "ast_hash": "33693611b0b7728a7dc2bd7f0096262e",
-    "semantic_hash": "33693611b0b7728a7dc2bd7f0096262e"
+    "mtime": 1785167707.1987727,
+    "ast_hash": "d2ef98af9316398ee564f8ae099db1b0",
+    "semantic_hash": ""
   },
   "src/datasluice/connectors/ckan/__init__.py": {
     "mtime": 1784930360.2997594,
@@ -100,9 +100,9 @@
     "semantic_hash": "5d006b722d5e11325824af9905a0edbe"
   },
   "src/datasluice/connectors/ckan/adapter.py": {
-    "mtime": 1784930360.2997594,
-    "ast_hash": "e6ce22830507179df25c65468bd28eba",
-    "semantic_hash": "e6ce22830507179df25c65468bd28eba"
+    "mtime": 1785168176.2580328,
+    "ast_hash": "586427fea25595ed244d52c7e0fef22d",
+    "semantic_hash": ""
   },
   "src/datasluice/connectors/ckan/errors.py": {
     "mtime": 1782061945.0489817,
@@ -115,9 +115,9 @@
     "semantic_hash": "50b2a95ec7abbf663d8a49f9e2eff14e"
   },
   "src/datasluice/connectors/ckan/mapper.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "6441ef6e719060669029988090f9a385",
-    "semantic_hash": "6441ef6e719060669029988090f9a385"
+    "mtime": 1785168049.7586277,
+    "ast_hash": "93a5185ef0804ab57455b02591645f32",
+    "semantic_hash": ""
   },
   "src/datasluice/connectors/ckan/pagination.py": {
     "mtime": 1782061945.0489817,
@@ -140,9 +140,9 @@
     "semantic_hash": "9a2ff6bf48d5992efb80335575f5a472"
   },
   "src/datasluice/connectors/datagouv/adapter.py": {
-    "mtime": 1784930360.2997594,
-    "ast_hash": "bb68d147cefe5019fbece3c1f47e3031",
-    "semantic_hash": "bb68d147cefe5019fbece3c1f47e3031"
+    "mtime": 1785169039.6953871,
+    "ast_hash": "a71fe699ebfdbf7ecd291ad2de79bb63",
+    "semantic_hash": ""
   },
   "src/datasluice/connectors/datagouv/errors.py": {
     "mtime": 1782061945.0489817,
@@ -155,9 +155,9 @@
     "semantic_hash": "f01e7fdd1ad1bd599fdc90b5e5ad4858"
   },
   "src/datasluice/connectors/datagouv/mapper.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "7a6002b2e8b8d0001624382aefa57cd6",
-    "semantic_hash": "7a6002b2e8b8d0001624382aefa57cd6"
+    "mtime": 1785169070.2041152,
+    "ast_hash": "840c62aab326f391fb37a6659ceb0f79",
+    "semantic_hash": ""
   },
   "src/datasluice/connectors/datagouv/pagination.py": {
     "mtime": 1782061945.0489817,
@@ -170,9 +170,9 @@
     "semantic_hash": "530e38a0855c45f0742331358da08097"
   },
   "src/datasluice/connectors/socrata/adapter.py": {
-    "mtime": 1784930360.3107593,
-    "ast_hash": "8fefdcb24ad1e86df79e31d8bbda6f83",
-    "semantic_hash": "8fefdcb24ad1e86df79e31d8bbda6f83"
+    "mtime": 1785169361.887388,
+    "ast_hash": "95280dfde45f696a69b4f9ddc77173d0",
+    "semantic_hash": ""
   },
   "src/datasluice/connectors/socrata/errors.py": {
     "mtime": 1782061945.0489817,
@@ -185,9 +185,9 @@
     "semantic_hash": "458400c463e7c9a3382e72e0118184b2"
   },
   "src/datasluice/connectors/socrata/mapper.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "c9c2764861928afa30de5d3498bb8e2b",
-    "semantic_hash": "c9c2764861928afa30de5d3498bb8e2b"
+    "mtime": 1785169503.479567,
+    "ast_hash": "46e232c37a8cb7c74d5802036d6c8261",
+    "semantic_hash": ""
   },
   "src/datasluice/connectors/socrata/pagination.py": {
     "mtime": 1782061945.0489817,
@@ -295,8 +295,8 @@
     "semantic_hash": "15853a239e99aa834575c430a77223eb"
   },
   "src/datasluice/exceptions.py": {
-    "mtime": 1785048715.404874,
-    "ast_hash": "868238975bca91d98b53656e552f5f2d",
+    "mtime": 1785167690.9200697,
+    "ast_hash": "9ebfa7b9a4bffcb0b8d65cb420cc2207",
     "semantic_hash": ""
   },
   "src/datasluice/integrations/__init__.py": {
@@ -547,6 +547,11 @@
   "src/datasluice/data/access.py": {
     "mtime": 1785070662.5525448,
     "ast_hash": "d56fc8c6dadde3e239661e9024ff1129",
+    "semantic_hash": ""
+  },
+  "src/datasluice/connectors/_reject.py": {
+    "mtime": 1785167736.9689398,
+    "ast_hash": "7794b15bb31edc3c538f312a88f0597a",
     "semantic_hash": ""
   }
 }

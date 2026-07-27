@@ -19,7 +19,7 @@ jobs:
   code-review:
     name: AI code review
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     if: github.event_name == 'pull_request_target' && github.actor != 'renovate[bot]'
     steps:
       - name: Set up UV
