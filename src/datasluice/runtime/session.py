@@ -166,9 +166,9 @@ class DataSluiceSession:
     def portal(self, url: str) -> BaseAdapter:
         """Resolve and construct a connector for *url*.
 
-        Auto-detects the portal type via :func:`detect_portal_type` and resolves
-        the factory through :class:`PluginManager`. The returned connector
-        structurally conforms to :class:`CatalogPort`.
+        Auto-detects the portal type via :func:`detect` and resolves the factory
+        through :class:`PluginManager`. The returned connector structurally
+        conforms to :class:`CatalogPort`.
 
         Args:
             url: Base URL of the open-data portal.
@@ -180,9 +180,15 @@ class DataSluiceSession:
             PortalDetectionError: If the portal type cannot be determined.
             AdapterNotFoundError: If no connector is registered for the detected type.
         """
-        from datasluice.discovery import detect_portal_type
+        from datasluice.discovery import detect
+        from datasluice.exceptions import PortalDetectionError
 
-        portal_type = detect_portal_type(url)
+        result = detect(url, transport=self._transport, plugin_manager=self.plugins)
+        portal_type = result.portal_type
+        if portal_type is None:
+            raise PortalDetectionError(
+                f"Could not auto-detect portal type for {url!r}. Specify portal_type explicitly."
+            )
         factory = cast("Callable[[ConnectorContext], BaseAdapter]", self.plugins.get(portal_type))
         ctx = ConnectorContext(base_url=url, transport=self._transport, auth=self.auth, page_size=self.page_size)
         connector = factory(ctx)

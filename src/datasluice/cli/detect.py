@@ -12,11 +12,16 @@ def detect(
     portal: str = typer.Argument(..., help="Portal base URL to inspect"),
 ) -> None:
     """Auto-detect the platform type of an open-data portal."""
-    from datasluice.discovery import detect_portal_type
+    from datasluice.discovery import detect
+    from datasluice.runtime.plugin_manager import PluginManager
+    from datasluice.transport import HttpClient
 
     try:
-        portal_type = detect_portal_type(portal)
-        console.print(f"[green]Detected portal type:[/green] [bold]{portal_type}[/bold]")
+        result = detect(portal, transport=HttpClient(), plugin_manager=PluginManager())
+        if result.portal_type is None:
+            console.print(f"[red]No portal detected for[/red] {portal!r}")
+            raise typer.Exit(1)
+        console.print(f"[green]Detected portal type:[/green] [bold]{result.portal_type}[/bold]")
     except Exception as exc:
         console.print(f"[red]Detection failed:[/red] {exc}")
         raise typer.Exit(1) from exc

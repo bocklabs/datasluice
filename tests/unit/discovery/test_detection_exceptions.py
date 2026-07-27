@@ -13,11 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
-try:
-    from datasluice.discovery.detector import detect  # ty: ignore[unresolved-import]
-except ImportError as _exc:  # pragma: no cover - RED phase only
-    pytest.skip(f"detect() not yet implemented: {_exc}", allow_module_level=True)
-
+from datasluice.discovery.detector import detect
 from datasluice.exceptions import NotFoundError, PortalError
 from datasluice.runtime.plugin_manager import PluginManager
 
@@ -39,6 +35,12 @@ class _RaisingTransport:
     def request(self, url: str, **kwargs: Any) -> bytes:
         raise self.exc_factory(url)
 
+    def get_json(self, url: str, **kwargs: Any) -> dict[str, Any]:
+        raise self.exc_factory(url)
+
+    def download(self, url: str, **kwargs: Any) -> bytes:
+        raise self.exc_factory(url)
+
 
 @pytest.mark.parametrize(
     "exc_factory",
@@ -53,7 +55,7 @@ def test_specific_exceptions_become_misses(exc_factory, caplog) -> None:  # type
     """Each entry in ``_PROBE_EXCEPTIONS`` is caught, logged at DEBUG, recorded."""
 
     transport = _RaisingTransport(exc_factory)
-    with caplog.at_level("DEBUG", logger="discovery"):
+    with caplog.at_level("DEBUG", logger="datasluice.discovery"):
         result = detect("https://example.gov", transport, _pm())
     assert result.portal_type is None
     assert result.confidence == 0.0

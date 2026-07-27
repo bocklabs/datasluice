@@ -11,14 +11,10 @@ from typing import Any
 
 import pytest
 
-try:
-    from datasluice.discovery.detector import detect  # ty: ignore[unresolved-import]
-except ImportError as _exc:  # pragma: no cover - RED phase only
-    pytest.skip(f"detect() not yet implemented: {_exc}", allow_module_level=True)
-
 import datasluice.runtime.plugin_manager as pm_mod
 import datasluice.transport as transport_mod
-from datasluice.runtime.plugin_manager import PluginManager
+from datasluice.discovery.detector import detect
+from datasluice.discovery.fingerprints import PATH_FINGERPRINTS
 
 
 class _StubTransport:
@@ -33,31 +29,41 @@ class _StubTransport:
     ) -> bytes:
         raise OSError(f"miss {url}")
 
+    def get_json(self, url: str, **kwargs: Any) -> dict[str, Any]:
+        return {}
 
-def _pm() -> PluginManager:
-    pm = PluginManager()
-    pm.register("ckan", lambda ctx: None)
-    return pm
+    def download(self, url: str, **kwargs: Any) -> bytes:
+        return b""
 
 
-def test_detect_does_not_instantiate_httpclient(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+class _StubPM:
+    """Minimal PluginManager stub — only ``list_connectors()`` is exercised."""
+
+    def __init__(self, names: list[str]) -> None:
+        self._names = list(names)
+
+    def list_connectors(self) -> list[str]:
+        return sorted(self._names)
+
+
+def test_detect_does_not_instantiate_httpclient(monkeypatch: pytest.MonkeyPatch) -> None:
     """``HttpClient()`` must NOT be constructed inside detect() (D-P5-16)."""
 
     def _explode(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("detect() constructed an HttpClient — D-P5-16 violation")
 
     monkeypatch.setattr(transport_mod, "HttpClient", _explode)
-    detect("https://example.gov", _StubTransport(), _pm())
+    detect("https://example.gov", _StubTransport(), _StubPM(["ckan"]))  # ty: ignore[invalid-argument-type]
 
 
-def test_detect_does_not_instantiate_pluginmanager(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_detect_does_not_instantiate_pluginmanager(monkeypatch: pytest.MonkeyPatch) -> None:
     """``PluginManager()`` must NOT be constructed inside detect() (D-P5-16)."""
 
     def _explode(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("detect() constructed a PluginManager — D-P5-16 violation")
 
     monkeypatch.setattr(pm_mod, "PluginManager", _explode)
-    detect("https://example.gov", _StubTransport(), _pm())
+    detect("https://example.gov", _StubTransport(), _StubPM(["ckan"]))  # ty: ignore[invalid-argument-type]
 
 
 def test_detect_uses_caller_transport() -> None:
@@ -71,8 +77,16 @@ def test_detect_uses_caller_transport() -> None:
             self.calls.append(url)
             raise OSError("miss")
 
+        def get_json(self, url: str, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        def download(self, url: str, **kwargs: Any) -> bytes:
+            return b""
+
     transport = _Recording()
-    detect("https://example.gov", transport, _pm())
+    detect("https://example.gov", transport, _StubPM(["ckan"]))  # ty: ignore[invalid-argument-type]
+    ckan_paths = [path for path, ptype in PATH_FINGERPRINTS.items() if ptype == "ckan"]
+    assert len(ckan_paths) == 2
     assert len(transport.calls) == 2
     assert all(c.startswith("https://example.gov/") for c in transport.calls)
 
@@ -89,25 +103,16 @@ def test_detect_is_reentrant_no_module_level_mutable_state() -> None:
         def request(self, url: str, **kwargs: Any) -> bytes:
             raise OSError("miss")
 
-    pm1 = PluginManager()
-    pm1.register("ckan", lambda ctx: None)
-    pm2 = PluginManager()
-    pm2.register("datagouv", lambda ctx: None)
+        def get_json(self, url: str, **kwargs: Any) -> dict[str, Any]:
+            raise OSError("miss")
 
-    r1 = detect("https://a.example", _Miss(), pm1)
-    r2 = detect("https://b.example", _Miss(), pm2)
+        def download(self, url: str, **kwargs: Any) -> bytes:
+            raise OSError("miss")
 
-    assert {ev.check for ev in r1.evidence} == {
-        path
-        for path, ptype in __import__(
-            "datasluice.discovery.fingerprints", fromlist=["PATH_FINGERPRINTS"]
-        ).PATH_FINGERPRINTS.items()
-        if ptype == "ckan"
-    }
+    r1 = detect("https://a.example", _Miss(), _StubPM(["ckan"]))  # ty: ignore[invalid-argument-type]
+    r2 = detect("https://b.example", _Miss(), _StubPM(["datagouv"]))  # ty: ignore[invalid-argument-type]
+
+    assert {ev.check for ev in r1.evidence} == {path for path, ptype in PATH_FINGERPRINTS.items() if ptype == "ckan"}
     assert {ev.check for ev in r2.evidence} == {
-        path
-        for path, ptype in __import__(
-            "datasluice.discovery.fingerprints", fromlist=["PATH_FINGERPRINTS"]
-        ).PATH_FINGERPRINTS.items()
-        if ptype == "datagouv"
+        path for path, ptype in PATH_FINGERPRINTS.items() if ptype == "datagouv"
     }
