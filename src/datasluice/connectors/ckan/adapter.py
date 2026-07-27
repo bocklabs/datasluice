@@ -51,13 +51,33 @@ class CKANAdapter(BaseAdapter):
         return response.get("result", {})
 
     def search(self, query: Query | None = None) -> SearchResult:
-        """Search datasets via ``package_search``."""
+        """Search datasets via ``package_search``.
+
+        Translates every set supported ``Query`` filter field into a CKAN Solr
+        ``fq`` clause (CONN-01). The reject gate from Task 1 already guarantees
+        every set field is in ``supported_query_fields``, so the translation is
+        unconditional. Value quoting is intentionally deferred (D-P5-09): only
+        binary field-presence is enforced in v1.
+        """
         query = query or Query()
         _reject_unsupported_fields(query, self.capabilities.supported_query_fields, "ckan")
         page = CKANPage(start=query.offset, rows=query.limit)
         params: dict[str, object] = {"q": query.text or "*:*", **page.to_params()}
         if query.sort:
             params["sort"] = query.sort
+        fq_clauses: list[str] = []
+        for tag in query.tags:
+            fq_clauses.append(f"tags:{tag}")
+        for org in query.organizations:
+            fq_clauses.append(f"organization:{org}")
+        for group in query.groups:
+            fq_clauses.append(f"groups:{group}")
+        if query.res_format:
+            fq_clauses.append(f"res_format:{query.res_format}")
+        if query.license_id:
+            fq_clauses.append(f"license_id:{query.license_id}")
+        if fq_clauses:
+            params["fq"] = " ".join(fq_clauses)
         result = self._action("package_search", **params)
         datasets = [map_dataset(pkg, base_url=self.base_url) for pkg in result.get("results", [])]
         count = int(result.get("count", len(datasets)))

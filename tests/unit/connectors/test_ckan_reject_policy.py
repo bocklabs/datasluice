@@ -145,3 +145,67 @@ def test_ckan_search_all_supported_fields_no_raise() -> None:
         )
     )
     assert stub.requested
+
+
+def _captured_fq(stub: _StubTransport) -> str:
+    """Return the ``fq`` query-string param captured on the first request."""
+    assert stub.requested, "no request was captured"
+    _url, kwargs = stub.requested[0]
+    params = kwargs.get("params")
+    assert isinstance(params, dict)
+    return str(params.get("fq", ""))
+
+
+def test_ckan_search_translates_tags_to_fq() -> None:
+    stub = _StubTransport()
+    adapter = CKANAdapter("https://x", transport=stub)
+    adapter.search(Query(tags=["economy"]))
+    assert "tags:economy" in _captured_fq(stub)
+
+
+def test_ckan_search_translates_organizations_to_fq() -> None:
+    stub = _StubTransport()
+    adapter = CKANAdapter("https://x", transport=stub)
+    adapter.search(Query(organizations=["myorg"]))
+    assert "organization:myorg" in _captured_fq(stub)
+
+
+def test_ckan_search_translates_groups_to_fq() -> None:
+    stub = _StubTransport()
+    adapter = CKANAdapter("https://x", transport=stub)
+    adapter.search(Query(groups=["transport"]))
+    assert "groups:transport" in _captured_fq(stub)
+
+
+def test_ckan_search_translates_res_format_to_fq() -> None:
+    stub = _StubTransport()
+    adapter = CKANAdapter("https://x", transport=stub)
+    adapter.search(Query(res_format="CSV"))
+    assert "res_format:CSV" in _captured_fq(stub)
+
+
+def test_ckan_search_translates_license_id_to_fq() -> None:
+    stub = _StubTransport()
+    adapter = CKANAdapter("https://x", transport=stub)
+    adapter.search(Query(license_id="cc-by"))
+    assert "license_id:cc-by" in _captured_fq(stub)
+
+
+def test_ckan_search_translates_multi_field_fq() -> None:
+    stub = _StubTransport()
+    adapter = CKANAdapter("https://x", transport=stub)
+    adapter.search(Query(tags=["economy"], organizations=["myorg"]))
+    fq = _captured_fq(stub)
+    assert "tags:economy" in fq
+    assert "organization:myorg" in fq
+
+
+def test_ckan_search_omits_fq_when_no_filter_set() -> None:
+    stub = _StubTransport()
+    adapter = CKANAdapter("https://x", transport=stub)
+    adapter.search(Query(text="climate"))
+    assert stub.requested
+    _url, kwargs = stub.requested[0]
+    params = kwargs.get("params")
+    assert isinstance(params, dict)
+    assert "fq" not in params
