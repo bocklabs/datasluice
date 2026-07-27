@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datasluice.connectors.ckan.mapper import map_resource as ckan_map_resource
 from datasluice.connectors.datagouv.mapper import map_resource as datagouv_map_resource
+from datasluice.connectors.socrata.mapper import map_resource as socrata_map_resource
 from datasluice.domain import HttpDownload, QueryAccess
 
 
@@ -83,4 +84,43 @@ def test_datagouv_schema_from_schema_fields() -> None:
 
 def test_datagouv_schema_none_when_portal_silent() -> None:
     resource = datagouv_map_resource({"id": "r1", "url": "https://x"})
+    assert resource.schema is None
+
+
+def test_socrata_access_httpdownload_when_url_set() -> None:
+    resource = socrata_map_resource(
+        {"id": "abcd-1234", "name": "My CSV", "url": "https://data.socrata.example.gov/downloads/abcd-1234.csv"}
+    )
+    assert isinstance(resource.access, HttpDownload)
+    assert resource.access.url == "https://data.socrata.example.gov/downloads/abcd-1234.csv"
+
+
+def test_socrata_access_queryaccess_when_no_url() -> None:
+    resource = socrata_map_resource(
+        {"id": "abcd-1234", "name": "Queryable view"},
+        base_url="https://data.socrata.example.gov",
+    )
+    assert isinstance(resource.access, QueryAccess)
+    assert resource.access.query_language == "socrata-soql"
+    assert resource.access.endpoint == "https://data.socrata.example.gov/resource/abcd-1234.json"
+    assert resource.access.extra["four_by_four"] == "abcd-1234"
+
+
+def test_socrata_schema_from_resource_columns() -> None:
+    resource = socrata_map_resource(
+        {
+            "id": "abcd-1234",
+            "name": "Typed view",
+            "columns": [{"name": "col1", "type": "text"}, {"name": "col2", "type": "number"}],
+        }
+    )
+    assert resource.schema is not None
+    assert resource.schema.columns == [
+        {"name": "col1", "type": "text"},
+        {"name": "col2", "type": "number"},
+    ]
+
+
+def test_socrata_schema_none_when_no_columns() -> None:
+    resource = socrata_map_resource({"id": "abcd-1234", "url": "https://x/data.csv"})
     assert resource.schema is None
