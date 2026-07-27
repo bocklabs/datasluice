@@ -163,32 +163,40 @@ class DataSluiceSession:
             return None
         return cache_module.ContentCache(cache_dir, ttl=cache_ttl)
 
-    def portal(self, url: str) -> BaseAdapter:
+    def portal(self, url: str, portal_type: str | None = None) -> BaseAdapter:
         """Resolve and construct a connector for *url*.
 
         Auto-detects the portal type via :func:`detect` and resolves the factory
-        through :class:`PluginManager`. The returned connector structurally
-        conforms to :class:`CatalogPort`.
+        through :class:`PluginManager`, unless *portal_type* is supplied in which
+        case detection is bypassed entirely (D-P5-20). The returned connector
+        structurally conforms to :class:`CatalogPort`.
 
         Args:
             url: Base URL of the open-data portal.
+            portal_type: Explicit portal type override; when set, detection is
+                skipped (D-P5-20 bypass).
 
         Returns:
             A connector instance conforming to :class:`CatalogPort`.
 
         Raises:
-            PortalDetectionError: If the portal type cannot be determined.
-            AdapterNotFoundError: If no connector is registered for the detected type.
+            PortalDetectionError: If detection yields ``portal_type=None`` or
+                ``confidence < 1.0``. The exception carries the
+                :class:`DetectionResult` as ``.detection_result`` (D-P5-20).
+            AdapterNotFoundError: If no connector is registered for the resolved type.
         """
         from datasluice.discovery import detect
         from datasluice.exceptions import PortalDetectionError
 
-        result = detect(url, transport=self._transport, plugin_manager=self.plugins)
-        portal_type = result.portal_type
         if portal_type is None:
-            raise PortalDetectionError(
-                f"Could not auto-detect portal type for {url!r}. Specify portal_type explicitly."
-            )
+            result = detect(url, transport=self._transport, plugin_manager=self.plugins)
+            if result.portal_type is None or result.confidence < 1.0:
+                raise PortalDetectionError(
+                    f"Could not auto-detect portal for {url!r}. Tried {len(result.evidence)} probe(s); "
+                    f"specify portal_type= explicitly.",
+                    detection_result=result,
+                )
+            portal_type = result.portal_type
         factory = cast("Callable[[ConnectorContext], BaseAdapter]", self.plugins.get(portal_type))
         ctx = ConnectorContext(base_url=url, transport=self._transport, auth=self.auth, page_size=self.page_size)
         connector = factory(ctx)
