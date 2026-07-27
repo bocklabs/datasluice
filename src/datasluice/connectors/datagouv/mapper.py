@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from datasluice.domain import Dataset, License, Organization, Resource
+from datasluice.domain import (
+    Dataset,
+    HttpDownload,
+    License,
+    Organization,
+    Resource,
+    ResourceAccess,
+    Schema,
+)
 
 
 def map_license(raw: dict[str, Any] | None) -> License | None:
@@ -18,8 +26,41 @@ def map_license(raw: dict[str, Any] | None) -> License | None:
     )
 
 
-def map_resource(raw: dict[str, Any]) -> Resource:
-    """Convert a udata resource dict into a :class:`Resource`."""
+def _resolve_access(raw: dict[str, Any]) -> ResourceAccess | None:
+    """Resolve the resource access descriptor per D-P5-02 for udata resources.
+
+    udata resources carry a direct ``url`` for HTTP download; udata does not
+    expose a queryable-resource signal the way CKAN exposes
+    ``datastore_active``, so the QueryAccess branch is omitted and the choice
+    is binary: ``HttpDownload`` when ``url`` is truthy, ``None`` otherwise.
+    """
+    url = raw.get("url") or raw.get("latest")
+    if url:
+        return HttpDownload(url=str(url))
+    return None
+
+
+def _resolve_schema(raw: dict[str, Any]) -> Schema | None:
+    """Best-effort schema extraction per D-P5-03 for udata resources.
+
+    Reads the Frictionless-style ``schema.fields`` list when udata exposes it;
+    returns ``None`` when the portal is silent so readers can infer from bytes.
+    """
+    fields = (raw.get("schema") or {}).get("fields")
+    if not fields:
+        return None
+    return Schema(name=str(raw.get("id", "udata-resource")), columns=list(fields))
+
+
+def map_resource(raw: dict[str, Any], *, base_url: str | None = None) -> Resource:
+    """Convert a udata resource dict into a :class:`Resource`.
+
+    Populates advisory ``access`` and ``schema`` descriptors per D-P5-02/03/04
+    so downstream readers can pick the right transport without re-probing the
+    portal. ``base_url`` is accepted for parity with the CKAN mapper; udata
+    resources do not require it for access-descriptor resolution.
+    """
+    del base_url
     return Resource(
         id=str(raw.get("id", "")),
         name=raw.get("title"),
@@ -30,6 +71,8 @@ def map_resource(raw: dict[str, Any]) -> Resource:
         size=raw.get("filesize"),
         created=raw.get("created_at"),
         modified=raw.get("last_modified"),
+        access=_resolve_access(raw),
+        schema=_resolve_schema(raw),
         extra=raw,
     )
 
@@ -50,14 +93,19 @@ def map_organization(raw: dict[str, Any] | None) -> Organization | None:
     )
 
 
-def map_dataset(raw: dict[str, Any]) -> Dataset:
-    """Convert a udata dataset dict into a :class:`Dataset`."""
+def map_dataset(raw: dict[str, Any], *, base_url: str | None = None) -> Dataset:
+    """Convert a udata dataset dict into a :class:`Dataset`.
+
+    ``base_url`` is forwarded to :func:`map_resource` for parity with the CKAN
+    mapper (udata resources do not currently require it, but the contract is
+    uniform across connectors).
+    """
     return Dataset(
         id=str(raw.get("id", "")),
         title=raw.get("title"),
         name=raw.get("slug"),
         description=raw.get("description"),
-        resources=[map_resource(r) for r in raw.get("resources", [])],
+        resources=[map_resource(r, base_url=base_url) for r in raw.get("resources", [])],
         organization=map_organization(raw.get("organization")),
         license=map_license(
             {"id": raw.get("license"), "title": raw.get("license")}
