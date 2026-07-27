@@ -45,17 +45,19 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 - ✓ `PluginManager` with entry-point discovery + per-entry error isolation replaces global side-effect registry — Phase 2 (ARCH-04, ARCH-05, ARCH-06, QUAL-09)
 - ✓ Python entry-points (`datasluice.connectors` group) for third-party connector discovery — Phase 2 (ARCH-04)
 - ✓ `adapters/` renamed to `connectors/` with per-connector factory functions — Phase 2 (D-03, D-04, D-13)
+- ✓ `BatchStream` (context-managed Arrow `RecordBatch` wrapper) + `IterableBytesIO` non-seekable byte adapter — Phase 4 (DATA-01, DATA-02)
+- ✓ All 5 format readers (CSV, JSON, Parquet, XLSX, GeoJSON) yield `RecordBatch` streams conforming to the domain `Schema`; old `formats/` package + dict-buffering integration read paths removed — Phase 4 (DATA-03)
+- ✓ `DataPlaneResourceReader` with `ResourceAccess`-kind dispatch (HttpDownload streaming via `StreamingTransport` + urllib fallback, ObjectStorage, LocalFile, Query/Stream stub) — Phase 4 (DATA-04)
+- ✓ Streaming HTTP responses with bounded memory (chunked transfer-encoding endpoint + subprocess peak-RSS proof via `resource.getrusage`) — Phase 4 (DATA-05)
+- ✓ Transparent compression decorators (GZIP/BZIP2/ZSTD streaming + ZIP spool, largest-member selection, truncated-frame → `DecompressionError`) — Phase 4 (DATA-06)
+- ✓ Domain `Schema` model → Arrow mapping (`to_arrow_schema`) + documented type-promotion unification via `pa.concat_tables` (`unify_batches`) — Phase 4 (DATA-07, DATA-08)
+- ✓ Peak-RSS subprocess test proves streaming data plane keeps memory bounded on large inputs — Phase 4 (QUAL-05)
 
 ### Active
 
 - [ ] Introduce capability metadata (`CatalogCapabilities`) with reject/warn policy for unsupported filters
 - [ ] Remove the non-functioning `CustomAdapter`
-- [ ] Streaming HTTP responses (bounded memory)
 - [ ] Adopt fsspec for storage (local, S3, GCS, Azure Blob, HTTP)
-- [ ] `ResourceAccess` descriptors (HttpDownload, ObjectStorage, Query, Stream, LocalFile)
-- [ ] Batch/stream readers with Arrow `RecordBatch` support
-- [ ] Compression/archive decorators
-- [ ] Domain `Schema` model
 - [ ] Composable transformation pipeline (SelectColumns, RenameColumns, CastSchema, NormalizeTimestamps, Filtering, Flattening)
 - [ ] Consistent terminal conversions (to_arrow, to_pandas, to_polars, to_duckdb) consuming shared `BatchStream`
 - [ ] Rebuild dlt integration to yield actual resource data
@@ -79,7 +81,7 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 
 ## Context
 
-**Current state (v0.1.0):** The project has a clean initial package structure with per-portal adapter subpackages, separated mappers, lazy optional deps, and a working CLI + library API on PyPI. However, several abstractions are ahead of the actual architecture — the public API has correctness bugs, the fat `BaseAdapter` conflates catalog operations with resource access, the data plane fully buffers everything into memory, credentials are shared unrestricted across hosts, and integrations each implement independent (and inconsistent) read paths.
+**Current state (v0.1.0):** The project has a clean initial package structure with per-portal adapter subpackages, separated mappers, lazy optional deps, and a working CLI + library API on PyPI. Through Phases 1–4 the correctness/security issues are fixed, a hexagonal composition root with narrow Protocol ports and plugin-based connectors is in place, and the data plane now streams Arrow `RecordBatch` with bounded memory (no `list[dict]` buffering), transparent compression, and schema unification. Remaining v1.0.0 work: capability-based connectors + contract suite (Phase 5), composable transforms + terminal conversions over the shared `BatchStream` (Phase 6), incremental sync + dlt rebuild (Phase 7), and final assembly + coverage gate (Phase 8).
 
 **Architecture audit (July 2026):** A comprehensive audit recommended evolving to hexagonal architecture (ports and adapters) with capability-based connector plugins, streaming Arrow-oriented processing, credential scoping, fsspec storage, rebuilt integrations, and incremental synchronization. The audit is accepted wholesale as the design contract for v1.0.0.
 
@@ -134,4 +136,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-25 after Phase 2 — composition root, port Protocols, connectors rename, and dead-Settings removal complete. 187 tests passing.*
+*Last updated: 2026-07-26 after Phase 4 — streaming data plane complete (BatchStream, 5 RecordBatch readers, access dispatch, compression, schema unification, peak-RSS memory proof). 303 tests passing.*
