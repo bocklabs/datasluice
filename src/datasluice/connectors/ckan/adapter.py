@@ -59,7 +59,7 @@ class CKANAdapter(BaseAdapter):
         if query.sort:
             params["sort"] = query.sort
         result = self._action("package_search", **params)
-        datasets = [map_dataset(pkg) for pkg in result.get("results", [])]
+        datasets = [map_dataset(pkg, base_url=self.base_url) for pkg in result.get("results", [])]
         count = int(result.get("count", len(datasets)))
         return SearchResult(
             datasets=datasets,
@@ -72,7 +72,7 @@ class CKANAdapter(BaseAdapter):
     def get_dataset(self, dataset_id: str) -> Dataset:
         """Fetch a dataset via ``package_show``."""
         result = self._action("package_show", id=dataset_id)
-        return map_dataset(result)
+        return map_dataset(result, base_url=self.base_url)
 
     def list_resources(self, dataset_id: str) -> list[Resource]:
         """Return resources for *dataset_id*."""
