@@ -14,6 +14,8 @@ import pytest
 
 from datasluice.connectors.base import BaseAdapter
 from datasluice.connectors.ckan.factory import create_ckan_connector
+from datasluice.connectors.datagouv.factory import create_datagouv_connector
+from datasluice.connectors.socrata.factory import create_socrata_connector
 from datasluice.contracts import run_contract_suite
 from datasluice.runtime.context import ConnectorContext
 from datasluice.transport import HttpClient
@@ -23,6 +25,8 @@ from datasluice.transport import HttpClient
     ("portal_name", "factory"),
     [
         pytest.param("ckan", create_ckan_connector, id="ckan"),
+        pytest.param("datagouv", create_datagouv_connector, id="datagouv"),
+        pytest.param("socrata", create_socrata_connector, id="socrata"),
     ],
 )
 def test_builtin_connector_conforms(

@@ -1,0 +1,37 @@
+{
+  "resultSetSize": 1,
+  "timings": {
+    "serviceMillis": 6,
+    "searchMillis": [4]
+  },
+  "results": [
+    {
+      "resource": {
+        "id": "qux8-42ab",
+        "name": "Restaurant Inspection Scores",
+        "type": "dataset",
+        "description": "Health inspection scores for food establishments.",
+        "createdAt": "2024-01-15T10:00:00.000Z",
+        "updatedAt": "2025-10-20T16:45:00.000Z",
+        "columns": [
+          {"id": "inspection_id", "name": "inspection_id", "fieldName": "inspection_id", "dataTypeName": "text"},
+          {"id": "business_name", "name": "business_name", "fieldName": "business_name", "dataTypeName": "text"},
+          {"id": "score", "name": "score", "fieldName": "score", "dataTypeName": "number"},
+          {"id": "inspected_at", "name": "inspected_at", "fieldName": "inspected_at", "dataTypeName": "calendar_date"}
+        ],
+        "page_views": {"page_views_total": 5102}
+      },
+      "classification": {
+        "domain_tags": ["health", "food"],
+        "domain_category": ["Health"]
+      },
+      "permalink": "https://example.gov/d/qux8-42ab",
+      "owner": {
+        "id": "usr-0002",
+        "displayName": "Department of Health",
+        "screenName": "health",
+        "url": "https://example.gov/users/health"
+      }
+    }
+  ]
+}

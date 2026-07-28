@@ -1,0 +1,156 @@
+{
+  "data": [
+    {
+      "id": "5f3a2b1c-9d8e-4f6a-b7c5-d3e2f1a0b9c8",
+      "title": "Horaires du reseau de bus",
+      "slug": "horaires-bus-urbains",
+      "description": "GTFS statique du reseau de bus municipal, mis a jour chaque trimestre.",
+      "resources": [
+        {
+          "id": "3d2c1b0a-9f8e-4d6c-b5a4-c3b2a1908f7e",
+          "title": "GTFS statique (archive ZIP)",
+          "url": "https://example.com/data/gtfs-statique.zip",
+          "format": "zip",
+          "mime": "application/zip",
+          "filesize": 5242880,
+          "description": "Archive GTFS complete (stop_times, trips, routes).",
+          "created_at": "2025-03-01T08:00:00.000000",
+          "last_modified": "2025-06-15T08:00:00.000000"
+        },
+        {
+          "id": "2c1b0a9f-8e7d-4c5b-a493-b2a1908f7e6d",
+          "title": "Liste des arrets (CSV)",
+          "url": "https://example.com/data/arrets-bus.csv",
+          "format": "csv",
+          "mime": "text/csv",
+          "filesize": 98304,
+          "description": "Identifiants, noms et coordonnees des arrets.",
+          "created_at": "2025-03-01T08:00:00.000000",
+          "last_modified": "2025-06-15T08:00:00.000000"
+        }
+      ],
+      "organization": {
+        "id": "534fff91a3ee7298cd8abcd1",
+        "slug": "ville-transports",
+        "name": "Ville Transports",
+        "description": "Operateur de transport public municipal.",
+        "url": "https://example.com/organizations/ville-transports/",
+        "website": "https://transports.example.com"
+      },
+      "tags": ["transport", "bus", "gtfs"],
+      "license": "lov2",
+      "created_at": "2025-03-01T08:00:00.000000",
+      "last_modified": "2025-06-15T08:00:00.000000",
+      "page": "https://example.com/datasets/horaires-bus-urbains/",
+      "uri": "/api/1/datasets/5f3a2b1c-9d8e-4f6a-b7c5-d3e2f1a0b9c8/"
+    },
+    {
+      "id": "6a4b3c2d-1e0f-4a5b-8c7d-e4f3a2b1c0d9",
+      "title": "Budget municipal",
+      "slug": "budget-municipal",
+      "description": "Budget primitif et compte administratif de la collectivite.",
+      "resources": [
+        {
+          "id": "1b0a9f8e-7d6c-4b5a-9382-a1908f7e6d5c",
+          "title": "Budget primitif 2025 (XLSX)",
+          "url": "https://example.com/data/budget-primitif-2025.xlsx",
+          "format": "xlsx",
+          "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "filesize": 262144,
+          "description": "Tableau reproduit au format tableur.",
+          "created_at": "2025-04-10T09:30:00.000000",
+          "last_modified": "2025-04-10T09:30:00.000000"
+        }
+      ],
+      "organization": {
+        "id": "534fff91a3ee7298cd8abcd2",
+        "slug": "ville-finances",
+        "name": "Direction des Finances",
+        "description": "Service financier de la collectivite.",
+        "url": "https://example.com/organizations/ville-finances/"
+      },
+      "tags": ["budget", "finances"],
+      "license": "lov2",
+      "created_at": "2025-04-10T09:30:00.000000",
+      "last_modified": "2025-05-02T10:00:00.000000",
+      "page": "https://example.com/datasets/budget-municipal/",
+      "uri": "/api/1/datasets/6a4b3c2d-1e0f-4a5b-8c7d-e4f3a2b1c0d9/"
+    },
+    {
+      "id": "7b5c4d3e-2f1a-4b6c-9d8e-f5a4b3c2d1e0",
+      "title": "Qualite de l'air",
+      "slug": "qualite-air",
+      "description": "Mesures horaires PM2.5 et NO2 des capteurs municipaux.",
+      "resources": [
+        {
+          "id": "0a9f8e7d-6c5b-4a49-8271-908f7e6d5c4b",
+          "title": "Mesures 2025 (CSV)",
+          "url": "https://example.com/data/qualite-air-2025.csv",
+          "format": "csv",
+          "mime": "text/csv",
+          "filesize": 1048576,
+          "description": "Mesures horaires par capteur.",
+          "created_at": "2025-01-05T07:00:00.000000",
+          "last_modified": "2025-07-01T07:00:00.000000",
+          "schema": {
+            "fields": [
+              {"name": "sensor_id", "type": "string"},
+              {"name": "measured_at", "type": "datetime"},
+              {"name": "pm25", "type": "number"}
+            ]
+          }
+        }
+      ],
+      "organization": {
+        "id": "534fff91a3ee7298cd8abcd3",
+        "slug": "agence-air",
+        "name": "Agence de l'Air",
+        "description": "Surveillance de la qualite de l'air.",
+        "url": "https://example.com/organizations/agence-air/"
+      },
+      "tags": ["air", "environnement"],
+      "license": "lov2",
+      "created_at": "2025-01-05T07:00:00.000000",
+      "last_modified": "2025-07-01T07:00:00.000000",
+      "page": "https://example.com/datasets/qualite-air/",
+      "uri": "/api/1/datasets/7b5c4d3e-2f1a-4b6c-9d8e-f5a4b3c2d1e0/"
+    },
+    {
+      "id": "8c6d5e4f-3a2b-4c7d-0e1f-a6b5c4d3e2f1",
+      "title": "Arbres remarquables",
+      "slug": "arbres-remarquables",
+      "description": "Localisation, essence et etat des arbres remarquables de la ville.",
+      "resources": [
+        {
+          "id": "9f8e7d6c-5b4a-4938-7160-08f7e6d5c4b3",
+          "title": "Inventaire (GeoJSON)",
+          "url": "https://example.com/data/arbres-remarquables.geojson",
+          "format": "geojson",
+          "mime": "application/geo+json",
+          "filesize": 524288,
+          "description": "Geometries ponctuelles avec attributs d'espece.",
+          "created_at": "2024-09-20T10:00:00.000000",
+          "last_modified": "2025-04-15T10:00:00.000000"
+        }
+      ],
+      "organization": {
+        "id": "534fff91a3ee7298cd8abcd4",
+        "slug": "service-espaces-verts",
+        "name": "Service des Espaces Verts",
+        "description": "Gestion du patrimoine arboricole.",
+        "url": "https://example.com/organizations/service-espaces-verts/"
+      },
+      "tags": ["arbres", "nature"],
+      "license": "lov2",
+      "created_at": "2024-09-20T10:00:00.000000",
+      "last_modified": "2025-04-15T10:00:00.000000",
+      "page": "https://example.com/datasets/arbres-remarquables/",
+      "uri": "/api/1/datasets/8c6d5e4f-3a2b-4c7d-0e1f-a6b5c4d3e2f1/"
+    }
+  ],
+  "total": 4,
+  "page": 1,
+  "page_size": 10,
+  "next": null,
+  "previous": null
+}
