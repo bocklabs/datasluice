@@ -12,8 +12,47 @@ from datasluice.connectors.base import BaseAdapter
 from datasluice.connectors.socrata.mapper import map_dataset
 from datasluice.connectors.socrata.pagination import SocrataPage
 from datasluice.domain import CatalogCapabilities, Dataset, Query, Resource, SearchResult
+from datasluice.exceptions import UnsupportedQueryFieldError
 
 _SOCRATA_SUPPORTED_QUERY_FIELDS: frozenset[str] = frozenset({"text", "tags", "sort"})
+
+_SOCRATA_SORT_FIELD_MAP: dict[str, str] = {
+    "name": "name",
+    "title": "name",
+    "updatedat": "updatedAt",
+    "updated_at": "updatedAt",
+    "updated": "updatedAt",
+    "modified": "updatedAt",
+    "metadata_modified": "updatedAt",
+    "createdat": "createdAt",
+    "created_at": "createdAt",
+    "created": "createdAt",
+    "issued": "createdAt",
+    "metadata_created": "createdAt",
+    "relevance": "relevance",
+    "score": "relevance",
+    "page_views_total": "page_views_total",
+    "page_views": "page_views_total",
+    "views": "page_views_total",
+}
+
+
+def _translate_sort(sort: str) -> str | None:
+    """Translate a ``Query.sort`` spec into a Socrata catalog ``order`` token.
+
+    The Discovery API ``order`` parameter accepts a fixed ascending-only token
+    set (``name``, ``updatedAt``, ``createdAt``, ``relevance``,
+    ``page_views_total``); any direction suffix — including ``desc`` — makes the
+    API return ``'...' is not a supported sort``. Returns ``None`` when the
+    sort spec cannot be expressed honestly (unknown field or non-ascending
+    direction) so the caller can reject instead of sending a broken param.
+    """
+    parts = sort.split()
+    if not 1 <= len(parts) <= 2:
+        return None
+    if len(parts) == 2 and parts[1].lower() != "asc":
+        return None
+    return _SOCRATA_SORT_FIELD_MAP.get(parts[0].lower())
 
 
 class SocrataAdapter(BaseAdapter):
@@ -23,9 +62,13 @@ class SocrataAdapter(BaseAdapter):
 
     Attributes:
         capabilities: Published catalog capability contract (D-P5-23). Socrata's
-            Discovery API supports only ``q``, ``tags``, and ``sort`` (RESEARCH
-            Pattern 2 Socrata row); ``organizations``, ``groups``,
-            ``res_format``, and ``license_id`` are NOT supported.
+            Discovery API supports only ``q``, ``tags``, and ``order`` (BL-02):
+            ``Query.sort`` is translated to the ascending-only ``order`` token
+            set via :func:`_translate_sort`, and unmappable field/direction
+            specs are rejected honestly rather than sent as Socrata's
+            nonexistent ``sort`` param (which silently zeroes the result set).
+            ``organizations``, ``groups``, ``res_format``, and ``license_id``
+            are NOT supported.
 
     Note:
         This adapter does NOT implement
@@ -59,7 +102,14 @@ class SocrataAdapter(BaseAdapter):
         if query.tags:
             params["tags"] = query.tags[0]
         if query.sort:
-            params["sort"] = query.sort
+            order = _translate_sort(query.sort)
+            if order is None:
+                raise UnsupportedQueryFieldError(
+                    field="sort",
+                    supported_fields=sorted(self.capabilities.supported_query_fields),
+                    portal_name="socrata",
+                )
+            params["order"] = order
         result = self._catalog(**params)
         datasets = [map_dataset(r, base_url=self.base_url) for r in result.get("results", [])]
         total = int(result.get("resultSetSize", len(datasets)))
