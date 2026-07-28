@@ -7,31 +7,35 @@
   "results": [
     {
       "resource": {
-        "id": "qux8-42ab",
         "name": "Restaurant Inspection Scores",
-        "type": "dataset",
+        "id": "qux8-42ab",
+        "resource_name": "restaurant-inspection-scores",
+        "parent_fxf": [],
         "description": "Health inspection scores for food establishments.",
+        "attribution": "Department of Health",
+        "contact_email": null,
+        "type": "dataset",
         "createdAt": "2024-01-15T10:00:00.000Z",
         "updatedAt": "2025-10-20T16:45:00.000Z",
-        "columns": [
-          {"id": "inspection_id", "name": "inspection_id", "fieldName": "inspection_id", "dataTypeName": "text"},
-          {"id": "business_name", "name": "business_name", "fieldName": "business_name", "dataTypeName": "text"},
-          {"id": "score", "name": "score", "fieldName": "score", "dataTypeName": "number"},
-          {"id": "inspected_at", "name": "inspected_at", "fieldName": "inspected_at", "dataTypeName": "calendar_date"}
-        ],
-        "page_views": {"page_views_total": 5102}
+        "page_views": {"page_views_total": 5102},
+        "columns_name": ["Inspection ID", "Business Name", "Score", "Inspected At"],
+        "columns_field_name": ["inspection_id", "business_name", "score", "inspected_at"],
+        "columns_datatype": ["Number", "Text", "Number", "Floating Timestamp"],
+        "columns_description": [null, null, "Inspection score out of 100", null],
+        "columns_format": [{}, {"align": "left"}, {}, {}]
       },
       "classification": {
+        "categories": ["health"],
+        "tags": ["inspections"],
+        "domain_category": "Health",
         "domain_tags": ["health", "food"],
-        "domain_category": ["Health"]
+        "domain_metadata": [{"key": "Metadata_Data-Owner", "value": "Department of Health"}]
       },
+      "metadata": {"domain": "example.gov", "license": "Public Domain"},
       "permalink": "https://example.gov/d/qux8-42ab",
-      "owner": {
-        "id": "usr-0002",
-        "displayName": "Department of Health",
-        "screenName": "health",
-        "url": "https://example.gov/users/health"
-      }
+      "link": "https://example.gov/Health/Restaurant-Inspection-Scores/qux8-42ab",
+      "owner": {"id": "usr-0002", "user_type": "interactive", "display_name": "Department of Health"},
+      "creator": {"id": "usr-0002", "user_type": "interactive", "display_name": "Department of Health"}
     }
   ]
 }

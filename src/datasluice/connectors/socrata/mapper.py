@@ -42,14 +42,19 @@ def _resolve_access(resource: dict[str, Any], base_url: str | None) -> ResourceA
 def _resolve_schema(resource: dict[str, Any]) -> Schema | None:
     """Best-effort schema extraction per D-P5-03 for Socrata views.
 
-    Socrata's catalog payload exposes typed column metadata under
-    ``resource.columns`` when present; returns ``None`` otherwise so readers
-    can infer from real bytes.
+    Socrata's catalog payload exposes typed column metadata as parallel arrays
+    (``columns_field_name`` / ``columns_name`` / ``columns_datatype``, zipped
+    positionally). ``columns_field_name`` is the stable SoQL column identifier
+    and is preferred as the column ``id``; ``columns_name`` is the display
+    label and serves as fallback. Returns ``None`` when the arrays are absent
+    or empty so readers can infer from real bytes.
     """
-    columns = resource.get("columns")
-    if not columns:
+    names = resource.get("columns_field_name") or resource.get("columns_name") or []
+    types = resource.get("columns_datatype") or []
+    if not names:
         return None
-    return Schema(name=str(resource.get("id", "socrata-view")), columns=list(columns))
+    columns = [{"id": str(n), "type": str(t)} for n, t in zip(names, types, strict=False)]
+    return Schema(name=str(resource.get("id", "socrata-view")), columns=columns)
 
 
 def map_resource(view: dict[str, Any], *, base_url: str | None = None) -> Resource:
@@ -80,9 +85,9 @@ def map_organization(owner: dict[str, Any] | None) -> Organization | None:
     if not owner:
         return None
     return Organization(
-        id=str(owner.get("id", owner.get("displayName", ""))),
-        name=owner.get("displayName") or owner.get("screenName"),
-        title=owner.get("displayName"),
+        id=str(owner.get("id", owner.get("display_name", ""))),
+        name=owner.get("displayName") or owner.get("display_name") or owner.get("screenName"),
+        title=owner.get("displayName") or owner.get("display_name"),
         url=owner.get("url"),
         extra=owner,
     )

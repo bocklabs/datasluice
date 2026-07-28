@@ -106,21 +106,47 @@ def test_socrata_access_queryaccess_when_no_url() -> None:
     assert resource.access.extra["four_by_four"] == "abcd-1234"
 
 
-def test_socrata_schema_from_resource_columns() -> None:
+def test_socrata_schema_from_parallel_column_arrays() -> None:
     resource = socrata_map_resource(
         {
             "id": "abcd-1234",
             "name": "Typed view",
-            "columns": [{"name": "col1", "type": "text"}, {"name": "col2", "type": "number"}],
+            "columns_name": ["Inspection ID", "Score"],
+            "columns_field_name": ["inspection_id", "score"],
+            "columns_datatype": ["Number", "Number"],
+        }
+    )
+    assert resource.schema is not None
+    assert resource.schema.name == "abcd-1234"
+    assert resource.schema.columns == [
+        {"id": "inspection_id", "type": "Number"},
+        {"id": "score", "type": "Number"},
+    ]
+
+
+def test_socrata_schema_falls_back_to_columns_name_when_no_field_name() -> None:
+    resource = socrata_map_resource(
+        {
+            "id": "abcd-1234",
+            "name": "Typed view",
+            "columns_name": ["Inspection ID", "Score"],
+            "columns_datatype": ["Number", "Number"],
         }
     )
     assert resource.schema is not None
     assert resource.schema.columns == [
-        {"name": "col1", "type": "text"},
-        {"name": "col2", "type": "number"},
+        {"id": "Inspection ID", "type": "Number"},
+        {"id": "Score", "type": "Number"},
     ]
 
 
-def test_socrata_schema_none_when_no_columns() -> None:
+def test_socrata_schema_none_when_no_column_arrays() -> None:
     resource = socrata_map_resource({"id": "abcd-1234", "url": "https://x/data.csv"})
+    assert resource.schema is None
+
+
+def test_socrata_schema_none_when_column_arrays_empty() -> None:
+    resource = socrata_map_resource(
+        {"id": "abcd-1234", "columns_name": [], "columns_field_name": [], "columns_datatype": []}
+    )
     assert resource.schema is None
