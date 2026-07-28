@@ -12,6 +12,12 @@ __all__ = [
     "TransformContext",
     "Pipeline",
     "compose",
+    "SelectColumns",
+    "RenameColumns",
+    "CastSchema",
+    "NormalizeTimestamps",
+    "Filter",
+    "Flatten",
 ]
 
 
@@ -41,4 +47,17 @@ def __getattr__(name: str):  # PEP 562
 
         globals()["compose"] = compose
         return compose
+    if name in {
+        "SelectColumns",
+        "RenameColumns",
+        "CastSchema",
+        "NormalizeTimestamps",
+        "Filter",
+        "Flatten",
+    }:
+        from datasluice.transforms import steps as _steps
+
+        symbol = getattr(_steps, name)
+        globals()[name] = symbol
+        return symbol
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
