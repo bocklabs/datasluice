@@ -204,7 +204,7 @@ class HttpxTransport:
 
         if params:
             separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}{urlencode(params)}"
+            url = f"{url}{separator}{urlencode(params, doseq=True)}"
 
         refreshed: list[bool] = [False]
         credential_provider = self._credential_provider

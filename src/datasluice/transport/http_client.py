@@ -120,7 +120,7 @@ class HttpClient:
 
         if params:
             separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}{urllib.parse.urlencode(params)}"
+            url = f"{url}{separator}{urllib.parse.urlencode(params, doseq=True)}"
 
         def _do_request() -> bytes:
             if self.rate_limiter:

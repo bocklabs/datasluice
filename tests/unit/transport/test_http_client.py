@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import urllib.parse
 
 import pytest
 
@@ -86,6 +87,21 @@ def test_http_client_retries_then_succeeds_on_503_then_200() -> None:
         client = HttpClient(retry_policy=RetryPolicy(max_attempts=2, base_delay=0.01))
         result = client.request(f"{base}/flaky")
         assert result == b"ok"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_http_client_encodes_list_params_as_repeated_keys() -> None:
+    server, base = start_test_server({"/data": MockResponse(status=200, body=b'{"ok": true}')})
+    try:
+        client = HttpClient()
+        client.get_json(f"{base}/data", params={"tag": ["economy", "budget"], "q": "water"})
+        assert server.captured_paths
+        query = urllib.parse.parse_qsl(urllib.parse.urlparse(server.captured_paths[0]).query)
+        tag_pairs = [pair for pair in query if pair[0] == "tag"]
+        assert tag_pairs == [("tag", "economy"), ("tag", "budget")]
+        assert ("q", "water") in query
     finally:
         server.shutdown()
         server.server_close()

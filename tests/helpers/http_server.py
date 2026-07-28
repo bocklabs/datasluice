@@ -38,9 +38,15 @@ class MockResponse:
 
 
 class _CapturingServer(ThreadingHTTPServer):
-    """ThreadingHTTPServer that records received requests and exposes the script."""
+    """ThreadingHTTPServer that records received requests and exposes the script.
+
+    ``captured`` holds per-request lowercased header dicts; ``captured_paths``
+    holds the raw request target (path + query string) so tests can assert the
+    serialized wire format (e.g. repeated keys for list-valued params).
+    """
 
     captured: list[dict[str, str]]
+    captured_paths: list[str]
     responses: dict[str, MockResponse | list[MockResponse]]
 
 
@@ -57,6 +63,7 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
         else:
             resp = entry
         server.captured.append({k.lower(): v for k, v in self.headers.items()})
+        server.captured_paths.append(self.path)
         self.send_response(resp.status)
         for name, value in resp.headers.items():
             if name.lower() in ("content-length", "transfer-encoding"):
@@ -102,10 +109,12 @@ def start_test_server(
 
     Returns:
         ``(server, base_url)`` where ``server`` exposes ``captured`` (list of
-        received-header dicts) and ``responses`` (mutable script) attributes.
+        received-header dicts), ``captured_paths`` (raw request targets), and
+        ``responses`` (mutable script) attributes.
     """
     server = _CapturingServer(("127.0.0.1", 0), _ScriptableHandler)
     server.captured = []
+    server.captured_paths = []
     server.responses = dict(responses or {})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
