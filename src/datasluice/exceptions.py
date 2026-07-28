@@ -89,6 +89,16 @@ class DecompressionError(FormatError):
     """
 
 
+class TransformError(FormatError):
+    """Raised when a transform step cannot be applied (D-P6-15).
+
+    Transform failures are data-shape/decoding failures (an unsafe cast, a
+    missing column, an unsupported nesting), so they hang off
+    :class:`FormatError` — matching the :class:`DecompressionError` precedent
+    (D-P4-21). No new exception root.
+    """
+
+
 class ConfigError(DataSluiceError):
     """Raised when configuration is invalid or incomplete."""
 
