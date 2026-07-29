@@ -10,6 +10,8 @@ rebuilds all terminal integrations over the shared
 
 __all__ = [
     "pandas",
+    "polars",
+    "arrow",
     "dlt",
     "airflow",
     "duckdb",
