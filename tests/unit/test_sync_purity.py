@@ -40,3 +40,12 @@ def test_file_state_store_accessible() -> None:
 
     assert sync.FileStateStore is not None
     assert sync.InMemoryStateStore is not None
+
+
+def test_integration_dlt_imports_no_optional_dlt_module() -> None:
+    _purge_optional_modules()
+    sys.modules.pop("datasluice.integrations.dlt", None)
+
+    importlib.import_module("datasluice.integrations.dlt")
+
+    assert "dlt" not in sys.modules

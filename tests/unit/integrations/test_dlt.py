@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -165,3 +167,135 @@ def test_sanitize_collision_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match="collide after sanitization"):
         datasluice_source("https://portal.test")
+
+
+def test_three_run_roundtrip_structure(
+    tmp_path: Path,
+    csv_portal: Resource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arrow = importlib.import_module("datasluice.integrations.arrow")
+    original_to_arrow = arrow.to_arrow
+    seeded_watermarks: list[str | None] = []
+
+    def recording_to_arrow(stream: Any) -> Any:
+        state = importlib.import_module("dlt").current.resource_state()
+        seeded_watermarks.append(state.get("datasluice", {}).get("watermark"))
+        return original_to_arrow(stream)
+
+    monkeypatch.setattr(arrow, "to_arrow", recording_to_arrow)
+    store = InMemoryStateStore()
+    pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "three_run_roundtrip")
+    watermarks: list[str] = []
+
+    for _ in range(3):
+        _extract_and_load(pipeline, datasluice_source("https://portal.test", state_store=store))
+        state = store.get(csv_portal.id)
+        assert state is not None
+        watermarks.append(state.cursor[csv_portal.id])
+
+    with duckdb.connect(str(db_path)) as connection:
+        row_count = connection.execute(f'SELECT count(*) FROM "{dataset_name}"."my_resource_csv"').fetchone()[0]
+
+    assert seeded_watermarks == [None, watermarks[0], watermarks[0]]
+    assert watermarks[0] == watermarks[1] == watermarks[2]
+    assert row_count == 2
+
+
+def test_replace_not_append_duplicates(tmp_path: Path, csv_portal: Resource) -> None:
+    pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "replace_no_duplicates")
+    row_counts: list[int] = []
+
+    for _ in range(2):
+        _extract_and_load(pipeline, datasluice_source("https://portal.test"))
+        with duckdb.connect(str(db_path)) as connection:
+            row_counts.append(
+                connection.execute(f'SELECT count(*) FROM "{dataset_name}"."my_resource_csv"').fetchone()[0]
+            )
+
+    assert row_counts == [2, 2]
+
+
+def test_metadata_sibling_opt_in(tmp_path: Path, csv_portal: Resource) -> None:
+    pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "metadata_sibling")
+
+    _extract_and_load(pipeline, datasluice_source("https://portal.test", include_metadata=True))
+
+    assert {"my_resource_csv", "datasets"} <= _table_names(db_path, dataset_name)
+
+
+def test_dlt_lazy_import_no_module_level() -> None:
+    code = """
+import sys
+import types
+import datasluice
+from datasluice.domain import SearchResult
+
+assert "dlt" not in sys.modules
+module = __import__("datasluice.integrations.dlt", fromlist=["datasluice_source"])
+assert "dlt" not in sys.modules
+datasluice.DataSluiceSession = lambda: types.SimpleNamespace(search=lambda *args, **kwargs: SearchResult())
+module.datasluice_source("https://portal.test")
+assert "dlt" in sys.modules
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_table_naming_deterministic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, base_url = start_test_server({"/data.csv": MockResponse(body=b"id\n1\n")})
+    resource_ids = ["my-resource.csv", "9a3f12ab-cd34", "départements-régions"]
+    resources = [
+        Resource(
+            id=resource_id,
+            url=f"{base_url}/data.csv",
+            format="CSV",
+            access=HttpDownload(url=f"{base_url}/data.csv"),
+        )
+        for resource_id in resource_ids
+    ]
+    _install_portal(monkeypatch, resources)
+    pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "deterministic_names")
+    try:
+        _extract_and_load(pipeline, datasluice_source("https://portal.test"))
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    expected = {_sanitize(resource_id) for resource_id in resource_ids}
+    assert expected <= _table_names(db_path, dataset_name)
+
+
+def test_state_writeback_durable_across_pipeline_recreation(
+    tmp_path: Path,
+    csv_portal: Resource,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryStateStore()
+    first_pipeline, _, _ = _make_pipeline(tmp_path, "durable_first")
+    _extract_and_load(first_pipeline, datasluice_source("https://portal.test", state_store=store))
+    first_state = store.get(csv_portal.id)
+    assert first_state is not None
+    first_watermark = first_state.cursor[csv_portal.id]
+
+    arrow = importlib.import_module("datasluice.integrations.arrow")
+    original_to_arrow = arrow.to_arrow
+    seeded_watermarks: list[str | None] = []
+
+    def recording_to_arrow(stream: Any) -> Any:
+        state = importlib.import_module("dlt").current.resource_state()
+        seeded_watermarks.append(state.get("datasluice", {}).get("watermark"))
+        return original_to_arrow(stream)
+
+    monkeypatch.setattr(arrow, "to_arrow", recording_to_arrow)
+    second_pipeline, _, _ = _make_pipeline(tmp_path, "durable_second")
+    _extract_and_load(second_pipeline, datasluice_source("https://portal.test", state_store=store))
+    second_state = store.get(csv_portal.id)
+
+    assert second_state is not None
+    assert seeded_watermarks == [first_watermark]
+    assert second_state.cursor[csv_portal.id] == first_watermark
