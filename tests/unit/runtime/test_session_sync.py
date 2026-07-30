@@ -138,7 +138,7 @@ def test_sessions_swap_file_and_memory_state_stores(monkeypatch: Any, tmp_path: 
         assert call["destination_uri"] == destination_uri
         assert call["resume"] is False
 
-    file_state = SyncState(cursor={"file": "file-watermark"})
+    file_state = SyncState(cursor={"file-key": '"file-watermark"'})
     memory_state = SyncState(cursor={"memory": "memory-watermark"})
     file_store.put("file-key", file_state)
     memory_store.put("memory-key", memory_state)
