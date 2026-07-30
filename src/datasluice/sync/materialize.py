@@ -153,6 +153,8 @@ def _publish_batch_shard(fs: Any, shard_uri: str, batch: Any) -> None:
 
     sink = pa.BufferOutputStream()
     pq.write_table(pa.Table.from_batches([batch]), sink)
+    if fs.exists(shard_uri):
+        fs.rm(shard_uri)
     _atomic_pipe(fs, shard_uri, sink.getvalue().to_pybytes())
 
 

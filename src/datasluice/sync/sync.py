@@ -17,6 +17,7 @@ logger = get_logger("sync.sync")
 
 _CONDITIONAL_SYNC_READY = True
 _WITHIN_RESOURCE_RESUME_READY = True
+_FAILURE_BOUNDARY_READY = True
 
 
 @dataclass(frozen=True)
