@@ -1,16 +1,17 @@
 """Transport port Protocols for HTTP-like request execution.
 
-Two narrow runtime-checkable Protocol classes live here, co-located per RESEARCH
-Open Question 2 (co-location keeps the streaming contract visible next to the
-buffered one). They are deliberately separate so a transport can implement
-buffered-only ``Transport`` without advertising streaming capability, letting
-Phase 4 ``ResourceReader`` probe ``isinstance(transport, StreamingTransport)``
-without depending on any backend-specific types (D-P3-06/D-P3-07).
+Three narrow runtime-checkable Protocol classes live here, co-located per
+RESEARCH Open Question 2 (co-location keeps streaming and conditional-fetch
+contracts visible next to the buffered one). They are deliberately separate so
+a transport advertises only capabilities it actually implements, letting
+callers probe with ``isinstance`` without backend-specific types
+(D-P3-06/D-P3-07/D-P7-15).
 """
 
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -51,3 +52,38 @@ class StreamingTransport(Protocol):
     """
 
     def stream(self, url: str, **kwargs: Any) -> AbstractContextManager[Any]: ...
+
+
+@dataclass(frozen=True)
+class ConditionalFetchResult:
+    """Result of a conditional resource fetch (D-P7-15/D-P7-16).
+
+    A 304 Not Modified response is a normal healthy outcome represented by
+    ``status_code == 304`` and ``stream is None`` — never an exception. On a
+    successful fetch, ``stream`` is a context manager yielding the same
+    backend-agnostic iterable-byte wrapper as :class:`StreamingTransport`.
+    ``headers`` remains ``Any`` so the port stays free of httpx imports
+    (D-P3-07).
+    """
+
+    status_code: int
+    headers: Any
+    stream: AbstractContextManager[Any] | None
+
+
+@runtime_checkable
+class ConditionalTransport(Protocol):
+    """Optional transport capability for ETag/Last-Modified conditional GETs (D-P7-15).
+
+    Implementations surface 304 as :class:`ConditionalFetchResult` rather
+    than hiding the status behind a bytes-only response. The urllib fallback
+    deliberately does not implement this Protocol (D-P7-17).
+    """
+
+    def conditional_fetch(
+        self,
+        url: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: str | None = None,
+    ) -> ConditionalFetchResult: ...

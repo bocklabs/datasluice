@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 
     from datasluice.auth import BaseAuth
     from datasluice.domain import CredentialScope
+    from datasluice.ports.transport import ConditionalFetchResult
 
 logger = get_logger("transport.httpx")
 
@@ -86,6 +87,16 @@ class StreamResponse:
     def close(self) -> None:
         """Release the underlying httpx response."""
         self._response.close()
+
+
+@contextmanager
+def _stream_response(response: httpx.Response) -> Iterator[StreamResponse]:
+    """Yield a :class:`StreamResponse` and deterministically close its response."""
+    wrapped = StreamResponse(response)
+    try:
+        yield wrapped
+    finally:
+        wrapped.close()
 
 
 class HttpxTransport:
@@ -155,12 +166,14 @@ class HttpxTransport:
         method: str,
         headers: dict[str, str],
         body: bytes | None,
+        *,
+        stream: bool = False,
     ) -> httpx.Response:
         """Drive the manual redirect loop, stripping sensitive headers per hop (Pattern 1)."""
 
         current_url = url
         req = self._client.build_request(method, current_url, headers=headers, content=body)
-        response = self._client.send(req, follow_redirects=False)
+        response = self._client.send(req, follow_redirects=False, stream=stream)
         for _ in range(self._max_redirects):
             if not response.has_redirect_location:
                 break
@@ -174,7 +187,8 @@ class HttpxTransport:
                         del next_request.headers[header_name]
                 logger.debug("Stripped sensitive headers on redirect to %s", next_url)
             current_url = next_url
-            response = self._client.send(next_request, follow_redirects=False)
+            response.close()
+            response = self._client.send(next_request, follow_redirects=False, stream=stream)
         return response
 
     def request(
@@ -267,6 +281,55 @@ class HttpxTransport:
         """GET *url* and return the raw bytes (for file downloads)."""
 
         return self.request(url, method="GET", **kwargs)
+
+    def conditional_fetch(
+        self,
+        url: str,
+        *,
+        if_none_match: str | None = None,
+        if_modified_since: str | None = None,
+    ) -> ConditionalFetchResult:
+        """Fetch *url* conditionally, surfacing 304 as a normal result (D-P7-15/16/17).
+
+        Conditional validators are opaque server-provided strings and are sent
+        verbatim. Redirects use the existing manual security loop: auth headers
+        may be stripped, while conditional headers survive hops. Does not use
+        ``with_retry`` — resumable reads belong to the sync layer, matching
+        :meth:`stream`.
+        """
+        from datasluice.ports.transport import ConditionalFetchResult
+
+        headers: dict[str, str] = {}
+        if if_none_match is not None:
+            headers["If-None-Match"] = if_none_match
+        if if_modified_since is not None:
+            headers["If-Modified-Since"] = if_modified_since
+        headers.setdefault("User-Agent", self.user_agent)
+        headers, _ = self.auth.apply(headers, {})
+
+        response = self._send_with_redirects(url, "GET", headers, None, stream=True)
+        status = response.status_code
+        response_headers = response.headers
+
+        if status == 304:
+            response.read()
+            response.close()
+            return ConditionalFetchResult(status, response_headers, None)
+        if status >= 400:
+            response.read()
+            response.close()
+            if status == 429:
+                raise RateLimitError(
+                    f"Rate limited by {url}",
+                    retry_after=_parse_retry_after(response_headers.get("Retry-After")),
+                )
+            if status >= 500:
+                raise RetryableHTTPError(
+                    f"HTTP {status} from {url}: {_truncate_body(response.content)}",
+                    status_code=status,
+                )
+            raise PortalError(f"HTTP {status} from {url}: {_truncate_body(response.content)}")
+        return ConditionalFetchResult(status, response_headers, _stream_response(response))
 
     @contextmanager
     def stream(self, url: str, **kwargs: Any) -> Iterator[StreamResponse]:

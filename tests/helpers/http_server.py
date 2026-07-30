@@ -64,6 +64,10 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
             resp = entry
         server.captured.append({k.lower(): v for k, v in self.headers.items()})
         server.captured_paths.append(self.path)
+        if self._not_modified(resp):
+            self.send_response(304)
+            self.end_headers()
+            return
         self.send_response(resp.status)
         for name, value in resp.headers.items():
             if name.lower() in ("content-length", "transfer-encoding"):
@@ -77,6 +81,17 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(resp.body)))
             self.end_headers()
             self.wfile.write(resp.body)
+
+    def _not_modified(self, resp: MockResponse) -> bool:
+        """Return whether request validators match *resp* (SYNC-06 / D-P7-34)."""
+        if_none_match = self.headers.get("if-none-match")
+        if_modified_since = self.headers.get("if-modified-since")
+        etag = resp.headers.get("ETag")
+        last_modified = resp.headers.get("Last-Modified")
+        return bool(
+            (if_none_match is not None and etag is not None and if_none_match == etag)
+            or (if_modified_since is not None and last_modified is not None and if_modified_since >= last_modified)
+        )
 
     def _write_chunked(self, body: bytes, chunk_size: int) -> None:
         """Emit *body* using HTTP/1.1 chunked transfer-encoding (D-P4-19)."""
