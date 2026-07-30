@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import json
 import os
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
@@ -299,6 +300,95 @@ def test_legacy_v1_envelope_with_key_remains_readable(file_store: FileStateStore
     file_store._fs.pipe_file(file_store._state_path(key), payload)
 
     assert file_store.get(key) == legacy_state
+
+
+def test_repeated_identical_put_has_same_path_and_bytes(file_store: FileStateStore) -> None:
+    key = "resource-deterministic"
+    state = SyncState(
+        cursor={key: _sha_watermark("1")},
+        last_synced_at="2026-07-30T12:34:56+00:00",
+    )
+
+    file_store.put(key, state)
+    first_path = file_store._state_path(key)
+    first_bytes = file_store._fs.cat_file(first_path)
+    file_store.put(key, state)
+    second_path = file_store._state_path(key)
+    second_bytes = file_store._fs.cat_file(second_path)
+
+    assert first_path == second_path
+    assert first_bytes == second_bytes
+    assert file_store.get(key) == state
+    assert json.loads(first_bytes) == json.loads(second_bytes)
+
+
+def test_concurrent_read_observes_complete_old_or_new_envelope(file_store: FileStateStore) -> None:
+    key = "resource-concurrent"
+    old_state = SyncState(cursor={key: _sha_watermark("2")})
+    new_state = SyncState(cursor={key: _sha_watermark("3")})
+    file_store.put(key, old_state)
+    final_path = file_store._state_path(key)
+    old_bytes = file_store._fs.cat_file(final_path)
+    move_reached = threading.Event()
+    release_move = threading.Event()
+    original_move = file_store._fs.mv
+    writer_errors: list[BaseException] = []
+
+    def paused_move(source: str, target: str) -> None:
+        assert target == final_path
+        move_reached.set()
+        if not release_move.wait(timeout=5):
+            raise TimeoutError("test did not release state publication")
+        original_move(source, target)
+
+    def writer() -> None:
+        try:
+            file_store.put(key, new_state)
+        except BaseException as exc:
+            writer_errors.append(exc)
+
+    with patch.object(file_store._fs, "mv", side_effect=paused_move):
+        thread = threading.Thread(target=writer)
+        thread.start()
+        try:
+            assert move_reached.wait(timeout=5)
+            during_state = file_store.get(key)
+            during_bytes = file_store._fs.cat_file(final_path)
+        finally:
+            release_move.set()
+            thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert writer_errors == []
+    after_state = file_store.get(key)
+    after_bytes = file_store._fs.cat_file(final_path)
+    assert during_state == old_state
+    assert during_bytes == old_bytes
+    assert after_state == new_state
+    assert json.loads(during_bytes)["schema_version"] == 1
+    assert json.loads(after_bytes)["schema_version"] == 1
+
+
+def test_move_failure_preserves_prior_complete_state(file_store: FileStateStore) -> None:
+    key = "resource-move-failure"
+    old_state = SyncState(cursor={key: _sha_watermark("4")})
+    new_state = SyncState(cursor={key: _sha_watermark("5")})
+    file_store.put(key, old_state)
+    final_path = file_store._state_path(key)
+    old_bytes = file_store._fs.cat_file(final_path)
+    original_pipe = file_store._fs.pipe_file
+
+    with (
+        patch.object(file_store._fs, "pipe_file", wraps=original_pipe) as pipe_file,
+        patch.object(file_store._fs, "mv", side_effect=OSError("injected move failure")),
+    ):
+        with pytest.raises(StateStoreError, match="Failed to publish durable state envelope"):
+            file_store.put(key, new_state)
+
+    pipe_file.assert_called_once()
+    assert file_store.get(key) == old_state
+    assert file_store._fs.cat_file(final_path) == old_bytes
+    assert json.loads(old_bytes)["schema_version"] == 1
 
 
 def test_delete_then_get_none(file_store: FileStateStore) -> None:
