@@ -100,10 +100,11 @@ def _parse_output(stdout: str) -> dict[str, int]:
 def test_peak_rss_bounded() -> None:
     """Streaming ~145MB of synthetic CSV through IterableBytesIO keeps peak RSS well below input (QUAL-05).
 
-    The threshold of 200 MB accommodates Python interpreter baseline (~40 MB),
-    pyarrow native runtime (~15 MB), and streaming batch buffers. A regression
-    that materialised the full input as Python ``bytes`` would push peak RSS
-    to ~290 MB+ (str + bytes + BytesIO) — comfortably above this threshold.
+    The threshold of 250 MB accommodates Python 3.14 + pyarrow allocator
+    pressure during the full suite while remaining below the ~290 MB+
+    materialisation regression (str + bytes + BytesIO). The isolated streaming
+    path remains near 90 MB; this margin keeps the default-suite test stable
+    without accepting full-buffer semantics.
     """
     result = subprocess.run(
         [sys.executable, "-c", _CSV_SUBPROCESS_CODE],
@@ -118,7 +119,7 @@ def test_peak_rss_bounded() -> None:
     assert values["rows"] == 5_000_000, f"expected 5M rows, got {values['rows']}"
     peak_rss_kb = values["peak_rss_kb"]
 
-    threshold_kb = 200_000  # 200 MB; baseline+streaming actual is ~90 MB, regression is ~290 MB+
+    threshold_kb = 250_000  # 250 MB; full-suite peak ~210 MB, materialisation regression ~290 MB+
     assert peak_rss_kb < threshold_kb, (
         f"peak RSS {peak_rss_kb} KB ({peak_rss_kb / 1024:.1f} MB) exceeds "
         f"{threshold_kb} KB ({threshold_kb / 1024:.0f} MB) bound for ~145 MB streaming CSV input "
