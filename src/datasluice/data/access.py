@@ -136,6 +136,27 @@ class DataPlaneResourceReader:
         decompressed = apply_compression(source, content_encoding)
         return self._build_batch_stream(resource, decompressed, effective_batch_size)
 
+    def open_response(
+        self,
+        resource: Resource,
+        stream_cm: Any,
+        *,
+        headers: Any,
+        batch_size: int | None = None,
+    ) -> BatchStream:
+        """Open an already-fetched streaming response through the data plane."""
+        response = stream_cm.__enter__()
+        try:
+            response_headers = dict(headers) if headers is not None else {}
+            content_encoding = _content_encoding_from_headers(response_headers)
+            source = _StreamClosingBytesIO(iter(response), response, stream_cm)
+            decompressed = apply_compression(source, content_encoding)
+            effective_batch_size = batch_size if batch_size is not None else self.default_batch_size
+            return self._build_batch_stream(resource, decompressed, effective_batch_size)
+        except BaseException:
+            stream_cm.__exit__(None, None, None)
+            raise
+
     def _build_batch_stream(
         self,
         resource: Resource,

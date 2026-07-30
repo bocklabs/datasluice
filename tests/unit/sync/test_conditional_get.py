@@ -97,3 +97,20 @@ def test_conditional_headers_not_stripped(tmp_path, csv_server, make_resource, i
     _sync(tmp_path, resource, inmemory_state, transport)
 
     assert server.captured[0]["if-none-match"] == '"e1"'
+
+
+def test_last_modified_roundtrip(tmp_path, csv_server, make_resource, inmemory_state) -> None:
+    last_modified = "Wed, 30 Jul 2025 00:00:00 GMT"
+    server, url = csv_server(headers={"Last-Modified": last_modified})
+    resource = make_resource(url)
+    transport = HttpxTransport()
+
+    _sync(tmp_path, resource, inmemory_state, transport)
+    state = inmemory_state.get(resource.id)
+    assert state is not None
+    assert state.cursor[resource.id] == last_modified
+    server.captured.clear()
+    second = _sync(tmp_path, resource, inmemory_state, transport)
+
+    assert second[0].action == "skipped-unchanged"
+    assert server.captured[0]["if-modified-since"] == last_modified

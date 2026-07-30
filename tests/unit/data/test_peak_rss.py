@@ -62,12 +62,15 @@ for batch in reader:
 peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 print(f"rows={total}")
 print(f"peak_rss_kb={peak_kb}")
+sys.stdout.flush()
+os._exit(0)
 """
 
 _JSON_SUBPROCESS_CODE = """
 import io
 import os
 import resource
+import sys
 os.environ["ARROW_DEFAULT_MEMORY_POOL"] = "system"
 import pyarrow.json as paj
 
@@ -88,6 +91,8 @@ peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 print(f"rows={table.num_rows}")
 print(f"input_bytes={input_bytes}")
 print(f"peak_rss_kb={peak_kb}")
+sys.stdout.flush()
+os._exit(0)
 """
 
 
