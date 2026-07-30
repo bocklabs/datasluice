@@ -10,17 +10,23 @@ optional dependency at package import time.
 __all__ = [
     "FileStateStore",
     "InMemoryStateStore",
+    "SyncOutcome",
+    "materialize",
+    "sync_resources",
 ]
 
 from datasluice.sync.state_store import FileStateStore, InMemoryStateStore
+from datasluice.sync.sync import SyncOutcome, sync_resources
 
 
-def __getattr__(name: str):  # PEP 562
+def __getattr__(name: str):
     """Lazily export pyarrow-adjacent sync primitives.
 
-    ``materialize`` is the lazy branch — it lands in Plan 07-02 and raises an
-    actionable AttributeError until it exists (D-P7-29 stub discipline).
+    ``materialize`` remains lazy so importing the package does not load pyarrow.
     """
     if name == "materialize":
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r} (materialize lands in Phase 07 Plan 02)")
+        from datasluice.sync.materialize import materialize
+
+        globals()[name] = materialize
+        return materialize
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

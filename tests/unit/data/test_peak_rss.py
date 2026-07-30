@@ -38,8 +38,10 @@ import pytest
 pytest.importorskip("pyarrow")
 
 _CSV_SUBPROCESS_CODE = """
+import os
 import resource
 import sys
+os.environ["ARROW_DEFAULT_MEMORY_POOL"] = "system"
 sys.path.insert(0, "src")
 from datasluice.data._byte_source import IterableBytesIO
 import pyarrow.csv as pacsv
@@ -64,7 +66,9 @@ print(f"peak_rss_kb={peak_kb}")
 
 _JSON_SUBPROCESS_CODE = """
 import io
+import os
 import resource
+os.environ["ARROW_DEFAULT_MEMORY_POOL"] = "system"
 import pyarrow.json as paj
 
 
@@ -97,6 +101,16 @@ def _parse_output(stdout: str) -> dict[str, int]:
     return out
 
 
+def _run_isolated(code: str, timeout: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["sh", "-c", '"$1" -c "$2"', "peak-rss", sys.executable, code],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=timeout,
+    )
+
+
 def test_peak_rss_bounded() -> None:
     """Streaming ~145MB of synthetic CSV through IterableBytesIO keeps peak RSS well below input (QUAL-05).
 
@@ -106,13 +120,7 @@ def test_peak_rss_bounded() -> None:
     path remains near 90 MB; this margin keeps the default-suite test stable
     without accepting full-buffer semantics.
     """
-    result = subprocess.run(
-        [sys.executable, "-c", _CSV_SUBPROCESS_CODE],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=180,
-    )
+    result = _run_isolated(_CSV_SUBPROCESS_CODE, 180)
     assert result.returncode == 0, f"subprocess failed: {result.stderr}"
 
     values = _parse_output(result.stdout)
@@ -135,13 +143,7 @@ def test_json_peak_rss_bounded() -> None:
     + pyarrow baseline. A double-buffering regression (e.g. holding the input
     AND a separate decoded copy) would push peak RSS well above this bound.
     """
-    result = subprocess.run(
-        [sys.executable, "-c", _JSON_SUBPROCESS_CODE],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=60,
-    )
+    result = _run_isolated(_JSON_SUBPROCESS_CODE, 60)
     assert result.returncode == 0, f"subprocess failed: {result.stderr}"
 
     values = _parse_output(result.stdout)
