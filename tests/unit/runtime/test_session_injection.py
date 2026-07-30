@@ -1,10 +1,10 @@
 """Tests for DataSluiceSession Phase 3 kwargs + injectables (Success Criterion 5).
 
-Covers the new ``timeout``/``retries``/``rate_limit``/``cache_dir``/``cache_ttl``
-kwargs and the ``transport=``/``storage=``/``cache=``/``credential_provider=``
-injectables wired in D-P3-02/D-P3-05/D-P3-14/D-P3-20, plus regression guards
-that the ``ConnectorContext`` signature is unchanged (D-P3-21) and the session
-exposes no ``download()``/``materialize()`` method (D-P3-22).
+Covers the ``timeout``/``retries``/``rate_limit``/``cache_dir``/``cache_ttl``
+kwargs and the ``transport=``/``storage=``/``cache=``/``credential_provider=``/
+``state_store=`` injectables, plus regression guards that the
+``ConnectorContext`` signature is unchanged (D-P3-21) and the session exposes
+no ``download()``/``materialize()`` method.
 """
 
 from __future__ import annotations
@@ -13,9 +13,10 @@ import inspect
 from typing import Any
 
 from datasluice.auth import NoAuth
-from datasluice.ports import CachePort, CredentialProvider, StoragePort, Transport
+from datasluice.ports import CachePort, CredentialProvider, StateStore, StoragePort, Transport
 from datasluice.runtime.context import ConnectorContext
 from datasluice.runtime.session import DataSluiceSession
+from datasluice.sync import InMemoryStateStore
 
 
 class _StubTransport:
@@ -119,6 +120,15 @@ def test_cache_injectable() -> None:
     assert isinstance(session._cache, CachePort)
 
 
+def test_state_store_injectable() -> None:
+    """An injected StateStore is retained by the session."""
+
+    state_store = InMemoryStateStore()
+    session = DataSluiceSession(state_store=state_store)
+    assert session.state_store is state_store
+    assert isinstance(session.state_store, StateStore)
+
+
 def test_connector_context_signature_unchanged() -> None:
     """ConnectorContext fields stay exactly (base_url, transport, auth, page_size) (D-P3-21)."""
 
@@ -127,7 +137,7 @@ def test_connector_context_signature_unchanged() -> None:
 
 
 def test_session_has_no_download_method() -> None:
-    """The session stays portal()/search()-only (D-P3-22)."""
+    """Sync composition does not add download or materialize facade methods."""
 
     session = DataSluiceSession()
     assert not hasattr(session, "download")

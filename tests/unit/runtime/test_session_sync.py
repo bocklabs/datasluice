@@ -9,7 +9,9 @@ from typing import Any
 
 import pytest
 
-from datasluice.sync import InMemoryStateStore
+from datasluice.domain import SyncState
+from datasluice.runtime.plugin_manager import PluginManager
+from datasluice.sync import FileStateStore, InMemoryStateStore
 
 session_module = importlib.import_module("datasluice.runtime.session")
 if not hasattr(session_module, "_SESSION_SYNC_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
@@ -97,3 +99,51 @@ def test_omitted_state_store_never_constructs_file_store(monkeypatch: Any) -> No
     session = session_class()
 
     assert isinstance(session.state_store, InMemoryStateStore)
+
+
+def test_sessions_swap_file_and_memory_state_stores(monkeypatch: Any, tmp_path: Any) -> None:
+    from datasluice.runtime.session import DataSluiceSession
+    from datasluice.sync import sync as sync_module
+
+    transport = object()
+    plugins = PluginManager()
+    reader = object()
+    resources = [object()]
+    destination_uri = "file:///tmp/datasluice-sync"
+    file_store = FileStateStore(f"file://{tmp_path}/state")
+    memory_store = InMemoryStateStore()
+    captured: list[dict[str, Any]] = []
+
+    def sync_spy(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        assert args == (resources,)
+        captured.append(kwargs)
+        return iter(())
+
+    monkeypatch.setattr(sync_module, "sync_resources", sync_spy)
+
+    common: dict[str, Any] = {"transport": transport, "plugins": plugins}
+    file_session = DataSluiceSession(**common, state_store=file_store)
+    memory_session = DataSluiceSession(**common, state_store=memory_store)
+
+    file_session.sync_resources(resources, destination_uri=destination_uri, reader=reader)
+    memory_session.sync_resources(resources, destination_uri=destination_uri, reader=reader)
+
+    assert len(captured) == 2
+    assert captured[0]["state_store"] is file_store
+    assert captured[1]["state_store"] is memory_store
+    for call in captured:
+        assert call["transport"] is transport
+        assert call["cache"] is None
+        assert call["reader"] is reader
+        assert call["destination_uri"] == destination_uri
+        assert call["resume"] is False
+
+    file_state = SyncState(cursor={"file": "file-watermark"})
+    memory_state = SyncState(cursor={"memory": "memory-watermark"})
+    file_store.put("file-key", file_state)
+    memory_store.put("memory-key", memory_state)
+
+    assert file_store.get("file-key") == file_state
+    assert memory_store.get("memory-key") == memory_state
+    assert file_store.get("memory-key") is None
+    assert memory_store.get("file-key") is None
