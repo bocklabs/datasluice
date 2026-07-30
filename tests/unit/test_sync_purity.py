@@ -35,6 +35,15 @@ def test_import_state_store_no_optional_deps() -> None:
     _assert_optional_modules_absent()
 
 
+def test_session_sync_composition_imports_no_optional_deps() -> None:
+    _purge_optional_modules()
+    sys.modules.pop("datasluice.runtime.session", None)
+
+    importlib.import_module("datasluice.runtime.session")
+
+    _assert_optional_modules_absent()
+
+
 def test_file_state_store_accessible() -> None:
     sync = importlib.import_module("datasluice.sync")
 
