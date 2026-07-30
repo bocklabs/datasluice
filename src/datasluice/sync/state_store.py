@@ -12,7 +12,9 @@ import hashlib
 import json
 import os
 import random
-from dataclasses import asdict
+import re
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import StateStoreError, SyncStateConflictError
@@ -24,20 +26,31 @@ if TYPE_CHECKING:
 logger = get_logger("sync.state_store")
 
 _UNSET = object()
+_SECRET_FREE_STATE_READY = True
+_COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
+_COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
+_CHECKPOINT_KEYS = {"version", "status", "next_batch_index", "position"}
+_CHECKPOINT_POSITION_KEYS = {"kind", "row_group_index"}
+_MAX_TIMESTAMP_LENGTH = 128
+_MAX_WATERMARK_LENGTH = 1024
+_ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 
 
 class FileStateStore:
     """Durable :class:`StateStore` persisting :class:`SyncState` as versioned JSON files (D-P7-01/03).
 
-    State is written to one SHA-256-hexdigest-named JSON file per key
-    (SEC-06 carry-forward: keys never appear as raw filenames, so path
-    traversal is impossible by construction). Writes are atomic (temp file +
-    ``fs.mv`` rename, mirroring the content-cache discipline) and protected by
-    detection-only optimistic CAS (re-read + hash-compare before the rename,
-    D-P7-27 — portable across fsspec backends, where no advisory file lock
-    exists). The durable format is a versioned envelope
-    ``{"schema_version": 1, "key": ..., "state": {...}}`` so future
-    :class:`SyncState` evolution can migrate old files on read (D-P7-03).
+    State is written to one SHA-256-hexdigest-named JSON file per key. New
+    envelopes contain only ``schema_version`` and ``state``; completed
+    watermarks use a fixed keyless representation and are reconstructed from
+    the lookup key on read. New writes validate every :class:`SyncState` field
+    against the completed-watermark or ``datasluice_checkpoint`` schemas before
+    publishing bytes. Historical schema-version-1 envelopes containing a raw
+    ``key`` and unconstrained state mappings remain readable.
+
+    Writes are atomic (temp file + ``fs.mv`` rename, mirroring the content-cache
+    discipline) and protected by detection-only optimistic CAS (re-read +
+    hash-compare before the rename, D-P7-27 — portable across fsspec backends,
+    where no advisory file lock exists).
 
     Attributes:
         base_uri: URI (``file://``, ``s3://``, …) of the directory holding the
@@ -78,20 +91,27 @@ class FileStateStore:
             return None
         try:
             envelope = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise StateStoreError(f"Corrupt state file {path!r}: {exc}") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise StateStoreError("Corrupt state envelope: invalid JSON") from exc
         if not isinstance(envelope, dict) or envelope.get("schema_version") != 1:
-            version = envelope.get("schema_version") if isinstance(envelope, dict) else None
-            raise StateStoreError(f"Unsupported state file schema_version {version!r} at {path!r}; expected 1")
-        s = envelope.get("state") or {}
+            raise StateStoreError("Unsupported state envelope schema_version; expected 1")
+        s = envelope.get("state")
+        if not isinstance(s, dict):
+            raise StateStoreError("Corrupt state envelope at state")
         from datasluice.domain import SyncState
 
-        return SyncState(
-            cursor=dict(s.get("cursor", {})),
-            partitions=dict(s.get("partitions", {})),
+        if "key" in envelope:
+            return _decode_legacy_state(s)
+        if set(envelope) != {"schema_version", "state"}:
+            raise StateStoreError("Corrupt state envelope at top level")
+        state = SyncState(
+            cursor=_decode_completed_cursor(key, s.get("cursor", {})),
+            partitions=_mapping_field(s, "partitions"),
             last_synced_at=s.get("last_synced_at"),
-            extra=dict(s.get("extra", {})),
+            extra=_mapping_field(s, "extra"),
         )
+        _validate_state_for_write(key, state)
+        return state
 
     def read_raw(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key* (or ``None`` if absent) for CAS compare-and-swap.
@@ -132,9 +152,13 @@ class FileStateStore:
                 *expected_prior* (CAS lost a race).
             StateStoreError: on any write I/O failure.
         """
+        _validate_state_for_write(key, state)
         path = self._state_path(key)
         payload = json.dumps(
-            {"schema_version": 1, "key": key, "state": asdict(state)},
+            {
+                "schema_version": 1,
+                "state": _encode_state(state),
+            },
             sort_keys=True,
         ).encode()
 
@@ -145,16 +169,14 @@ class FileStateStore:
             expected_sha = hashlib.sha256(expected_bytes).hexdigest()
             actual_sha = hashlib.sha256(actual_bytes).hexdigest()
             if actual_sha != expected_sha:
-                raise SyncStateConflictError(
-                    f"State for key {key!r} changed since last read (CAS mismatch); re-read and re-apply"
-                )
+                raise SyncStateConflictError("State changed since last read (CAS mismatch); re-read and re-apply")
 
         tmp_path = f"{self._base}/.{self._sha256_bytes(payload)}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
         try:
             self._fs.pipe_file(tmp_path, payload)
             self._fs.mv(tmp_path, path)
         except OSError as exc:
-            raise StateStoreError(f"Failed to write state file {path!r}: {exc}") from exc
+            raise StateStoreError("Failed to publish durable state envelope") from exc
 
     def delete(self, key: str) -> None:
         """Remove the state file for *key*; a missing file is tolerated (idempotent)."""
@@ -167,6 +189,126 @@ class FileStateStore:
     @staticmethod
     def _sha256_bytes(data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
+
+
+def _decode_legacy_state(state: dict[str, Any]) -> SyncState:
+    from datasluice.domain import SyncState
+
+    return SyncState(
+        cursor=_mapping_field(state, "cursor"),
+        partitions=_mapping_field(state, "partitions"),
+        last_synced_at=state.get("last_synced_at"),
+        extra=_mapping_field(state, "extra"),
+    )
+
+
+def _mapping_field(state: dict[str, Any], field: str) -> dict[str, Any]:
+    value = state.get(field, {})
+    if not isinstance(value, dict):
+        raise StateStoreError(f"Corrupt state envelope at state.{field}")
+    return dict(value)
+
+
+def _decode_completed_cursor(key: str, cursor: Any) -> dict[str, str]:
+    if cursor == {}:
+        return {}
+    if not isinstance(cursor, dict) or set(cursor) != _COMPLETED_WATERMARK_KEYS:
+        raise StateStoreError("Corrupt state envelope at state.cursor")
+    if cursor.get("schema") != _COMPLETED_WATERMARK_SCHEMA or not isinstance(cursor.get("watermark"), str):
+        raise StateStoreError("Corrupt state envelope at state.cursor")
+    return {key: cursor["watermark"]}
+
+
+def _encode_state(state: SyncState) -> dict[str, Any]:
+    cursor: dict[str, str] = {}
+    if state.cursor:
+        watermark = next(iter(state.cursor.values()))
+        cursor = {
+            "schema": _COMPLETED_WATERMARK_SCHEMA,
+            "watermark": watermark,
+        }
+    return {
+        "cursor": cursor,
+        "partitions": {},
+        "last_synced_at": state.last_synced_at,
+        "extra": state.extra,
+    }
+
+
+def _validate_state_for_write(key: str, state: SyncState) -> None:
+    _validate_cursor(key, state.cursor)
+    if type(state.partitions) is not dict or state.partitions:
+        raise StateStoreError("Invalid durable SyncState at state.partitions")
+    _validate_last_synced_at(state.last_synced_at)
+    _validate_extra(state.extra)
+
+
+def _validate_cursor(key: str, cursor: Any) -> None:
+    if type(cursor) is not dict:
+        raise StateStoreError("Invalid durable SyncState at state.cursor")
+    if not cursor:
+        return
+    if len(cursor) != 1:
+        raise StateStoreError("Invalid durable SyncState at state.cursor")
+    cursor_key, watermark = next(iter(cursor.items()))
+    if cursor_key != key or not isinstance(watermark, str) or not _is_completed_watermark(watermark):
+        raise StateStoreError("Invalid durable SyncState at state.cursor")
+
+
+def _is_completed_watermark(watermark: str) -> bool:
+    if not watermark or len(watermark) > _MAX_WATERMARK_LENGTH:
+        return False
+    if len(watermark) == 64 and all(character in "0123456789abcdefABCDEF" for character in watermark):
+        return True
+    if _ETAG_PATTERN.fullmatch(watermark) is not None:
+        return True
+    try:
+        parsed = parsedate_to_datetime(watermark)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return parsed is not None and parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+def _validate_last_synced_at(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value or len(value) > _MAX_TIMESTAMP_LENGTH:
+        raise StateStoreError("Invalid durable SyncState at state.last_synced_at")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise StateStoreError("Invalid durable SyncState at state.last_synced_at") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise StateStoreError("Invalid durable SyncState at state.last_synced_at")
+
+
+def _validate_extra(extra: Any) -> None:
+    if type(extra) is not dict:
+        raise StateStoreError("Invalid durable SyncState at state.extra")
+    if not extra:
+        return
+    if set(extra) != {"datasluice_checkpoint"}:
+        raise StateStoreError("Invalid durable SyncState at state.extra")
+    checkpoint = extra["datasluice_checkpoint"]
+    if not isinstance(checkpoint, dict) or set(checkpoint) != _CHECKPOINT_KEYS:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+    position = checkpoint["position"]
+    if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.position")
+    next_batch_index = checkpoint["next_batch_index"]
+    row_group_index = position["row_group_index"]
+    if (
+        type(checkpoint["version"]) is not int
+        or checkpoint["version"] != 1
+        or checkpoint["status"] != "in_progress"
+        or type(next_batch_index) is not int
+        or type(row_group_index) is not int
+        or next_batch_index < 0
+        or row_group_index < 0
+        or next_batch_index != row_group_index
+        or position["kind"] != "parquet_row_group"
+    ):
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
 
 
 class InMemoryStateStore:
