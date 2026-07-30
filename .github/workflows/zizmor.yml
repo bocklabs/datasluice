@@ -1,11 +1,6 @@
 name: Workflow security analysis
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/**"
   pull_request:
     types:
       - opened
@@ -14,6 +9,8 @@ on:
       - ready_for_review
     paths:
       - ".github/workflows/**"
+      - uv.lock
+      - pyproject.toml
 
 permissions: {}
 

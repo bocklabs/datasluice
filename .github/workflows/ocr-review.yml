@@ -19,8 +19,8 @@ jobs:
   code-review:
     name: AI code review
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: github.event_name == 'pull_request_target'
+    timeout-minutes: 900
+    if: github.event_name == 'pull_request_target' && github.actor != 'renovate[bot]' && github.actor != 'dependabot[bot]'
     steps:
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@802af6b461d17408856fac0d07a18f9b17d6d38c # v1.7.7
@@ -29,8 +29,25 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
-          llm_extra_body: '{"enable_thinking": true}'
+          
+          llm_extra_body: '{"thinking":{"type":"enabled"},"reasoning_effort": "high"}'
+          
+          review_concurrency: '4'
+          language: 'English'
+          
           github_token: ${{ secrets.GITHUB_TOKEN }}
           sticky_summary: 'true'
           incremental: 'true'
+          incremental_overlap_threshold: '0.8'
           upload_artifacts: 'true'
+
+          background: >-
+            DataSluice is a Python 3.12+ open-data SDK and CLI. Preserve public
+            API compatibility and consistent behavior across different data 
+            portal adapters. Optional format and integration
+            dependencies must remain lazily imported so the base package works
+            without extras. Adapter imports perform intentional registry side
+            effects. Prioritize HTTP correctness, pagination, retries, rate limiting, resource
+            cleanup, credential safety, mapping correctness, typing, and tests
+            for changed behavior. Avoid style-only findings already covered by
+            Ruff and ty.
