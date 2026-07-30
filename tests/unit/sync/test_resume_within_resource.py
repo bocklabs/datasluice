@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
 from typing import Any
@@ -12,14 +13,18 @@ import pytest
 from datasluice.data import DataPlaneResourceReader
 from datasluice.domain import LocalFile, Resource
 from datasluice.exceptions import DataSluiceError
+from datasluice.io.filesystem import open_filesystem
 from datasluice.sync import sync_resources
 from datasluice.sync.state_store import InMemoryStateStore
+from tests.unit.sync.conftest import FaultInjectingStateStore
 
 batch_stream_module = importlib.import_module("datasluice.data.batch_stream")
 parquet_module = importlib.import_module("datasluice.data.readers.parquet")
 sync_module = importlib.import_module("datasluice.sync.sync")
 if not hasattr(sync_module, "_WITHIN_RESOURCE_RESUME_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
     pytest.skip("within-resource resume implementation pending GREEN phase", allow_module_level=True)
+if not hasattr(sync_module, "_FAILURE_BOUNDARY_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
+    pytest.skip("checkpoint failure-boundary hardening pending GREEN phase", allow_module_level=True)
 
 
 def _checkpoint(next_batch_index: int) -> dict[str, Any]:
@@ -58,12 +63,13 @@ def _parquet_resource(tmp_path) -> tuple[Resource, list[int]]:
 
 
 class _CursorAwareReader:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_at: int | None = 2) -> None:
         import pyarrow as pa
 
         self._schema = pa.schema([("group_id", pa.int64())])
         self._batches = [pa.record_batch({"group_id": [index]}, schema=self._schema) for index in range(4)]
         self.requested: list[int] = []
+        self.fail_at = fail_at
         self.fail_once = True
 
     def _stream(self, start: int) -> Any:
@@ -72,7 +78,7 @@ class _CursorAwareReader:
         def batches():
             for index in range(start, len(self._batches)):
                 self.requested.append(index)
-                if index == 2 and self.fail_once:
+                if index == self.fail_at and self.fail_once:
                     self.fail_once = False
                     raise RuntimeError("injected batch failure")
                 yield self._batches[index]
@@ -219,3 +225,165 @@ def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_p
         )
 
     assert reader.open_count == 0
+
+
+class _NoOverwriteFS:
+    def __init__(self, fs: Any) -> None:
+        self.fs = fs
+
+    def mv(self, source: str, target: str) -> None:
+        if self.fs.exists(target):
+            raise FileExistsError(target)
+        self.fs.mv(source, target)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.fs, name)
+
+
+class _FailBeforeSelectedMoveFS(_NoOverwriteFS):
+    def __init__(self, fs: Any, target_suffix: str) -> None:
+        super().__init__(fs)
+        self.target_suffix = target_suffix
+        self.failed = False
+
+    def mv(self, source: str, target: str) -> None:
+        if target.endswith(self.target_suffix) and not self.failed:
+            self.failed = True
+            raise OSError("injected pre-shard-move failure")
+        super().mv(source, target)
+
+
+def _partial_uri(destination: str, resource_id: str) -> str:
+    resource_scope = hashlib.sha256(resource_id.encode()).hexdigest()
+    return f"{destination}/.datasluice-partial/{resource_scope}"
+
+
+def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None:
+    resource = Resource(id="pre-move", name="pre-move", format="PARQUET")
+    reader = _CursorAwareReader(fail_at=None)
+    store = InMemoryStateStore()
+    destination = f"file://{tmp_path}/pre-move"
+    fs = _FailBeforeSelectedMoveFS(open_filesystem(destination), "00000000000000000001.parquet")
+
+    with patch("datasluice.io.filesystem.open_filesystem", return_value=fs):
+        with pytest.raises(DataSluiceError, match="injected pre-shard-move failure"):
+            list(
+                sync_resources(
+                    [resource],
+                    state_store=store,
+                    reader=reader,
+                    destination_uri=destination,
+                )
+            )
+
+    state = store.get(resource.id)
+    assert state is not None
+    assert state.extra == {"datasluice_checkpoint": _checkpoint(1)}
+    partial = _partial_uri(destination, resource.id)
+    assert fs.exists(f"{partial}/00000000000000000000.parquet")
+    assert not fs.exists(f"{partial}/00000000000000000001.parquet")
+
+
+def test_failure_after_shard_move_before_checkpoint_replaces_stale_shard(tmp_path) -> None:
+    resource = Resource(id="post-move", name="post-move", format="PARQUET")
+    reader = _CursorAwareReader(fail_at=None)
+    inner_store = InMemoryStateStore()
+    crashing_store = FaultInjectingStateStore(inner_store, raise_on_put=1)
+    destination = f"file://{tmp_path}/post-move"
+    fs = _NoOverwriteFS(open_filesystem(destination))
+
+    with patch("datasluice.io.filesystem.open_filesystem", return_value=fs):
+        with pytest.raises(RuntimeError, match="injected crash"):
+            list(
+                sync_resources(
+                    [resource],
+                    state_store=crashing_store,
+                    reader=reader,
+                    destination_uri=destination,
+                )
+            )
+
+        partial = _partial_uri(destination, resource.id)
+        assert inner_store.get(resource.id) is None
+        assert fs.exists(f"{partial}/00000000000000000000.parquet")
+        reader.requested.clear()
+        outcomes = list(
+            sync_resources(
+                [resource],
+                state_store=inner_store,
+                reader=reader,
+                destination_uri=destination,
+            )
+        )
+
+    assert reader.requested == [0, 1, 2, 3]
+    assert outcomes[0].action == "materialized"
+    assert not fs.exists(partial)
+
+
+def test_failure_after_checkpoint_put_resumes_at_following_batch(tmp_path) -> None:
+    resource = Resource(id="post-checkpoint", name="post-checkpoint", format="PARQUET")
+    reader = _CursorAwareReader()
+    store = InMemoryStateStore()
+    destination = f"file://{tmp_path}/post-checkpoint"
+
+    with pytest.raises(RuntimeError, match="injected batch failure"):
+        list(
+            sync_resources(
+                [resource],
+                state_store=store,
+                reader=reader,
+                destination_uri=destination,
+            )
+        )
+
+    interrupted = store.get(resource.id)
+    assert interrupted is not None
+    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint(2)}
+    reader.requested.clear()
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=store,
+            reader=reader,
+            destination_uri=destination,
+            resume=True,
+        )
+    )
+
+    assert reader.requested == [2, 3]
+    assert outcomes[0].action == "resumed"
+
+
+def test_missing_checkpoint_referenced_shard_fails_as_corrupt_state(tmp_path) -> None:
+    import pyarrow as pa
+
+    from datasluice.domain import SyncState
+    from datasluice.sync.materialize import _publish_batch_shard
+
+    resource = Resource(id="missing-shard", name="missing-shard", format="PARQUET")
+    reader = _CursorAwareReader(fail_at=None)
+    store = InMemoryStateStore()
+    store.put(resource.id, SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}))
+    destination = f"file://{tmp_path}/missing-shard"
+    fs = open_filesystem(destination)
+    partial = _partial_uri(destination, resource.id)
+    fs.makedirs(partial, exist_ok=True)
+    _publish_batch_shard(
+        fs,
+        f"{partial}/00000000000000000000.parquet",
+        pa.record_batch({"group_id": [0]}),
+    )
+
+    with pytest.raises(DataSluiceError, match="completed shard 1 is missing"):
+        list(
+            sync_resources(
+                [resource],
+                state_store=store,
+                reader=reader,
+                destination_uri=destination,
+                resume=True,
+            )
+        )
+
+    assert reader.requested == []
