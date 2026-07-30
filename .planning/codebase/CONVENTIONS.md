@@ -1,215 +1,248 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-07-26
+**Analysis Date:** 2026-07-30
 
-## Language & Target
+## Language & Toolchain Baseline
 
-- **Python 3.12+** (`requires-python = ">= 3.12"` in `pyproject.toml`). CI matrix runs 3.12, 3.13, 3.14.
-- Use modern syntax: `str | None` unions (not `Optional[str]`), `list[...]` (not `List[...]`), walrus, `match`. The `UP` (pyupgrade) ruff rule enforces this.
-- Use **PEP 695 type params** — `def func[T](...)` / `class Generic[T]` — not `TypeVar`. Do not import from `typing` what `collections.abc` provides.
-
-## Code Style
-
-**Formatting:** Ruff format (line length **120**, configured in `pyproject.toml` `[tool.ruff]`).
-
-**Linting:** Ruff check with selects `E, W, F, I, B, UP` (`pyproject.toml` `[tool.ruff.lint]`). Run with auto-fix:
-```bash
-uv run ruff format .
-uv run ruff check . --fix
-```
-
-**Type checking:** `ty` (Astral), all rules as errors by default. `--all-extras` is **required** so optional lazy deps resolve:
-```bash
-uv run --all-extras ty check .
-```
-
-**Pre-commit** (`.pre-commit-config.yaml`) runs: trailing-whitespace, end-of-file-fixer, check-yaml/toml, ruff `--fix`, ruff-format, `ty check` (local hook), `pytest -q` (local hook). Always invoke as `uv run pre-commit`, never bare `pre-commit`.
-
-**Editor config** (`.editorconfig`): UTF-8, LF line endings, 4-space indent for Python, trim trailing whitespace, final newline.
-
-## Module Header Pattern
-
-Every `.py` file begins with, in this order:
-
-1. Module docstring (Google-style, one-line summary first).
-2. `from __future__ import annotations` (universal — enables deferred evaluation).
-3. stdlib imports.
-4. third-party imports.
-5. local (`datasluice...`) imports.
-
-Example from `src/datasluice/transport/http_client.py`:
-```python
-"""HTTP client with retry, rate-limiting, and authentication support."""
-
-from __future__ import annotations
-
-import email.utils
-import json as json_module
-...
-from datasluice.exceptions import PortalError, RateLimitError, RetryableHTTPError
-```
+- **Target Python:** `>=3.12` (declared in `pyproject.toml`). CI matrix runs 3.12, 3.13, 3.14.
+- **Formatter/Linter:** Ruff (config in `pyproject.toml` under `[tool.ruff]`). Line length **120**.
+- **Type checker:** `ty` (Astral), all rules as errors by default (`[tool.ty]`). Run with `uv run --all-extras ty check .`.
+- **Type hints are mandatory.** The package ships `src/datasluice/py.typed`; the classifier `Typing :: Typed` is set.
+- **Package manager:** `uv` exclusively — never call `pip` directly. Full install: `uv sync --all-extras`.
 
 ## Naming Patterns
 
-**Files:** `snake_case.py` — e.g. `http_client.py`, `host_provider.py`, `user_agent.py`.
+**Modules/Files:**
+- `snake_case.py` — e.g. `state_store.py`, `batch_stream.py`, `resource_reader.py`.
+- One concept per module; the module name matches the primary class/concept (`dataset.py` → `Dataset`).
 
-**Modules / packages:** short snake_case — `transport/`, `credentials/`, `formats/`, `runtime/`.
+**Classes:**
+- `PascalCase`. Domain models are nouns: `Dataset`, `Resource`, `SearchResult`, `SyncState`.
+- Exceptions end in `Error`: `DataSluiceError`, `DownloadError`, `FormatError`, `PortalError`.
+- Adapters: `<Portal>Adapter` (e.g. `CKANAdapter`, `DatagouvAdapter`, `SocrataAdapter`) in `connectors/<portal>/adapter.py`.
 
-**Classes:** `PascalCase`. Abstract bases prefixed `Base` (`BaseAdapter`, `BaseAuth`, `BaseFormatReader`). Protocols suffixed `Port` or descriptive (`Transport`, `CachePort`, `CatalogPort`, `CredentialProvider`).
+**Functions:**
+- `snake_case`. Mappers are prefixed `map_`: `map_dataset`, `map_resource`, `map_organization` (`src/datasluice/connectors/ckan/mapper.py`).
+- Internal helpers prefixed `_`: `_resolve_access`, `_reject_unsupported_fields`, `_check_publishs_catalog_capabilities`.
+- Factory functions named `create_<portal>_connector` and registered as entry-points (`pyproject.toml` → `[project.entry-points."datasluice.connectors"]`).
 
-**Functions / methods:** `snake_case`. Private/internal prefixed `_` (`_parse_retry_after`, `_truncate_body`, `_do_request`, `_action`).
+**Variables/constants:**
+- Module-level constants are `UPPER_SNAKE`: `_FORMAT_ALIASES`, `_QUERY_DECLARATION_ORDER`, `_CKAN_SUPPORTED_QUERY_FIELDS`, `SENSITIVE_HEADERS`.
+- Private constants may keep a leading `_`.
 
-**Variables:** `snake_case`.
+**Type parameters:**
+- **PEP 695 syntax is the standard.** Use `def func[T](...)`, never `TypeVar`. Confirmed in `src/datasluice/transport/pagination.py:22` (`def paginate[T]`) and `src/datasluice/transport/retry.py:40` (`def with_retry[T]`). No `TypeVar` usage exists in `src/`.
 
-**Constants:** `UPPER_SNAKE`, module-level, often `_`-prefixed when private (`DEFAULT_TIMEOUT`, `DEFAULT_PAGE_SIZE`, `SENSITIVE_HEADERS`, `_FORMAT_ALIASES`, `_logger_name`).
+## Code Style
 
-**ClassVar attributes:** declare with `typing.ClassVar` — `portal_type: ClassVar[str] = "ckan"` (`src/datasluice/connectors/base.py`), `format_name: ClassVar[str]` (`src/datasluice/formats/base.py`).
+**Formatting (Ruff):**
+- Line length 120.
+- `from __future__ import annotations` appears at the top of essentially every module (PEP 563 deferred annotations). Keep it.
+- Double quotes for strings.
+
+**Linting (Ruff `select`):**
+```
+E   # pycodestyle errors
+W   # pycodestyle warnings
+F   # Pyflakes
+I   # isort
+B   # flake8-bugbear
+UP  # pyupgrade
+```
+- B008 (no function calls in argument defaults) is enforced — see the Typer pattern below.
+- `# noqa: <code>` is used sparingly and annotated with a reason, e.g. `# noqa: F401 — lazy import gate` (`src/datasluice/integrations/polars.py:35`), `# noqa: E402` for imports after a `pytest.skip` guard (`tests/unit/connectors/test_ckan_reject_policy.py:26`).
+
+**Modern type syntax (pyupgrade / UP):**
+- Use `X | None` not `Optional[X]`; `list[T]` not `List[T]`; `dict[str, Any]` not `Dict`. Example: `id: str`, `title: str | None = None` (`src/datasluice/domain/dataset.py:36-37`).
+- Use `from collections.abc import Callable, Iterator, Mapping` — not `typing.Callable`.
 
 ## Import Organization
 
-**Order** (enforced by ruff `I`/isort):
-1. Standard library.
-2. Third-party (`typer`, `rich`, `pytest`).
-3. First-party (`datasluice...`, `tests...`).
+**Order (Ruff isort):**
+1. `from __future__ import annotations`
+2. Standard library (`import json`, `from pathlib import Path`)
+3. Third-party (`import typer`, `from rich.console import Console`)
+4. First-party (`from datasluice.domain import Dataset`)
 
-**Path / pythonpath:** `pythonpath = ["src", "."]` (`pyproject.toml` `[tool.pytest.ini_options]`). Import source as `from datasluice.domain import Dataset`, never `from src.datasluice...`. Tests import helpers as `from tests.helpers.http_server import ...`.
+**Path Aliases:**
+- None. Imports are absolute and fully-qualified: `from datasluice.connectors.ckan.mapper import map_dataset`.
+- pytest config sets `pythonpath = ["src", "."]` (`pyproject.toml`), so tests import `from tests.helpers.http_server import ...` and `from datasluice... import ...`.
 
-**Lazy imports:** heavy optional dependencies (pyarrow, openpyxl, pandas, polars, dlt, duckdb, fsspec, airflow) are imported **inside functions**, not at module top-level. This keeps the package importable without optional extras. Example from `src/datasluice/formats/parquet.py`:
+**TYPE_CHECKING guards:**
+- Import type-only dependencies under `if TYPE_CHECKING:` to avoid circular imports and runtime cost. Pattern in `src/datasluice/connectors/base.py:10-12`, `src/datasluice/domain/dataset.py:8-11`, `src/datasluice/ports/catalog.py:7-8`:
 ```python
-def read(self, source: str | Path | bytes) -> list[dict[str, Any]]:
-    try:
-        import pyarrow.parquet as pq
-    except ImportError as exc:
-        raise FormatError("Parquet support requires 'pyarrow'...") from exc
-```
-Also used for runtime wiring in `src/datasluice/runtime/session.py` (`from datasluice.discovery import detect_portal_type` inside `portal()`) and `src/datasluice/connectors/base.py` (`from datasluice.transport import HttpClient` inside the lazy `transport` property).
-
-**`TYPE_CHECKING` guards:** import-only type references go under `if TYPE_CHECKING:` to avoid runtime import cost / cycles. Example from `src/datasluice/connectors/base.py`:
-```python
-from typing import TYPE_CHECKING, ClassVar
-
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from datasluice.auth import BaseAuth
-    from datasluice.ports import Transport
+    from datasluice.domain import Organization, Query, SearchResult
 ```
-
-**Barrel `__init__.py` files:** every package exposes its public surface via an explicit, alphabetically-sorted `__all__` list. See `src/datasluice/__init__.py`, `src/datasluice/domain/__init__.py`, `src/datasluice/auth/__init__.py`.
-
-## Comments
-
-**No explanatory comments** in code unless explicitly requested (per `AGENTS.md`). The only inline comments present are **linter directives**:
-- `# noqa: E402` — imports after a non-import line (used in RED-commit test files and post-`importorskip` imports).
-- `# noqa: F401` — intentional re-export of unused name.
-- `# type: ignore[...]` / `# ty: ignore[...]` — suppress type-checker diagnostics where dynamic behaviour is intentional (`src/datasluice/transport/__init__.py:31`, `src/datasluice/transport/retry.py:73`, `src/datasluice/integrations/airflow.py:56`, `src/datasluice/integrations/pandas.py:34`).
-
-All other intent is conveyed through docstrings.
-
-## Docstrings
-
-**Google style**, first line is a concise summary. Use `Args:`, `Returns:`, `Raises:`, `Attributes:`, `Example:` sections as applicable. RST cross-references with `` :class:`...` `` / `` :func:`...` `` / `` :mod:`...` `` appear in API-facing modules (consumed by mkdocstrings). Examples:
-
-- Class with attributes — `src/datasluice/domain/dataset.py` (`Dataset`).
-- Function with Args/Returns/Raises — `src/datasluice/runtime/session.py` (`DataSluiceSession.portal`).
-- Class with Args + Example — `src/datasluice/runtime/session.py` (`DataSluiceSession`).
 
 ## Error Handling
 
-**Exception hierarchy** (`src/datasluice/exceptions.py`) — single root `DataSluiceError(Exception)`:
+**Strategy:** A single rooted exception hierarchy. Every public failure raises a subclass of `DataSluiceError`. Callers can catch the broad base or a specific branch.
 
+**Hierarchy** (defined in `src/datasluice/exceptions.py`):
 ```
-DataSluiceError
-├── PortalError              (portal unreachable / non-2xx)
-│   ├── RateLimitError        (429, carries retry_after)
-│   ├── RetryableHTTPError    (5xx, carries status_code)
-│   └── NotFoundError
-├── AdapterError
-│   └── AdapterNotFoundError
-├── PortalDetectionError
-├── AuthenticationError
-├── DownloadError
-│   └── ChecksumMismatchError (carries expected/actual)
-├── FormatError
-└── ConfigError
+DataSluiceError (base)
+├── PortalError                       # portal returned error / unreachable
+│   ├── RateLimitError                # HTTP 429; carries .retry_after
+│   ├── RetryableHTTPError            # HTTP 5xx; carries .status_code
+│   └── NotFoundError                 # missing dataset/resource
+├── AdapterError                      # adapter cannot fulfil request
+│   └── AdapterNotFoundError          # no adapter registered for portal type
+├── PortalDetectionError              # detection failed; carries .detection_result
+├── AuthenticationError               # missing/invalid credentials
+├── DownloadError                     # resource download failed
+│   ├── ChecksumMismatchError         # carries .expected/.actual
+│   └── UnsupportedAccessError        # no reader for an access Kind
+├── FormatError                       # parse failure
+│   ├── DecompressionError            # decompression failure
+│   └── TransformError                # transform step failure
+├── ConfigError                       # invalid/incomplete config
+├── StateStoreError                   # durable sync-state I/O failure
+│   └── SyncStateConflictError        # optimistic-CAS race lost
+├── StreamClosedError                 # use-after-close on a BatchStream
+├── SchemaUnificationError            # pyarrow schema promotion failure
+└── UnsupportedQueryFieldError        # pre-flight: Query filter not supported
 ```
 
 **Patterns:**
-- **Raise, don't return None, for failure.** Each domain error type maps to a distinct caller-recoverable condition.
-- **Wrap third-party exceptions** with `from exc` to preserve the chain: `raise FormatError(...) from exc` (`src/datasluice/formats/parquet.py:25`).
-- **Carry diagnostic context** on the exception instance: `RateLimitError(message, retry_after=...)`, `RetryableHTTPError(message, status_code=...)`, `ChecksumMismatchError(message, expected=..., actual=...)`.
-- **Map HTTP status → exception** centrally in `src/datasluice/transport/http_client.py` `_do_request`: 429 → `RateLimitError`, ≥500 → `RetryableHTTPError`, else → `PortalError`; `URLError` → `PortalError`.
-- **Retry classification** via `RetryPolicy.retry_on` tuple in `src/datasluice/transport/retry.py`; only listed exception types are retried (full-jitter backoff).
-
-## Logging
-
-**Framework:** Python stdlib `logging` only — no third-party logging library.
-
-**Patterns:**
-- Obtain a logger via the factory `from datasluice.logging import get_logger`, then `logger = get_logger("transport.http")` / `get_logger("session")` — the name is appended to the package root `"datasluice"`.
-- Configure via `configure_logging(level, format_string=None, **kwargs)` (`src/datasluice/logging.py`) which attaches a `StreamHandler` with a `RedactingFilter`.
-- **Secret redaction** is automatic: `RedactingFilter(logging.Filter)` walks `record.__dict__` and `record.args` dicts, replacing values whose lower-cased key is in `_SENSITIVE_KEYS` (`authorization`, `cookie`, `x-api-key`, `api_key`, `token`, `secret`, `password`, …) with `"***"`. Targeted by **key name**, never by value-pattern heuristics, so legitimate base64 / open-data payloads pass through unchanged. Env var `DATASLUICE_NO_REDACT=1` is the debug escape hatch.
-- `SENSITIVE_HEADERS` frozenset is the single source of truth, lifted into `src/datasluice/logging.py` so the redacting filter and the redirect handler share it without a circular import.
-- Log levels: `logger.debug(...)` for wiring/lifecycle (`"transport= injected; ... scalars ignored"`), `"Resolved connector %s for %s"`. Avoid `print()` — the CLI uses `rich.console.Console` for user-facing output, not logging.
-
-## Function Design
-
-**Constructors:** keyword-only (`*` after `self`) with `None` defaults and `or`-fallback to a default instance. Example from `src/datasluice/transport/http_client.py`:
+- **Rich exception constructors with keyword-only params.** When an exception carries structured data, give it explicit attributes and a `__init__`. See `RateLimitError(message, retry_after=None)`, `ChecksumMismatchError(message, expected=None, actual=None)`, and the fully kw-only `UnsupportedQueryFieldError(*, field, supported_fields, portal_name)` (`src/datasluice/exceptions.py:169`).
+- **Docstrings explain *why* each subclass hangs where it does.** E.g. `UnsupportedQueryFieldError` is a direct child of `DataSluiceError`, not under `PortalError`, because the reject policy fires pre-flight before any portal contact (`src/datasluice/exceptions.py:154-167`).
+- **Catch and re-raise with context** for optional-dependency gating, converting `ImportError` into an actionable `ImportError` with install instructions:
 ```python
-def __init__(
-    self,
+try:
+    import polars as pl  # noqa: F401 — lazy import gate
+except ImportError as exc:
+    raise ImportError("to_polars requires 'polars'. Install with: pip install datasluice[polars]") from exc
+```
+(`src/datasluice/integrations/polars.py:34-37`.)
+- **Always chain:** `raise ... from exc` when wrapping.
+- **Fail loud, never silently swallow** corrupt state — see `StateStoreError` docstring: "staleness is worse than a loud failure" (`src/datasluice/exceptions.py:106-114`).
+
+## Lazy Imports (Heavy Optional Deps)
+
+Heavy third-party deps are imported **inside functions, not at module top-level**, so the core package imports cheaply without optional extras. Keep this invariant.
+
+**Where it applies:** pyarrow, openpyxl, pandas, polars, dlt, duckdb, fsspec, zstandard.
+
+**Two patterns observed:**
+
+1. **Lazy import gate inside a function** (`src/datasluice/integrations/`, `src/datasluice/transforms/`, `src/datasluice/sync/materialize.py`):
+```python
+def to_polars(stream: BatchStream) -> Any:
+    try:
+        import polars as pl  # noqa: F401 — lazy import gate
+    except ImportError as exc:
+        raise ImportError("to_polars requires 'polars'. Install with: ...") from exc
+    from datasluice.integrations.arrow import to_arrow
+    return pl.from_arrow(to_arrow(stream))
+```
+
+2. **Lazy property for transport** (`src/datasluice/connectors/base.py:47-54`) — `HttpClient` is only constructed when `.transport` is first accessed.
+
+`--all-extras` is required for `ty check` and pre-commit because `ty` resolves these lazy imports.
+
+## Docstrings
+
+**Style:** Google format. Every public module, class, and function has a docstring.
+
+**Structure:**
+- **Module docstring:** first line is an imperative summary; may add paragraphs of design rationale referencing decision IDs (e.g. `D-P5-14`, `ARCH-08`, `QUAL-02`). See `src/datasluice/contracts/checks.py:1-36`.
+- **Class:** summary line + `Attributes:` section listing each field with type and meaning. Example: `src/datasluice/domain/dataset.py:16-34`.
+- **Function:** summary + optional `Args:` / `Returns:` / `Raises:` sections.
+
+```python
+def run_contract_suite(
+    connector_factory: Callable[[ConnectorContext], BaseAdapter],
+    fixture_set: Mapping[str, Any],
     *,
-    auth: BaseAuth | None = None,
-    timeout: float = DEFAULT_TIMEOUT,
-    retry_policy: RetryPolicy | None = None,
-    ...
+    base_url: str,
+    transport: Transport,
 ) -> None:
-    self.auth = auth or NoAuth()
-    self.retry_policy = retry_policy or RetryPolicy()
+    """Run all 8 conformance checks (D-P5-14) against a fixture-served connector.
+
+    Args:
+        connector_factory: A ``create_*_connector(ctx)`` callable ...
+        fixture_set: Parsed fixture payloads keyed by fixture name. ...
+
+    Raises:
+        AssertionError: On the first failing conformance check. ...
+    """
 ```
-This enables zero-config construction while allowing dependency injection (D-02 / D-P3-05).
+(`src/datasluice/contracts/checks.py:52-83`.)
 
-**Return types:** explicit. Public API returns domain models, `bytes`, `dict[str, Any]`, or `list[...]` — never bare `Any` on typed surfaces.
-
-**Mutability:** domain models are `@dataclass(frozen=True)` (immutable value objects — `Dataset`, `Resource`, `License`, `Query`). Builders/services (`HttpClient`, `PluginManager`, `HostCredentialProvider`) are mutable classes with private `_`-prefixed state.
-
-## Typer / CLI
-
-**Entry point:** `datasluice.cli.app:app` (`pyproject.toml` `[project.scripts]`). A single `typer.Typer(name="datasluice", no_args_is_help=True)` with a `@app.callback()` global (`--version`/`-V`) and commands registered via `app.command(name=...)(fn)` (`src/datasluice/cli/app.py`).
-
-**Option declaration — preferred pattern (`Annotated`):**
-```python
-from typing import Annotated
-import typer
-
-def download(
-    portal: Annotated[str, typer.Option("--portal", "-p", help="Portal base URL")],
-    dataset_id: Annotated[str, typer.Argument(help="Dataset ID")],
-    dest: Annotated[Path, typer.Option("--dest", "-o", help="...")] = Path("."),
-) -> None:
-```
-This satisfies the flake8-bugbear **B008** rule (no function call in argument default). Used in `src/datasluice/cli/download.py`. **Always use this `Annotated` form for new CLI commands.**
-
-> Note: `src/datasluice/cli/app.py` (`main`) and `src/datasluice/cli/search.py` still use the legacy `param: str = typer.Option(...)` form, which violates B008. These are pre-existing inconsistencies — new code must use `Annotated`.
-
-**Output:** `rich.console.Console` for all user-facing output (`Table`, styled spans like `[green]...[/green]`). Console instantiated at module scope: `console = Console()`.
+**Comments in code:** none unless explicitly requested (per `AGENTS.md`). Rationale lives in docstrings, not inline comments.
 
 ## Module Design
 
-**Exports:** explicit `__all__` list in every package `__init__.py`. Re-export only what is part of the stable public API.
+**Exports:**
+- Every package has an `__init__.py` that re-exports its public surface and defines `__all__`. See `src/datasluice/domain/__init__.py`, `src/datasluice/ports/__init__.py`, `src/datasluice/contracts/__init__.py`.
+- `__all__` is **sorted alphabetically** (`src/datasluice/domain/__init__.py:17-36`).
 
-**Lazy attribute access:** `src/datasluice/transport/__init__.py` uses a module-level `__getattr__` to import `HttpClient` / `HttpxTransport` lazily, deferring the (optional `httpx`) import until first attribute access.
+**Domain models are `@dataclass(frozen=True)`:**
+- Immutable value objects in `src/datasluice/domain/`. Mutable defaults use `field(default_factory=...)`.
+- Optional fields default to `None`; collections default to empty via `field(default_factory=list)` / `dict`.
 
-**Dependency-injected composition root:** `DataSluiceSession` (`src/datasluice/runtime/session.py`) is the single facade. It wires `PluginManager`, transport, auth, cache, and storage via explicit kwargs — no env-var-driven `Settings` system (removed: CORR-04 / D-14 / D-10; enforced by `tests/unit/test_no_dead_settings.py`). The connector registry is always an injected `PluginManager` instance, never a module-level singleton (enforced by `tests/unit/runtime/test_no_global_state.py`).
+**Ports are `@runtime_checkable` Protocols:**
+- Boundary interfaces in `src/datasluice/ports/`. Decorated `@runtime_checkable` so the runtime/contracts probe capabilities with `isinstance` (`src/datasluice/ports/catalog.py:11`, `src/datasluice/ports/transport.py:18`).
+- Capability protocols are narrow and separate (e.g. `Transport`, `StreamingTransport`, `ConditionalTransport`) so a backend advertises only what it implements.
+- **Important gotama:** do NOT declare capability methods on `BaseAdapter` — only on the Protocol. Declaring `get_organization` on the base would make `isinstance` short-circuit and every adapter falsely satisfy `OrganizationCatalog` (python/typing#800). See `src/datasluice/connectors/base.py:20-28`.
 
-## Secret Safety (cross-cutting)
+## Adapter Pattern
 
-- `__repr__` on auth classes **must redact** secret material. Enforced by `tests/unit/auth/test_auth.py` (`test_bearer_auth_repr_redacts_token`, etc.): assert the secret string is absent and `"***"` is present. `src/datasluice/auth/bearer.py`:
-  ```python
-  def __repr__(self) -> str:
-      return f"<BearerAuth scheme={self.scheme!r} token=***>"
-  ```
-- `DataSluiceSession.__repr__` must not leak secrets — enforced by `tests/unit/runtime/test_session.py::test_repr_has_no_secrets`.
-- Cross-host redirects strip credentials by default (`src/datasluice/transport/redirect.py` `CredentialAwareRedirectHandler`); `CredentialScope` opt-in retains them on allow-listed hosts.
+Each portal connector lives in `src/datasluice/connectors/<portal>/` with a fixed file layout:
+
+| File | Responsibility |
+|------|----------------|
+| `adapter.py` | `<Portal>Adapter(BaseAdapter)` — orchestrates transport calls, maps responses, applies the reject gate |
+| `mapper.py` | Pure `map_*` functions translating portal-native JSON → `datasluice.domain` models |
+| `pagination.py` | Portal-specific pagination logic (`<Portal>Page`) |
+| `errors.py` | Portal-specific exception subclasses (e.g. `connectors/ckan/errors.py`) |
+| `factory.py` | `create_<portal>_connector(ctx)` entry-point target |
+
+**Adapter conventions** (from `src/datasluice/connectors/ckan/adapter.py:28-63`):
+- Declare a `portal_type: ClassVar[str]` (e.g. `"ckan"`).
+- Publish a `capabilities: ClassVar[CatalogCapabilities]` enumerating `supported_query_fields`.
+- Every `search()` starts with the pre-flight reject gate: `_reject_unsupported_fields(query, self.capabilities.supported_query_fields, "<portal>")` (from `src/datasluice/connectors/_reject.py`). No transport call before the gate.
+- Mappers are pure functions in `mapper.py` — no transport access, easy to unit-test with dicts.
+
+## Typer / CLI Conventions
+
+- **Use `Annotated[T, typer.Option(...)]`** (preferred form), NOT function-call defaults, because B008 rejects calls in defaults:
+```python
+def download(
+    portal: Annotated[str, typer.Option("--portal", "-p", help="Portal base URL")],
+    dataset_id: Annotated[str, typer.Argument(help="Dataset ID")],
+    dest: Annotated[Path, typer.Option("--dest", "-o", help="Destination directory")] = Path("."),
+    fmt: Annotated[str | None, typer.Option("--format", "-f", help="Filter resources by format")] = None,
+) -> None:
+```
+(`src/datasluice/cli/download.py:14-19`.)
+
+  > Note: `src/datasluice/cli/search.py` still uses the older `param: str = typer.Option(...)` form. The `Annotated` form in `download.py` is the target pattern — follow it for new commands.
+
+- CLI modules import heavy/session objects **lazily inside the function body** (`from datasluice import DataSluiceSession` inside `download`/`search`) to keep CLI startup fast.
+- Output uses `rich` (`Console`, `Table`) with inline markup like `[bold]`, `[green]`, `[yellow]`, `[dim]`.
+- Exit with `raise typer.Exit(1)` on error conditions (not `sys.exit`).
+- Commands are registered on the Typer app: `app.command(name="download")(download)` (`src/datasluice/cli/app.py:39-42`).
+
+## Logging
+
+**Framework:** stdlib `logging` via a thin wrapper in `src/datasluice/logging.py`.
+
+- Get a logger with `get_logger("subsystem")` → returns `logging.getLogger("datasluice.subsystem")`.
+- **Secret redaction is mandatory.** `RedactingFilter` walks log records and replaces values whose lowercased key is in `SENSITIVE_KEYS` with `"***"`. `SENSITIVE_HEADERS = frozenset({"authorization", "cookie", "x-api-key", "x-auth-token"})` is the single source of truth.
+- Redaction targets **known keys only, never value-pattern heuristics** — legitimate base64/open-data payloads pass through unchanged (see `RedactingFilter` docstring, `src/datasluice/logging.py:45-67`).
+- `DATASLUICE_NO_REDACT=1` env var disables redaction (test/debug escape hatch).
+
+## Cross-Cutting Patterns
+
+**Design-decision IDs:** Code and docstrings reference decision/requirement IDs (`D-P5-14`, `ARCH-08`, `QUAL-02`, `INFRA-06`, `CONN-01`). Preserve these when editing the relevant code; they trace to the planning docs.
+
+**Public API stability:** Public contract surfaces have signature-stability tests (e.g. `tests/unit/contracts/test_contract_api.py` asserts `run_contract_suite`'s param kinds). Do not change the public signature of locked functions without updating these tests.
+
+**No comments in code** unless explicitly requested. Design intent goes in docstrings.
 
 ---
 
-*Convention analysis: 2026-07-26*
+*Convention analysis: 2026-07-30*

@@ -1,125 +1,186 @@
 # Technology Stack
 
-**Analysis Date:** 2026-07-26
+**Analysis Date:** 2026-07-30
 
 ## Languages
 
 **Primary:**
-- Python `>= 3.12` (declared in `pyproject.toml` `requires-python`). CI matrix targets Python 3.12, 3.13, and 3.14 (`.github/workflows/ci.yml`).
+- Python 3.12+ — requires-python `>= 3.12` (`pyproject.toml:26`). All source under `src/datasluice/`. Tested on 3.12, 3.13, 3.14 matrix.
 
-**Secondary:**
-- YAML / TOML for configuration (`pyproject.toml`, `zensical.toml`, `.pre-commit-config.yaml`).
-- Markdown for documentation (`docs/`, `README.md`).
-- Bash/shell snippets embedded in `justfile` and `Makefile` task targets.
+**No secondary languages.** The project is pure Python (PEP 561 typed — `src/datasluice/py.typed` committed).
 
 ## Runtime
 
 **Environment:**
-- CPython 3.12–3.14. No pinned interpreter file (`.python-version` / `.tool-versions` not present); the version is selected per-command via `uv run --python=3.1x` (see `justfile`, `Makefile`).
+- Python >= 3.12 (CI matrix: `["3.12", "3.13", "3.14"]` in `.github/workflows/ci.yml:61`)
 
 **Package Manager:**
-- `uv` (Astral) — the only sanctioned installer. Never call `pip` directly (per `AGENTS.md`).
-- Lockfile: `uv.lock` present and committed (~583 KB).
-- `--all-extras` is required for type checking and pre-commit so `ty` can resolve lazy optional imports (`pandas`, `polars`, `dlt`, `duckdb`, `pyarrow`, `openpyxl`, `airflow`).
+- `uv` (Astral) — the only supported package manager; never `pip` directly (per `AGENTS.md`)
+- Lockfile: `uv.lock` (present, committed)
+- Default groups: `["dev"]` (`pyproject.toml:132`), so `uv sync` installs lint + test + typecheck + pre-commit
+
+## Build System
+
+**Backend:**
+- Hatchling (`build-system.requires = ["hatchling"]`, `build-backend = "hatchling.build"` — `pyproject.toml:1-3`)
+
+**Build commands:**
+- `uv build` — builds wheel + sdist into `dist/`
+- `uvx twine check dist/*` — validates distribution (CI `.github/workflows/ci.yml:128`)
+- Justfile/Makefile `build` target: `rm -rf build dist && uv build`
 
 ## Frameworks
 
-**Core:**
-- `typer` (CLI framework) — drives the `datasluice` command (`src/datasluice/cli/app.py`). Commands registered via `app.command(name=...)`.
-- `rich` — console rendering (`src/datasluice/cli/app.py` uses `rich.console.Console`).
-- Python standard library — the default HTTP transport is built on `urllib.request` / `urllib.parse` (`src/datasluice/transport/http_client.py`) and the content cache uses `sqlite3` in WAL mode (`src/datasluice/io/content_cache.py`).
+**Core (required dependencies):**
+- Typer `0.26.7` — CLI application framework (`pyproject.toml:23`). Entry point `datasluice = "datasluice.cli.app:app"` (`pyproject.toml:82`)
+- Rich `15.0.0` — terminal pretty-printing (`pyproject.toml:24`, used in `src/datasluice/cli/app.py:6`)
 
-**Testing:**
-- `pytest` — runner. Config in `pyproject.toml` `[tool.pytest.ini_options]` (`testpaths = ["tests"]`, `pythonpath = ["src", "."]`).
-- `coverage` — branch + parallel coverage. Config in `pyproject.toml` `[tool.coverage.*]`; threshold `fail_under = 50`.
+**Standard Library (default transport — zero-config):**
+- `urllib.request` / `urllib.error` — default HTTP backend; `src/datasluice/transport/http_client.py` wraps urllib directly. No third-party dep required for basic operation.
 
-**Type Checking:**
-- `ty` (Astral) — the sole type checker, replacing mypy. Run as `uv run --all-extras ty check .` Config in `pyproject.toml` `[tool.ty]` (all rules error by default).
+**Documentation:**
+- Zensical `0.0.45` — MkDocs Material wrapper (config: `zensical.toml`, NOT `mkdocs.yml`)
+- mkdocstrings-python `2.0.5` — auto-generated API reference (`docs/api.md` uses `::: datasluice`)
 
-**Linting / Formatting:**
-- `ruff` — formatter + linter. Config in `pyproject.toml` `[tool.ruff]` / `[tool.ruff.lint]` (`line-length = 120`; selects `E, W, F, I, B, UP`). Pinned to `v0.13.2` in `.pre-commit-config.yaml`.
-
-**Build / Dev:**
-- `hatchling` — PEP 517 build backend (`pyproject.toml` `[build-system]`).
-- `pre-commit` — git hooks (`.pre-commit-config.yaml`). Includes local hooks that invoke `ty` and `pytest` via `uv run`.
-- `just` — task runner (`justfile`); `make` as zero-dependency fallback (`Makefile`). Both expose identical `qa` → format, lint, typecheck, test.
-- `zensical` + `mkdocstrings-python` — documentation build (MkDocs Material wrapper). Config in `zensical.toml` (NOT `mkdocs.yml`).
+**Build/Dev:**
+- uv — dependency management, venv, running tools
+- just (Justfile) / make (Makefile) — task runners with identical targets
+- pre-commit `4.6.0` — git hooks (`.pre-commit-config.yaml`)
 
 ## Key Dependencies
 
-**Critical (installed by default):**
-- `typer` — CLI entry surface (`src/datasluice/cli/`).
-- `rich` — terminal output.
+**Required (`project.dependencies`):**
+| Package | Lockfile Version | Why it matters |
+|---------|-----------------|----------------|
+| `typer` | 0.26.7 | CLI framework, the user-facing entry point |
+| `rich` | 15.0.0 | Console output rendering |
 
-**Optional extras (declared in `pyproject.toml` `[project.optional-dependencies]`):**
-- `http` → `httpx>=0.27` — preferred HTTP transport; auto-selected when importable (`src/datasluice/runtime/defaults.py`).
-- `storage` → `fsspec>=2025.1` — multi-backend filesystem (S3 / GCS / Azure / HTTP / memory / local).
-- `pandas`, `polars` — DataFrame integration (`src/datasluice/integrations/pandas.py`, `polars.py`).
-- `dlt` — data-load-tool source (`src/datasluice/integrations/dlt.py`).
-- `duckdb` — in-process SQL over remote resources (`src/datasluice/integrations/duckdb.py`).
-- `apache-airflow` — `DataSluiceOperator` (`src/datasluice/integrations/airflow.py`).
-- `parquet` → `pyarrow` — Parquet reader (`src/datasluice/formats/parquet.py`).
-- `xlsx` → `openpyxl` — XLSX reader (`src/datasluice/formats/xlsx.py`).
-- `all` — convenience metagroup installing every extra above.
+The runtime dependency surface is intentionally minimal (2 packages). Everything else is optional, lazy-imported extras.
 
-**Lazy-import discipline:** every optional heavy dependency is imported *inside* the function/method that needs it (never at module top level), so a bare `pip install datasluice` stays importable. See `src/datasluice/formats/parquet.py`, `src/datasluice/integrations/duckdb.py`, `src/datasluice/transport/httpx_transport.py`, `src/datasluice/io/filesystem.py`. Preserve this when adding new optional deps.
+**Optional Dependencies (`[project.optional-dependencies]`, `pyproject.toml:50-73`):**
 
-**Standard-library usage worth noting:**
-- `urllib.request` / `urllib.parse` — default transport backend.
-- `sqlite3` (WAL mode) — content cache metadata index (`src/datasluice/io/content_cache.py`).
-- `importlib.metadata` entry_points — connector plugin discovery (`src/datasluice/runtime/plugin_manager.py`).
-- `importlib.util.find_spec` — httpx availability probe without eager import (`src/datasluice/runtime/defaults.py`).
-- `threading.Lock` — per-host single-flight credential refresh (`src/datasluice/credentials/host_provider.py`).
-- `hashlib` — SHA-256 cache keys and download checksums.
+Each extra is a feature gate that unlocks a lazy-imported integration. Install with `pip install datasluice[<extra>]` or `uv sync --extra <extra>` / `--all-extras`:
+
+| Extra | Package | Lockfile Version | Purpose / Location |
+|-------|---------|-----------------|---------------------|
+| `http` | `httpx` | 0.28.1 | Preferred HTTP transport (`>=0.27`) — `src/datasluice/transport/httpx_transport.py` |
+| `storage` | `fsspec` | 2026.6.0 | Cloud/local filesystem abstraction (`>=2025.1`) — `src/datasluice/io/filesystem.py`, `src/datasluice/io/fsspec_storage.py` |
+| `parquet` | `pyarrow` | 24.0.0 | Parquet read/write, Arrow substrate — `src/datasluice/data/readers/parquet.py`, `src/datasluice/integrations/arrow.py` |
+| `streaming` | `pyarrow` | 24.0.0 | Same as parquet (BatchStream materialization) |
+| `xlsx` | `openpyxl` | 3.1.5 | Excel (.xlsx) reader — `src/datasluice/data/readers/xlsx.py` |
+| `compression` | `zstandard` | 0.25.0 | Zstd decompression (`>=0.23`) — `src/datasluice/data/compression.py` |
+| `pandas` | `pandas` | 3.0.3 | DataFrame terminal via Arrow zero-copy — `src/datasluice/integrations/pandas.py` |
+| `polars` | `polars` | 1.41.2 | Polars DataFrame terminal — `src/datasluice/integrations/polars.py` |
+| `duckdb` | `duckdb` | 1.5.4 | SQL relation registration — `src/datasluice/integrations/duckdb.py` |
+| `dlt` | `dlt` | 1.28.1 | data load tool source adapter — `src/datasluice/integrations/dlt.py` |
+| `airflow` | `apache-airflow` | 3.2.2 | Airflow operator factory — `src/datasluice/integrations/airflow.py` |
+| `all` | (aggregate) | — | Installs everything except polars/pandas/dlt/duckdb/airflow-less combos; see `pyproject.toml:62-73` |
+
+**Lazy import discipline (critical convention):** All optional deps are imported *inside function bodies*, never at module top-level. This keeps `import datasluice` working on a bare install with only typer + rich. See `src/datasluice/integrations/arrow.py:30`, `src/datasluice/transport/httpx_transport.py:124`, `src/datasluice/io/filesystem.py:48`. Each missing dep raises a helpful `ImportError` naming the extra to install.
+
+## Dev Dependencies
+
+**Dependency groups (`[dependency-groups]`, `pyproject.toml:28-48`):**
+
+| Group | Packages | Purpose |
+|-------|----------|---------|
+| `lint` | `ruff` (0.15.18) | Format + lint |
+| `test` | `pytest` (9.1.1), `coverage` (7.14.2) | Test runner + coverage |
+| `typecheck` | `ty` (0.0.51) | Astral type checker |
+| `docs` | `zensical` (0.0.45), `mkdocstrings-python` (2.0.5) | Documentation build |
+| `dev` | aggregates lint + test + typecheck + `pre-commit` (4.6.0) | Default group |
 
 ## Configuration
 
 **Environment:**
-- No env-var settings system. The legacy `Settings` dataclass was removed (D-14, CORR-04). All configuration flows through explicit `DataSluiceSession(...)` kwargs (`src/datasluice/runtime/session.py`).
-- `.env.example` is present — contains environment variable templates for the CI/external-LLM secrets (existence noted; contents not read).
-- Default runtime constants live in `src/datasluice/config/defaults.py`: `DEFAULT_TIMEOUT=30.0`, `DEFAULT_RETRIES=3`, `DEFAULT_RATE_LIMIT=10.0`, `DEFAULT_PAGE_SIZE=100`, `DEFAULT_CACHE_DIR=".datasluice/cache"`, `DEFAULT_CACHE_TTL=3600`, `DEFAULT_LOG_LEVEL="INFO"`.
-- `DATASLUICE_NO_REDACT=1` env var disables log redaction (`src/datasluice/logging.py`).
+- No runtime env-var settings system. The `Settings` env-var dataclass was deliberately removed (D-14, CORR-04) — all configuration is explicit kwargs on `DataSluiceSession` (`src/datasluice/runtime/session.py:105`).
+- `.env.example` exists documenting *optional* tuning vars (`DATASLUICE_HTTP_TIMEOUT`, `DATASLUICE_HTTP_RETRIES`, `DATASLUICE_API_KEY`, `DATASLUICE_CACHE_DIR`, `DATASLUICE_LOG_LEVEL`, `DATASLUICE_USER_AGENT`), but these are reference/documentation — the code itself does not read a `.env` file.
+- `DATASLUICE_NO_REDACT=1` — escape hatch to disable log redaction (`src/datasluice/logging.py:57`).
+- Default constants in `src/datasluice/config/defaults.py`: timeout `30.0s`, retries `3`, rate limit `10.0` req/s, page size `100`, cache dir `.datasluice/cache`, cache TTL `3600s`, log level `INFO`.
 
-**Build / Tool config files:**
-- `pyproject.toml` — single source of truth: project metadata, deps, ruff, ty, pytest, coverage config.
-- `uv.lock` — locked dependency resolution.
-- `.pre-commit-config.yaml` — hook definitions (pre-commit-hooks v5.0.0, ruff-pre-commit v0.13.2, local `ty` + `pytest` hooks).
-- `release-please-config.json` + `.release-please-manifest.json` — automated release configuration.
-- `zensical.toml` — documentation site config (MkDocs Material).
-- `.editorconfig` — line-ending (LF), indent (4 spaces Python / 2 for YAML/JSON), charset (UTF-8).
-- `CNAME` — GitHub Pages custom domain pointer.
+**Linting (`[tool.ruff]`, `pyproject.toml:94-105`):**
+- Line length: 120
+- Selected rule sets: `E` (pycodestyle errors), `W` (pycodestyle warnings), `F` (Pyflakes), `I` (isort), `B` (flake8-bugbear), `UP` (pyupgrade)
+- Pre-commit hook: `ruff --fix` + `ruff-format` (`.pre-commit-config.yaml:17-23`, ruff-pre-commit rev `v0.13.2`)
 
-**Versioning:**
-- Single source of truth: `version = "0.1.0"` in `pyproject.toml`.
-- Bumped automatically by **Release Please** (Conventional Commits).
-- Exposed at runtime via `importlib.metadata` in `src/datasluice/_version.py` — a separate module (kept out of `__init__.py`) to break a circular import with `src/datasluice/transport/user_agent.py`. Do NOT inline it.
+**Type Checking (`[tool.ty]`, `pyproject.toml:89-92`):**
+- `ty` (Astral) — all rules enabled as "error" by default
+- **Must run with `--all-extras`**: `uv run --all-extras ty check .` so `ty` can resolve lazy imports of optional deps. Without it → `unresolved-import` errors.
+- CI type-check job: `.github/workflows/ci.yml:53`
+
+**Testing (`[tool.pytest.ini_options]`, `pyproject.toml:127-129`):**
+- `testpaths = ["tests"]`
+- `pythonpath = ["src", "."]`
+
+**Coverage (`[tool.coverage]`, `pyproject.toml:107-125`):**
+- Branch coverage enabled (`branch = true`), parallel mode (`parallel = true`)
+- Source: `src/`, `tests/`
+- Threshold: `fail_under = 50`
+- Excludes: `TYPE_CHECKING` blocks, `@overload`, `Protocol` classes, `@abstractmethod`, `NotImplementedError`, `...`
+- `show_missing = true`, `skip_covered = true`
+
+**Pre-commit (`.pre-commit-config.yaml`):**
+- pre-commit-hooks v5.0.0 (trailing-whitespace, end-of-file-fixer, check-yaml/toml, large-files 2048kb, merge-conflict, case-conflict, debug-statements, mixed-line-ending=lf, check-ast, check-docstring-first)
+- ruff-pre-commit v0.13.2 (ruff --fix, ruff-format)
+- **Local hooks** (run via `uv run`, not bare): `ty check .` and `pytest -q`
+- Local hooks MUST be invoked as `uv run pre-commit` (per `AGENTS.md`)
+
+**Editor config (`.editorconfig`):**
+- Python: UTF-8, LF, 4-space indent, trim trailing whitespace, final newline
+- HTML/CSS/JS/JSON/YAML: 2-space indent
+
+**Docs (`zensical.toml`):**
+- Site: DataSluice, URL `https://nitish-raj.github.io/datasluice/`
+- mkdocstrings python handler paths: `["src"]`
+- Light/dark palette toggle
+
+## CI/CD & Release
+
+**CI Pipeline (`.github/workflows/ci.yml`):**
+6 jobs gated by an `all-checks-pass` aggregate:
+1. **lint** — `ruff format --check` + `ruff check`
+2. **type-check** — `uv run --all-extras ty check .`
+3. **test** — `coverage run -m pytest` on Python 3.12/3.13/3.14 matrix
+4. **coverage** — combines results, publishes report to `$GITHUB_STEP_SUMMARY`
+5. **build** — `uv build` + `twine check` + upload dist artifact
+6. **smoke-test** — installs built wheel in fresh venv, imports `datasluice`, prints `__version__`
+
+**Security workflows:**
+- `.github/workflows/codeql.yml` — CodeQL analysis (Python `security-extended` + GitHub Actions)
+- `.github/workflows/zizmor.yml` — workflow security analysis (zizmor on `.github/`)
+
+**Release (Release Please — automated, no manual tagging):**
+- Config: `release-please-config.json`, manifest: `.release-please-manifest.json` (current `0.1.0`)
+- Release type: `python`, conventional commits required (`feat:`, `fix:`, etc.)
+- Bumps `version` in `pyproject.toml` + updates `CHANGELOG.md` via a release PR
+- Workflow: `.github/workflows/release-please.yml`
+- Version exposed at runtime via `importlib.metadata` in `src/datasluice/_version.py` (single source of truth = pyproject; no second copy to sync). `_version.py` is a separate module to break a circular import with `transport/user_agent.py`.
+
+**Publishing (`.github/workflows/publish.yml`):**
+Triggered on `release: published`:
+1. Build + validate + attest build provenance + upload artifact
+2. Publish to **TestPyPI** (env `test-pypi`, secret `TEST_PYPI_API_KEY`)
+3. Publish to **PyPI** (env `pypi`, secret `PYPI_API_KEY`) — waits for TestPyPI + manual approval
+
+**Docs deployment (`.github/workflows/docs.yml`):**
+- On push to `main`: `zensical build --clean` → deploy to GitHub Pages
+
+**Dependabot (`.github/dependabot.yml`):**
+- GitHub Actions (weekly) + pip (weekly), 7-day cooldown, max 5 open PRs, minor/patch grouped
 
 ## Platform Requirements
 
 **Development:**
-- Python 3.12, 3.13, or 3.14.
-- `uv` installed; run `uv sync --all-extras` to populate the venv.
-- `just` (Rust binary) recommended for task running; install into the venv per `AGENTS.md` or fall back to `make`.
-- OS: Linux/macOS for CI (`ubuntu-latest`); local dev assumed POSIX (content cache relies on POSIX-atomic `mv`).
+- Python 3.12, 3.13, or 3.14
+- `uv` installed
+- `just` (optional, Rust binary) or `make` as fallback — both provide identical targets
+- `--all-extras` required for type checking and full local dev: `uv sync --all-extras`
 
 **Production:**
-- Published as a library + CLI to [PyPI](https://pypi.org/project/datasluice/) (and [TestPyPI](https://test.pypi.org/project/datasluice/)).
-- Pure-Python wheel; no compiled extensions. Runs anywhere CPython 3.12+ runs.
-- Docs hosted on GitHub Pages at `https://nitish-raj.github.io/datasluice/` (`CNAME`, `.github/workflows/docs.yml`).
-
-## CI / Release Pipeline
-
-| Pipeline | File | Purpose |
-|----------|------|---------|
-| CI | `.github/workflows/ci.yml` | lint → type-check → test matrix (3.12/3.13/3.14) → coverage → build → smoke-test (install wheel, `import datasluice`) → all-checks-pass gate |
-| Docs | `.github/workflows/docs.yml` | build zensical docs → deploy to GitHub Pages on push to `main` |
-| Release Please | `.github/workflows/release-please.yml` | maintains release PR, bumps version + changelog, tags releases |
-| Publish | `.github/workflows/publish.yml` | on GitHub Release: build → attest provenance → TestPyPI → (await approval) → PyPI |
-| CodeQL | `.github/workflows/codeql.yml` | GitHub code scanning for `python` + `actions` (weekly + on PR) |
-| Zizmor | `.github/workflows/zizmor.yml` | workflow security analysis on `.github/workflows/**` |
-| PR-Agent | `.github/workflows/pr-agent.yml` | auto-generated PR descriptions via external LLM |
-| OpenCodeReview | `.github/workflows/ocr-review.yml` | AI code review on PRs via external LLM |
+- Distributed via **PyPI** (`datasluice` package). Consumers install `pip install datasluice[<extras>]`.
+- Zero-dependency runtime beyond typer+rich for bare operation (urllib-based transport, no cloud, no data libs).
+- Linux/macOS/Windows; CI runs `ubuntu-latest`. EditorConfig sets LF line endings (CRLF only for `*.bat`).
 
 ---
 
-*Stack analysis: 2026-07-26*
+*Stack analysis: 2026-07-30*

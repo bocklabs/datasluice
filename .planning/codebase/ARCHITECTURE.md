@@ -1,294 +1,560 @@
-<!-- refreshed: 2026-07-26 -->
+<!-- refreshed: 2026-07-30 -->
 # Architecture
 
-**Analysis Date:** 2026-07-26
+**Analysis Date:** 2026-07-30
 
 ## System Overview
 
-DataSluice is a Python library **and** CLI providing one unified interface for
-open-data portal discovery, extraction, format normalization, and pipeline
-integration (pandas / dlt / duckdb / airflow). The design follows a
-**hexagonal (ports-and-adapters) architecture** with an explicit dependency-injection
-composition root.
+DataSluice is a Python library + Typer CLI for discovering, reading, normalizing,
+and synchronizing open-data from heterogeneous portal platforms (CKAN, data.gouv,
+Socrata). The architecture is a **ports-and-adapters (hexagonal) design** with a
+strict lazy-import discipline so that `import datasluice` succeeds on a bare
+install (only `typer` + `rich` are hard dependencies). Every optional dependency
+(httpx, pyarrow, pandas, polars, dlt, duckdb, fsspec, openpyxl, zstandard,
+apache-airflow) is imported lazily inside function bodies or resolved via PEP 562
+`__getattr__` module-level hooks.
 
 ```text
-┌─────────────────────────────────────────────────────────────────────┐
-│                          Entry Surfaces                              │
-├──────────────────────────────────┬──────────────────────────────────┤
-│   CLI (Typer)                    │   Python API (library import)    │
-│   `src/datasluice/cli/app.py`    │   `from datasluice import ...`   │
-│   commands: search/inspect/      │                                  │
-│   download/detect                │                                  │
-└───────────────┬──────────────────┴──────────────┬───────────────────┘
-                │                                 │
-                ▼                                 ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│              Composition Root / Facade (ARCH-03)                     │
-│   `src/datasluice/runtime/session.py`  →  DataSluiceSession          │
-│   wires: PluginManager + create_default_transport() + auth + cache   │
-└───────┬───────────────────┬──────────────────────┬──────────────────┘
-        │                   │                      │
-        ▼                   ▼                      ▼
-┌──────────────────┐ ┌──────────────────┐ ┌──────────────────────────┐
-│ Plugin Discovery │ │  Discovery       │ │  Transport (infra port)  │
-│ runtime/         │ │  detect_portal_  │ │  transport/http_client   │
-│ plugin_manager   │ │  type()          │ │  transport/httpx_transport│
-│ (entry points)   │ │  discovery/      │ │  + retry + rate-limit    │
-└────────┬─────────┘ └──────────────────┘ └────────────┬─────────────┘
-         │                                              │
-         ▼                                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                  Connectors / Adapters (CatalogPort impls)           │
-│   base.py: BaseAdapter (ABC)   ←  ckan/  socrata/  datagouv/  custom│
-│   each subpackage: adapter.py, mapper.py, pagination.py, factory.py │
-└───────────────────────────┬─────────────────────────────────────────┘
-                            │ produce / consume
-                            ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│        Domain Models (portal-agnostic, frozen dataclasses)           │
-│   `src/datasluice/domain/`  Dataset, Resource, Organization,         │
-│   Query, SearchResult, License, Schema, Artifact, DetectionResult... │
-└─────────────────────────────────────────────────────────────────────┘
-                            ▲ consumed by
-┌───────────────────────────┴─────────────────────────────────────────┐
-│   IO / Formats / Integrations (lazy optional deps)                   │
-│   io/downloader  io/storage  io/cache   formats/*  integrations/*    │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          ENTRY POINTS                                 │
+│   CLI (Typer)              Programmatic API                           │
+│  `src/datasluice/cli/`     `datasluice.DataSluiceSession`             │
+│  app.py / search /         (public re-export of                       │
+│  inspect / download /      `runtime.session.DataSluiceSession`)       │
+│  detect                                                                │
+└───────────────┬──────────────────────┬────────────────────────────────┘
+                │                      │
+                ▼                      ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                  COMPOSITION ROOT (runtime/)                          │
+│  `runtime/session.py:DataSluiceSession`  — public facade             │
+│  `runtime/plugin_manager.py:PluginManager` — entry-point discovery   │
+│  `runtime/context.py:ConnectorContext`    — DI carrier               │
+│  `runtime/defaults.py:create_default_transport` — transport factory   │
+└──────┬───────────────────────────────────┬───────────────────────────┘
+       │                                   │
+       ▼                                   ▼
+┌─────────────────────────────┐  ┌─────────────────────────────────────┐
+│   PORTS (boundary Protocols) │  │   CONNECTORS (portal adapters)       │
+│  `src/datasluice/ports/`     │  │  `src/datasluice/connectors/`        │
+│  Transport, StreamingTrans,  │  │  ckan/  datagouv/  socrata/          │
+│  ConditionalTransport,       │  │  base.py:BaseAdapter (ABC)           │
+│  CatalogPort, Searchable-    │  │  _reject.py (pre-flight Query gate)  │
+│  Catalog, OrganizationCat,   │  │  Each adapter: adapter.py,           │
+│  ResourceReader, StateStore, │  │    mapper.py, pagination.py,         │
+│  StoragePort, CachePort,     │  │    errors.py, factory.py             │
+│  CredentialProvider,         │  │  (factories registered as             │
+│  PortalDetector              │  │   `datasluice.connectors` entry pts) │
+└─────────────────────────────┘  └─────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                        INFRASTRUCTURE LAYER                           │
+│  `transport/`  HttpClient (urllib) + HttpxTransport (httpx, default)  │
+│                retry.py, rate_limit.py, redirect.py, user_agent.py    │
+│                httpx_transport.py: StreamResponse + conditional_fetch  │
+│  `auth/`       BaseAuth ABC + NoAuth/APIKey/Bearer/Basic/Headers      │
+│  `credentials/`HostCredentialProvider (single-flight refresh)         │
+│  `discovery/`  detect() + fingerprints.py (PATH/HTML probes)          │
+│  `io/`         downloader, FileCache, ContentCache (SQLite WAL),      │
+│                filesystem.open_filesystem, LocalStorage/FsspecStorage │
+└──────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                        DATA PLANE (Arrow)                             │
+│  `data/`       BatchStream (ctx-mgr RecordBatch stream), access.py    │
+│                DataPlaneResourceReader (access-kind dispatch),        │
+│                compression.py (GZIP/BZIP2/ZSTD/ZIP),                  │
+│                _byte_source.py:IterableBytesIO,                       │
+│                readers/: CSV/JSON/Parquet/GeoJSON/XLSX                │
+│  `transforms/` TransformStep Protocol + Pipeline + compose()          │
+│                steps: SelectColumns, RenameColumns, CastSchema,       │
+│                NormalizeTimestamps, Filter, Flatten                   │
+└──────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│            SYNC + TERMINAL INTEGRATIONS                               │
+│  `sync/`       sync_resources, materialize/materialize_checkpointed,  │
+│                state_store.py:FileStateStore/InMemoryStateStore,      │
+│                _hashing.logical_sha256                                │
+│  `integrations/` to_arrow (substrate), to_pandas, to_polars,          │
+│                  to_duckdb, dlt.datasluice_source, airflow.Operator   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Component Responsibilities
 
 | Component | Responsibility | File |
 |-----------|----------------|------|
-| `DataSluiceSession` | Public facade & composition root — resolves portals, injects infra | `src/datasluice/runtime/session.py` |
+| `DataSluiceSession` | Public facade + composition root; wires plugins/transport/auth/state/cache | `src/datasluice/runtime/session.py` |
 | `PluginManager` | Entry-point-based connector discovery (no module singleton) | `src/datasluice/runtime/plugin_manager.py` |
-| `ConnectorContext` | Frozen DI carrier passed to every connector factory | `src/datasluice/runtime/context.py` |
-| `create_default_transport` | Picks httpx when importable, else urllib `HttpClient` | `src/datasluice/runtime/defaults.py` |
-| `BaseAdapter` | ABC every portal adapter implements (`search`/`get_dataset`/...) | `src/datasluice/connectors/base.py` |
-| `BaseAuth` | ABC for pluggable request auth strategies | `src/datasluice/auth/base.py` |
-| `Transport` / `StreamingTransport` | Runtime-checkable Protocol ports for HTTP execution | `src/datasluice/ports/transport.py` |
-| `CatalogPort` family | Capability Protocols (`SearchableCatalog`, `OrganizationCatalog`) | `src/datasluice/ports/catalog.py` |
-| `detect_portal_type` | Probes well-known endpoints to fingerprint a portal | `src/datasluice/discovery/detector.py` |
-| Domain models | Portal-agnostic record types exchanged across layers | `src/datasluice/domain/*.py` |
+| `ConnectorContext` | Frozen DI carrier (base_url, transport, auth, page_size) passed to factories | `src/datasluice/runtime/context.py` |
+| `create_default_transport` | Picks `HttpxTransport` when importable, else urllib `HttpClient` | `src/datasluice/runtime/defaults.py` |
+| Domain models | Portal-agnostic frozen dataclasses (Dataset, Resource, Query, etc.) | `src/datasluice/domain/*.py` |
+| Ports | `runtime_checkable` Protocol boundary contracts | `src/datasluice/ports/*.py` |
+| `BaseAdapter` | ABC every connector implements (search/get_dataset/list_resources) | `src/datasluice/connectors/base.py` |
+| Per-portal adapter | Translate portal-native JSON → domain models | `src/datasluice/connectors/<portal>/adapter.py` |
+| Per-portal mapper | Pure JSON→dataclass mapping functions | `src/datasluice/connectors/<portal>/mapper.py` |
+| Per-portal factory | Entry-point target; `create_*_connector(ctx) -> Adapter` | `src/datasluice/connectors/<portal>/factory.py` |
+| `_reject_unsupported_fields` | Pre-flight `Query` field validation gate (runs before transport) | `src/datasluice/connectors/_reject.py` |
+| `detect` | Probe portal endpoints → `DetectionResult` with evidence trail | `src/datasluice/discovery/detector.py` |
+| `HttpClient` / `HttpxTransport` | Concrete `Transport` impls (urllib fallback / httpx default) | `src/datasluice/transport/{http_client,httpx_transport}.py` |
+| `DataPlaneResourceReader` | Open a `Resource` as a `BatchStream` (access-kind dispatch) | `src/datasluice/data/access.py` |
+| `BatchStream` | Context-managed Arrow `RecordBatch` stream + `__arrow_c_stream__` | `src/datasluice/data/batch_stream.py` |
+| Format readers | Decode bytes → `Iterator[RecordBatch]` (CSV/JSON/Parquet/etc.) | `src/datasluice/data/readers/*.py` |
+| `apply_compression` | Magic-byte peek + transparent decompression decorator | `src/datasluice/data/compression.py` |
+| `Pipeline` / `compose` | Thread `TransformStep`s over a `BatchStream` → new `BatchStream` | `src/datasluice/transforms/pipeline.py` |
+| `sync_resources` | Checkpointed incremental sync (ETag/Last-Modified + Parquet row-group) | `src/datasluice/sync/sync.py` |
+| `materialize` | Idempotent write of resource → fsspec destination (parquet/raw) | `src/datasluice/sync/materialize.py` |
+| `FileStateStore` / `InMemoryStateStore` | Durable / ephemeral `StateStore` implementations | `src/datasluice/sync/state_store.py` |
+| Terminal integrations | `to_arrow`/`to_pandas`/`to_polars`/`to_duckdb`/dlt/airflow | `src/datasluice/integrations/*.py` |
 
 ## Pattern Overview
 
-**Overall:** Hexagonal architecture (ports & adapters) with dependency injection.
+**Overall:** Ports-and-adapters (hexagonal) with capability-probe `Protocol`s,
+plugin discovery via `importlib.metadata` entry points, and a single composition
+root (`DataSluiceSession`). Inside the hexagon, the data plane is a lazy Arrow
+pipeline (acquire bytes → decompress → decode → transform → materialize/expose).
 
 **Key Characteristics:**
-- **Ports** are `typing.Protocol` classes decorated `@runtime_checkable` (structural typing, `isinstance`-capable) — see `src/datasluice/ports/`.
-- **Adapters** are concrete implementations: `connectors/` implement `CatalogPort`, `transport/` implements `Transport`, `io/` implements `StoragePort`.
-- **Entry-point plugin discovery** replaces side-effect registration: built-in + third-party connectors declare themselves under the `datasluice.connectors` entry-points group in `pyproject.toml` (`[project.entry-points."datasluice.connectors"]`). Loaded eagerly by `PluginManager.__init__`, failures isolated as `PluginFailure`.
-- **Lazy imports everywhere** for optional/heavy deps so bare installs (`pip install datasluice`) work with zero optional deps — only `typer` and `rich` are hard deps.
-- **Composition root is explicit** (`DataSluiceSession.__init__`); no env-var-driven `Settings` singleton (deliberately removed — enforced by `tests/unit/test_no_dead_settings.py`).
-- **Frozen dataclass domain models** (`@dataclass(frozen=True)`) for value semantics and hashability.
+- **Boundary Protocols over classes.** `src/datasluice/ports/*.py` defines
+  `@runtime_checkable Protocol`s. Adapters satisfy them *structurally*; callers
+  probe capabilities with `isinstance(x, StreamingTransport)` rather than
+  backend-specific types.
+- **Entry-point plugin discovery, no module singleton.** `PluginManager` loads
+  factories from the `datasluice.connectors` entry-points group in
+  `pyproject.toml`; a broken third-party plugin is recorded as a
+  `PluginFailure` and never crashes session creation.
+- **Lazy imports everywhere.** Heavy optional deps (pyarrow, httpx, pandas,
+  dlt, duckdb, fsspec, openpyxl, zstandard) are imported inside function
+  bodies. Package `__init__.py` files for `data/`, `transforms/`, `sync/`,
+  `io/`, `transport/` use PEP 562 `__getattr__` so attribute access is the
+  import trigger.
+- **Frozen dataclasses for value objects.** Every domain model is
+  `@dataclass(frozen=True)`. Mutable state lives only in the session, stores,
+  and transport client.
+- **Pre-flight reject gates.** Catalog adapters call `_reject_unsupported_fields`
+  at the top of `search()` so an unsupported `Query` filter raises
+  `UnsupportedQueryFieldError` *before* any transport call.
+- **Single-substrate terminals.** `to_pandas`/`to_polars`/`to_duckdb` all
+  delegate through `to_arrow` for consistency.
 
 ## Layers
 
-**CLI Layer:**
-- Purpose: Thin Typer command handlers; render domain models with `rich`.
-- Location: `src/datasluice/cli/`
-- Contains: One module per command (`app.py`, `search.py`, `inspect.py`, `download.py`, `detect.py`).
-- Depends on: `DataSluiceSession` (lazy-imported inside each command body), `rich`, `typer`.
-- Used by: The `datasluice` console script (`[project.scripts] datasluice = "datasluice.cli.app:app"`).
-
-**Composition Root / Runtime:**
-- Purpose: Wire plugins, transport, auth, cache, storage into a zero-config session.
-- Location: `src/datasluice/runtime/`
-- Contains: `session.py`, `plugin_manager.py`, `context.py`, `defaults.py`.
-- Depends on: `ports/`, `transport/`, `auth/`, `discovery/`, `config/`.
-- Used by: CLI commands and library users (`from datasluice import DataSluiceSession`).
-
-**Ports (Boundary Contracts):**
-- Purpose: Unstable-but-narrow Protocol interfaces defining what adapters must satisfy.
-- Location: `src/datasluice/ports/`
-- Contains: `transport.py` (`Transport`, `StreamingTransport`), `catalog.py` (`CatalogPort`/`SearchableCatalog`/`OrganizationCatalog`), `storage.py` (`StoragePort`), `cache.py` (`CachePort`), `credentials.py` (`CredentialProvider`), `detector.py` (`PortalDetector`), `resource_reader.py` (`ResourceReader`), `state_store.py` (`StateStore`).
-- Depends on: `domain/` (only under `TYPE_CHECKING`).
-- Used by: `runtime/`, `transport/`, `io/`, `connectors/`.
-
-**Connectors (Adapters):**
-- Purpose: Translate one portal platform's API into `datasluice.domain` models.
-- Location: `src/datasluice/connectors/<portal>/`
-- Contains per subpackage: `adapter.py` (the `BaseAdapter` subclass), `mapper.py` (portal JSON → domain), `pagination.py` (portal-specific paging), `factory.py` (entry-point target `create_*_connector(ctx)`), `errors.py`, `__init__.py`.
-- Depends on: `connectors/base.py`, `domain/`, `transport/` (via injected `Transport`), `auth/`.
-- Used by: `PluginManager` resolves the factory; `DataSluiceSession.portal()` invokes it.
-
-**Domain:**
-- Purpose: Portal-agnostic data model — the lingua franca every layer speaks.
-- Location: `src/datasluice/domain/`
-- Contains: `dataset.py`, `resource.py`, `organization.py`, `query.py`, `result.py`, `license.py`, `schema.py`, `artifact.py`, `access.py`, `capabilities.py`, `credentials.py`, `detection.py`, `sync_state.py`.
-- Depends on: nothing (only stdlib + sibling domain modules under `TYPE_CHECKING`).
+**Domain Layer (`src/datasluice/domain/`):**
+- Purpose: Portal-agnostic, dependency-free value objects.
+- Location: `src/datasluice/domain/*.py`
+- Contains: Frozen dataclasses — `Dataset`, `Resource`, `Organization`,
+  `License`, `Query`, `SearchResult`, `Schema`, `SyncState`, `DetectionResult`,
+  `CatalogCapabilities`, `CredentialScope`, plus the `ResourceAccess` sum-type
+  family (`HttpDownload`, `ObjectStorage`, `QueryAccess`, `StreamAccess`,
+  `LocalFile`) in `src/datasluice/domain/access.py`.
+- Depends on: nothing (stdlib only).
 - Used by: every other layer.
 
-**Transport:**
-- Purpose: HTTP execution with retry, rate-limiting, redirect safety, optional streaming.
-- Location: `src/datasluice/transport/`
-- Contains: `http_client.py` (urllib, always available), `httpx_transport.py` (lazy, needs `http` extra), `retry.py`, `rate_limit.py`, `redirect.py`, `pagination.py`, `user_agent.py`.
-- Depends on: `auth/`, `config/defaults.py`, `exceptions.py`.
-- Used by: `runtime/defaults.py`, `connectors/base.py` (lazy fallback), `io/downloader.py`.
+**Ports Layer (`src/datasluice/ports/`):**
+- Purpose: `runtime_checkable Protocol` boundary contracts — the *only* types
+  crossing the hexagon boundary.
+- Location: `src/datasluice/ports/*.py`
+- Contains: `Transport`, `StreamingTransport`, `ConditionalTransport`,
+  `CatalogPort`, `SearchableCatalog`, `OrganizationCatalog`, `ResourceReader`,
+  `CheckpointableResourceReader`, `StateStore`, `StoragePort`, `CachePort`,
+  `CredentialProvider`, `PortalDetector`. Plus `ConditionalFetchResult`
+  (frozen dataclass).
+- Depends on: `domain/` (TYPE_CHECKING only).
+- Used by: `runtime/`, `connectors/`, `transport/`, `sync/`, `data/`.
 
-**Discovery:**
-- Purpose: Auto-detect which platform powers a portal URL.
-- Location: `src/datasluice/discovery/`
-- Contains: `detector.py` (`detect_portal_type`), `fingerprints.py` (`PATH_FINGERPRINTS`/`HTML_FINGERPRINTS`), `portal_metadata.py`.
-- Depends on: `transport/` (probes via a fresh `HttpClient`), `runtime/plugin_manager.py` (to check registered types).
-- Used by: `runtime/session.py`, `cli/detect.py`.
+**Runtime / Composition Root (`src/datasluice/runtime/`):**
+- Purpose: Wire injected infra into a zero-config facade.
+- Location: `src/datasluice/runtime/session.py` (and `context.py`,
+  `defaults.py`, `plugin_manager.py`).
+- Contains: `DataSluiceSession`, `ConnectorContext`, `PluginManager`,
+  `create_default_transport`.
+- Depends on: `ports/`, `auth/`, `config/`, `discovery/`, `sync/`.
+- Used by: `cli/`, public `datasluice.__init__`, `integrations/dlt.py`.
 
-**IO:**
-- Purpose: Download resources, cache bytes, verify checksums, abstract storage.
-- Location: `src/datasluice/io/`
-- Contains: `downloader.py` (`Downloader`), `storage.py` (`Storage` ABC + `LocalStorage`), `cache.py` (`FileCache`), `content_cache.py` (lazy, sqlite `ContentCache`), `fsspec_storage.py` (lazy, `FsspecStorage`), `filesystem.py` (lazy `open_filesystem`), `checksums.py`, `local.py`.
-- Depends on: `transport/`, `domain/resource.py`, `exceptions.py`.
-- Used by: `cli/download.py`, integrations.
+**Connectors Layer (`src/datasluice/connectors/`):**
+- Purpose: Translate one portal platform's API into domain models.
+- Location: `src/datasluice/connectors/<portal>/{adapter,mapper,pagination,errors,factory}.py`.
+- Contains: `BaseAdapter` ABC + 3 built-ins: `ckan`, `datagouv`, `socrata`.
+  Each adapter declares a `capabilities: ClassVar[CatalogCapabilities]`.
+- Depends on: `domain/`, `ports/`, `connectors/_reject.py`, `transport/` (lazy).
+- Used by: `PluginManager` resolves factories; `DataSluiceSession.portal()`.
 
-**Formats:**
-- Purpose: Normalize a file/bytes blob into `list[dict]` rows.
-- Location: `src/datasluice/formats/`
-- Contains: `base.py` (`BaseFormatReader` ABC), one reader per format (`csv.py`, `json.py`, `parquet.py` [pyarrow], `xlsx.py` [openpyxl], `geojson.py`), and `__init__.py` registry `READERS` + `get_reader()`.
-- Depends on: optional deps imported **inside** `read()` methods.
-- Used by: `integrations/`.
+**Transport Layer (`src/datasluice/transport/`):**
+- Purpose: HTTP execution satisfying the `Transport` / `StreamingTransport` /
+  `ConditionalTransport` Protocols.
+- Location: `src/datasluice/transport/http_client.py` (urllib, fallback),
+  `httpx_transport.py` (httpx, default), plus `retry.py`, `rate_limit.py`,
+  `redirect.py`, `user_agent.py`, `pagination.py`.
+- Contains: `HttpClient`, `HttpxTransport`, `StreamResponse`,
+  `RetryPolicy`/`with_retry`, `RateLimiter`, `CredentialAwareRedirectHandler`,
+  `build_user_agent`, `PaginationConfig`/`paginate`.
+- Depends on: `auth/`, `config/`, `exceptions.py`, `logging.py`.
+- Used by: `runtime/defaults.py`, `discovery/detector.py`, `data/access.py`,
+  `sync/sync.py`.
 
-**Integrations:**
-- Purpose: Bridge DataSluice into external ecosystems (pandas, polars, dlt, duckdb, airflow).
-- Location: `src/datasluice/integrations/`
-- Contains: `pandas.py`, `polars.py`, `dlt.py`, `duckdb.py`, `airflow.py`.
-- Depends on: `DataSluiceSession` (lazy), `domain/`, optional third-party libs imported inside functions.
-- Used by: end users opting into an extra.
+**Discovery Layer (`src/datasluice/discovery/`):**
+- Purpose: Auto-detect portal platform type by probing well-known endpoints.
+- Location: `src/datasluice/discovery/detector.py`, `fingerprints.py`,
+  `portal_metadata.py`.
+- Contains: `detect(url, transport, plugin_manager) -> DetectionResult`,
+  `PATH_FINGERPRINTS`, `HTML_FINGERPRINTS`, `PortalMetadata`.
+- Depends on: `ports/`, `runtime/plugin_manager.py`, `domain/detection.py`.
+- Used by: `runtime/session.py:DataSluiceSession.portal()`, `cli/detect.py`.
+
+**Data Plane (`src/datasluice/data/`):**
+- Purpose: Acquire bytes → decompress → decode → yield Arrow `RecordBatch`.
+- Location: `src/datasluice/data/access.py` (dispatch), `batch_stream.py`,
+  `compression.py`, `_byte_source.py`, `schema.py`, `readers/`.
+- Contains: `BatchStream`, `BatchCursor`, `ParquetRowGroupPosition`,
+  `DataPlaneResourceReader`, `IterableBytesIO`, `apply_compression`,
+  `PeekableReader`, and readers `CSVReader`/`JSONReader`/`ParquetReader`/
+  `GeoJSONReader`/`XLSXReader` + `get_reader` registry.
+- Depends on: `ports/`, `domain/`, `io/filesystem.py`, `exceptions.py` (lazy
+  pyarrow inside methods).
+- Used by: `sync/`, `integrations/`, `runtime/session.py:sync_resources`.
+
+**Transforms Layer (`src/datasluice/transforms/`):**
+- Purpose: Closed-set normalization pipeline over `RecordBatch` iterators.
+- Location: `src/datasluice/transforms/protocol.py`, `pipeline.py`, `steps.py`.
+- Contains: `TransformStep` Protocol, `TransformContext` (frozen),
+  `Pipeline`, `compose`, and steps `Filter`, `SelectColumns`, `RenameColumns`,
+  `CastSchema`, `NormalizeTimestamps`, `Flatten`.
+- Depends on: `data/batch_stream.py` (lazy pyarrow inside `apply`).
+- Used by: callers composing a normalization pipeline before terminal export.
+
+**Sync Layer (`src/datasluice/sync/`):**
+- Purpose: Incremental, checkpointed resource synchronization to fsspec URIs.
+- Location: `src/datasluice/sync/sync.py`, `materialize.py`, `state_store.py`,
+  `_hashing.py`.
+- Contains: `sync_resources`, `SyncOutcome`, `materialize`,
+  `materialize_checkpointed`, `FileStateStore`, `InMemoryStateStore`,
+  `logical_sha256`.
+- Depends on: `ports/`, `domain/`, `data/`, `io/filesystem.py`,
+  `integrations/arrow.py` (lazy pyarrow).
+- Used by: `runtime/session.py:sync_resources`, `integrations/dlt.py`.
+
+**Integrations Layer (`src/datasluice/integrations/`):**
+- Purpose: Terminal export to downstream data ecosystems.
+- Location: `src/datasluice/integrations/{arrow,pandas,polars,duckdb,dlt,airflow}.py`.
+- Contains: `to_arrow` (shared substrate), `to_pandas`, `to_polars`,
+  `to_duckdb`, `datasluice_source` (dlt), `DataSluiceOperator` (Airflow).
+- Depends on: `data/`, `runtime/session.py` (dlt only). All heavy deps lazy.
+- Used by: end users; not imported by the library core.
+
+**IO Layer (`src/datasluice/io/`):**
+- Purpose: Local/remote byte storage, caching, checksums, downloading.
+- Location: `src/datasluice/io/{storage,local,cache,content_cache,downloader,filesystem,fsspec_storage,checksums}.py`.
+- Contains: `Storage` ABC + `LocalStorage`/`FsspecStorage`, `FileCache`,
+  `ContentCache` (SQLite WAL), `Downloader`, `open_filesystem`,
+  `compute_hash`/`compute_sha256`/`compute_md5`/`verify_checksum`.
+- Depends on: `transport/`, `exceptions.py`, `config/` (lazy fsspec).
+- Used by: `data/access.py`, `sync/`, `runtime/session.py`.
+
+**Cross-cutting:**
+- `src/datasluice/auth/` — `BaseAuth` ABC + 5 strategies.
+- `src/datasluice/credentials/host_provider.py` — `HostCredentialProvider`.
+- `src/datasluice/contracts/` — `run_contract_suite` conformance harness.
+- `src/datasluice/config/defaults.py` — `DEFAULT_*` constants.
+- `src/datasluice/exceptions.py` — single exception hierarchy rooted at
+  `DataSluiceError`.
+- `src/datasluice/logging.py` — `get_logger`, `RedactingFilter`,
+  `configure_logging`, `SENSITIVE_HEADERS`.
 
 ## Data Flow
 
-### Primary Request Path — `datasluice search`
+### Primary Request Path: discover → resolve → search
 
-1. CLI parses args → `src/datasluice/cli/search.py:search()` lazily imports `DataSluiceSession`.
-2. `DataSluiceSession()` constructs transport via `create_default_transport()` (`src/datasluice/runtime/defaults.py:28`) and a `PluginManager` that eagerly loads `datasluice.connectors` entry points.
-3. `session.portal(portal)` (`src/datasluice/runtime/session.py:166`) calls `detect_portal_type(url)` → resolves factory via `plugins.get(portal_type)` → builds `ConnectorContext(base_url, transport, auth, page_size)` → `factory(ctx)` returns e.g. `CKANAdapter`.
-4. `connector.search(Query(...))` (`src/datasluice/connectors/ckan/adapter.py:28`) calls `transport.get_json(.../package_search)`, then `map_dataset()` on each result (`src/datasluice/connectors/ckan/mapper.py:53`).
-5. Returns `SearchResult(datasets=[Dataset(...)])`; the CLI renders a `rich` table.
+1. User calls `DataSluiceSession.portal(url)` (`src/datasluice/runtime/session.py:178`).
+2. Unless `portal_type=` override is given, `detect(url, transport, plugins)`
+   probes `PATH_FINGERPRINTS` endpoints through the session transport
+   (`src/datasluice/discovery/detector.py:48`). Each probe is recorded as
+   `DetectionEvidence`; first hit pins `portal_type` at confidence 1.0.
+3. `PluginManager.get(portal_type)` resolves the registered factory
+   (`src/datasluice/runtime/plugin_manager.py:65`).
+4. A `ConnectorContext(base_url, transport, auth, page_size)` is built and the
+   factory `create_*_connector(ctx)` constructs the adapter wired to the
+   session's transport/auth (`src/datasluice/connectors/<portal>/factory.py`).
+5. Caller invokes `adapter.search(query)` → `_reject_unsupported_fields` runs
+   pre-flight → transport `get_json` → `mapper.map_dataset` translates each
+   portal package into a `Dataset` → returns `SearchResult`
+   (`src/datasluice/connectors/<portal>/adapter.py`).
 
-### Detection Flow — `datasluice detect`
+### Read Path: resource → bytes → Arrow → terminal
 
-1. `src/datasluice/cli/detect.py:detect()` imports `detect_portal_type`.
-2. `detect_portal_type` (`src/datasluice/discovery/detector.py:26`) normalizes the URL, iterates `PATH_FINGERPRINTS`, and issues a probe `HttpClient().request(url)` for each path whose `portal_type` is registered in a fresh `PluginManager`.
-3. First non-error probe wins → returns the canonical portal name.
+1. `DataPlaneResourceReader.open(resource)` resolves `resource.access` (default
+   `HttpDownload(url=resource.url)`) (`src/datasluice/data/access.py:93`).
+2. Access-kind dispatch acquires a byte source:
+   - `http_download` → `StreamingTransport.stream()` wrapped in
+     `IterableBytesIO` (or buffered `BytesIO` fallback for urllib)
+     (`src/datasluice/data/access.py:251`).
+   - `object_storage` → `open_filesystem(uri).open(path)`
+     (`src/datasluice/data/access.py:286`).
+   - `local_file` → `open(path, "rb")`.
+   - `query`/`stream` → raise `UnsupportedAccessError`.
+3. `apply_compression(source, content_encoding)` peeks magic bytes and wraps in
+   the right decompressor (`src/datasluice/data/compression.py:277`).
+4. `get_reader(resource.format)` selects the format reader; `read_batches`
+   yields `RecordBatch` (`src/datasluice/data/readers/__init__.py:33`).
+5. Output is wrapped in a `BatchStream` exposing `.schema`, `.iter_batches()`,
+   `.iter_batches_with_cursors()`, and `__arrow_c_stream__`
+   (`src/datasluice/data/batch_stream.py`).
+6. Optional: `Pipeline(steps).run(stream)` threads `TransformStep`s and returns
+   a NEW `BatchStream` whose schema reflects the post-transform batches
+   (`src/datasluice/transforms/pipeline.py:40`).
+7. Terminal: `to_arrow`/`to_pandas`/`to_polars`/`to_duckdb` materialize the
+   stream (`src/datasluice/integrations/*.py`).
 
-### Download Flow — `datasluice download`
+### Sync Path: incremental materialization
 
-1. `src/datasluice/cli/download.py:download()` resolves a connector as above.
-2. `connector.get_dataset(dataset_id)` → `Dataset.resources`.
-3. Filters by `--format`, then calls `cast("Any", connector).downloader.download_many(resources, dest)` (`src/datasluice/cli/download.py:37`). `Downloader.download()` (`src/datasluice/io/downloader.py:41`) consults the optional `FileCache`, fetches via `transport.download()`, optionally verifies SHA-256, and writes via `LocalStorage`/`save_bytes()`.
+1. `DataSluiceSession.sync_resources(resources, destination_uri=...)` builds a
+   `DataPlaneResourceReader` and delegates to `sync_resources`
+   (`src/datasluice/runtime/session.py:235`).
+2. For each resource, `sync_resources` consults the `StateStore` for a prior
+   watermark/checkpoint (`src/datasluice/sync/sync.py:33`).
+3. HTTP resources with a non-SHA256 watermark use
+   `ConditionalTransport.conditional_fetch` (ETag/Last-Modified); a 304 yields
+   `SyncOutcome(action="skipped-unchanged")` without reading bytes
+   (`src/datasluice/sync/sync.py:69`).
+4. Otherwise `materialize` (or `materialize_checkpointed` for resumable
+   Parquet) opens the reader, computes `logical_sha256`, writes to a temp file
+   and atomically `mv`s into place at the fsspec destination
+   (`src/datasluice/sync/materialize.py:15`).
+5. The new watermark/checkpoint is persisted via `state_store.put` BEFORE the
+   `SyncOutcome` is yielded (checkpoint-then-emit ordering).
 
 **State Management:**
-- No global mutable state. `PluginManager` is an **injected instance** (ARCH-06), never module-level — verified by `tests/unit/runtime/test_no_global_state.py`.
-- The only module-level singletons are immutable: `DEFAULT_*` constants (`src/datasluice/config/defaults.py`) and the `READERS` registry (`src/datasluice/formats/__init__.py`).
-- Per-request retry/refresh state is local to the closure inside `HttpxTransport.request` (`refreshed: list[bool]`).
+- The only mutable session state is `DataSluiceSession`'s injected ports
+  (`_transport`, `_cache`, `state_store`, `_credential_provider`, `auth`,
+  `storage`, `plugins`).
+- `InMemoryStateStore` (default) holds a plain dict; `FileStateStore` writes
+  SHA-256-named JSON envelopes with detection-only optimistic CAS.
+- All domain models and `ConnectorContext`/`TransformContext` are frozen.
 
 ## Key Abstractions
 
-**`ConnectorContext` (frozen dataclass):**
-- Purpose: The single injection seam handed to every connector factory.
-- Examples: `src/datasluice/runtime/context.py`; consumed by `create_ckan_connector(ctx)` (`src/datasluice/connectors/ckan/factory.py`).
-- Pattern: Dependency-injection carrier — third-party connectors receive infra via the context rather than reaching for globals.
+**`Transport` / `StreamingTransport` / `ConditionalTransport` Protocols:**
+- Purpose: HTTP execution boundary, split so a transport advertises only the
+  capabilities it implements.
+- Examples: `src/datasluice/ports/transport.py`. `HttpClient` satisfies only
+  `Transport`; `HttpxTransport` satisfies all three.
+- Pattern: `@runtime_checkable Protocol` + `isinstance` capability probes.
 
-**`BaseAdapter` (ABC) + `CatalogPort` (Protocol):**
-- Purpose: `BaseAdapter` is the inheritance contract; `CatalogPort` is the structural capability contract.
-- Examples: `src/datasluice/connectors/base.py`, `src/datasluice/ports/catalog.py`.
-- Pattern: Capability probing — `isinstance(connector, SearchableCatalog)` lets callers ask "can this portal search?" without backend-specific types.
+**`ResourceAccess` sum-type family:**
+- Purpose: Describe how a `Resource` is reached, discriminated by `.kind`
+  (`"http_download"`, `"object_storage"`, `"query"`, `"stream"`, `"local_file"`).
+- Examples: `src/datasluice/domain/access.py`. Dispatch lives in
+  `DataPlaneResourceReader.open` (`src/datasluice/data/access.py:117`).
+- Pattern: Frozen-dataclass inheritance with a `kind` discriminator string
+  (avoids `isinstance` chains in the reader).
 
-**`Transport` / `StreamingTransport` Protocols:**
-- Purpose: Backend-agnostic HTTP boundary satisfied structurally by `HttpClient` and `HttpxTransport`.
-- Examples: `src/datasluice/ports/transport.py`, `src/datasluice/transport/http_client.py`, `src/datasluice/transport/httpx_transport.py`.
-- Pattern: `HttpxTransport` satisfies **both** protocols; `HttpClient` satisfies only `Transport`, so Phase-4 streaming code can probe `isinstance(transport, StreamingTransport)`.
+**`BatchStream`:**
+- Purpose: Backend-agnostic, context-managed Arrow `RecordBatch` stream — the
+  single data-plane currency. Wraps either a `pa.RecordBatchReader` or a bare
+  iterator.
+- Examples: `src/datasluice/data/batch_stream.py`. Implements
+  `__arrow_c_stream__` for zero-copy interop.
+- Pattern: Composition over inheritance (never subclass `pa.RecordBatchReader`).
 
-**Domain models (frozen dataclasses):**
-- Purpose: Portal-agnostic value objects exchanged across all layers.
-- Examples: `src/datasluice/domain/dataset.py`, `resource.py`, `query.py`, `result.py`.
-- Pattern: `Resource.normalize_format()` (`src/datasluice/domain/resource.py:55`) centralizes format-alias normalization used by every mapper.
+**`TransformStep` Protocol:**
+- Purpose: Closed-set normalization contract (`apply(batches, context) ->
+  Iterator[RecordBatch]`). NOT a third-party extension point.
+- Examples: `src/datasluice/transforms/protocol.py`; steps in
+  `src/datasluice/transforms/steps.py`.
+- Pattern: Frozen-dataclass-configured classes + generator `apply`.
+
+**`CatalogCapabilities`:**
+- Purpose: Per-connector ClassVar declaring which `Query` filter fields and
+  capabilities (search/organizations/facets) a portal honors.
+- Examples: `src/datasluice/domain/capabilities.py`; declared on every adapter.
+- Pattern: Frozen dataclass published as `ClassVar`, consumed by
+  `_reject_unsupported_fields` and the conformance suite.
+
+**`StateStore` Protocol + `SyncState`:**
+- Purpose: Persist incremental sync watermarks/Parquet checkpoints.
+- Examples: `src/datasluice/ports/state_store.py`,
+  `src/datasluice/sync/state_store.py`.
+- Pattern: Protocol port + two dep-free concrete impls; JSON envelopes with
+  schema validation on every write.
 
 ## Entry Points
 
-**CLI `datasluice`:**
-- Location: `src/datasluice/cli/app.py:app` (Typer app).
-- Declared: `[project.scripts] datasluice = "datasluice.cli.app:app"` in `pyproject.toml`.
-- Triggers: console invocation; `python -m datasluice.cli.app`.
-- Responsibilities: route to `search`/`inspect`/`download`/`detect` subcommands; `--version` short-circuits via eager `@app.callback()`.
+**CLI (`datasluice` console script):**
+- Location: `src/datasluice/cli/app.py:app` (Typer app, registered in
+  `pyproject.toml` `[project.scripts]`).
+- Triggers: `datasluice search|inspect|download|detect`, `--version`.
+- Responsibilities: parse args, build a `DataSluiceSession`, render Rich tables.
 
-**Python library `DataSluiceSession`:**
-- Location: `src/datasluice/runtime/session.py`; re-exported from package root in `src/datasluice/__init__.py`.
-- Triggers: `from datasluice import DataSluiceSession`.
-- Responsibilities: zero-config facade; `.portal(url)` returns a connector, `.search(url, query)` is a one-liner convenience.
+**Programmatic API (`DataSluiceSession`):**
+- Location: `src/datasluice/runtime/session.py`; re-exported from
+  `src/datasluice/__init__.py`.
+- Triggers: `import datasluice; datasluice.DataSluiceSession()`.
+- Responsibilities: `portal(url)`, `search(url, query)`, `sync_resources(...)`.
 
-**Connector factories (entry-point targets):**
-- Location: `src/datasluice/connectors/<portal>/factory.py`.
-- Declared: `[project.entry-points."datasluice.connectors"]` in `pyproject.toml`.
-- Responsibilities: `create_<portal>_connector(ctx: ConnectorContext) -> BaseAdapter`.
+**Connector entry points (`datasluice.connectors` group):**
+- Location: `pyproject.toml` `[project.entry-points."datasluice.connectors"]`.
+  - `ckan = datasluice.connectors.ckan.factory:create_ckan_connector`
+  - `datagouv = datasluice.connectors.datagouv.factory:create_datagouv_connector`
+  - `socrata = datasluice.connectors.socrata.factory:create_socrata_connector`
+- Triggers: `PluginManager.__init__` eagerly loads via `importlib.metadata`.
+- Responsibilities: each factory takes a `ConnectorContext` and returns a
+  `BaseAdapter` wired to the injected transport/auth.
 
 ## Architectural Constraints
 
-- **Python version:** 3.12+ required (`requires-python = ">= 3.12"`). Use PEP 695 type-param syntax (`def f[T](...)`), not `TypeVar`.
-- **Threading:** Single-threaded; transport clients (`httpx.Client`, urllib opener) are constructed per-session. `HttpxTransport` documents its underlying client as thread-safe for reuse.
-- **Global state:** Forbidden by design. No module-level `AdapterRegistry`/`Settings` (both deliberately removed). Validated by `tests/unit/runtime/test_no_global_state.py` and `tests/unit/test_no_dead_settings.py`.
-- **Circular imports:** `src/datasluice/_version.py` is a standalone module to break the cycle with `src/datasluice/transport/user_agent.py`. Do NOT inline it into `__init__.py`.
-- **Lazy import discipline (D-P3-01):** Heavy/optional deps (httpx, pyarrow, openpyxl, pandas, polars, dlt, duckdb, airflow, fsspec) must be imported inside functions/methods, or via PEP 562 `__getattr__` (see `src/datasluice/transport/__init__.py` and `src/datasluice/io/__init__.py`), never at module top-level.
-- **Hard dependencies:** Only `typer` and `rich` may be assumed at import time. Everything else is an optional extra.
-- **Line length:** 120 (ruff).
-- **No comments in code** unless explicitly requested; docstrings are Google-style with a summary first line.
+- **Python version:** `>= 3.12` (PEP 695 type params, `type X = ...` aliases).
+  CI matrix: 3.12, 3.13, 3.14.
+- **Threading:** Single-threaded by default. `HostCredentialProvider` uses a
+  per-host `threading.Lock` for single-flight refresh; `HttpxTransport`'s
+  underlying `httpx.Client` is thread-safe and connection-pooled.
+- **Lazy-import invariant:** `import datasluice` MUST NOT pull any optional
+  dependency. Enforced by PEP 562 `__getattr__` in `data/`, `transforms/`,
+  `sync/`, `io/`, `transport/` `__init__.py` files and by importing heavy deps
+  inside function bodies. The CI `type-check` job uses
+  `uv run --all-extras ty check .` to resolve lazy imports.
+- **No env-var settings system.** `DataSluiceSession` takes explicit kwargs
+  only (the legacy `Settings`/`DataSluice` env-var system was removed, D-14).
+  The only env vars read are `DATASLUICE_NO_REDACT` (logging escape hatch) and
+  those consumed by fsspec backends.
+- **No module-level singletons for connectors.** `PluginManager` is an injected
+  instance, never a global (ARCH-06). The legacy `AdapterRegistry` singleton
+  was removed.
+- **Global state:** Module-level constants in `src/datasluice/config/defaults.py`
+  and the `SENSITIVE_HEADERS` frozenset in `src/datasluice/logging.py` (shared
+  with `transport/redirect.py`). No module-level mutable singletons.
+- **Circular imports:** `datasluice/_version.py` is a separate module to break
+  a circular import with `transport/user_agent.py` — do NOT move it into
+  `__init__.py`. `runtime/session.py` uses deferred (`importlib`/function-local)
+  imports for `discovery.detect`, `sync.sync_resources`,
+  `data.access.DataPlaneResourceReader`, and `sync.state_store.InMemoryStateStore`.
+- **Hard dependencies:** Only `typer` and `rich` (`pyproject.toml`
+  `[project.dependencies]`). Everything else is an optional extra.
+- **Coverage gate:** 50% (`fail_under` in `pyproject.toml`).
+- **`get_organization` is intentionally NOT on `BaseAdapter`.** It lives only
+  on the `OrganizationCatalog` Protocol so `runtime_checkable` `isinstance`
+  does not short-circuit on the base class (python/typing#800). Socrata
+  therefore correctly fails `isinstance(adapter, OrganizationCatalog)`.
 
 ## Anti-Patterns
 
-### CLI `download` reaches for a non-existent `connector.downloader`
+### Leaking optional dependencies at import time
 
-**What happens:** `src/datasluice/cli/download.py:37` does `cast("Any", connector).downloader.download_many(resources, dest)`, but `BaseAdapter` (`src/datasluice/connectors/base.py`) declares no `downloader` attribute and no built-in connector sets one.
-**Why it's wrong:** The `download` command will raise `AttributeError` at runtime for every portal — the typed contract (`BaseAdapter`) and the CLI's expectation are out of sync. The `cast("Any", ...)` silences the type checker that would otherwise have caught this.
-**Do this instead:** Either add a `downloader` (or `Downloader` accessor) to `BaseAdapter`/`ConnectorContext`, or have the CLI construct a `Downloader` from the session's transport explicitly: `Downloader(transport=session._transport, storage=LocalStorage(dest))`.
+**What happens:** Importing pyarrow/httpx/pandas at module top level in
+`data/`, `transforms/`, `integrations/`, or `transport/` would make
+`import datasluice` fail on a bare install (only `typer`+`rich` installed).
+**Why it's wrong:** Breaks the zero-config install contract; the CI
+`type-check` job and `smoke-test` job both depend on lazy resolution.
+**Do this instead:** Import inside the function body, or expose the symbol via
+a PEP 562 `__getattr__` in the package `__init__.py` (see
+`src/datasluice/data/__init__.py:18`, `src/datasluice/transport/__init__.py:31`).
 
-### `detect_portal_type` bypasses dependency injection
+### Declaring capability methods on `BaseAdapter`
 
-**What happens:** `src/datasluice/discovery/detector.py:42-46` constructs its own `HttpClient()` and a fresh `PluginManager()` inside the function body instead of receiving them as parameters.
-**Why it's wrong:** It ignores the caller's configured transport (auth, retry, rate-limit, proxy) and re-scans entry points on every call. It also couples the discovery layer to concrete transports, undermining the hexagonal boundary.
-**Do this instead:** Pass `transport` and `plugin_manager` (or the `DataSluiceSession`) into `detect_portal_type`, mirroring how `session.portal()` already calls detection — refactor so detection reuses the session's injected infra.
+**What happens:** Adding `get_organization` as an `@abstractmethod` (or default)
+on `BaseAdapter` makes every adapter structurally satisfy `OrganizationCatalog`
+under PEP 544 `runtime_checkable`.
+**Why it's wrong:** Socrata has no organizations endpoint; advertising one via a
+stub would be a lying capability, and the `isinstance` check would wrongly pass.
+**Do this instead:** Keep capability methods ONLY on the dedicated Protocol
+(`src/datasluice/ports/catalog.py:OrganizationCatalog`); implement them on the
+adapter only when the portal truly supports them (see `src/datasluice/connectors/base.py:21`).
 
-### Two storage abstractions coexist
+### Hand-rolling Arrow compute
 
-**What happens:** `src/datasluice/io/storage.py` defines a `Storage` ABC with `LocalStorage`, while `src/datasluice/ports/storage.py` defines a separate `StoragePort` Protocol. `Downloader` (`src/datasluice/io/downloader.py`) types against the concrete `Storage` ABC, not the `StoragePort` Protocol.
-**Why it's wrong:** Two contracts for the same concept invite drift; the ABC approach also forfeits structural `isinstance` checks and forces third parties to inherit rather than just satisfy the Protocol.
-**Do this instead:** Consolidate on `StoragePort` (`src/datasluice/ports/storage.py`); make `LocalStorage`/`FsspecStorage` structurally satisfy it and type `Downloader` against `StoragePort`.
+**What happens:** Writing custom Python loops to filter/cast/flatten Arrow
+batches.
+**Why it's wrong:** Forfeits pyarrow's vectorized, zero-copy primitives and
+introduces correctness bugs.
+**Do this instead:** Delegate every hard operation to `pyarrow.compute` (see
+every step in `src/datasluice/transforms/steps.py` — `Filter` uses
+`RecordBatch.filter`, `CastSchema` uses `Table.cast(safe=True)`, etc.).
+
+### Sending unsupported `Query` filters to the portal
+
+**What happens:** Translating an unsupported filter field into a portal param
+the portal silently ignores (Socrata's nonexistent `sort` zeroes the result set).
+**Why it's wrong:** The caller believes their filter was applied; results are
+silently wrong.
+**Do this instead:** Call `_reject_unsupported_fields(query, capabilities,
+portal_name)` at the top of every `search()` BEFORE any transport call
+(`src/datasluice/connectors/_reject.py:34`, used in every adapter).
+
+### Buffered reads when streaming is available
+
+**What happens:** Using `transport.download()` (full body into memory) when the
+transport satisfies `StreamingTransport`.
+**Why it's wrong:** Breaks the bounded-memory contract for large open-data files.
+**Do this instead:** Probe `isinstance(transport, StreamingTransport)` and wrap
+`transport.stream(url)` in `IterableBytesIO`; fall back to buffered only when
+the probe fails and log a WARNING recommending `datasluice[http]`
+(`src/datasluice/data/access.py:251`).
 
 ## Error Handling
 
-**Strategy:** A single rooted exception hierarchy in `src/datasluice/exceptions.py`.
-
-```
-DataSluiceError
-├── PortalError                 (portal returned error / unreachable)
-│   ├── RateLimitError          (HTTP 429; carries retry_after)
-│   ├── RetryableHTTPError      (HTTP 5xx; carries status_code)
-│   └── NotFoundError
-├── AdapterError
-│   └── AdapterNotFoundError    (no connector registered)
-├── PortalDetectionError        (cannot auto-detect type)
-├── AuthenticationError
-├── DownloadError
-│   └── ChecksumMismatchError   (carries expected/actual)
-├── FormatError                 (parse failure / missing optional dep)
-└── ConfigError
-```
+**Strategy:** Single exception hierarchy rooted at `DataSluiceError`
+(`src/datasluice/exceptions.py`). Every public error type is a subclass;
+callers can catch `DataSluiceError` for a library-wide boundary.
 
 **Patterns:**
-- Transport maps HTTP status codes to typed exceptions: 429 → `RateLimitError`, ≥500 → `RetryableHTTPError`, other 4xx → `PortalError` (`src/datasluice/transport/http_client.py:133`, `httpx_transport.py:243`).
-- `RetryPolicy`/`with_retry` (`src/datasluice/transport/retry.py`) retries on `RetryableHTTPError` and `RateLimitError` (honoring `Retry-After`).
-- Optional-dep absence raises `FormatError`/`ImportError` with an actionable install hint (e.g. `pip install datasluice[parquet]`) — see `src/datasluice/formats/parquet.py:24`.
-- `PluginManager` never raises on a broken third-party entry point; it records a `PluginFailure` and logs a warning (`src/datasluice/runtime/plugin_manager.py:48`).
+- **Transport errors** → `PortalError` and subclasses: `RateLimitError`
+  (HTTP 429, carries `retry_after`), `RetryableHTTPError` (HTTP 5xx, carries
+  `status_code`), `NotFoundError` (404). See `src/datasluice/transport/http_client.py:133`
+  and `httpx_transport.py:257`.
+- **Retry** → `with_retry(fn, RetryPolicy)` wraps each attempt; 429 honors
+  `Retry-After` (`src/datasluice/transport/retry.py`).
+- **Pre-flight reject** → `UnsupportedQueryFieldError` (sibling of
+  `AdapterError`, NOT under `PortalError` because no portal contact occurred)
+  lists supported alternatives in the message
+  (`src/datasluice/exceptions.py:154`).
+- **State-store corruption** → `StateStoreError` fails loud (never treats
+  corrupt state as "no state"); `SyncStateConflictError` for lost CAS races.
+- **Decompression** → `DecompressionError` (subclass of `FormatError`).
+- **Transform** → `TransformError` (subclass of `FormatError`), names missing
+  columns AND available ones.
+- **Detection** → `PortalDetectionError` carries the `DetectionResult`
+  evidence trail as `.detection_result` so callers can surface why detection
+  failed without re-running it.
+- **Plugin load failures** → recorded as `PluginFailure(name, error)`, never
+  raised; queryable via `PluginManager.list_failures()`.
 
 ## Cross-Cutting Concerns
 
-**Logging:** `src/datasluice/logging.py` — module-level `get_logger(name)` returning configured loggers; `configure_logging(level)` called once by `DataSluiceSession.__init__` using `DEFAULT_LOG_LEVEL`. A redacting filter is tested by `tests/unit/test_redacting_filter.py`.
+**Logging:** `src/datasluice/logging.py` — `get_logger(name)` returns
+`logging.getLogger("datasluice.<name>")`. `configure_logging` attaches a
+`StreamHandler` with a `RedactingFilter` that scrubs known sensitive keys
+(`authorization`, `cookie`, `x-api-key`, `token`, `secret`, `password`, …) by
+*key name* only (never value-pattern heuristics, so legitimate base64/open-data
+payloads pass through). `DATASLUICE_NO_REDACT=1` disables redaction.
 
-**Validation:** Lightweight and ad-hoc inside domain dataclasses and mappers (e.g. `Resource.normalize_format`). No external validation library (no pydantic); frozen dataclasses enforce structural validity at construction.
+**Validation:** Domain models validate at construction via `__post_init__`
+(e.g. `BatchCursor`, `ParquetRowGroupPosition`). `FileStateStore.put` runs
+`_validate_state_for_write` on every write (watermark format, cursor shape,
+checkpoint schema). SQL identifiers are regex-validated
+(`src/datasluice/integrations/duckdb.py:_validate_table_name`,
+SEC-03 boundary). `LocalStorage.write` rejects path traversal.
 
-**Authentication:** Pluggable via `BaseAuth` ABC (`src/datasluice/auth/base.py`) with strategies `NoAuth`, `APIKeyAuth`, `BearerAuth`, `BasicAuth`, `HeadersAuth`. Applied per-request by `HttpClient.request`/`HttpxTransport.request` via `auth.apply(headers, params)`. Redirect-time credential stripping is governed by `CredentialScope` (`src/datasluice/domain/credentials.py`) via `CredentialAwareRedirectHandler` (urllib) and `_should_strip_authorization` (httpx).
+**Authentication:** `src/datasluice/auth/base.py:BaseAuth.apply(headers,
+params) -> (headers, params)`. Five strategies: `NoAuth` (default),
+`APIKeyAuth`, `BearerAuth`, `BasicAuth`, `HeadersAuth`. Host-scoped refresh is
+`HostCredentialProvider` (`src/datasluice/credentials/host_provider.py`),
+plugged into `HttpxTransport` via the `CredentialProvider` port; on 401/403 the
+transport evicts and refreshes exactly once (single-flight under a per-host
+lock). Object-storage credentials flow through `open_filesystem(uri,
+credentials=)` and fsspec's own resolver — never through `BaseAuth`.
 
-**User-Agent:** Built once by `build_user_agent()` (`src/datasluice/transport/user_agent.py`) and attached to every request.
+**Security:** Manual redirect loop (`follow_redirects=False`) applies a
+`CredentialScope` policy per hop, stripping sensitive headers on any cross-host
+redirect or `https`→`http` downgrade (`src/datasluice/transport/redirect.py`,
+`httpx_transport.py:_should_strip_authorization`). The user-agent is built
+once via `build_user_agent()` (`src/datasluice/transport/user_agent.py`).
+
+**Conformance:** `src/datasluice/contracts/checks.py:run_contract_suite` runs
+an 8-check matrix against a fixture-served connector; built-in connectors run
+it in default CI, third-party authors import and parametrize it.
 
 ---
 
-*Architecture analysis: 2026-07-26*
+*Architecture analysis: 2026-07-30*

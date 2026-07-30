@@ -1,304 +1,460 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-07-26
+**Analysis Date:** 2026-07-30
 
-## Tech Debt
+Severity legend: **Critical** (security/data-loss/blocker), **High** (likely bug or active fragility),
+**Medium** (works today but maintenance hazard), **Low** (polish / tech-debt marker).
 
-**Stale AGENTS.md / docs reference a renamed package**
-- Issue: `AGENTS.md` (lines 44–49), `docs/architecture.md` (line 40), and `docs/adapters.md` (lines 9, 37) describe `datasluice.adapters` with a **module-level `registry` singleton** and "auto-registration on import." The actual code ships `datasluice.connectors` backed by an entry-points-driven `PluginManager` (`src/datasluice/runtime/plugin_manager.py`) with no module-level singleton (intentionally, ARCH-06). `pyproject.toml:81-84` declares the `[project.entry-points."datasluice.connectors"]` group.
-- Files: `AGENTS.md`, `docs/architecture.md`, `docs/adapters.md`
-- Impact: New contributors following AGENTS.md look in the wrong directory and expect an import side effect that no longer exists; doc-driven code review against `docs/adapters.md` will propose patterns the codebase has explicitly removed.
-- Fix approach: Rewrite the three doc files to reference `datasluice.connectors`, the entry-points group, and `PluginManager`. Remove the "module-level `registry`" language and the "importing triggers side-effect registration" claim.
-
-**Dual HTTP transports with divergent security semantics**
-- Issue: Two transports coexist — `HttpClient` (`src/datasluice/transport/http_client.py`, urllib-backed) and `HttpxTransport` (`src/datasluice/transport/httpx_transport.py`, httpx-backed). Only `HttpxTransport` implements the 401/403 credential-eviction-and-refresh path (D-P3-15). The lazy default in `BaseAdapter.transport` (`src/datasluice/connectors/base.py:43-45`) constructs `HttpClient`, so the eviction path is **off by default** unless a caller explicitly injects an `HttpxTransport`.
-- Files: `src/datasluice/transport/http_client.py`, `src/datasluice/transport/httpx_transport.py`, `src/datasluice/connectors/base.py:39-46`
-- Impact: Security/correctness behaviour depends on which transport is wired; the zero-config path is the less-secure one.
-- Fix approach: Either promote `HttpxTransport` to the default in `BaseAdapter.transport` (gated by the `http` extra, falling back to `HttpClient` only when httpx is absent), or document the divergence loudly and add a runtime warning when `HttpClient` is used with a `HostCredentialProvider`.
-
-**Duplicated redirect-credential-stripping logic**
-- Issue: The "strip sensitive headers on cross-origin/scheme-downgrade redirect" policy is implemented twice: once for urllib in `CredentialAwareRedirectHandler.redirect_request` (`src/datasluice/transport/redirect.py:30-60`) and once for httpx in `HttpxTransport._should_strip_authorization` (`src/datasluice/transport/httpx_transport.py:129-150`). The two implementations must be kept in sync by hand — there is no shared predicate.
-- Files: `src/datasluice/transport/redirect.py`, `src/datasluice/transport/httpx_transport.py`
-- Impact: A future fix to one (e.g. a new sensitive header, a `port`-aware same-origin check) will silently drift from the other. Both are security-relevant (SEC-01/SEC-02).
-- Fix approach: Extract a single pure function `should_strip_credentials(old_url, new_url, scope) -> bool` in `redirect.py` (or a new `redirect_policy.py`) and call it from both transports. Add a shared parametric test that exercises the function against the SEC-01/SEC-02 matrix.
-
-**`__version__` resolves to `"0.0.0"` in source checkouts**
-- Issue: `src/datasluice/_version.py:12-15` reads the version from installed package metadata via `importlib.metadata.version("datasluice")` and falls back to `"0.0.0"` on `PackageNotFoundError`. In a bare `git clone` without `uv sync`/`uv install`, every `datasluice --version` call and `User-Agent` (which embeds the version via `transport/user_agent.py`) reports `0.0.0`.
-- Files: `src/datasluice/_version.py`, `src/datasluice/transport/user_agent.py`
-- Impact: Misleading version strings in dev and in any environment where the package isn't installed under its metadata name; user-agent-based portal analytics undercount real versions.
-- Fix approach: Keep the `importlib.metadata` lookup as primary, but fall back to reading `version` from `pyproject.toml` (via `tomllib` when `__file__` resolution permits) before defaulting to `"0.0.0"`. Document the fallback.
-
-**`RetryableHTTPError` defined but not exported from the package root**
-- Issue: `src/datasluice/exceptions.py:38` defines `RetryableHTTPError`, but `src/datasluice/__init__.py:26-39` omits it from both the import block and `__all__`. Every other exception in the hierarchy is exported.
-- Files: `src/datasluice/__init__.py`, `src/datasluice/exceptions.py`
-- Impact: Callers cannot `from datasluice import RetryableHTTPError` to catch 5xx retries uniformly; they must reach into `datasluice.exceptions` — inconsistent with the rest of the exception API surface.
-- Fix approach: Add `RetryableHTTPError` to the `from datasluice.exceptions import (...)` block and to `__all__` in `__init__.py`.
-
-**`CustomAdapter` raises `NotImplementedError` instead of staying abstract**
-- Issue: `src/datasluice/connectors/custom/adapter.py:13-28` subclasses `BaseAdapter` (an `ABC`) but overrides every abstract method with a concrete `raise NotImplementedError`. This defeats the ABC: instantiation succeeds, and the failure surfaces only at call time rather than at construction.
-- Files: `src/datasluice/connectors/custom/adapter.py`
-- Impact: A user who instantiates `CustomAdapter` directly gets no error until they call a method — confusing for the "template to copy" use case the module documents.
-- Fix approach: Either leave the methods abstract (don't override them) so `CustomAdapter` itself is uninstantiable, or document explicitly that it is a skeleton and raise `TypeError`/`NotImplementedError` from `__init__` with a clear message pointing at the copy instructions.
-
-**CLI `--version` uses `typer.Option(...)` as a default argument**
-- Issue: `src/datasluice/cli/app.py:25-31` writes `version: bool = typer.Option(False, "--version", "-V", ...)`. The project's `AGENTS.md` style guide (and ruff's `B008` from flake8-bugbear, which is in the selected rule set) forbids function calls in argument defaults and mandates the `Annotated[bool, typer.Option(...)]` form.
-- Files: `src/datasluice/cli/app.py`
-- Impact: Inconsistent with the documented convention; will trip B008 if/when the rule is enforced on the CLI module, and sets a bad template for new CLI subcommands.
-- Fix approach: Rewrite the signature as `version: Annotated[bool, typer.Option(False, "--version", "-V", help=..., is_eager=True)] = False`.
-
-## Known Bugs
-
-**DuckDB format detection rejects URLs with query strings**
-- Symptoms: `resource_to_relation("https://portal.example/dataset.csv?token=abc")` raises `ValueError("Unsupported resource format for DuckDB: ...")`.
-- Files: `src/datasluice/integrations/duckdb.py:60-68`
-- Trigger: Any resource URL whose path ends in `.csv`/`.parquet`/`.json` but carries a query string (signed S3 URLs, Socrata tokens, CKAN `?download=1`) — common in open-data portals.
-- Workaround: None without stripping the query string before calling.
-- Fix: Strip the query/fragment before the suffix check, e.g. `path = urllib.parse.urlparse(resource_url).path; lowered = path.lower()`.
-
-**`Downloader.download_many` silently swallows per-resource failures**
-- Symptoms: Returns only the paths of resources that downloaded successfully; logs the failures at ERROR and continues. The caller cannot distinguish "1 of 10 succeeded" from "10 of 10 succeeded" without counting.
-- Files: `src/datasluice/io/downloader.py:99-113`, and the same pattern in `src/datasluice/integrations/airflow.py:62-73`.
-- Trigger: Any `download_many` / Airflow operator run where one resource 404s or its checksum fails.
-- Workaround: Call `download` individually and handle `DownloadError` yourself.
-- Fix: Return a structured result (e.g. `DownloadBatch(results=[...], failures=[...])`) or raise an `AggregateError` after collecting all failures. At minimum, log the count of failures at WARNING and document the partial-success contract in the docstring.
-
-**Adapters return stub objects on not-found instead of raising `NotFoundError`**
-- Symptoms: `CKANAdapter.get_organization` returns `Organization(id=organization_id)` when `map_organization` returns `None` (`src/datasluice/connectors/ckan/adapter.py:59-61`); `SocrataAdapter.get_dataset` returns `Dataset(id=dataset_id)` when the catalog returns no results (`src/datasluice/connectors/socrata/adapter.py:51-53`). The caller cannot distinguish a real (but sparse) record from a 404.
-- Files: `src/datasluice/connectors/ckan/adapter.py:55-61`, `src/datasluice/connectors/socrata/adapter.py:47-53`
-- Trigger: Any lookup against an ID that the portal does not have.
-- Workaround: Inspect `extra` for emptiness — fragile and undocumented.
-- Fix: Raise `NotFoundError` (already declared in `src/datasluice/exceptions.py:46` but currently unused) on genuine misses. If the stub behaviour is intentional for some portals, gate it behind a `strict=False` flag.
-
-**`int(result.get("count", ...))` can raise unhandled `ValueError`**
-- Symptoms: An uncaught `ValueError` if a portal returns `count`/`resultSetSize` as a non-numeric string.
-- Files: `src/datasluice/connectors/ckan/adapter.py:37`, `src/datasluice/connectors/socrata/adapter.py:38`, and likely `src/datasluice/connectors/datagouv/adapter.py`.
-- Trigger: Malformed portal response (rare but observed on some CKAN forks that return `"123"` as a string, which `int()` accepts, versus `"unknown"`, which it does not).
-- Fix: Wrap in a `try/except (TypeError, ValueError)` and fall back to `len(datasets)` with a DEBUG log, or coerce explicitly via `str(...).isdigit()`.
-
-**Mapper crashes on non-dict tag/group entries**
-- Symptoms: `AttributeError: 'str' object has no attribute 'get'` when a CKAN package's `tags` or `groups` is a list of strings (some CKAN forks serialise tags as `["health", "climate"]` rather than `[{"name": "health"}, ...]`).
-- Files: `src/datasluice/connectors/ckan/mapper.py:65-66`
-- Trigger: A portal whose CKAN serialisation differs from the canonical `package_search` shape.
-- Fix: Guard with `isinstance(t, dict)` before `.get`, falling back to `str(t)`.
-
-**Pandas integration reads parquet/xlsx via dict records, not native readers**
-- Symptoms: `resource_to_dataframe` for `PARQUET`/`XLSX` goes `get_reader(fmt).read(url) -> list[dict] -> pd.DataFrame(records)`, losing dtype information, datetime parsing, and column-level options, and is significantly slower than `pd.read_parquet`/`pd.read_excel`.
-- Files: `src/datasluice/integrations/pandas.py:28-34`
-- Trigger: Any parquet/xlsx resource loaded through the pandas integration.
-- Fix: Branch on format and call `pd.read_parquet`/`pd.read_excel`/`pd.read_csv`/`pd.read_json` directly with `storage_options`/`**kwargs`, bypassing the `formats/` readers for the DataFrame path.
-
-## Security Considerations
-
-**Path traversal in `FsspecStorage._resolve` when `base_uri` is empty**
-- Risk: `src/datasluice/io/fsspec_storage.py:64-74` returns `path` unchanged when it does not start with a known URI scheme and `base_uri` is empty. A caller-supplied `path` like `../../etc/passwd` (or a resource `name` containing `../` that flows through `Downloader.download -> storage.write`) is resolved by the local fsspec backend against the process CWD, allowing escape from the intended storage root.
-- Files: `src/datasluice/io/fsspec_storage.py`, call site `src/datasluice/io/downloader.py:92-94` (filename derived from `safe_filename(resource.name ...)`, which permits `.` and spaces).
-- Current mitigation: `safe_filename` (`src/datasluice/io/local.py:43-45`) strips most punctuation but explicitly **allows** `.`, `/` is not in the allowed set so path separators are dropped — `..` becomes `..` (two dots, no separator) which is harmless. The residual risk is direct calls to `FsspecStorage.write(data, path)` with an attacker-influenced `path`.
-- Recommendations: (1) In `FsspecStorage._resolve`, normalise the joined path with `posixpath.normpath` and reject any result that escapes `base_uri` when `base_uri` is set. (2) When `base_uri` is empty, refuse bare paths that contain `..` segments. (3) Add a security-focused test for the traversal vector.
-
-**`duckdb.query_resource` is a raw-SQL passthrough**
-- Risk: `src/datasluice/integrations/duckdb.py:73-91` executes the `sql` argument verbatim via `con.execute(sql)`. DuckDB SQL can read arbitrary local files (`read_csv_auto('/etc/passwd')`, `read_blob(...)`) and make network requests — effectively RCE-equivalent for the DuckDB process. The docstring warns the caller, but nothing enforces it.
-- Files: `src/datasluice/integrations/duckdb.py`
-- Current mitigation: Documented as "intentionally opt-in raw-SQL passthrough"; `_validate_table_name` protects the *table name* but not the SQL body.
-- Recommendations: (1) Keep the passthrough but rename to `query_resource_raw` / require an explicit `allow_raw_sql=True` kwarg so callers cannot trigger it by accident. (2) Document a safe alternative that builds queries from the relation API (`resource_to_relation(...).filter(...).select(...)`).
-
-**No CRLF / control-char validation on header names and values**
-- Risk: `APIKeyAuth` (`src/datasluice/auth/api_key.py:54`) and `HeadersAuth` (`src/datasluice/auth/headers.py:20-30`) accept arbitrary strings as header names and values. A header value containing `\r\n` enables HTTP header injection / response splitting on transports that don't sanitise (urllib does not; httpx does some validation).
-- Files: `src/datasluice/auth/api_key.py`, `src/datasluice/auth/headers.py`
-- Current mitigation: None. The `api_key` itself is caller-supplied, but portal-discovered credential values (e.g. from a `HostCredentialProvider` refresher) could carry attacker-controlled bytes.
-- Recommendations: Add a `_validate_header(name, value)` helper that rejects any name/value containing `\r`, `\n`, or other ASCII control chars, and call it from both `apply` methods.
-
-**`logging.RedactingFilter` only scans top-level log-record attributes**
-- Risk: `src/datasluice/logging.py:56-71` walks `record.__dict__` and `record.args` dicts, redacting only values whose **key** appears in `_SENSITIVE_KEYS`. Structured log records that nest a credential inside a dict value (e.g. `logger.info("resp: %s", {"headers": {"authorization": "Bearer ..." }})`) are **not** redacted — the outer key is `"resp"` / positional, not a sensitive key.
-- Files: `src/datasluice/logging.py`
-- Current mitigation: Targeted key-list (no value-pattern heuristics) is an explicit design choice (RESEARCH Pitfall 6) to avoid corrupting base64 payloads.
-- Recommendations: Document this limitation in the docstring. Consider a recursive walker with a depth cap (e.g. 2 levels) that redacts nested sensitive keys. Add a regression test for the nested-dict case.
-
-**Domain models retain the entire raw portal payload in `extra`**
-- Risk: `map_dataset`/`map_resource`/`map_organization` store the full upstream JSON dict in the model's `extra` field (`src/datasluice/connectors/ckan/mapper.py:33, 49, 70`; same in socrata/datagouv mappers). If a portal response includes credentials, PII, or internal metadata, those bytes are carried in the domain object, survive `__repr__`/logging by default, and can be serialised by integrations (dlt/airflow) into downstream stores.
-- Files: `src/datasluice/connectors/*/mapper.py`
-- Current mitigation: None.
-- Recommendations: Add an opt-in `strip_extra=True` flag on the mappers (or a session-level `redact_extra_fields` allowlist) that drops or redacts unknown keys before they enter the domain model. At minimum, exclude `extra` from `__repr__`.
-
-**Portal-detection probe swallows TLS errors silently**
-- Risk: `src/datasluice/discovery/detector.py:48-57` wraps each portal probe in `try: client.request(...) except Exception: continue`. A TLS verification failure (expired cert, hostname mismatch, MITM) on the *real* portal is indistinguishable from "this isn't a CKAN portal," so the detector silently moves on and ultimately raises a generic `PortalDetectionError`.
-- Files: `src/datasluice/discovery/detector.py`
-- Current mitigation: None.
-- Recommendations: Narrow the swallowed exception set to `PortalError` (transport-level) and re-raise/propagate TLS errors as a distinct `PortalDetectionError` subtype (e.g. `PortalSecurityError`) so users see the real cause.
-
-## Performance Bottlenecks
-
-**Portal detection constructs a throwaway transport + plugin manager per call**
-- Problem: `detect_portal_type` (`src/datasluice/discovery/detector.py:45-46`) builds a fresh `HttpClient()` and a fresh `PluginManager()` (which triggers an `entry_points()` scan + plugin loads) on every invocation. `DataSluiceSession.portal()` calls it (`src/datasluice/runtime/session.py:185`) and the session already holds its own `PluginManager`, so detection duplicates the work and ignores the session's configured transport, auth, timeout, and retry policy.
-- Files: `src/datasluice/discovery/detector.py`, `src/datasluice/runtime/session.py:183-190`
-- Cause: Detection is a free function with no access to the session.
-- Improvement path: Make detection a method on the session (or accept an injected `transport` + `plugin_manager`), reusing the session's already-built instances. Memoise `entry_points()` results if profiling shows the scan is hot.
-
-**`entry_points()` scanned eagerly on every `PluginManager()` construction**
-- Problem: `src/datasluice/runtime/plugin_manager.py:45` iterates `entry_points(group=group)` in `__init__`. With the `detector.py` throwaway above, a single `session.portal(url)` triggers **two** full entry-point scans + plugin loads.
-- Files: `src/datasluice/runtime/plugin_manager.py`, `src/datasluice/discovery/detector.py`
-- Cause: Eager discovery in the constructor (ARCH-05).
-- Improvement path: Cache the parsed entry points at module level keyed by group (they don't change at runtime), or move discovery behind a `PluginManager.discover()` classmethod that memoises.
-
-**`ContentCache` opens a new SQLite connection on every method call**
-- Problem: `src/datasluice/io/content_cache.py:79-84` documents that "SQLite connections are short-lived: each method opens a fresh connection." Every `get`/`put`/`delete`/`get_metadata` therefore pays `sqlite3.connect` + two `PRAGMA` round-trips (WAL mode, busy_timeout).
-- Files: `src/datasluice/io/content_cache.py`
-- Cause: Explicit design choice (no global connection held, no `close()` needed) to avoid lifecycle bugs.
-- Improvement path: Acceptable for low-frequency catalog access. For the Phase 4 download path with many `put`s in a loop, add a `ContentCache.bulk_put(iterable)` that holds one connection for the batch, or thread a connection through a context manager. Profile before changing.
-
-**CSV / Parquet readers load the entire file into memory**
-- Problem: `CSVReader.read` (`src/datasluice/formats/csv.py:27-35`) decodes the whole file then constructs `csv.DictReader` over an in-memory `StringIO`; `ParquetReader.read` (`src/datasluice/formats/parquet.py:21-34`) calls `pq.read_table(...).to_pylist()`. For multi-GB open-data files (common for geospatial and census datasets), this OOMs the process.
-- Files: `src/datasluice/formats/csv.py`, `src/datasluice/formats/parquet.py`
-- Cause: Return-type contract is `list[dict]`.
-- Improvement path: Add a streaming variant returning an iterator (`read_iter`), or document an upper size limit and raise `FormatError` above it. For parquet, prefer `RecordBatchReader` and yield per-batch.
-
-**`os.environ.get("DATASLUICE_NO_REDACT")` read on every log record**
-- Problem: `RedactingFilter.filter` (`src/datasluice/logging.py:57`) calls `os.environ.get(...)` for every log record emitted. `os.environ.get` is a dict lookup but involves string interning and is on the hot path of every `logger.debug` call in the transport layer.
-- Files: `src/datasluice/logging.py`
-- Improvement path: Read the env var once at filter construction (or module import) into a boolean `_REDACT_ENABLED`, and provide a `set_redaction(bool)` escape hatch for tests. Re-read only if explicitly refreshed.
-
-**`HostCredentialProvider` credential and lock dicts grow unboundedly**
-- Problem: `_cache` and `_host_locks` (`src/datasluice/credentials/host_provider.py:65-66`) are plain dicts keyed by host. Every unique host ever queried adds an entry that is never pruned. A long-running process that discovers many portal hosts (crawler, Airflow scheduler) leaks memory linearly with host count.
-- Files: `src/datasluice/credentials/host_provider.py`
-- Improvement path: Cap the cache (e.g. `cachetools.LRUCache(maxsize=1024)`) or add a `prune(inactive_since: float)` method the session can call periodically. Lock dict pruning is harder (a lock may be in flight); consider a `WeakValueDictionary` for `_host_locks`.
-
-**Portal-detection probe downloads the full response body**
-- Problem: `src/datasluice/discovery/detector.py:53` calls `client.request(probe_url)` (a GET) and reads the entire body just to confirm reachability. Some CKAN `/api/3/action/package_show` endpoints return large JSON.
-- Files: `src/datasluice/discovery/detector.py`
-- Improvement path: Issue a `HEAD` (or `GET` with `Range: bytes=0-0`) for the probe; only fall back to a body-bearing request if the portal rejects HEAD.
-
-## Fragile Areas
-
-**Airflow integration reaches into `DataSluiceSession._transport`**
-- Files: `src/datasluice/integrations/airflow.py:71` — `Downloader(cast("Any", ds._transport))`.
-- Why fragile: Accesses a private attribute from outside the class. Renaming `_transport` (a private symbol the session is free to rename) silently breaks the Airflow operator at runtime, with no type-checker or test coverage to catch it (Airflow integration is 23% covered). The `cast("Any", ...)` hides the access from `ty`.
-- Safe modification: Promote a public accessor on the session (e.g. `session.transport` property, or a `session.build_downloader()` method) and use it here. Until then, any refactor of `DataSluiceSession` internals must grep for `_transport` references in `integrations/`.
-- Test coverage: None for the download branch (`airflow.py:62-73` uncovered).
-
-**`HttpxTransport` leaks its `httpx.Client` connection pool**
-- Files: `src/datasluice/transport/httpx_transport.py:123-127`. The `httpx.Client` is created in `__init__` but `HttpxTransport` defines no `close()`, no `__enter__`/`__exit__`, and no `__del__`.
-- Why fragile: GC of an `httpx.Client` does close its pool eventually, but in long-running processes (crawlers, Airflow workers) that construct many transports, connections accumulate until GC runs. Combined with the per-call transport construction in `detector.py`, this can exhaust file descriptors under load.
-- Safe modification: Add `close()` + `__enter__`/`__exit__` to `HttpxTransport`, and have the session own/close the default transport it constructs.
-
-**`configure_logging()` is a side effect of `DataSluiceSession.__init__`**
-- Files: `src/datasluice/runtime/session.py:147` — `configure_logging(DEFAULT_LOG_LEVEL)` runs on every session construction.
-- Why fragile: A library user who has already configured `logging` (custom handlers, structured formatters, log aggregation) gets a `StreamHandler` with a `RedactingFilter` added to the `"datasluice"` logger on the first `DataSluiceSession()` call, and the level clobbered to `INFO` on every subsequent call. This violates the "library code should not configure logging" convention.
-- Safe modification: Remove the `configure_logging` call from `__init__`; move it into the CLI entry point (`src/datasluice/cli/app.py`) where datasluice owns the process. Document that library users should call `configure_logging()` themselves if they want the default handler.
-
-**Silent no-cache fallback when `ContentCache` import fails**
-- Files: `src/datasluice/runtime/session.py:150-164` — `_build_default_cache` catches `ImportError` and returns `None`, logging only at DEBUG.
-- Why fragile: A caller passing `cache_dir=...` expects caching. If the import fails (rare — `sqlite3` is stdlib — but possible in stripped environments or during refactors), the session silently operates without a cache and re-downloads every resource. The only signal is a DEBUG log line.
-- Safe modification: Log at WARNING when `cache_dir` is provided but the cache cannot be constructed. Consider raising `ConfigError` unless an explicit `allow_no_cache=True` is passed.
-
-**`with_retry` carries a placeholder `RuntimeError`**
-- Files: `src/datasluice/transport/retry.py:57, 73` — `last_exc` is initialised to `RuntimeError("No retries attempted")` and the final `raise last_exc` carries a `# type: ignore[misc]` to silence the type checker.
-- Why fragile: If `policy.max_attempts == 0` (misconfiguration), the function raises the placeholder `RuntimeError` rather than a `ValueError` explaining the bad config. The `type: ignore` masks the genuine type-soundness gap (`Exception` vs `T`).
-- Safe modification: Validate `max_attempts >= 1` in `RetryPolicy.__post_init__`. Replace the placeholder with an `assert last_exc is not ...` or restructure so the loop is guaranteed to assign.
-
-**`_host_credential_provider_type()` importlib indirection**
-- Files: `src/datasluice/transport/httpx_transport.py:49-67`. The 401/403 eviction capability check does `importlib.import_module("datasluice.credentials.host_provider")` on **every** 401/403 response, wrapped in try/except ImportError.
-- Why fragile: This was a wave-ordering workaround so transport could land before plan 03-04. Now that `host_provider.py` exists, the lazy import is dead weight on the hot path and obscures the real dependency. If `host_provider.py` is ever moved/renamed, the `ImportError` is swallowed and the eviction path silently degrades to "no refresh."
-- Safe modification: Replace with a normal `from datasluice.credentials.host_provider import HostCredentialProvider` import under `TYPE_CHECKING` + a module-level `_HostCredentialProviderType = ...` alias, dropping the `importlib` dance.
-
-## Scaling Limits
-
-**Single-process session; no connection pooling across sessions**
-- Current capacity: One `httpx.Client` (or urllib opener) per transport instance; pooled within that instance.
-- Limit: Crawling thousands of portals from one process requires either one shared transport (no per-portal auth scoping) or N transports (N connection pools). There is no built-in pool manager.
-- Scaling path: Introduce a `TransportPool` keyed by `CredentialScope`, or document the shared-transport pattern.
-
-**Token-bucket rate limiter is global per instance, not per host**
-- Current capacity: One `RateLimiter(requests_per_second=N)` throttles all requests that share the limiter instance.
-- Limit: Different portals have different quotas. A single shared limiter either under-utilises lenient portals or over-stresses strict ones.
-- Scaling path: Per-host `RateLimiter` map keyed on `urlparse(url).hostname`, owned by the transport.
-
-**Content cache has no size bound**
-- Current capacity: `ContentCache` grows without limit; only `ttl`-based expiry applies, and only on read (`get`) / sweep.
-- Limit: A crawler downloading many large resources fills the disk; there is no `max_bytes` eviction.
-- Scaling path: Add an LRU-by-size sweep that evicts the oldest `ready` entries when total content size exceeds a configured cap.
-
-## Dependencies at Risk
-
-**`apache-airflow` optional extra is heavy and pins a wide constraint surface**
-- Risk: `apache-airflow` (in `[project.optional-dependencies].airflow` and `.all`, `pyproject.toml:55, 65`) drags in a large, opinionated dependency tree with its own Python-version and Flask-version constraints. It frequently conflicts with the rest of the datasluice environment, making `uv sync --all-extras` fragile on newer Pythons.
-- Impact: CI type-check job (`uv run --all-extras ty check .`) and local dev installs can break on Airflow's release cadence, independent of datasluice's own code. The `airflow` integration is only 23% covered, so the cost/benefit of bundling it is poor.
-- Migration plan: Consider moving Airflow support to a separate companion package (`datasluice-airflow`) that depends on `datasluice` and `apache-airflow`, installed only by users who need it. Until then, pin a known-good Airflow range and exclude it from `--all-extras` in CI type-check.
-
-**`httpx>=0.27` lower bound with no upper cap**
-- Risk: `pyproject.toml:58` pins `httpx>=0.27` but no upper bound. A future httpx major release (httpx 1.0 has been discussed) could break `HttpxTransport` (e.g. `iter_raw`, `build_request`, `response.next_request` APIs).
-- Impact: A transitive bump could break production downloads with no compile-time signal.
-- Migration plan: Cap with `httpx>=0.27,<1.0` (or `<2.0` if conservative). Add a smoke test that imports `HttpxTransport` and exercises a single request against the in-process test HTTP server (`tests/helpers/http_server.py`).
-
-**Python 3.14 in the CI matrix ahead of ecosystem support**
-- Risk: `.github/workflows/ci.yml` runs the test matrix on Python 3.12, 3.13, and 3.14 (per AGENTS.md). At analysis date, several optional deps (notably `apache-airflow`, `dlt`, and some `pyarrow` releases) lag behind 3.14.
-- Impact: The 3.14 leg can fail for reasons unrelated to datasluice's own code, masking real regressions.
-- Migration plan: Mark the 3.14 leg `allow-failure: false` but `continue-on-error: true` until the optional-deps ecosystem declares 3.14 support; or split the matrix into "core" (3.12–3.14) and "extras" (3.12–3.13) jobs.
-
-**Coverage threshold of 50% is well below actual coverage**
-- Risk: `[tool.coverage.report].fail_under = 50` (`pyproject.toml:112`) gates CI on 50% line coverage. Actual coverage is 85% overall.
-- Impact: A regression that drops coverage from 85% to 55% would still pass CI. The threshold provides no meaningful guard.
-- Migration plan: Raise `fail_under` to 80% (or the current actual minus 2pp) and add per-package thresholds for the low-coverage areas listed below.
-
-## Missing Critical Features
-
-**No HEAD / conditional-GET support on the download path**
-- Problem: `Downloader.download` (`src/datasluice/io/downloader.py:41-97`) always issues a full GET. `ContentCache.get_metadata` (`src/datasluice/io/content_cache.py:232-256`) already stores `etag`/`last_modified`, but nothing on the read path sends `If-None-Match` / `If-Modified-Since` to revalidate.
-- Blocks: Bandwidth-efficient incremental sync (the documented Phase 7 / SYNC-06 goal).
-
-**No retries on the streaming path**
-- Problem: `HttpxTransport.stream` (`src/datasluice/transport/httpx_transport.py:271-298`) explicitly does NOT wrap in `with_retry` — a transient 5xx mid-stream fails the whole download. Resumable streaming is documented as Phase 4's concern but is not yet implemented.
-- Blocks: Reliable download of large resources over flaky connections.
-
-**No structured/batch download result**
-- Problem: `Downloader.download_many` returns `list[Path]` only (see Known Bugs). There is no `DownloadReport` exposing successes, failures, bytes downloaded, and timing.
-- Blocks: Observability and idempotent retry of just the failed resources.
-
-## Test Coverage Gaps
-
-Actual overall coverage is 85% (265 tests passing), but it is unevenly distributed. The threshold (`fail_under=50`) hides these gaps.
-
-**Portal adapters — the core product surface — are barely tested**
-- What's not tested: Live search, `get_dataset`, `list_resources`, `get_organization` for all three built-in adapters. Only the mappers have focused unit tests; the adapter orchestration is uncovered.
-- Files & coverage:
-  - `src/datasluice/connectors/ckan/adapter.py` — 33% (lines 24-26, 30-38, 48-49, 53, 57-61 uncovered)
-  - `src/datasluice/connectors/socrata/adapter.py` — 32% (lines 24-25, 29-39, 49-53, 57, 64)
-  - `src/datasluice/connectors/datagouv/adapter.py` — 28% (lines 24-25, 29-44, 54-55, 59, 63-67)
-  - `src/datasluice/connectors/socrata/mapper.py` — 35%
-  - `src/datasluice/connectors/datagouv/mapper.py` — 37%
-- Risk: A regression in search/pagination/`has_next` computation — the most user-visible behaviour — ships without a failing test.
-- Priority: **High.** Add contract tests using recorded fixtures (or the existing `tests/helpers/http_server.py`) per adapter.
-
-**Connector `errors.py` modules are 0% covered**
-- What's not tested: The custom exception classes/mappers in `src/datasluice/connectors/ckan/errors.py`, `.../socrata/errors.py`, `.../datagouv/errors.py` (all 0%).
-- Risk: These modules may be entirely dead code (nothing imports them) — or, worse, are intended to be wired in and never were. Either way, the current state is undefined.
-- Priority: **High** (clarify intent — wire in or delete).
-
-**`io/downloader.py` — the download path — is 21% covered**
-- What's not tested: `Downloader.download` body (lines 63-97), `download_many` (105-113). Hash verification, cache hit/miss, and storage-write branches are all uncovered.
-- Files: `src/datasluice/io/downloader.py`
-- Risk: The checksum-mismatch and storage-failure paths — security/correctness critical — are untested. A bug in `verify_hash` comparison (case sensitivity, algorithm selection) would ship silently.
-- Priority: **High.**
-
-**`discovery/detector.py` is 25% covered**
-- What's not tested: The actual probe loop (lines 40-59) — i.e. detection never exercises a real (mocked) portal response in tests.
-- Risk: The "auto-detect portal from URL" UX — a headline feature — has no regression test.
-- Priority: **High.**
-
-**Integration modules (pandas, polars, dlt, airflow) are 16–25% covered**
-- What's not tested: The happy path of every integration except DuckDB (89%).
-- Files: `src/datasluice/integrations/polars.py` (16%), `pandas.py` (22%), `airflow.py` (23%), `dlt.py` (25%).
-- Risk: Public integration APIs that users call directly are untested. A pandas/polars API change (these libraries release often) breaks the integration with no signal.
-- Priority: **Medium** (add smoke tests gated on optional-dep presence).
-
-**`formats/xlsx.py` (27%) and `formats/geojson.py` (30%)**
-- What's not tested: The read paths for Excel and GeoJSON.
-- Risk: Format readers silently break on valid files; users hit confusing errors.
-- Priority: **Medium.**
-
-**`connectors/custom/` is 0% covered**
-- What's not tested: The skeleton adapter entirely.
-- Risk: Low — it raises `NotImplementedError` everywhere — but the 0% number means even instantiation isn't asserted.
-- Priority: **Low.**
+This project is mid-refactor (v0.1.0 → v1.0.0, Phases 1–7 done; Phase 8 pending). Many issues below are
+*intentional, documented compromises* tied to a numbered RESEARCH Pitfall or broken window. Each entry
+states whether it is a genuine defect vs. an accepted deviation so a refactorer knows where to invest.
+Canonical pitfall reference: `.planning/research/PITFALLS.md`. Open defect register: `.planning/WINDOWS.md`.
 
 ---
 
-*Concerns audit: 2026-07-26*
+## Tech Debt
+
+### dlt source ignores caller-injected dependencies  · **Critical**
+
+- Issue: `datasluice_source()` constructs its own `DataSluiceSession()` (line 59) and a fresh
+  `DataPlaneResourceReader(transport=HttpxTransport())` (line 62) *inside* the source closure. It does
+  not accept or forward the caller's `auth`, `credential_provider`, `rate_limit`, `retry_policy`,
+  `cache`, or `transport`. The entire Phase 2/3 dependency-injection design is bypassed for the dlt path.
+- Files: `src/datasluice/integrations/dlt.py:59`, `src/datasluice/integrations/dlt.py:62`
+- Impact: Authenticated/private portals cannot be loaded through dlt. Rate limits, retry policy, and the
+  content cache are silently unused. Any credential scope/host stripping configured on a user's session
+  does not apply to dlt-initiated downloads. This also forces dlt users to install `httpx` even when they
+  intend to read from object storage.
+- Fix approach: Accept an optional `session: DataSluiceSession | None = None` (and/or `reader=` /
+  `transport=`) on `datasluice_source()`; default to `DataSluiceSession()` only when none is supplied.
+  Reuse the injected reader for resource bodies instead of hard-coding `DataPlaneResourceReader`.
+
+### dlt yields a fully materialized Table, not streaming RecordBatches  · **Medium**
+
+- Issue: Each resource body calls `to_arrow(stream)` (full `pa.Table.from_batches(...)`), then yields the
+  whole table into dlt. RESEARCH Pitfall 11 explicitly warns against dict/Table materialization and
+  prescribes yielding `RecordBatch` / dlt `ArrowItem` so dlt and DataSluice both speak Arrow natively.
+- Files: `src/datasluice/integrations/dlt.py:93`
+- Impact: Large resources are buffered into one Arrow Table in memory before dlt sees them — defeats the
+  bounded-memory promise of the `BatchStream` data plane (Phase 4) for the dlt integration specifically.
+- Fix approach: Refactor `_resource_body` to iterate `stream.iter_batches()` and yield batches (or
+  `dlt.mark`/`ArrowItem`) lazily. Confirm dlt's resource contract accepts a batch generator.
+
+### Airflow operator reaches into a private attribute via `cast("Any", ...)`  · **High**
+
+- Issue: `DataSluiceOperator` accesses `ds._transport` (a private, underscore-prefixed attribute) through
+  `cast("Any", ds._transport)` to feed the legacy `Downloader`. This is a deliberate type-checker escape
+  hatch that hides a layering violation from `ty`.
+- Files: `src/datasluice/integrations/airflow.py:71`
+- Impact: Couples the Airflow provider to `DataSluiceSession` internals; any rename of `_transport` breaks
+  it silently at runtime (not at type-check time). The operator also instantiates its own `Downloader`
+  rather than using the session's data plane / sync facilities, so it bypasses streaming, checksums, and
+  the content-addressed cache.
+- Fix approach: Expose a public accessor on `DataSluiceSession` (e.g. `session.transport` property) or
+  route the operator through `session.sync_resources(...)`. Remove the `cast`.
+
+### Legacy `Downloader` / `FileCache` diverge from the new content-addressed cache  · **Medium**
+
+- Issue: `io/downloader.py` and `io/cache.py` predate the Phase 3 `ContentCache`. They are still wired into
+  the Airflow operator. Divergences: (a) `Downloader` uses `cache_key = resource.url` verbatim
+  (`io/downloader.py:68`) — the very anti-pattern RESEARCH Pitfall 9 flags (URL-derived keys). The new
+  `ContentCache` hashes the key with SHA-256. (b) `FileCache.put` returns `Path` while `ContentCache.put`
+  returns `None` — the `CachePort` return contract is inconsistent across the two implementations.
+- Files: `src/datasluice/io/downloader.py:68`, `src/datasluice/io/cache.py:43`, `src/datasluice/io/content_cache.py:146`
+- Impact: Two parallel cache implementations with different semantics. The Airflow path can collide /
+  mis-key where the rest of the library cannot. `FileCache` has no size bound (Pitfall 9), no metadata
+  sidecar, and no atomic two-phase write.
+- Fix approach: Retire `FileCache`/`Downloader` once the Airflow operator is rebuilt on `sync_resources`.
+  Delete the legacy modules or mark them deprecated. Unify the `put` return type.
+
+### `_READY = True` feature-flag scaffolding left in production modules  · **Low**
+
+- Issue: Several modules carry module-level booleans that were flags during incremental feature landing:
+  `_CONDITIONAL_SYNC_READY`, `_WITHIN_RESOURCE_RESUME_READY`, `_FAILURE_BOUNDARY_READY`,
+  `_SECRET_FREE_STATE_READY`, `_SESSION_SYNC_READY`, `_IDEMPOTENT_MATERIALIZE_READY`. All are now `True`
+  and are never read.
+- Files: `src/datasluice/sync/sync.py:18-20`, `src/datasluice/sync/materialize.py:12`,
+  `src/datasluice/sync/state_store.py:29`, `src/datasluice/runtime/session.py:47`
+- Impact: Dead code; mild reader confusion ("is this still gated?").
+- Fix approach: Delete the flags. They served their purpose during Phase 7 landings.
+
+---
+
+## Known Bugs
+
+### `with result.stream: pass` is not a valid context-manager call  · **High**
+
+- Symptoms: In the conditional-fetch fallback branch of `sync_resources`, when the reader lacks
+  `open_response`, the code does `with result.stream: pass` to "close" the stream.
+- Files: `src/datasluice/sync/sync.py:84-86`
+- Trigger: Inject any `reader` that does not implement `open_response` together with a
+  `ConditionalTransport` whose `conditional_fetch` returns a non-304 result. `result.stream` is a
+  `StreamResponse` (`src/datasluice/transport/httpx_transport.py:71`) that implements only `__iter__` and
+  `close()` — it has no `__enter__`/`__exit__`, so `with result.stream:` raises `AttributeError: __enter__`.
+- Workaround: None today. The path is currently dead because the default `DataPlaneResourceReader` *does*
+  implement `open_response`, so the branch is untested and the bug is latent. Registered as a deviation
+  surface (broken window #7 covers the broader conditional-body reuse).
+- Fix approach: Replace `with result.stream: pass` with `result.stream.close()`. Add a test that injects a
+  reader without `open_response` and asserts the stream is closed, not that an `AttributeError` is raised.
+
+### pandas 3.0.3 ArrowStringArray Index bug skips integration tests  · **Medium** (broken windows #1, #2)
+
+- Symptoms: `tests/unit/integrations/test_to_pandas.py` and `test_equivalence.py` skip in the full suite
+  but pass in isolation.
+- Files: `tests/unit/integrations/test_to_pandas.py`, `tests/unit/integrations/test_equivalence.py:66`
+- Trigger: Running the complete pytest suite under pandas 3.0.3 (an upstream pandas bug in
+  ArrowStringArray Index handling).
+- Workaround: Run those files individually. The broken-windows ledger (`/.planning/WINDOWS.md` items 1, 2)
+  records this as an accepted deviation; `/gsd-ship` tolerates it.
+
+### `test_peak_rss_bounded` flaky under full-suite memory pressure  · **Medium** (broken windows #3, #5)
+
+- Symptoms: Peak-RSS test fails at the 200MB threshold (observed 208MB) when run as part of the full
+  suite, passes in isolation.
+- Files: `tests/unit/data/test_peak_rss.py:122`
+- Cause: Inherited allocator state / Arrow shutdown interactions when the test shares a process with the
+  rest of the suite. The test deliberately uses `ru_maxrss` in a subprocess (RESEARCH Pitfall 5) because
+  `tracemalloc` cannot see pyarrow's native mimalloc allocations — the isolation is incomplete.
+- Fix approach: Run the peak-RSS measurement in a stricter subprocess harness or raise the threshold and
+  document the headroom. Broken-window #5 tracks the isolation work.
+
+### dlt tests resolve the active module at execution time via `importlib`  · **Medium** (broken windows #8, #9)
+
+- Symptoms: `tests/unit/integrations/test_dlt.py` resolves `datasluice.integrations.dlt` through
+  `importlib.import_module` at module load and resolves `dlt.current.resource_state()` inside patched
+  callables via `importlib` again, rather than a normal import.
+- Files: `tests/unit/integrations/test_dlt.py:19`, `:177`, `:285`, `:290`
+- Cause: A "purity" module purge step re-imports the dlt module fresh for some tests; the late binding is
+  needed so the patched `arrow.to_arrow` is observed. This is fragile to import-ordering changes.
+- Fix approach: Eliminate the purity-purge step (broken window #9) or formalize it behind a fixture so
+  the late binding is intentional rather than an `importlib` workaround.
+
+---
+
+## Security Considerations
+
+### DuckDB SQL injection — mitigated but the boundary is a single regex  · **Low** (residual after fix)
+
+- Risk: An attacker controlling the `table_name` argument could attempt SQL injection.
+- Files: `src/datasluice/integrations/duckdb.py:21-38` (`_validate_table_name`), `:76` (call site)
+- Current mitigation: `_validate_table_name` rejects anything not matching `^[A-Za-z_][A-Za-z0-9_]*$`
+  before `connection.register(table_name, table)` / `connection.table(table_name)`. The relation API is
+  used (no f-string SQL interpolation), so this was the RESEARCH Pitfall 5 fix. Regression tests exist
+  (`tests/unit/integrations/test_to_duckdb.py` imports `_validate_table_name`).
+- Recommendations: The guard is correct but lives as the *sole* SEC-03 boundary. Any future API that
+  re-introduces string-interpolated SQL must re-apply the regex. Keep the guard centralized and add a
+  lint/test asserting `to_duckdb` is the only DuckDB call site.
+
+### Cross-host credential leakage on redirect — mitigated  · **Low** (residual after fix)
+
+- Risk: Credentials forwarded to a third-party CDN / attacker host on 3xx.
+- Files: `src/datasluice/transport/redirect.py:30-59`, `src/datasluice/transport/httpx_transport.py:140-192`
+- Current mitigation: Both the urllib `CredentialAwareRedirectHandler` and the httpx manual redirect loop
+  strip `SENSITIVE_HEADERS` (`authorization`, `cookie`, `x-api-key`, `x-auth-token`) on cross-origin or
+  https→http downgrade hops. With a `CredentialScope`, stripping is host-allowlist-driven. This was the
+  RESEARCH Pitfall 1 fix.
+- Recommendations: `SENSITIVE_HEADERS` (`src/datasluice/logging.py:17`) is a closed set. If a new auth
+  strategy introduces a new sensitive header name, it must be added here *and* to the redirect handlers,
+  or it will be forwarded on cross-host redirects. Add a test that fails when a new `BaseAuth` subclass
+  emits a header not in the set.
+
+### Secret redaction is key-name-based, not value-pattern-based  · **Low** (intentional)
+
+- Risk: Secrets in URL query strings (`?api_key=...`, presigned `X-Amz-Signature`) and in arbitrary
+  non-allowlisted log keys are NOT redacted.
+- Files: `src/datasluice/logging.py:45-71`
+- Current mitigation: `RedactingFilter` replaces values for keys in `_SENSITIVE_KEYS`. RESEARCH Pitfall 6
+  documents the deliberate choice: value-pattern heuristics would false-positive on legitimate base64 /
+  open-data payloads. `DATASLUICE_NO_REDACT=1` disables redaction entirely.
+- Recommendations: Logged URLs at DEBUG still carry embedded tokens (Pitfall 19). If DEBUG logging of
+  request URLs is enabled in production, presigned signatures and query-string API keys reach logs.
+  Consider a URL-sanitizing formatter step that strips known signature query params before emission.
+
+### Plugin entry-point `.load()` executes arbitrary import-time code  · **Low** (accepted)
+
+- Risk: A malicious or buggy third-party connector registered under `datasluice.connectors` runs at
+  `PluginManager.__init__` time.
+- Files: `src/datasluice/runtime/plugin_manager.py:45-59`
+- Current mitigation: `.load()` is wrapped in `except Exception` (see "Broad exception catches" below);
+  failures are recorded as `PluginFailure` and never crash session creation (RESEARCH Pitfall 4). Discovery
+  is eager in `__init__`, not at package import — but `DataSluiceSession()` construction triggers it.
+- Recommendations: Document the trust model for third-party connectors in the contributor guide. The eager
+  discovery means merely constructing a session executes all installed connector entry points.
+
+### Credentials never persisted to disk by DataSluice  · **Low** (verified)
+
+- Risk: Tokens leaking to disk via cache/state files.
+- Files: `src/datasluice/io/content_cache.py`, `src/datasluice/sync/state_store.py`
+- Current mitigation: `FileStateStore.put` validates that watermark strings are SHA-256 / ETag / HTTP-date
+  shaped (`_is_completed_watermark`, `state_store.py:258`) and rejects anything else; `last_synced_at` is
+  constrained to tz-aware ISO-8601. The content cache stores only resource bytes + ETag/Last-Modified.
+  No code path writes raw credentials (`BearerAuth`/`APIKeyAuth` reprs are redacted: `auth/bearer.py:22`,
+  `auth/api_key.py:42`).
+
+---
+
+## Performance Bottlenecks
+
+### Parquet over HTTP buffers the entire file into `BytesIO`  · **High** (documented compromise)
+
+- Problem: Non-seekable Parquet sources (HTTP downloads via `IterableBytesIO`) are spooled with
+  `io.BytesIO(source.read())` before `ParquetFile` can seek to the footer.
+- Files: `src/datasluice/data/readers/parquet.py:55-57`
+- Cause: Parquet footers live at EOF; `ParquetFile.iter_batches` issues `seek()`. The spool is bounded by
+  total file size, NOT by `batch_size` — explicitly the "unavoidable compromise" of RESEARCH Pitfall 1.
+- Improvement path: HTTP Range requests to fetch the footer + requested row groups directly. Documented as
+  out of Phase 4 scope; large Parquet resources fetched over HTTP remain an OOM risk until landed.
+  Mitigation today: route large Parquet through `object_storage` / `local_file` access kinds (seekable,
+  no spool) and checkpoint via `read_batches_from_row_group`.
+
+### ZIP decompression spools the full body and materializes the largest member  · **Medium**
+
+- Problem: `_zip_largest_member` does `source.read()` into `io.BytesIO`, then `zf.read(largest)` returns
+  the member bytes in full.
+- Files: `src/datasluice/data/compression.py:245-274`
+- Cause: ZIP central directory lives at EOF (RESEARCH Pitfall 2), so the body must be seekable; the
+  largest-member selection (OQ5) then reads that member wholesale. Two full copies of the member can be
+  resident (the `BytesIO` body + the extracted `member_bytes`).
+- Improvement path: Stream the selected member via `zf.open(largest)` instead of `zf.read(largest)` so
+  downstream format readers can consume it lazily. Keep the body spool (unavoidable) but avoid the second
+  full copy.
+
+### XLSX "streaming" buffers the whole workbook  · **Medium** (documented)
+
+- Problem: `XLSXReader` calls `load_workbook(..., read_only=True)`, but XLSX is itself a ZIP so openpyxl
+  decodes it in one pass; per-batch memory is not byte-bounded for wide rows.
+- Files: `src/datasluice/data/readers/xlsx.py:7-13`, `:52-55`
+- Cause: Format limitation (D-P4-14 acknowledges this). Open-data XLSX rows are modest width in practice.
+- Improvement path: None planned; document the memory profile for users loading large XLSX.
+
+### dlt terminal materializes the full table per resource  · **Medium**
+
+(See "Tech Debt" — `to_arrow(stream)` in `dlt.py:93` buffers the entire resource.)
+
+---
+
+## Fragile Areas
+
+### `pc.__dict__["assume_timezone"]` / `pc.__dict__["struct_field"]` bypass type checking  · **High**
+
+- Files: `src/datasluice/transforms/steps.py:167`, `src/datasluice/transforms/steps.py:216`
+- Why fragile: PyArrow compute functions `assume_timezone` and `struct_field` are accessed via dict lookup
+  (`pc.__dict__[...]`) and assigned to an `Any`-typed local. This is a workaround for the `ty` type
+  checker flagging these functions' signatures. Consequences: (a) no IDE autocomplete or go-to-definition;
+  (b) a pyarrow rename/removal would raise `KeyError` at *runtime* inside the transform, not a clear
+  ImportError; (c) the type checker can no longer verify argument correctness for these calls.
+- Safe modification: If touching `NormalizeTimestamps` or `Flatten`, re-verify whether the `ty`
+  conformance issue is still present on the current pyarrow version. If resolved, switch back to direct
+  `pc.assume_timezone` / `pc.struct_field` attribute access. Keep a unit test that exercises both code
+  paths so a pyarrow upgrade surfaces the change.
+- Test coverage: Covered by `tests/unit/data/test_schema_unification.py` and transform tests, but only the
+  happy path — a pyarrow rename would not be caught until runtime.
+
+### `transport/__init__.py` PEP 562 lazy `__getattr__`  · **Medium**
+
+- Files: `src/datasluice/transport/__init__.py:31-42`
+- Why fragile: `HttpxTransport` and `StreamResponse` are resolved on first attribute access via a module
+  `__getattr__` so bare installs (without the `http` extra) never import httpx. Unusual pattern; static
+  analyzers and some IDEs do not see these as exported. Carries `# type: ignore[no-untyped-def]`.
+- Safe modification: Anyone adding a new httpx-backed export must extend `__getattr__` and `__all__`
+  together, or the symbol will import at runtime but be invisible to tooling.
+
+### Detection-only optimistic CAS in `FileStateStore`  · **Medium** (documented)
+
+- Files: `src/datasluice/sync/state_store.py:129-179`
+- Why fragile: `put(..., expected_prior=...)` re-reads the file and SHA-256-compares *before* the atomic
+  rename, but there is no true compare-and-swap — a writer can commit between the hash check and the
+  `mv`. RESEARCH Pitfall 5 documents this as the portable fsspec workaround (no advisory locks / etags
+  across backends).
+- Safe modification: Concurrent writers to the same state key on a shared remote backend can still lose
+  updates in the race window. For single-writer workflows (the current design) this is safe. Document the
+  single-writer assumption if multi-writer sync is ever considered.
+
+### `iter_batches_with_cursors` assumes monotonic batch indexes  · **Medium**
+
+- Files: `src/datasluice/data/batch_stream.py:101-110`
+- Why fragile: The cursor generator enforces `next_batch_index > previous` and pins the cursor position to
+  a `ParquetRowGroupPosition` with `next_batch_index == row_group_index`. This coupling (batch index MUST
+  equal row-group index) is correct only for the Parquet-row-group reader path
+  (`read_batches_from_row_group`). A format reader that yields multiple batches per row group, or batches
+  not aligned to row groups, would trip the `DataSluiceError("Batch cursor indexes must increase
+  monotonically")` guard or produce meaningless cursors.
+- Safe modification: Only the Parquet cursor stream uses this; do not wire non-Parquet formats through
+  `iter_batches_with_cursors` without generalizing the position type.
+
+### httpx connection/timeout errors propagate from detection  · **Medium** (open question OQ-1)
+
+- Files: `src/datasluice/discovery/detector.py:23-37`
+- Why fragile: `_PROBE_EXCEPTIONS = (NotFoundError, PortalError, OSError)`. `httpx.ConnectError` and
+  `httpx.TimeoutException` are NOT `OSError` subclasses, so injecting an `HttpxTransport` into `detect()`
+  means a connection failure propagates as an uncaught exception instead of becoming a detection miss.
+- Safe modification: The CLI defaults to urllib `HttpClient` where this is moot. If you inject
+  `HttpxTransport` into detection, either translate httpx exceptions in the transport or extend
+  `_PROBE_EXCEPTIONS`. Documented as out of Phase 5 scope.
+
+### `RecordBatchReader` use-after-close + GIL/native-resource edge cases  · **Medium**
+
+- Files: `src/datasluice/data/batch_stream.py:81-99`
+- Why fragile: `BatchStream.iter_batches()` catches `StopIteration` from `read_next_batch()` (RESEARCH
+  Pitfall 2 — PyArrow readers hold native resources; GC may not finalize promptly). `__arrow_c_stream__`
+  materializes the full batch list for bare iterators via `pa.RecordBatchReader.from_batches`. Resource
+  cleanup depends on the caller using the context manager.
+- Safe modification: Always use `with open(...) as stream:`. The `_StreamClosingBytesIO`
+  (`data/access.py:46-60`) chains response + transport cleanup into `close()`; any new reader wrapper must
+  preserve that discipline or leak file descriptors / httpx connections under load.
+
+---
+
+## Scaling Limits
+
+### httpx connection pool defaults  · **Low**
+
+- Current capacity: `HttpxTransport.__init__` constructs `httpx.Client(timeout=httpx.Timeout(timeout))`
+  with default `Limits` (httpx defaults: 20 keepalive / 100 max connections). No `pool` timeout slot is
+  set — `timeout` is a single scalar.
+- Limit: RESEARCH Pitfall 13 warns this yields `PoolTimeout` under batch downloads. The single-scalar
+  timeout conflates connect/read/write/pool wait.
+- Scaling path: Expose `httpx.Limits` and `httpx.Timeout(connect, read, write, pool)` on `HttpxTransport`
+  / `DataSluiceSession` when batch/concurrent download support lands.
+
+### Content cache is local-filesystem-oriented  · **Low**
+
+- Current capacity: `ContentCache` uses a SQLite WAL index (`cache.db`) with short-lived connections and a
+  lazy sweep. Works on local FS; on remote fsspec backends the per-method `cat_file`/`pipe_file` round
+  trips and SQLite-over-remote are untested.
+- Limit: SQLite WAL on a non-local backend is not supported reliably.
+- Scaling path: Restrict `ContentCache` to `file://` / local; use a different `CachePort` implementation
+  for remote backends if needed.
+
+### `HostCredentialProvider` is synchronous only  · **Low**
+
+- Current capacity: Single-flight refresh via `threading.Lock` + double-checked expiry.
+- Limit: No async refresh path. Fine for the current single-threaded sync design; an async transport would
+  need an `asyncio`-native provider.
+- Scaling path: Add an async-capable credential provider if/when async fsspec / httpx is adopted
+  (RESEARCH Pitfall 8 reserves async as opt-in).
+
+---
+
+## Dependencies at Risk
+
+### Heavy optional deps imported lazily inside function bodies  · **Low** (intentional, maintain carefully)
+
+- Risk: `pandas`, `polars`, `dlt`, `duckdb`, `apache-airflow`, `pyarrow`, `openpyxl`, `httpx`, `fsspec`,
+  `zstandard` are all optional extras. The codebase deliberately imports them inside function bodies
+  (AGENTS.md "Lazy imports" rule) so `import datasluice` works on a bare install.
+- Impact: If a future change moves any of these to a module-top-level import, `import datasluice` breaks
+  for users without that extra. `ty` type-checking (CI) requires `uv sync --all-extras` precisely because
+  these lazy imports are otherwise unresolved.
+- Migration plan: Keep the lazy-import discipline. The `# noqa: F401 — lazy import gate` markers in
+  `integrations/pandas.py:36` and `integrations/polars.py:35` are the established pattern — they import to
+  trigger `ImportError` early, then discard the name and re-import at use.
+
+### pandas 3.0.3 upstream bug  · **Medium** (broken windows #1, #2)
+
+- Risk: The pinned/newer pandas ships an ArrowStringArray Index bug that causes integration tests to skip
+  in the full suite.
+- Impact: Equivalent between `to_pandas` / DuckDB / polars is not continuously verified in CI's full run.
+- Migration plan: Track the upstream pandas fix; unskip the tests when fixed. Until then, equivalence is
+  only validated by running the two test files in isolation.
+
+### `pyarrow` is the load-bearing substrate  · **Medium**
+
+- Risk: The entire data plane (`BatchStream`, all format readers, all transforms, all terminals, dlt)
+  depends on pyarrow. RESEARCH Pitfall 7 warns the Python-level API evolves across major versions.
+- Impact: A pyarrow major bump could break `RecordBatchReader` semantics, `pc.assume_timezone`/
+  `pc.struct_field` availability (see Fragile Areas), or the `__arrow_c_stream__` PyCapsule protocol.
+- Migration plan: The CI matrix runs Python 3.12/3.13/3.14 but pyarrow is not matrixed. Consider adding a
+  pyarrow floor/ceiling test matrix before v1.0.0.
+
+---
+
+## Missing Critical Features
+
+### Application-layer facade and use cases  · **Medium** (Phase 8 scope)
+
+- Problem: `DataSluiceSession` exposes `portal()`, `search()`, `sync_resources()` but the full
+  application-layer use cases and the complete CLI surface are Phase 8 work.
+- Files: `src/datasluice/runtime/session.py`, `src/datasluice/cli/` (only `search`/`inspect`/`download`/
+  `detect` commands today)
+- Blocks: A user cannot drive the full sync/materialize flow from the CLI today; `sync_resources` is API-
+  only.
+
+### 80% coverage gate  · **Medium** (Phase 8 scope)
+
+- Problem: `pyproject.toml` sets `fail_under = 50` — the floor, not the target.
+- Files: `pyproject.toml:115`
+- Blocks: The v1.0.0 release gate (ROADMAP Phase 8, success criterion 5: "CI enforces coverage ≥ 80%").
+  Until Phase 8 plan 08-04 lands, coverage at 50% means new untested code does not fail CI.
+
+### Query / stream access kinds  · **Low** (explicitly out of scope)
+
+- Problem: `DataPlaneResourceReader.open()` raises `UnsupportedAccessError` for `query` and `stream`
+  access kinds (CKAN datastore, Socrata SoQL). dlt's `datasluice_source` skips resources with these kinds.
+- Files: `src/datasluice/data/access.py:124-132`, `src/datasluice/integrations/dlt.py:67-71`
+- Blocks: Resources exposed only via query/stream APIs cannot be read. Documented as future work / out of
+  scope for the current milestone.
+
+---
+
+## Test Coverage Gaps
+
+### Conditional-fetch fallback branch is untested (latent bug)  · **High**
+
+- What's not tested: The `elif result.stream is not None:` branch in `sync_resources` that does
+  `with result.stream: pass` (see Known Bugs). Because the default reader has `open_response`, no test
+  injects a reader without it.
+- Files: `src/datasluice/sync/sync.py:84-86`
+- Risk: The latent `AttributeError` is not caught. A reader implementation that legitimately lacks
+  `open_response` would crash on a 200 conditional fetch.
+- Priority: High — add a test injecting a minimal reader without `open_response` to expose the bug, then
+  fix to `result.stream.close()`.
+
+### Broad exception catches are intentional but under-asserted  · **Medium**
+
+- What's not tested: The intentional broad catches in `runtime/plugin_manager.py:48` (`except Exception`
+  around `.load()`), `io/content_cache.py:279,286,288` (`except Exception` in sweep),
+  `data/readers/parquet.py:119` (`except Exception` in `_safe_seekable`), `data/readers/xlsx.py:54`
+  (`except Exception` around `load_workbook`).
+- Files: as above
+- Risk: Each is documented as intentional isolation, but none have a test asserting they swallow only the
+  intended failure classes. A future regression that broadens the catch further (or narrows it wrongly)
+  would not be caught.
+- Priority: Medium — add tests that (a) a broken plugin is recorded in `list_failures()`, (b) a sweep
+  failure does not break `get`/`put`, (c) `_safe_seekable` returns False on a reader whose `seekable()`
+  raises.
+
+### Cross-host redirect stripping under a `CredentialScope`  · **Medium**
+
+- What's not tested (verify): The host-allowlist path of `_should_strip_authorization` /
+  `CredentialAwareRedirectHandler` when a redirect target IS in `allowed_hosts` (should NOT strip).
+  RESEARCH Pitfall 1's "same-host-but-not-in-scope" case is the subtle one.
+- Files: `src/datasluice/transport/httpx_transport.py:140-161`, `src/datasluice/transport/redirect.py:49-55`
+- Risk: A regression that over-strips (breaking legitimate same-scope redirects) or under-strips (leaking
+  to an allowed-but-unexpected host) would not be caught.
+- Priority: Medium — confirm coverage of the four scope branches (downgrade / host-not-allowed /
+  scheme-not-allowed / `send_on_redirect=False`) and the same-host positive case.
+
+### Materialize checkpoint-resume corrupt-state paths  · **Medium**
+
+- What's not tested (verify): `materialize_checkpointed` corrupt-continuation branches — missing shard,
+  non-monotonic cursor — are exercised; confirm the `DataSluiceError` paths in
+  `sync/materialize.py:98-103`, `:108-112`, `:118-119`, `:121-125` each have coverage.
+- Files: `src/datasluice/sync/materialize.py`
+- Risk: A crash mid-materialize that leaves a partial-shard gap could silently produce an incomplete
+  artifact if the guards regress.
+- Priority: Medium.
+
+### Overall coverage at the 50% floor  · **Medium**
+
+- What's not tested: Branch coverage (`branch = true` is set in `pyproject.toml:108`) is collected but the
+  gate is `fail_under = 50`. RESEARCH Pitfall 16 explicitly warns that line coverage can hit a threshold
+  while error paths and streaming edge cases stay untested.
+- Files: `pyproject.toml:107-125`
+- Risk: New code with no tests passes CI as long as aggregate coverage stays ≥ 50%.
+- Priority: Medium — Phase 8 plan 08-04 raises the gate to 80%. Until then, rely on the targeted
+  per-pitfall tests the phases added.
+
+---
+
+*Concerns audit: 2026-07-30*
