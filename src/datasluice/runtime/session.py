@@ -10,8 +10,8 @@ Phase 3 (D-P3-02): the session gains explicit kwargs (``timeout``/``retries``/
 (``transport=``/``storage=``/``cache=``/``credential_provider=``). Scalar knobs
 configure only the default-constructed transport; when ``transport=`` is
 injected the scalars are ignored (D-P3-05). The session surface stays
-``portal()``/``search()``-only (D-P3-22) and ``ConnectorContext`` is unchanged
-(D-P3-21).
+``portal()``/``search()``-only until Phase 7 adds sync composition, while
+``ConnectorContext`` remains unchanged (D-P3-21).
 """
 
 from __future__ import annotations
@@ -35,13 +35,16 @@ from datasluice.runtime.defaults import create_default_transport
 from datasluice.runtime.plugin_manager import PluginManager
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable, Iterator
 
     from datasluice.auth import BaseAuth
     from datasluice.connectors.base import BaseAdapter
-    from datasluice.ports import CachePort, CredentialProvider, StoragePort, Transport
+    from datasluice.ports import CachePort, CredentialProvider, StateStore, StoragePort, Transport
+    from datasluice.sync.sync import SyncOutcome
 
 logger = get_logger("session")
+
+_SESSION_SYNC_READY = True
 
 
 class _StaticCredentialProvider:
@@ -64,9 +67,9 @@ class _StaticCredentialProvider:
 class DataSluiceSession:
     """Public facade and composition root for DataSluice.
 
-    Wires the :class:`PluginManager`, transport, auth, and (optional) storage
-    / cache / credential provider into a zero-config session. Every override
-    is explicit — no env-var-driven settings (D-14).
+    Wires the :class:`PluginManager`, transport, auth, state store, and
+    optional storage / cache / credential provider into a zero-config session.
+    Every override is explicit — no env-var-driven settings (D-14).
 
     Args:
         auth: Authentication strategy; defaults to :class:`NoAuth` (D-11). When
@@ -89,6 +92,8 @@ class DataSluiceSession:
         cache: Optional :class:`CachePort` instance; wins over ``cache_dir``.
         credential_provider: Optional :class:`CredentialProvider`; wins over
             ``auth=`` wrapping (D-P3-14).
+        state_store: Optional :class:`StateStore`; defaults to a fresh
+            :class:`InMemoryStateStore` owned by this session.
 
     Example:
         >>> from datasluice import DataSluiceSession
@@ -112,10 +117,17 @@ class DataSluiceSession:
         storage: StoragePort | None = None,
         cache: CachePort | None = None,
         credential_provider: CredentialProvider | None = None,
+        state_store: StateStore | None = None,
     ) -> None:
         self.auth = auth or NoAuth()
         self.page_size = page_size
         self.storage = storage
+        if state_store is None:
+            from datasluice.sync.state_store import InMemoryStateStore
+
+            self.state_store = InMemoryStateStore()
+        else:
+            self.state_store = state_store
 
         if credential_provider is not None:
             self._credential_provider = credential_provider
@@ -219,6 +231,40 @@ class DataSluiceSession:
         else:
             q = Query(text=query, **kwargs)
         return self.portal(url).search(q)
+
+    def sync_resources(
+        self,
+        resources: Iterable[Any],
+        *,
+        destination_uri: str,
+        reader: Any | None = None,
+        resume: bool = False,
+    ) -> Iterator[SyncOutcome]:
+        """Synchronize resources through this session's runtime dependencies.
+
+        Args:
+            resources: Resource values to synchronize.
+            destination_uri: fsspec destination URI for materialized output.
+            reader: Optional resource reader; defaults to a data-plane reader
+                backed by the session transport.
+            resume: Continue from durable checkpoints when true.
+
+        Returns:
+            The underlying lazy iterator of per-resource sync outcomes.
+        """
+        from datasluice.data.access import DataPlaneResourceReader
+        from datasluice.sync.sync import sync_resources
+
+        selected_reader = reader if reader is not None else DataPlaneResourceReader(transport=self._transport)
+        return sync_resources(
+            resources,
+            state_store=self.state_store,
+            reader=selected_reader,
+            destination_uri=destination_uri,
+            transport=self._transport,
+            cache=self._cache,
+            resume=resume,
+        )
 
     def __repr__(self) -> str:
         return f"<DataSluiceSession(connectors={len(self.plugins.list_connectors())})>"
