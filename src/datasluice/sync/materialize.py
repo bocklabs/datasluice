@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import random
 from typing import Any
+
+from datasluice.exceptions import DownloadError
+
+_IDEMPOTENT_MATERIALIZE_READY = True
 
 
 def materialize(
@@ -15,6 +18,7 @@ def materialize(
     reader: Any,
     destination_uri: str,
     mode: str = "parquet",
+    stored_checksum: str | None = None,
 ) -> tuple[str, str, int, str]:
     """Materialize a resource and return its URI, media type, size, and checksum."""
     from datasluice.io.filesystem import open_filesystem
@@ -28,33 +32,66 @@ def materialize(
         import pyarrow.parquet as pq
 
         from datasluice.integrations.arrow import to_arrow
+        from datasluice.sync._hashing import logical_sha256
 
         with reader.open(resource) as stream:
             table = to_arrow(stream)
-        checksum = _logical_sha256(table)
+        checksum = logical_sha256(table)
+        final_uri = f"{base_uri}/{resource.id}.parquet"
+        media_type = "application/x-parquet"
+        existing = _existing_record(fs, final_uri, media_type, checksum, stored_checksum)
+        if existing is not None:
+            return existing
         sink = pa.BufferOutputStream()
         pq.write_table(table, sink)
         payload = sink.getvalue().to_pybytes()
-        final_uri = f"{base_uri}/{resource.id}.parquet"
-        media_type = "application/x-parquet"
     elif mode == "raw":
         payload = _read_raw(resource, reader)
         checksum = hashlib.sha256(payload).hexdigest()
         final_uri = f"{base_uri}/{resource.id}.bin"
-        media_type = resource.media_type or "application/octet-stream"
+        media_type = _raw_media_type(resource)
+        existing = _existing_record(fs, final_uri, media_type, checksum, stored_checksum)
+        if existing is not None:
+            return existing
     else:
         raise ValueError(f"Unsupported materialize mode {mode!r}; expected 'parquet' or 'raw'")
 
     tmp_uri = f"{base_uri}/.{resource.id}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
-    fs.pipe_file(tmp_uri, payload)
-    fs.mv(tmp_uri, final_uri)
+    try:
+        fs.pipe_file(tmp_uri, payload)
+        fs.mv(tmp_uri, final_uri)
+    except OSError as exc:
+        try:
+            if fs.exists(tmp_uri):
+                fs.rm(tmp_uri)
+        except OSError:
+            pass
+        raise DownloadError(f"Failed to materialize resource {resource.id!r} to {final_uri!r}: {exc}") from exc
     return final_uri, media_type, len(payload), checksum
 
 
-def _logical_sha256(table: Any) -> str:
-    schema = [[field.name, str(field.type), field.nullable] for field in table.schema]
-    payload = json.dumps([schema, table.to_pylist()], sort_keys=True, default=str, separators=(",", ":")).encode()
-    return hashlib.sha256(payload).hexdigest()
+def _existing_record(
+    fs: Any,
+    final_uri: str,
+    media_type: str,
+    checksum: str,
+    stored_checksum: str | None,
+) -> tuple[str, str, int, str] | None:
+    if stored_checksum != checksum or not fs.exists(final_uri):
+        return None
+    size = int(fs.info(final_uri)["size"])
+    return final_uri, media_type, size, checksum
+
+
+def _raw_media_type(resource: Any) -> str:
+    if resource.media_type:
+        return str(resource.media_type)
+    return {
+        "CSV": "text/csv",
+        "JSON": "application/json",
+        "JSONL": "application/x-ndjson",
+        "XML": "application/xml",
+    }.get(resource.format or "", "application/octet-stream")
 
 
 def _read_raw(resource: Any, reader: Any) -> bytes:

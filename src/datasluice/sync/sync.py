@@ -81,7 +81,12 @@ def sync_resources(
                     with result.stream:
                         pass
 
-        record = materialize(resource, reader=materialize_reader, destination_uri=destination_uri)
+        record = materialize(
+            resource,
+            reader=materialize_reader,
+            destination_uri=destination_uri,
+            stored_checksum=watermark,
+        )
         checksum = record[3]
         if fresh_watermark is None and watermark is not None and checksum == watermark:
             yield SyncOutcome(resource, action="skipped-unchanged", record=record, state_key=key)
