@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 logger = get_logger("sync.sync")
 
 _CONDITIONAL_SYNC_READY = True
+_WITHIN_RESOURCE_RESUME_READY = True
 
 
 @dataclass(frozen=True)
@@ -38,7 +40,7 @@ def sync_resources(
     resume: bool = False,
 ) -> Iterator[SyncOutcome]:
     """Synchronize resources and emit each outcome after its state checkpoint."""
-    from datasluice.sync.materialize import materialize
+    from datasluice.sync.materialize import materialize, materialize_checkpointed
 
     for resource in resources:
         kind = resource.access.kind if resource.access is not None else "http_download"
@@ -48,7 +50,8 @@ def sync_resources(
 
         key = f"{resource.id}"
         prior = state_store.get(key)
-        if resume and prior is not None:
+        checkpoint = _decode_checkpoint(prior) if prior is not None else None
+        if resume and prior is not None and checkpoint is None:
             yield SyncOutcome(resource, action="resumed", state_key=key)
             continue
 
@@ -81,25 +84,99 @@ def sync_resources(
                     with result.stream:
                         pass
 
-        record = materialize(
-            resource,
-            reader=materialize_reader,
-            destination_uri=destination_uri,
-            stored_checksum=watermark,
-        )
+        action = "materialized"
+        if (resource.format or "").upper() == "PARQUET":
+            if resume and checkpoint is not None:
+                from datasluice.ports import CheckpointableResourceReader
+
+                if not isinstance(reader, CheckpointableResourceReader):
+                    raise DataSluiceError(
+                        f"continuation reader for resource {resource.id!r} cannot resume row group "
+                        f"{checkpoint.position.row_group_index}; reader lacks open_from_cursor"
+                    )
+                stream = reader.open_from_cursor(resource, checkpoint)
+                start_batch_index = checkpoint.next_batch_index
+                action = "resumed"
+            else:
+                stream = materialize_reader.open(resource)
+                start_batch_index = 0
+
+            def persist_batch(cursor: Any, state_key: str = key) -> None:
+                state_store.put(state_key, _in_progress_state(cursor))
+
+            record = materialize_checkpointed(
+                resource,
+                stream=stream,
+                destination_uri=destination_uri,
+                start_batch_index=start_batch_index,
+                on_batch_persisted=persist_batch,
+            )
+        else:
+            record = materialize(
+                resource,
+                reader=materialize_reader,
+                destination_uri=destination_uri,
+                stored_checksum=watermark,
+            )
         checksum = record[3]
         if fresh_watermark is None and watermark is not None and checksum == watermark:
             yield SyncOutcome(resource, action="skipped-unchanged", record=record, state_key=key)
             continue
 
         state_store.put(key, _sync_state(resource.id, fresh_watermark or checksum))
-        yield SyncOutcome(resource, action="materialized", record=record, state_key=key)
+        yield SyncOutcome(resource, action=action, record=record, state_key=key)
 
 
 def _sync_state(resource_id: str, watermark: str) -> SyncState:
     from datasluice.domain import SyncState
 
     return SyncState(cursor={resource_id: watermark}, last_synced_at=_utcnow_iso())
+
+
+def _in_progress_state(cursor: Any) -> SyncState:
+    from datasluice.data.batch_stream import BatchCursor, ParquetRowGroupPosition
+    from datasluice.domain import SyncState
+
+    if not isinstance(cursor, BatchCursor) or not isinstance(cursor.position, ParquetRowGroupPosition):
+        raise DataSluiceError("Cannot persist an opaque or unsupported continuation cursor")
+    checkpoint = {
+        "version": 1,
+        "status": "in_progress",
+        "next_batch_index": cursor.next_batch_index,
+        "position": {
+            "kind": "parquet_row_group",
+            "row_group_index": cursor.position.row_group_index,
+        },
+    }
+    return SyncState(extra={"datasluice_checkpoint": checkpoint})
+
+
+def _decode_checkpoint(state: SyncState) -> Any | None:
+    from datasluice.data.batch_stream import BatchCursor, ParquetRowGroupPosition
+
+    if "datasluice_checkpoint" not in state.extra:
+        return None
+    checkpoint = state.extra["datasluice_checkpoint"]
+    expected_keys = {"version", "status", "next_batch_index", "position"}
+    if not isinstance(checkpoint, dict) or set(checkpoint) != expected_keys:
+        raise DataSluiceError("Corrupt datasluice checkpoint: expected exact version 1 checkpoint keys")
+    position = checkpoint["position"]
+    position_keys = {"kind", "row_group_index"}
+    if (
+        checkpoint["version"] != 1
+        or type(checkpoint["version"]) is not int
+        or checkpoint["status"] != "in_progress"
+        or type(checkpoint["next_batch_index"]) is not int
+        or not isinstance(position, dict)
+        or set(position) != position_keys
+        or position["kind"] != "parquet_row_group"
+        or type(position["row_group_index"]) is not int
+    ):
+        raise DataSluiceError("Corrupt datasluice checkpoint: unsupported version, status, position, or type")
+    return BatchCursor(
+        checkpoint["next_batch_index"],
+        ParquetRowGroupPosition(position["row_group_index"]),
+    )
 
 
 def _utcnow_iso() -> str:

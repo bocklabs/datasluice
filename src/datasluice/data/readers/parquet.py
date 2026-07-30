@@ -60,13 +60,56 @@ class ParquetReader(BaseFormatReader):
             parquet_file = pq.ParquetFile(source)
         except pa.ArrowInvalid as exc:
             raise FormatError(f"Invalid Parquet: {exc}") from exc
-
         try:
             for batch in parquet_file.iter_batches(batch_size=batch_size):
                 if batch.num_rows > 0:
                     yield batch
         except pa.ArrowInvalid as exc:
             raise FormatError(f"Invalid Parquet: {exc}") from exc
+
+    def read_batches_from_row_group(self, source: Any, *, start_row_group_index: int) -> Iterator[Any]:
+        """Yield one complete batch per row group from a validated boundary."""
+        if type(start_row_group_index) is not int or start_row_group_index < 0:
+            raise FormatError("Parquet start row-group index must be a non-negative integer")
+        if not _safe_seekable(source):
+            raise FormatError("Parquet continuation requires a seekable local-file or object-storage source")
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise FormatError("Streaming reads require 'pyarrow'. Install with: uv sync --all-extras") from exc
+        try:
+            parquet_file = pq.ParquetFile(source)
+        except pa.ArrowInvalid as exc:
+            raise FormatError(f"Invalid Parquet: {exc}") from exc
+        if start_row_group_index > parquet_file.num_row_groups:
+            raise FormatError(
+                f"Parquet continuation row group {start_row_group_index} exceeds footer count "
+                f"{parquet_file.num_row_groups}"
+            )
+        try:
+            for row_group_index in range(start_row_group_index, parquet_file.num_row_groups):
+                batch = self._read_row_group(parquet_file, row_group_index)
+                if batch.num_rows > 0:
+                    yield batch
+        except pa.ArrowInvalid as exc:
+            raise FormatError(f"Invalid Parquet row group: {exc}") from exc
+        finally:
+            if hasattr(source, "close"):
+                source.close()
+
+    def _read_row_group(self, parquet_file: Any, row_group_index: int) -> Any:
+        """Read one complete Parquet row group as one RecordBatch."""
+        table = parquet_file.read_row_group(row_group_index).combine_chunks()
+        batches = table.to_batches(max_chunksize=max(table.num_rows, 1))
+        if batches:
+            return batches[0]
+        import pyarrow as pa
+
+        return pa.RecordBatch.from_arrays(
+            [pa.array([], type=field.type) for field in table.schema],
+            schema=table.schema,
+        )
 
 
 def _safe_seekable(source: Any) -> bool:

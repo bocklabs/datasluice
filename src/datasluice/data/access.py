@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from datasluice.data._byte_source import IterableBytesIO
-from datasluice.data.batch_stream import BatchStream
+from datasluice.data.batch_stream import BatchCursor, BatchStream, ParquetRowGroupPosition
 from datasluice.data.compression import apply_compression
 from datasluice.data.readers import get_reader
 from datasluice.exceptions import UnsupportedAccessError
@@ -133,6 +133,20 @@ class DataPlaneResourceReader:
         else:
             raise UnsupportedAccessError(f"Unknown access kind {kind!r} on resource {resource.id!r}")
 
+        if (resource.format or "").upper() == "PARQUET" and kind in ("local_file", "object_storage"):
+            if content_encoding is not None:
+                source.close()
+                raise UnsupportedAccessError(
+                    f"Checkpointable Parquet resource {resource.id!r} must not be transport-compressed"
+                )
+            from datasluice.data.compression import _detect_format
+
+            magic = source.read(6)
+            source.seek(0)
+            if _detect_format(magic, None) != "none":
+                source.close()
+                raise UnsupportedAccessError(f"Checkpointable Parquet resource {resource.id!r} must not be compressed")
+            return self._build_parquet_cursor_stream(source, start_row_group_index=0)
         decompressed = apply_compression(source, content_encoding)
         return self._build_batch_stream(resource, decompressed, effective_batch_size)
 
@@ -156,6 +170,61 @@ class DataPlaneResourceReader:
         except BaseException:
             stream_cm.__exit__(None, None, None)
             raise
+
+    def open_from_cursor(
+        self,
+        resource: Resource,
+        cursor: BatchCursor,
+        *,
+        batch_size: int | None = None,
+    ) -> BatchStream:
+        """Open a seekable Parquet resource from an exact row-group cursor."""
+        if not isinstance(cursor, BatchCursor) or not isinstance(cursor.position, ParquetRowGroupPosition):
+            raise UnsupportedAccessError(
+                f"Continuation for resource {resource.id!r} requires a ParquetRowGroupPosition cursor"
+            )
+        if (resource.format or "").upper() != "PARQUET":
+            raise UnsupportedAccessError(f"Continuation for resource {resource.id!r} supports only PARQUET resources")
+        access = self._resolve_access(resource)
+        if access.kind == "local_file":
+            source, content_encoding = self._open_local_file(access)
+        elif access.kind == "object_storage":
+            source, content_encoding = self._open_object_storage(access)
+        else:
+            raise UnsupportedAccessError(
+                f"Continuation for resource {resource.id!r} at row group "
+                f"{cursor.position.row_group_index} requires local_file or object_storage access; "
+                f"{access.kind!r} cannot resume without restarting at byte zero"
+            )
+        if content_encoding is not None:
+            source.close()
+            raise UnsupportedAccessError(
+                f"Continuation for compressed Parquet resource {resource.id!r} is not supported"
+            )
+        return self._build_parquet_cursor_stream(
+            source,
+            start_row_group_index=cursor.position.row_group_index,
+        )
+
+    def _build_parquet_cursor_stream(self, source: Any, *, start_row_group_index: int) -> BatchStream:
+        from datasluice.data.readers.parquet import ParquetReader
+
+        batches = ParquetReader().read_batches_from_row_group(source, start_row_group_index=start_row_group_index)
+        first_batch = next(batches, None)
+        if first_batch is None:
+            import pyarrow as pa
+
+            schema = pa.schema([])
+            batch_iter: Iterator[Any] = iter(())
+        else:
+            schema = first_batch.schema
+            batch_iter = _chain(first_batch, batches)
+        return BatchStream(
+            batch_iter,
+            schema,
+            start_batch_index=start_row_group_index,
+            closeables=(source,),
+        )
 
     def _build_batch_stream(
         self,

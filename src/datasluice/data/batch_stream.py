@@ -9,12 +9,38 @@ C++ extension type — we wrap it, never subclass it (RESEARCH Anti-Patterns).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from datasluice.exceptions import StreamClosedError
+from datasluice.exceptions import DataSluiceError, StreamClosedError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+@dataclass(frozen=True)
+class ParquetRowGroupPosition:
+    """Logical position at the next unread Parquet row group."""
+
+    row_group_index: int
+
+    def __post_init__(self) -> None:
+        if type(self.row_group_index) is not int or self.row_group_index < 0:
+            raise DataSluiceError("Parquet row-group index must be a non-negative integer")
+
+
+@dataclass(frozen=True)
+class BatchCursor:
+    """Closed continuation cursor for the next unread batch."""
+
+    next_batch_index: int
+    position: ParquetRowGroupPosition
+
+    def __post_init__(self) -> None:
+        if type(self.next_batch_index) is not int or self.next_batch_index < 0:
+            raise DataSluiceError("Next batch index must be a non-negative integer")
+        if self.next_batch_index != self.position.row_group_index:
+            raise DataSluiceError("Batch and Parquet row-group indexes must match")
 
 
 class BatchStream:
@@ -31,10 +57,21 @@ class BatchStream:
         _closed: Whether :meth:`close` has been called.
     """
 
-    def __init__(self, source: Any, schema: Any) -> None:
+    def __init__(
+        self,
+        source: Any,
+        schema: Any,
+        *,
+        start_batch_index: int = 0,
+        closeables: tuple[Any, ...] = (),
+    ) -> None:
+        if type(start_batch_index) is not int or start_batch_index < 0:
+            raise DataSluiceError("Batch stream start index must be a non-negative integer")
         self._source = source
         self._schema = schema
         self._closed = False
+        self._start_batch_index = start_batch_index
+        self._closeables = closeables
 
     @property
     def schema(self) -> Any:
@@ -61,6 +98,17 @@ class BatchStream:
         else:
             yield from self._source
 
+    def iter_batches_with_cursors(self) -> Iterator[tuple[Any, BatchCursor]]:
+        """Yield batches with the closed cursor for the next unread row group."""
+        previous = self._start_batch_index
+        for batch_index, batch in enumerate(self.iter_batches(), start=self._start_batch_index):
+            next_batch_index = batch_index + 1
+            if next_batch_index <= previous:
+                raise DataSluiceError("Batch cursor indexes must increase monotonically")
+            cursor = BatchCursor(next_batch_index, ParquetRowGroupPosition(next_batch_index))
+            yield batch, cursor
+            previous = next_batch_index
+
     def close(self) -> None:
         """Release the underlying reader; idempotent (safe to call multiple times)."""
         if self._closed:
@@ -68,6 +116,9 @@ class BatchStream:
         self._closed = True
         if hasattr(self._source, "close"):
             self._source.close()
+        for closeable in self._closeables:
+            if hasattr(closeable, "close"):
+                closeable.close()
 
     def __enter__(self) -> BatchStream:
         return self

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from datasluice.data.batch_stream import BatchStream
+    from datasluice.data.batch_stream import BatchCursor, BatchStream
     from datasluice.domain import Resource
 
 
@@ -20,3 +20,16 @@ class ResourceReader(Protocol):
     """
 
     def open(self, resource: Resource, *, batch_size: int = 65536) -> BatchStream: ...
+
+
+@runtime_checkable
+class CheckpointableResourceReader(Protocol):
+    """Additive capability for opening a resource from a logical cursor."""
+
+    def open_from_cursor(
+        self,
+        resource: Resource,
+        cursor: BatchCursor,
+        *,
+        batch_size: int = 65536,
+    ) -> BatchStream: ...
