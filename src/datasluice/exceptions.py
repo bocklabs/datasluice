@@ -103,6 +103,26 @@ class ConfigError(DataSluiceError):
     """Raised when configuration is invalid or incomplete."""
 
 
+class StateStoreError(DataSluiceError):
+    """Raised when a state store cannot read or write durable sync state (D-P7-26).
+
+    A direct child of :class:`DataSluiceError` because store I/O failures are
+    neither portal, download, nor format errors: a corrupt or wrong-version
+    JSON envelope is a data-integrity failure of the local/remote state file.
+    Fails loud (never silently treats corrupt state as "no state") because
+    staleness is worse than a loud failure (D-P7-03).
+    """
+
+
+class SyncStateConflictError(StateStoreError):
+    """Raised when a state write loses an optimistic compare-and-swap race (D-P7-27).
+
+    The version read before the write had already been replaced by a
+    concurrent writer; the caller must re-read and re-apply their mutation
+    rather than silently overwrite another writer's state.
+    """
+
+
 class UnsupportedAccessError(DownloadError):
     """Raised when a resource's access kind has no reader implementation (D-P4-09).
 

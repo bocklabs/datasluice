@@ -36,6 +36,8 @@ from datasluice.exceptions import (
     PortalDetectionError,
     PortalError,
     RateLimitError,
+    StateStoreError,
+    SyncStateConflictError,
 )
 from datasluice.runtime.session import DataSluiceSession
 
@@ -69,6 +71,8 @@ __all__ = [
     "PortalDetectionError",
     "AuthenticationError",
     "RateLimitError",
+    "StateStoreError",
+    "SyncStateConflictError",
     "NotFoundError",
     "DownloadError",
     "ChecksumMismatchError",
