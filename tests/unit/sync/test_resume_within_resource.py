@@ -54,6 +54,8 @@ def _checkpoint_v2(next_batch_index: int, row_group_index: int, source_version: 
 
 
 _EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+_ARTIFACT_HEALTH_READY = hasattr(sync_module, "_ARTIFACT_HEALTH_READY")
+_SKIP_ARTIFACT_HEALTH = not _ARTIFACT_HEALTH_READY and os.environ.get("DATASLUICE_TDD_RED") != "1"
 
 
 def _file_sha256(path: str) -> str:
@@ -602,3 +604,54 @@ def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> N
     state = store.get(canonical_identity(resource))
     assert state is not None
     assert "datasluice_checkpoint" not in state.extra
+
+
+@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="publication ordering implementation pending GREEN phase")
+def test_publication_failure_leaves_artifact_and_prior_checkpoint_recoverable(tmp_path) -> None:
+    import pyarrow.parquet as pq
+
+    resource = Resource(
+        id="publication-failure",
+        name="publication-failure",
+        format="PARQUET",
+        access=LocalFile(path="/dev/null"),
+    )
+    inner_store = InMemoryStateStore()
+    crashing_store = FaultInjectingStateStore(inner_store, raise_on_put=5)
+    reader = _CursorAwareReader(fail_at=None)
+    destination = f"file://{tmp_path}/publication-failure"
+    fs = open_filesystem(destination)
+    identity = canonical_identity(resource)
+    final_uri = f"{destination}/{identity}.parquet"
+    partial_uri = _partial_uri(destination, identity)
+
+    with pytest.raises(RuntimeError, match="injected crash"):
+        list(
+            sync_resources(
+                [resource],
+                state_store=crashing_store,
+                reader=reader,
+                destination_uri=destination,
+            )
+        )
+
+    checkpoint = inner_store.get(identity)
+    assert checkpoint is not None
+    assert "datasluice_checkpoint" in checkpoint.extra
+    assert fs.exists(final_uri)
+    assert fs.exists(f"{partial_uri}/00000000000000000000.parquet")
+
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=inner_store,
+            reader=reader,
+            destination_uri=destination,
+            resume=True,
+        )
+    )
+
+    assert outcomes[0].action == "resumed"
+    assert outcomes[0].record is not None
+    assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == [0, 1, 2, 3]
+    assert not fs.exists(partial_uri)
