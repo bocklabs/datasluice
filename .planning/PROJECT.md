@@ -52,6 +52,10 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 - ✓ Transparent compression decorators (GZIP/BZIP2/ZSTD streaming + ZIP spool, largest-member selection, truncated-frame → `DecompressionError`) — Phase 4 (DATA-06)
 - ✓ Domain `Schema` model → Arrow mapping (`to_arrow_schema`) + documented type-promotion unification via `pa.concat_tables` (`unify_batches`) — Phase 4 (DATA-07, DATA-08)
 - ✓ Peak-RSS subprocess test proves streaming data plane keeps memory bounded on large inputs — Phase 4 (QUAL-05)
+- ✓ Incremental StateStore implementations with conditional fetch, CAS transitions, and per-session swapping — Phase 7 (SYNC-01, SYNC-02)
+- ✓ Cursor/watermark state, per-batch checkpoint emission, physical Parquet resume, and source/destination replacement handling — Phase 7 (SYNC-03, SYNC-04, SYNC-05)
+- ✓ ETag/Last-Modified conditional GETs, idempotent materialization, destination health checks, and secret-free durable metadata — Phase 7 (SYNC-06, SYNC-07)
+- ✓ dlt resources yield real Arrow data and round-trip DataSluice incremental state — Phase 7 (INTG-05, INTG-06)
 
 ### Active
 
@@ -60,13 +64,7 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 - [ ] Adopt fsspec for storage (local, S3, GCS, Azure Blob, HTTP)
 - [ ] Composable transformation pipeline (SelectColumns, RenameColumns, CastSchema, NormalizeTimestamps, Filtering, Flattening)
 - [ ] Consistent terminal conversions (to_arrow, to_pandas, to_polars, to_duckdb) consuming shared `BatchStream`
-- [ ] Rebuild dlt integration to yield actual resource data
 - [ ] Separate Airflow provider distribution (`apache-airflow-provider-datasluice`)
-- [ ] Artifact-oriented outputs (`Artifact` dataclass with URI, media_type, checksum)
-- [ ] ETag/Last-Modified state for files
-- [ ] Cursor/watermark state for API resources
-- [ ] Checkpoint emission and resume behavior
-- [ ] State-store ports and idempotent materialization
 - [ ] Connector contract test suite (reusable per-connector conformance tests)
 - [ ] Raise coverage threshold from 50% to 80-85%
 
@@ -81,7 +79,7 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 
 ## Context
 
-**Current state (v0.1.0):** The project has a clean initial package structure with per-portal adapter subpackages, separated mappers, lazy optional deps, and a working CLI + library API on PyPI. Through Phases 1–4 the correctness/security issues are fixed, a hexagonal composition root with narrow Protocol ports and plugin-based connectors is in place, and the data plane now streams Arrow `RecordBatch` with bounded memory (no `list[dict]` buffering), transparent compression, and schema unification. Remaining v1.0.0 work: capability-based connectors + contract suite (Phase 5), composable transforms + terminal conversions over the shared `BatchStream` (Phase 6), incremental sync + dlt rebuild (Phase 7), and final assembly + coverage gate (Phase 8).
+**Current state (v0.1.0):** The project has a clean initial package structure with per-portal connector subpackages, separated mappers, lazy optional deps, and a working CLI + library API on PyPI. Through Phases 1–7 the correctness/security issues are fixed, a hexagonal composition root with narrow Protocol ports and plugin-based connectors is in place, the data plane streams Arrow `RecordBatch` with bounded memory, and incremental sync now supports checkpointed resume, idempotent materialization, conditional fetches, and real dlt resource data. Remaining v1.0.0 work is the final application layer, CLI assembly, separate Airflow provider, end-to-end coverage, and release gate in Phase 8.
 
 **Architecture audit (July 2026):** A comprehensive audit recommended evolving to hexagonal architecture (ports and adapters) with capability-based connector plugins, streaming Arrow-oriented processing, credential scoping, fsspec storage, rebuilt integrations, and incremental synchronization. The audit is accepted wholesale as the design contract for v1.0.0.
 
@@ -136,4 +134,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-26 after Phase 4 — streaming data plane complete (BatchStream, 5 RecordBatch readers, access dispatch, compression, schema unification, peak-RSS memory proof). 303 tests passing.*
+*Last updated: 2026-07-31 after Phase 7 — incremental sync and dlt integration complete (checkpoint/resume, conditional fetch, idempotent materialization, secure durable state, and real Arrow resources). 614 tests passing, 6 skipped.*
