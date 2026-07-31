@@ -15,6 +15,7 @@ skips cleanly instead of erroring at collection.
 from __future__ import annotations
 
 import importlib
+import os
 import urllib.parse
 from unittest.mock import MagicMock
 
@@ -38,6 +39,7 @@ except ImportError:
         allow_module_level=True,
     )
 HttpxTransport = _httpx_transport_module.HttpxTransport
+_RESPONSE_AWARE_READY = hasattr(importlib.import_module("datasluice.ports"), "ResponseAwareReader")
 
 
 def _fast_policy() -> RetryPolicy:
@@ -201,6 +203,68 @@ def test_stream_yields_bytes_and_headers() -> None:
             collected = b"".join(resp)
             assert collected == b"chunk1chunk2"
             assert resp.headers["ETag"] == "abc"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.skipif(
+    not _RESPONSE_AWARE_READY and os.environ.get("DATASLUICE_TDD_RED") != "1",
+    reason="stream redirect hardening pending GREEN phase",
+)
+def test_stream_routes_through_redirect_loop() -> None:
+    """Streaming requests use the credential-scoped redirect loop."""
+    server_b, base_b = start_test_server({"/target": MockResponse(body=b"stream-body")})
+    server_a, base_a = start_test_server(
+        {"/start": MockResponse(status=302, headers={"Location": f"{base_b}/target"}, body=b"redirect")}
+    )
+    try:
+        transport = HttpxTransport(auth=BearerAuth("stream-secret"))
+        with transport.stream(f"{base_a}/start") as response:
+            assert b"".join(response) == b"stream-body"
+        assert server_b.captured
+        assert all("authorization" not in headers for headers in server_b.captured)
+    finally:
+        server_a.shutdown()
+        server_a.server_close()
+        server_b.shutdown()
+        server_b.server_close()
+
+
+@pytest.mark.skipif(
+    not _RESPONSE_AWARE_READY and os.environ.get("DATASLUICE_TDD_RED") != "1",
+    reason="stream redirect hardening pending GREEN phase",
+)
+def test_redirect_exhaustion_raises() -> None:
+    """A pending redirect after max_redirects is an error, not a successful response."""
+    server, base = start_test_server({})
+    server.responses["/loop"] = MockResponse(status=302, headers={"Location": f"{base}/loop"}, body=b"loop")
+    try:
+        transport = HttpxTransport(max_redirects=2)
+        with pytest.raises(PortalError, match="redirect"):
+            with transport.stream(f"{base}/loop"):
+                pass
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.skipif(
+    not _RESPONSE_AWARE_READY and os.environ.get("DATASLUICE_TDD_RED") != "1",
+    reason="stream auth query preservation pending GREEN phase",
+)
+def test_stream_preserves_query_auth_params() -> None:
+    """Query-position authentication remains on streaming request URLs."""
+    from datasluice.auth import APIKeyAuth
+
+    server, base = start_test_server({"/data": MockResponse(body=b"stream-body")})
+    try:
+        transport = HttpxTransport(
+            auth=APIKeyAuth("secret", param_name="api_key", in_header=False, in_query=True),
+        )
+        with transport.stream(f"{base}/data") as response:
+            assert b"".join(response) == b"stream-body"
+        assert server.captured_paths == ["/data?api_key=secret"]
     finally:
         server.shutdown()
         server.server_close()
