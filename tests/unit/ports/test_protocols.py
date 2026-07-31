@@ -12,6 +12,7 @@ from datasluice.ports import (
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
+    ResponseAwareReader,
     SearchableCatalog,
     StateStore,
     StoragePort,
@@ -26,6 +27,7 @@ ALL_PROTOCOLS = [
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
+    ResponseAwareReader,
     SearchableCatalog,
     StateStore,
     StoragePort,
@@ -77,6 +79,7 @@ def test_all_protocols_importable_individually() -> None:
         "OrganizationCatalog",
         "PortalDetector",
         "ResourceReader",
+        "ResponseAwareReader",
         "SearchableCatalog",
         "StateStore",
         "StoragePort",
@@ -88,10 +91,10 @@ def test_all_protocols_importable_individually() -> None:
         assert hasattr(ports, name), f"{name} missing from datasluice.ports"
 
 
-def test_ports_all_contains_fifteen_names() -> None:
+def test_ports_all_contains_sixteen_names() -> None:
     import datasluice.ports as ports
 
-    assert len(ports.__all__) == 15
+    assert len(ports.__all__) == 16
 
 
 def test_transport_declares_request_get_json_download() -> None:
@@ -124,3 +127,7 @@ def test_state_store_declares_get_put_delete() -> None:
 
 def test_resource_reader_declares_open() -> None:
     assert hasattr(ResourceReader, "open")
+
+
+def test_response_aware_reader_declares_open_response() -> None:
+    assert hasattr(ResponseAwareReader, "open_response")

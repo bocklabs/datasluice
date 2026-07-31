@@ -33,3 +33,17 @@ class CheckpointableResourceReader(Protocol):
         *,
         batch_size: int = 65536,
     ) -> BatchStream: ...
+
+
+@runtime_checkable
+class ResponseAwareReader(Protocol):
+    """Additive capability for consuming an already-fetched response stream."""
+
+    def open_response(
+        self,
+        resource: Resource,
+        stream_cm: object,
+        *,
+        headers: object,
+        batch_size: int | None = None,
+    ) -> BatchStream: ...

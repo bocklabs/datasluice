@@ -189,6 +189,9 @@ class HttpxTransport:
             current_url = next_url
             response.close()
             response = self._client.send(next_request, follow_redirects=False, stream=stream)
+        if response.has_redirect_location:
+            response.close()
+            raise PortalError(f"Redirect limit {self._max_redirects} exceeded for {url}")
         return response
 
     def request(
@@ -305,7 +308,10 @@ class HttpxTransport:
         if if_modified_since is not None:
             headers["If-Modified-Since"] = if_modified_since
         headers.setdefault("User-Agent", self.user_agent)
-        headers, _ = self.auth.apply(headers, {})
+        headers, params = self.auth.apply(headers, {})
+        if params:
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}{urlencode(params, doseq=True)}"
 
         response = self._send_with_redirects(url, "GET", headers, None, stream=True)
         status = response.status_code
@@ -343,8 +349,13 @@ class HttpxTransport:
 
         headers = dict(kwargs.pop("headers", None) or {})
         headers.setdefault("User-Agent", self.user_agent)
-        headers, _ = self.auth.apply(headers, {})
-        with self._client.stream("GET", url, headers=headers) as resp:
+        headers, params = self.auth.apply(headers, {})
+        if params:
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}{urlencode(params, doseq=True)}"
+        response = self._send_with_redirects(url, "GET", headers, None, stream=True)
+        try:
+            resp = response
             if resp.status_code >= 400:
                 resp.read()
                 if resp.status_code == 429:
@@ -359,3 +370,5 @@ class HttpxTransport:
                     )
                 raise PortalError(f"HTTP {resp.status_code} from {url}: {_truncate_body(resp.content)}")
             yield StreamResponse(resp)
+        finally:
+            response.close()

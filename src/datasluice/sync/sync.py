@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 logger = get_logger("sync.sync")
 
 _CONDITIONAL_SYNC_READY = True
+_RESPONSE_AWARE_READER_READY = True
 _WITHIN_RESOURCE_RESUME_READY = True
 _FAILURE_BOUNDARY_READY = True
 _ARTIFACT_HEALTH_READY = True
@@ -125,13 +126,22 @@ def sync_resources(
                         )
                         continue
                 fresh_watermark = _preferred_watermark(result.headers)
-                if result.stream is not None and hasattr(reader, "open_response"):
-                    materialize_reader = _SingleStreamReader(
-                        reader.open_response(resource, result.stream, headers=result.headers)
-                    )
-                elif result.stream is not None:
-                    with result.stream:
-                        pass
+                if result.stream is not None:
+                    from datasluice.ports import ResponseAwareReader
+
+                    if isinstance(reader, ResponseAwareReader):
+                        materialize_reader = _SingleStreamReader(
+                            reader.open_response(resource, result.stream, headers=result.headers)
+                        )
+                    else:
+                        with result.stream as response:
+                            for _chunk in response:
+                                pass
+                        logger.warning(
+                            "Reader %s cannot consume a conditional response; closing it and re-fetching "
+                            "through ordinary open",
+                            type(reader).__name__,
+                        )
 
         # Capture the prior raw version so every state transition passes it through the
         # conditional-write path (CR-02). The box is mutated by the checkpoint callback so

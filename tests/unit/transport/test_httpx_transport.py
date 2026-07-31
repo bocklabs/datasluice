@@ -241,7 +241,7 @@ def test_redirect_exhaustion_raises() -> None:
     server.responses["/loop"] = MockResponse(status=302, headers={"Location": f"{base}/loop"}, body=b"loop")
     try:
         transport = HttpxTransport(max_redirects=2)
-        with pytest.raises(PortalError, match="redirect"):
+        with pytest.raises(PortalError, match="Redirect"):
             with transport.stream(f"{base}/loop"):
                 pass
     finally:
