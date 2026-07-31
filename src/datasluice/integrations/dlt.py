@@ -60,7 +60,9 @@ def datasluice_source(
         result = session.search(portal, Query(text=query, limit=limit, **kwargs))
         datasets = result.datasets
         reader = DataPlaneResourceReader(transport=HttpxTransport())
-        seen_names: dict[str, str] = {}
+        from datasluice.sync._identity import canonical_identity
+
+        seen_identities: dict[str, str] = {}
 
         for dataset in datasets:
             for resource in dataset.resources:
@@ -70,23 +72,24 @@ def datasluice_source(
                     )
                     continue
 
+                identity = canonical_identity(resource)
                 table_name = _sanitize(resource.id)
-                if table_name in seen_names:
+                if identity in seen_identities:
                     raise ValueError(
-                        f"Resource IDs {seen_names[table_name]!r} and {resource.id!r} collide after sanitization "
-                        f"as {table_name!r}"
+                        f"Resource IDs {seen_identities[identity]!r} and {resource.id!r} collide on canonical "
+                        f"identity {identity}"
                     )
-                seen_names[table_name] = resource.id
+                seen_identities[identity] = resource.id
 
                 @dlt.resource(name=table_name, table_name=table_name, write_disposition="replace")
-                def _resource_body(resource: Any = resource) -> Any:
+                def _resource_body(resource: Any = resource, identity: str = identity) -> Any:
                     from datasluice.domain import SyncState
                     from datasluice.integrations.arrow import to_arrow
                     from datasluice.sync._hashing import logical_sha256
 
                     if state_store is not None:
-                        prior = state_store.get(resource.id)
-                        watermark = prior.cursor.get(resource.id) if prior is not None else None
+                        prior = state_store.get(identity)
+                        watermark = prior.cursor.get(identity) if prior is not None else None
                         dlt.current.resource_state()["datasluice"] = {"watermark": watermark}
 
                     with reader.open(resource) as stream:
@@ -96,9 +99,9 @@ def datasluice_source(
                     fresh_watermark = logical_sha256(table)
                     if state_store is not None:
                         state_store.put(
-                            resource.id,
+                            identity,
                             SyncState(
-                                cursor={resource.id: fresh_watermark},
+                                cursor={identity: fresh_watermark},
                                 last_synced_at=datetime.now(UTC).isoformat(),
                             ),
                         )

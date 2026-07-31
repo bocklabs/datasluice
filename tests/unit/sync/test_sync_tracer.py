@@ -5,6 +5,7 @@ from __future__ import annotations
 from datasluice.data import DataPlaneResourceReader
 from datasluice.domain import QueryAccess, Resource
 from datasluice.sync import sync_resources
+from datasluice.sync._identity import canonical_identity
 from datasluice.transport.httpx_transport import HttpxTransport
 
 
@@ -29,9 +30,9 @@ def test_sync_one_resource(tmp_path, csv_server, make_resource, inmemory_state) 
     assert media_type == "application/x-parquet"
     assert size > 0
     assert checksum
-    state = inmemory_state.get(resource.id)
+    state = inmemory_state.get(canonical_identity(resource))
     assert state is not None
-    assert state.cursor == {resource.id: checksum}
+    assert state.cursor == {canonical_identity(resource): checksum}
 
 
 def test_skip_unsupported(tmp_path, inmemory_state) -> None:
@@ -52,7 +53,7 @@ def test_skip_unsupported(tmp_path, inmemory_state) -> None:
 
     assert outcomes[0].action == "skipped-unsupported"
     assert outcomes[0].state_key is None
-    assert inmemory_state.get(resource.id) is None
+    assert inmemory_state.get(canonical_identity(resource)) is None
 
 
 def test_outcome_stream_is_generator(tmp_path, csv_server, make_resource, inmemory_state) -> None:
@@ -72,6 +73,6 @@ def test_outcome_stream_is_generator(tmp_path, csv_server, make_resource, inmemo
     assert hasattr(result, "__next__")
     first = next(result)
     assert first.resource.id == "resource-1"
-    assert inmemory_state.get("resource-1") is not None
-    assert inmemory_state.get("resource-2") is None
+    assert inmemory_state.get(canonical_identity(resources[0])) is not None
+    assert inmemory_state.get(canonical_identity(resources[1])) is None
     assert server.captured_paths == ["/data.csv"]

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
+from datasluice.sync._identity import canonical_identity, validate_unique_identities
 
 if TYPE_CHECKING:
     from datasluice.domain import SyncState
@@ -43,20 +44,23 @@ def sync_resources(
     """Synchronize resources and emit each outcome after its state checkpoint."""
     from datasluice.sync.materialize import materialize, materialize_checkpointed
 
-    for resource in resources:
+    resource_list = list(resources)
+    validate_unique_identities(resource_list)
+
+    for resource in resource_list:
         kind = resource.access.kind if resource.access is not None else "http_download"
         if kind in ("query", "stream"):
             yield SyncOutcome(resource, action="skipped-unsupported")
             continue
 
-        key = f"{resource.id}"
+        key = canonical_identity(resource)
         prior = state_store.get(key)
         checkpoint = _decode_checkpoint(prior) if prior is not None else None
         if resume and prior is not None and checkpoint is None:
             yield SyncOutcome(resource, action="resumed", state_key=key)
             continue
 
-        watermark = prior.cursor.get(resource.id) if prior is not None else None
+        watermark = prior.cursor.get(key) if prior is not None else None
         materialize_reader = reader
         fresh_watermark: str | None = None
         access = resource.access
@@ -124,14 +128,14 @@ def sync_resources(
             yield SyncOutcome(resource, action="skipped-unchanged", record=record, state_key=key)
             continue
 
-        state_store.put(key, _sync_state(resource.id, fresh_watermark or checksum))
+        state_store.put(key, _sync_state(key, fresh_watermark or checksum))
         yield SyncOutcome(resource, action=action, record=record, state_key=key)
 
 
-def _sync_state(resource_id: str, watermark: str) -> SyncState:
+def _sync_state(state_key: str, watermark: str) -> SyncState:
     from datasluice.domain import SyncState
 
-    return SyncState(cursor={resource_id: watermark}, last_synced_at=_utcnow_iso())
+    return SyncState(cursor={state_key: watermark}, last_synced_at=_utcnow_iso())
 
 
 def _in_progress_state(cursor: Any) -> SyncState:

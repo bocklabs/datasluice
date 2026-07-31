@@ -8,6 +8,7 @@ import random
 from typing import Any
 
 from datasluice.exceptions import DataSluiceError, DownloadError
+from datasluice.sync._identity import canonical_identity
 
 _IDEMPOTENT_MATERIALIZE_READY = True
 
@@ -26,6 +27,7 @@ def materialize(
     base_uri = destination_uri.rstrip("/")
     fs = open_filesystem(base_uri)
     fs.makedirs(base_uri, exist_ok=True)
+    identity = canonical_identity(resource)
 
     if mode == "parquet":
         import pyarrow as pa
@@ -37,7 +39,7 @@ def materialize(
         with reader.open(resource) as stream:
             table = to_arrow(stream)
         checksum = logical_sha256(table)
-        final_uri = f"{base_uri}/{resource.id}.parquet"
+        final_uri = f"{base_uri}/{identity}.parquet"
         media_type = "application/x-parquet"
         existing = _existing_record(fs, final_uri, media_type, checksum, stored_checksum)
         if existing is not None:
@@ -48,7 +50,7 @@ def materialize(
     elif mode == "raw":
         payload = _read_raw(resource, reader)
         checksum = hashlib.sha256(payload).hexdigest()
-        final_uri = f"{base_uri}/{resource.id}.bin"
+        final_uri = f"{base_uri}/{identity}.bin"
         media_type = _raw_media_type(resource)
         existing = _existing_record(fs, final_uri, media_type, checksum, stored_checksum)
         if existing is not None:
@@ -56,7 +58,7 @@ def materialize(
     else:
         raise ValueError(f"Unsupported materialize mode {mode!r}; expected 'parquet' or 'raw'")
 
-    tmp_uri = f"{base_uri}/.{resource.id}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
+    tmp_uri = f"{base_uri}/.{identity}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
     try:
         fs.pipe_file(tmp_uri, payload)
         fs.mv(tmp_uri, final_uri)
@@ -79,8 +81,6 @@ def materialize_checkpointed(
     on_batch_persisted: Any,
 ) -> tuple[str, str, int, str]:
     """Stage cursor-bearing Parquet batches and atomically publish one final artifact."""
-    import hashlib
-
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -92,8 +92,8 @@ def materialize_checkpointed(
     base_uri = destination_uri.rstrip("/")
     fs = open_filesystem(base_uri)
     fs.makedirs(base_uri, exist_ok=True)
-    resource_scope = hashlib.sha256(resource.id.encode()).hexdigest()
-    partial_uri = f"{base_uri}/.datasluice-partial/{resource_scope}"
+    identity = canonical_identity(resource)
+    partial_uri = f"{base_uri}/.datasluice-partial/{identity}"
     fs.makedirs(partial_uri, exist_ok=True)
     for batch_index in range(start_batch_index):
         shard_uri = _batch_shard_uri(partial_uri, batch_index)
@@ -132,7 +132,7 @@ def materialize_checkpointed(
     sink = pa.BufferOutputStream()
     pq.write_table(table, sink)
     payload = sink.getvalue().to_pybytes()
-    final_uri = f"{base_uri}/{resource.id}.parquet"
+    final_uri = f"{base_uri}/{identity}.parquet"
     _atomic_pipe(fs, final_uri, payload)
     try:
         fs.rm(partial_uri, recursive=True)

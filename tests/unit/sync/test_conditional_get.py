@@ -10,6 +10,7 @@ import pytest
 
 from datasluice.data import DataPlaneResourceReader
 from datasluice.sync import sync_resources
+from datasluice.sync._identity import canonical_identity
 from datasluice.transport.httpx_transport import HttpxTransport
 
 sync_module = importlib.import_module("datasluice.sync.sync")
@@ -38,9 +39,9 @@ def test_304_skips_materialize(tmp_path, csv_server, make_resource, inmemory_sta
     first = _sync(tmp_path, resource, inmemory_state, transport)
 
     assert first[0].action == "materialized"
-    state = inmemory_state.get(resource.id)
+    state = inmemory_state.get(canonical_identity(resource))
     assert state is not None
-    assert state.cursor[resource.id] == '"e1"'
+    assert state.cursor[canonical_identity(resource)] == '"e1"'
     assert server.captured_paths == ["/data.csv"]
     first_synced_at = state.last_synced_at
     server.captured.clear()
@@ -53,7 +54,7 @@ def test_304_skips_materialize(tmp_path, csv_server, make_resource, inmemory_sta
     materialize_spy.assert_not_called()
     assert server.captured_paths == ["/data.csv"]
     assert server.captured[0]["if-none-match"] == '"e1"'
-    current = inmemory_state.get(resource.id)
+    current = inmemory_state.get(canonical_identity(resource))
     assert current is not None
     assert current.last_synced_at == first_synced_at
 
@@ -75,9 +76,9 @@ def test_headerless_sha_path(tmp_path, csv_server, make_resource, inmemory_state
     transport = HttpxTransport()
 
     first = _sync(tmp_path, resource, inmemory_state, transport)
-    first_state = inmemory_state.get(resource.id)
+    first_state = inmemory_state.get(canonical_identity(resource))
     assert first_state is not None
-    assert len(first_state.cursor[resource.id]) == 64
+    assert len(first_state.cursor[canonical_identity(resource)]) == 64
     server.captured_paths.clear()
 
     second = _sync(tmp_path, resource, inmemory_state, transport)
@@ -106,9 +107,9 @@ def test_last_modified_roundtrip(tmp_path, csv_server, make_resource, inmemory_s
     transport = HttpxTransport()
 
     _sync(tmp_path, resource, inmemory_state, transport)
-    state = inmemory_state.get(resource.id)
+    state = inmemory_state.get(canonical_identity(resource))
     assert state is not None
-    assert state.cursor[resource.id] == last_modified
+    assert state.cursor[canonical_identity(resource)] == last_modified
     server.captured.clear()
     second = _sync(tmp_path, resource, inmemory_state, transport)
 

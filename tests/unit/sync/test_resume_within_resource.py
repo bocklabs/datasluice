@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib
 import os
 from typing import Any
@@ -15,6 +14,7 @@ from datasluice.domain import LocalFile, Resource
 from datasluice.exceptions import DataSluiceError
 from datasluice.io.filesystem import open_filesystem
 from datasluice.sync import sync_resources
+from datasluice.sync._identity import canonical_identity
 from datasluice.sync.state_store import InMemoryStateStore
 from tests.unit.sync.conftest import FaultInjectingStateStore
 
@@ -110,7 +110,7 @@ def test_interrupt_within_one_resource_resumes_without_refetching_completed_batc
             )
         )
 
-    interrupted = store.get(resource.id)
+    interrupted = store.get(canonical_identity(resource))
     assert interrupted is not None
     assert interrupted.cursor == {}
     assert interrupted.extra == {"datasluice_checkpoint": _checkpoint(2)}
@@ -130,10 +130,10 @@ def test_interrupt_within_one_resource_resumes_without_refetching_completed_batc
     assert reader.requested == [2, 3]
     assert [outcome.action for outcome in outcomes] == ["resumed"]
     assert outcomes[0].record is not None
-    final = store.get(resource.id)
+    final = store.get(canonical_identity(resource))
     assert final is not None
     assert "datasluice_checkpoint" not in final.extra
-    assert len(final.cursor[resource.id]) == 64
+    assert len(final.cursor[canonical_identity(resource)]) == 64
     assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == [0, 1, 2, 3]
 
 
@@ -169,7 +169,7 @@ def test_dataplane_parquet_resume_does_not_request_completed_row_groups(tmp_path
             )
 
         assert requested == [0, 1, 2]
-        interrupted = store.get(resource.id)
+        interrupted = store.get(canonical_identity(resource))
         assert interrupted is not None
         assert interrupted.extra == {"datasluice_checkpoint": _checkpoint(2)}
 
@@ -188,10 +188,10 @@ def test_dataplane_parquet_resume_does_not_request_completed_row_groups(tmp_path
     assert outcomes[0].action == "resumed"
     assert outcomes[0].record is not None
     assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == expected
-    completed = store.get(resource.id)
+    completed = store.get(canonical_identity(resource))
     assert completed is not None
     assert "datasluice_checkpoint" not in completed.extra
-    assert len(completed.cursor[resource.id]) == 64
+    assert len(completed.cursor[canonical_identity(resource)]) == 64
 
 
 def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_path) -> None:
@@ -208,7 +208,7 @@ def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_p
     resource = Resource(id="incapable", name="incapable", format="PARQUET")
     store = InMemoryStateStore()
     store.put(
-        resource.id,
+        canonical_identity(resource),
         SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}),
     )
     reader = IncapableReader()
@@ -253,9 +253,8 @@ class _FailBeforeSelectedMoveFS(_NoOverwriteFS):
         super().mv(source, target)
 
 
-def _partial_uri(destination: str, resource_id: str) -> str:
-    resource_scope = hashlib.sha256(resource_id.encode()).hexdigest()
-    return f"{destination}/.datasluice-partial/{resource_scope}"
+def _partial_uri(destination: str, identity: str) -> str:
+    return f"{destination}/.datasluice-partial/{identity}"
 
 
 def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None:
@@ -276,10 +275,10 @@ def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None
                 )
             )
 
-    state = store.get(resource.id)
+    state = store.get(canonical_identity(resource))
     assert state is not None
     assert state.extra == {"datasluice_checkpoint": _checkpoint(1)}
-    partial = _partial_uri(destination, resource.id)
+    partial = _partial_uri(destination, canonical_identity(resource))
     assert fs.exists(f"{partial}/00000000000000000000.parquet")
     assert not fs.exists(f"{partial}/00000000000000000001.parquet")
 
@@ -303,8 +302,8 @@ def test_failure_after_shard_move_before_checkpoint_replaces_stale_shard(tmp_pat
                 )
             )
 
-        partial = _partial_uri(destination, resource.id)
-        assert inner_store.get(resource.id) is None
+        partial = _partial_uri(destination, canonical_identity(resource))
+        assert inner_store.get(canonical_identity(resource)) is None
         assert fs.exists(f"{partial}/00000000000000000000.parquet")
         reader.requested.clear()
         outcomes = list(
@@ -337,7 +336,7 @@ def test_failure_after_checkpoint_put_resumes_at_following_batch(tmp_path) -> No
             )
         )
 
-    interrupted = store.get(resource.id)
+    interrupted = store.get(canonical_identity(resource))
     assert interrupted is not None
     assert interrupted.extra == {"datasluice_checkpoint": _checkpoint(2)}
     reader.requested.clear()
@@ -364,10 +363,10 @@ def test_missing_checkpoint_referenced_shard_fails_as_corrupt_state(tmp_path) ->
     resource = Resource(id="missing-shard", name="missing-shard", format="PARQUET")
     reader = _CursorAwareReader(fail_at=None)
     store = InMemoryStateStore()
-    store.put(resource.id, SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}))
+    store.put(canonical_identity(resource), SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}))
     destination = f"file://{tmp_path}/missing-shard"
     fs = open_filesystem(destination)
-    partial = _partial_uri(destination, resource.id)
+    partial = _partial_uri(destination, canonical_identity(resource))
     fs.makedirs(partial, exist_ok=True)
     _publish_batch_shard(
         fs,

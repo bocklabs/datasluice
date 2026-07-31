@@ -26,6 +26,7 @@ if datasluice_source is None:
 
 from datasluice.domain import Dataset, HttpDownload, QueryAccess, Resource, SearchResult  # noqa: E402
 from datasluice.integrations.dlt import _sanitize  # noqa: E402
+from datasluice.sync._identity import canonical_identity  # noqa: E402
 from datasluice.sync.state_store import InMemoryStateStore  # noqa: E402
 from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
 
@@ -112,9 +113,9 @@ def test_state_roundtrip_run1_seeds_state(tmp_path: Path, csv_portal: Resource) 
 
     _extract_and_load(pipeline, datasluice_source("https://portal.test", state_store=store))
 
-    state = store.get(csv_portal.id)
+    state = store.get(canonical_identity(csv_portal))
     assert state is not None
-    assert len(state.cursor[csv_portal.id]) == 64
+    assert len(state.cursor[canonical_identity(csv_portal)]) == 64
 
 
 def test_state_store_none_light_path(tmp_path: Path, csv_portal: Resource) -> None:
@@ -160,12 +161,12 @@ def test_sanitize_naming(resource_id: str, expected: str) -> None:
 
 def test_sanitize_collision_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     resources = [
-        Resource(id="a-b", url="https://portal.test/a.csv", format="CSV"),
-        Resource(id="a_b", url="https://portal.test/b.csv", format="CSV"),
+        Resource(id="same-id", url="https://portal.test/a.csv", format="CSV"),
+        Resource(id="same-id", url="https://portal.test/b.csv", format="CSV"),
     ]
     _install_portal(monkeypatch, resources)
 
-    with pytest.raises(ValueError, match="collide after sanitization"):
+    with pytest.raises(ValueError, match="collide on canonical identity"):
         datasluice_source("https://portal.test")
 
 
@@ -190,9 +191,9 @@ def test_three_run_roundtrip_structure(
 
     for _ in range(3):
         _extract_and_load(pipeline, datasluice_source("https://portal.test", state_store=store))
-        state = store.get(csv_portal.id)
+        state = store.get(canonical_identity(csv_portal))
         assert state is not None
-        watermarks.append(state.cursor[csv_portal.id])
+        watermarks.append(state.cursor[canonical_identity(csv_portal)])
 
     with duckdb.connect(str(db_path)) as connection:
         row_count = connection.execute(f'SELECT count(*) FROM "{dataset_name}"."my_resource_csv"').fetchone()[0]
@@ -278,9 +279,9 @@ def test_state_writeback_durable_across_pipeline_recreation(
     store = InMemoryStateStore()
     first_pipeline, _, _ = _make_pipeline(tmp_path, "durable_first")
     _extract_and_load(first_pipeline, datasluice_source("https://portal.test", state_store=store))
-    first_state = store.get(csv_portal.id)
+    first_state = store.get(canonical_identity(csv_portal))
     assert first_state is not None
-    first_watermark = first_state.cursor[csv_portal.id]
+    first_watermark = first_state.cursor[canonical_identity(csv_portal)]
 
     arrow = importlib.import_module("datasluice.integrations.arrow")
     original_to_arrow = arrow.to_arrow
@@ -294,8 +295,8 @@ def test_state_writeback_durable_across_pipeline_recreation(
     monkeypatch.setattr(arrow, "to_arrow", recording_to_arrow)
     second_pipeline, _, _ = _make_pipeline(tmp_path, "durable_second")
     _extract_and_load(second_pipeline, datasluice_source("https://portal.test", state_store=store))
-    second_state = store.get(csv_portal.id)
+    second_state = store.get(canonical_identity(csv_portal))
 
     assert second_state is not None
     assert seeded_watermarks == [first_watermark]
-    assert second_state.cursor[csv_portal.id] == first_watermark
+    assert second_state.cursor[canonical_identity(csv_portal)] == first_watermark
