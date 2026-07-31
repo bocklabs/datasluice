@@ -31,7 +31,14 @@ class ParquetRowGroupPosition:
 
 @dataclass(frozen=True)
 class BatchCursor:
-    """Closed continuation cursor for the next unread batch."""
+    """Closed continuation cursor for the next unread batch.
+
+    ``next_batch_index`` tracks the shard count (for shard naming) and
+    ``position.row_group_index`` tracks the physical Parquet row-group
+    position. These MAY diverge when empty row groups exist between non-empty
+    ones (CR-06): the physical index advances past empty groups while the
+    shard count only increments for yielded batches.
+    """
 
     next_batch_index: int
     position: ParquetRowGroupPosition
@@ -39,8 +46,6 @@ class BatchCursor:
     def __post_init__(self) -> None:
         if type(self.next_batch_index) is not int or self.next_batch_index < 0:
             raise DataSluiceError("Next batch index must be a non-negative integer")
-        if self.next_batch_index != self.position.row_group_index:
-            raise DataSluiceError("Batch and Parquet row-group indexes must match")
 
 
 class BatchStream:
@@ -63,15 +68,21 @@ class BatchStream:
         schema: Any,
         *,
         start_batch_index: int = 0,
+        start_row_group_index: int | None = None,
         closeables: tuple[Any, ...] = (),
+        indexed: bool = False,
     ) -> None:
         if type(start_batch_index) is not int or start_batch_index < 0:
             raise DataSluiceError("Batch stream start index must be a non-negative integer")
+        if start_row_group_index is not None and (type(start_row_group_index) is not int or start_row_group_index < 0):
+            raise DataSluiceError("Batch stream row-group start index must be a non-negative integer")
         self._source = source
         self._schema = schema
         self._closed = False
         self._start_batch_index = start_batch_index
+        self._start_row_group_index = start_batch_index if start_row_group_index is None else start_row_group_index
         self._closeables = closeables
+        self._indexed = indexed
 
     @property
     def schema(self) -> Any:
@@ -81,12 +92,19 @@ class BatchStream:
     def iter_batches(self) -> Iterator[Any]:
         """Yield Arrow ``RecordBatch`` objects from the wrapped source.
 
+        When ``indexed`` mode is active (Parquet row-group path), the source
+        yields ``(physical_index, batch)`` tuples and this method unwraps to
+        just the batch.
+
         Raises:
             StreamClosedError: If called after :meth:`close` or ``__exit__``.
         """
         if self._closed:
             raise StreamClosedError("BatchStream is closed; cannot iterate batches")
-        if hasattr(self._source, "read_next_batch"):
+        if self._indexed:
+            for _index, batch in self._source:
+                yield batch
+        elif hasattr(self._source, "read_next_batch"):
             while True:
                 try:
                     batch = self._source.read_next_batch()
@@ -99,15 +117,36 @@ class BatchStream:
             yield from self._source
 
     def iter_batches_with_cursors(self) -> Iterator[tuple[Any, BatchCursor]]:
-        """Yield batches with the closed cursor for the next unread row group."""
-        previous = self._start_batch_index
-        for batch_index, batch in enumerate(self.iter_batches(), start=self._start_batch_index):
-            next_batch_index = batch_index + 1
-            if next_batch_index <= previous:
-                raise DataSluiceError("Batch cursor indexes must increase monotonically")
-            cursor = BatchCursor(next_batch_index, ParquetRowGroupPosition(next_batch_index))
-            yield batch, cursor
-            previous = next_batch_index
+        """Yield batches with the closed cursor for the next unread row group.
+
+        In ``indexed`` mode (Parquet row-group path), the physical row-group
+        index comes from the source tuples, not from ``enumerate`` — so empty
+        row groups that are skipped internally do not corrupt the cursor
+        position (CR-06). ``next_batch_index`` (shard count) and
+        ``position.row_group_index`` (physical position) may diverge.
+        """
+        next_batch_index = self._start_batch_index
+        if self._indexed:
+            last_physical = self._start_row_group_index - 1
+            for physical_index, batch in self._source:
+                if physical_index <= last_physical:
+                    raise DataSluiceError("Physical row-group indexes must increase monotonically")
+                cursor = BatchCursor(
+                    next_batch_index + 1,
+                    ParquetRowGroupPosition(physical_index + 1),
+                )
+                yield batch, cursor
+                next_batch_index += 1
+                last_physical = physical_index
+        else:
+            previous = self._start_batch_index
+            for batch_index, batch in enumerate(self.iter_batches(), start=self._start_batch_index):
+                next_batch = batch_index + 1
+                if next_batch <= previous:
+                    raise DataSluiceError("Batch cursor indexes must increase monotonically")
+                cursor = BatchCursor(next_batch, ParquetRowGroupPosition(next_batch))
+                yield batch, cursor
+                previous = next_batch
 
     def close(self) -> None:
         """Release the underlying reader; idempotent (safe to call multiple times)."""

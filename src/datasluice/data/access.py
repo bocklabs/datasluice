@@ -146,7 +146,7 @@ class DataPlaneResourceReader:
             if _detect_format(magic, None) != "none":
                 source.close()
                 raise UnsupportedAccessError(f"Checkpointable Parquet resource {resource.id!r} must not be compressed")
-            return self._build_parquet_cursor_stream(source, start_row_group_index=0)
+            return self._build_parquet_cursor_stream(source, start_row_group_index=0, start_batch_index=0)
         decompressed = apply_compression(source, content_encoding)
         return self._build_batch_stream(resource, decompressed, effective_batch_size)
 
@@ -204,25 +204,34 @@ class DataPlaneResourceReader:
         return self._build_parquet_cursor_stream(
             source,
             start_row_group_index=cursor.position.row_group_index,
+            start_batch_index=cursor.next_batch_index,
         )
 
-    def _build_parquet_cursor_stream(self, source: Any, *, start_row_group_index: int) -> BatchStream:
+    def _build_parquet_cursor_stream(
+        self,
+        source: Any,
+        *,
+        start_row_group_index: int,
+        start_batch_index: int,
+    ) -> BatchStream:
         from datasluice.data.readers.parquet import ParquetReader
 
-        batches = ParquetReader().read_batches_from_row_group(source, start_row_group_index=start_row_group_index)
-        first_batch = next(batches, None)
-        if first_batch is None:
+        pairs = ParquetReader().read_batches_from_row_group(source, start_row_group_index=start_row_group_index)
+        first_pair = next(pairs, None)
+        if first_pair is None:
             import pyarrow as pa
 
             schema = pa.schema([])
-            batch_iter: Iterator[Any] = iter(())
+            pair_iter: Iterator[Any] = iter(())
         else:
-            schema = first_batch.schema
-            batch_iter = _chain(first_batch, batches)
+            schema = first_pair[1].schema
+            pair_iter = _chain(first_pair, pairs)
         return BatchStream(
-            batch_iter,
+            pair_iter,
             schema,
-            start_batch_index=start_row_group_index,
+            start_batch_index=start_batch_index,
+            start_row_group_index=start_row_group_index,
+            indexed=True,
             closeables=(source,),
         )
 

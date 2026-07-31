@@ -466,7 +466,48 @@ def _validate_extra(extra: Any) -> None:
     if set(extra) != {"datasluice_checkpoint"}:
         raise StateStoreError("Invalid durable SyncState at state.extra")
     checkpoint = extra["datasluice_checkpoint"]
-    if not isinstance(checkpoint, dict) or set(checkpoint) != _CHECKPOINT_KEYS:
+    if not isinstance(checkpoint, dict):
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+    version = checkpoint.get("version")
+    if version == 2:
+        _validate_checkpoint_v2(checkpoint)
+    elif version == 1:
+        _validate_checkpoint_v1(checkpoint)
+    else:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.version")
+
+
+def _validate_checkpoint_v2(checkpoint: dict[str, Any]) -> None:
+    if set(checkpoint) != {"version", "status", "next_batch_index", "position", "source_version"}:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+    position = checkpoint["position"]
+    if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.position")
+    next_batch_index = checkpoint["next_batch_index"]
+    row_group_index = position["row_group_index"]
+    source_version = checkpoint["source_version"]
+    if (
+        type(next_batch_index) is not int
+        or type(row_group_index) is not int
+        or next_batch_index < 0
+        or row_group_index < 0
+        or position["kind"] != "parquet_row_group"
+        or checkpoint["status"] != "in_progress"
+        or not _is_source_version(source_version)
+    ):
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+
+
+def _is_source_version(value: Any) -> bool:
+    return value is None or (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )
+
+
+def _validate_checkpoint_v1(checkpoint: dict[str, Any]) -> None:
+    if set(checkpoint) != _CHECKPOINT_KEYS:
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
     position = checkpoint["position"]
     if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
@@ -474,15 +515,13 @@ def _validate_extra(extra: Any) -> None:
     next_batch_index = checkpoint["next_batch_index"]
     row_group_index = position["row_group_index"]
     if (
-        type(checkpoint["version"]) is not int
-        or checkpoint["version"] != 1
-        or checkpoint["status"] != "in_progress"
-        or type(next_batch_index) is not int
+        type(next_batch_index) is not int
         or type(row_group_index) is not int
         or next_batch_index < 0
         or row_group_index < 0
         or next_batch_index != row_group_index
         or position["kind"] != "parquet_row_group"
+        or checkpoint["status"] != "in_progress"
     ):
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
 

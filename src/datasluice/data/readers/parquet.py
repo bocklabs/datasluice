@@ -67,8 +67,23 @@ class ParquetReader(BaseFormatReader):
         except pa.ArrowInvalid as exc:
             raise FormatError(f"Invalid Parquet: {exc}") from exc
 
-    def read_batches_from_row_group(self, source: Any, *, start_row_group_index: int) -> Iterator[Any]:
-        """Yield one complete batch per row group from a validated boundary."""
+    def read_batches_from_row_group(self, source: Any, *, start_row_group_index: int) -> Iterator[tuple[int, Any]]:
+        """Yield ``(row_group_index, batch)`` tuples for each non-empty row group.
+
+        Each tuple carries the physical row-group index alongside its batch so
+        the caller tracks the physical position even when empty groups are
+        skipped (CR-06). Empty row groups advance the ``range`` cursor without
+        yielding a tuple, keeping the physical index accurate for the next
+        non-empty group.
+
+        Args:
+            source: A seekable binary Parquet source.
+            start_row_group_index: Physical row-group index to resume from.
+
+        Raises:
+            FormatError: If ``pyarrow`` is missing, the Parquet is malformed, or
+                the source is non-seekable.
+        """
         if type(start_row_group_index) is not int or start_row_group_index < 0:
             raise FormatError("Parquet start row-group index must be a non-negative integer")
         if not _safe_seekable(source):
@@ -91,7 +106,7 @@ class ParquetReader(BaseFormatReader):
             for row_group_index in range(start_row_group_index, parquet_file.num_row_groups):
                 batch = self._read_row_group(parquet_file, row_group_index)
                 if batch.num_rows > 0:
-                    yield batch
+                    yield row_group_index, batch
         except pa.ArrowInvalid as exc:
             raise FormatError(f"Invalid Parquet row group: {exc}") from exc
         finally:

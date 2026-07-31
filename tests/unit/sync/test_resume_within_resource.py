@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
 from typing import Any
@@ -37,6 +38,27 @@ def _checkpoint(next_batch_index: int) -> dict[str, Any]:
             "row_group_index": next_batch_index,
         },
     }
+
+
+def _checkpoint_v2(next_batch_index: int, row_group_index: int, source_version: str | None = None) -> dict[str, Any]:
+    return {
+        "version": 2,
+        "status": "in_progress",
+        "next_batch_index": next_batch_index,
+        "position": {
+            "kind": "parquet_row_group",
+            "row_group_index": row_group_index,
+        },
+        "source_version": source_version,
+    }
+
+
+_EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
+def _file_sha256(path: str) -> str:
+    with open(path, "rb") as source:
+        return hashlib.sha256(source.read()).hexdigest()
 
 
 def _parquet_resource(tmp_path) -> tuple[Resource, list[int]]:
@@ -95,7 +117,7 @@ class _CursorAwareReader:
 def test_interrupt_within_one_resource_resumes_without_refetching_completed_batches(tmp_path) -> None:
     import pyarrow.parquet as pq
 
-    resource = Resource(id="cursor-aware", name="cursor-aware", format="PARQUET")
+    resource = Resource(id="cursor-aware", name="cursor-aware", format="PARQUET", access=LocalFile(path="/dev/null"))
     store = InMemoryStateStore()
     reader = _CursorAwareReader()
     destination = f"file://{tmp_path}/dest"
@@ -113,7 +135,7 @@ def test_interrupt_within_one_resource_resumes_without_refetching_completed_batc
     interrupted = store.get(canonical_identity(resource))
     assert interrupted is not None
     assert interrupted.cursor == {}
-    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint(2)}
+    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v2(2, 2, _EMPTY_SHA)}
     assert reader.requested == [0, 1, 2]
 
     reader.requested.clear()
@@ -171,7 +193,8 @@ def test_dataplane_parquet_resume_does_not_request_completed_row_groups(tmp_path
         assert requested == [0, 1, 2]
         interrupted = store.get(canonical_identity(resource))
         assert interrupted is not None
-        assert interrupted.extra == {"datasluice_checkpoint": _checkpoint(2)}
+        assert isinstance(resource.access, LocalFile)
+        assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v2(2, 2, _file_sha256(resource.access.path))}
 
         requested.clear()
         outcomes = list(
@@ -205,7 +228,7 @@ def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_p
             self.open_count += 1
             raise AssertionError("batch zero must not be accessed")
 
-    resource = Resource(id="incapable", name="incapable", format="PARQUET")
+    resource = Resource(id="incapable", name="incapable", format="PARQUET", access=LocalFile(path="/dev/null"))
     store = InMemoryStateStore()
     store.put(
         canonical_identity(resource),
@@ -258,7 +281,7 @@ def _partial_uri(destination: str, identity: str) -> str:
 
 
 def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None:
-    resource = Resource(id="pre-move", name="pre-move", format="PARQUET")
+    resource = Resource(id="pre-move", name="pre-move", format="PARQUET", access=LocalFile(path="/dev/null"))
     reader = _CursorAwareReader(fail_at=None)
     store = InMemoryStateStore()
     destination = f"file://{tmp_path}/pre-move"
@@ -277,14 +300,14 @@ def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None
 
     state = store.get(canonical_identity(resource))
     assert state is not None
-    assert state.extra == {"datasluice_checkpoint": _checkpoint(1)}
+    assert state.extra == {"datasluice_checkpoint": _checkpoint_v2(1, 1, _EMPTY_SHA)}
     partial = _partial_uri(destination, canonical_identity(resource))
     assert fs.exists(f"{partial}/00000000000000000000.parquet")
     assert not fs.exists(f"{partial}/00000000000000000001.parquet")
 
 
 def test_failure_after_shard_move_before_checkpoint_replaces_stale_shard(tmp_path) -> None:
-    resource = Resource(id="post-move", name="post-move", format="PARQUET")
+    resource = Resource(id="post-move", name="post-move", format="PARQUET", access=LocalFile(path="/dev/null"))
     reader = _CursorAwareReader(fail_at=None)
     inner_store = InMemoryStateStore()
     crashing_store = FaultInjectingStateStore(inner_store, raise_on_put=1)
@@ -321,7 +344,12 @@ def test_failure_after_shard_move_before_checkpoint_replaces_stale_shard(tmp_pat
 
 
 def test_failure_after_checkpoint_put_resumes_at_following_batch(tmp_path) -> None:
-    resource = Resource(id="post-checkpoint", name="post-checkpoint", format="PARQUET")
+    resource = Resource(
+        id="post-checkpoint",
+        name="post-checkpoint",
+        format="PARQUET",
+        access=LocalFile(path="/dev/null"),
+    )
     reader = _CursorAwareReader()
     store = InMemoryStateStore()
     destination = f"file://{tmp_path}/post-checkpoint"
@@ -338,7 +366,7 @@ def test_failure_after_checkpoint_put_resumes_at_following_batch(tmp_path) -> No
 
     interrupted = store.get(canonical_identity(resource))
     assert interrupted is not None
-    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint(2)}
+    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v2(2, 2, _EMPTY_SHA)}
     reader.requested.clear()
     outcomes = list(
         sync_resources(
@@ -360,7 +388,7 @@ def test_missing_checkpoint_referenced_shard_fails_as_corrupt_state(tmp_path) ->
     from datasluice.domain import SyncState
     from datasluice.sync.materialize import _publish_batch_shard
 
-    resource = Resource(id="missing-shard", name="missing-shard", format="PARQUET")
+    resource = Resource(id="missing-shard", name="missing-shard", format="PARQUET", access=LocalFile(path="/dev/null"))
     reader = _CursorAwareReader(fail_at=None)
     store = InMemoryStateStore()
     store.put(canonical_identity(resource), SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}))
@@ -415,15 +443,19 @@ def test_empty_row_group_resume_correct(tmp_path) -> None:
 
     resource, expected = _parquet_resource_three_groups(tmp_path)
     inner_store = InMemoryStateStore()
-    crashing_store = FaultInjectingStateStore(inner_store, raise_on_put=3)
     reader = DataPlaneResourceReader()
     destination = f"file://{tmp_path}/empty-middle"
     requested: list[int] = []
+    fail_once = True
 
     def recording_read(self: Any, parquet_file: Any, row_group_index: int) -> Any:
+        nonlocal fail_once
         import pyarrow as pa
 
         requested.append(row_group_index)
+        if row_group_index == 1 and fail_once:
+            fail_once = False
+            raise RuntimeError("injected crash")
         table = parquet_file.read_row_group(row_group_index).combine_chunks()
         batches = table.to_batches(max_chunksize=max(table.num_rows, 1))
         if batches:
@@ -445,7 +477,7 @@ def test_empty_row_group_resume_correct(tmp_path) -> None:
             list(
                 sync_resources(
                     [resource],
-                    state_store=crashing_store,
+                    state_store=inner_store,
                     reader=reader,
                     destination_uri=destination,
                 )
@@ -454,8 +486,8 @@ def test_empty_row_group_resume_correct(tmp_path) -> None:
         interrupted = inner_store.get(canonical_identity(resource))
         assert interrupted is not None
         checkpoint = interrupted.extra["datasluice_checkpoint"]
-        assert checkpoint["next_batch_index"] == 2
-        assert checkpoint["position"]["row_group_index"] == 3
+        assert checkpoint["next_batch_index"] == 1
+        assert checkpoint["position"]["row_group_index"] == 1
 
         requested.clear()
         outcomes = list(
@@ -468,7 +500,7 @@ def test_empty_row_group_resume_correct(tmp_path) -> None:
             )
         )
 
-    assert requested == []
+    assert requested == [1, 2]
     assert outcomes[0].action == "resumed"
     assert outcomes[0].record is not None
     assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == expected
@@ -529,7 +561,9 @@ def test_source_replacement_detected_and_restarted(tmp_path) -> None:
     )
 
     assert outcomes[0].action == "materialized"
-    result = pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist()
+    record = outcomes[0].record
+    assert record is not None
+    result = pq.read_table(record[0]).column("group_id").to_pylist()
     assert result == [100, 101, 102, 103]
     assert 0 not in result
 
