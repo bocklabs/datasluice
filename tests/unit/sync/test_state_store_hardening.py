@@ -413,3 +413,89 @@ def test_memory_backend_works(memory_store: FileStateStore) -> None:
 
 def test_inmemory_protocol_conformance() -> None:
     assert isinstance(InMemoryStateStore(), StateStore)
+
+
+_ADVERSARIAL_READY = getattr(state_store_module, "_ADVERSARIAL_VALIDATOR_READY", False)
+_skip_adversarial = pytest.mark.skipif(not _ADVERSARIAL_READY, reason="adversarial validator pending GREEN")
+
+
+@_skip_adversarial
+def test_adversarial_signed_url_etag_rejected(tmp_path: Path) -> None:
+    key = "resource-signed-url"
+    store = FileStateStore(f"file://{tmp_path}/state")
+    store.put(key, SyncState(cursor={key: _sha_watermark("1")}))
+    signed_url = (
+        '"https://AKIAuser:TOPSECRET@s3.example.test/bucket/key?'
+        'X-Amz-Signature=deadbeefcafebabe&X-Amz-Credential=AKIA/20260731"'
+    )
+    _assert_rejected_before_pipe(
+        store,
+        key,
+        SyncState(cursor={key: signed_url}),
+        secret_fragments=("TOPSECRET", "deadbeefcafebabe", "AKIA", "X-Amz-Signature", signed_url),
+    )
+
+
+@_skip_adversarial
+def test_adversarial_bearer_credential_etag_rejected(tmp_path: Path) -> None:
+    key = "resource-bearer"
+    store = FileStateStore(f"file://{tmp_path}/state")
+    store.put(key, SyncState(cursor={key: _sha_watermark("2")}))
+    bearer_etag = '"bearer=TOPSECRET-token;credential=AKIASECRET"'
+    _assert_rejected_before_pipe(
+        store,
+        key,
+        SyncState(cursor={key: bearer_etag}),
+        secret_fragments=("TOPSECRET", "AKIASECRET", bearer_etag),
+    )
+
+
+@_skip_adversarial
+def test_adversarial_control_byte_etag_rejected(tmp_path: Path) -> None:
+    key = "resource-control"
+    store = FileStateStore(f"file://{tmp_path}/state")
+    store.put(key, SyncState(cursor={key: _sha_watermark("3")}))
+    control_etag = '"ab\x01cd"'
+    _assert_rejected_before_pipe(
+        store,
+        key,
+        SyncState(cursor={key: control_etag}),
+        secret_fragments=(control_etag,),
+    )
+
+
+@_skip_adversarial
+def test_adversarial_oversized_etag_rejected(tmp_path: Path) -> None:
+    key = "resource-oversized"
+    store = FileStateStore(f"file://{tmp_path}/state")
+    store.put(key, SyncState(cursor={key: _sha_watermark("4")}))
+    oversized_etag = '"' + "a" * 300 + '"'
+    _assert_rejected_before_pipe(
+        store,
+        key,
+        SyncState(cursor={key: oversized_etag}),
+        secret_fragments=(oversized_etag,),
+    )
+
+
+@_skip_adversarial
+def test_legitimate_etag_still_accepted(file_store: FileStateStore) -> None:
+    key = "resource-legitimate"
+    etags = (
+        '"d41d8cd98f00b204e9800998ecf8427e"',
+        'W/"abc"',
+        '"abcdef0123456789"',
+    )
+    for etag in etags:
+        state = SyncState(cursor={key: etag})
+        file_store.put(key, state)
+        assert file_store.get(key) == state
+
+
+@_skip_adversarial
+def test_contract_reconciliation_documented_as_accepted_override() -> None:
+    docstring = FileStateStore.__doc__ or ""
+    assert "Contract Reconciliation" in docstring
+    assert "accepted override" in docstring.lower()
+    assert "producer-grounded" in docstring.lower()
+    assert "InMemoryStateStore" in docstring

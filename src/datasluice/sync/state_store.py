@@ -27,6 +27,7 @@ logger = get_logger("sync.state_store")
 
 _UNSET = object()
 _SECRET_FREE_STATE_READY = True
+_ADVERSARIAL_VALIDATOR_READY = False
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
 _CHECKPOINT_KEYS = {"version", "status", "next_batch_index", "position"}
