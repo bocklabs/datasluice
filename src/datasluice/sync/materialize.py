@@ -8,9 +8,13 @@ import random
 from typing import Any
 
 from datasluice.exceptions import DataSluiceError, DownloadError
+from datasluice.logging import get_logger
 from datasluice.sync._identity import canonical_identity
 
 _IDEMPOTENT_MATERIALIZE_READY = True
+_ARTIFACT_HEALTH_READY = True
+
+logger = get_logger("sync.materialize")
 
 
 def materialize(
@@ -134,13 +138,38 @@ def materialize_checkpointed(
     payload = sink.getvalue().to_pybytes()
     final_uri = f"{base_uri}/{identity}.parquet"
     _atomic_pipe(fs, final_uri, payload)
+    return final_uri, "application/x-parquet", len(payload), checksum
+
+
+def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
+    """Remove checkpoint shards after the completed state is durably committed."""
+    from datasluice.io.filesystem import open_filesystem
+
+    base_uri = destination_uri.rstrip("/")
+    partial_uri = f"{base_uri}/.datasluice-partial/{canonical_identity(resource)}"
     try:
+        fs = open_filesystem(base_uri)
         fs.rm(partial_uri, recursive=True)
     except OSError as exc:
-        raise DownloadError(
-            f"Published resource {resource.id!r} but failed to remove partial shards at {partial_uri!r}: {exc}"
-        ) from exc
-    return final_uri, "application/x-parquet", len(payload), checksum
+        logger.warning("Failed to remove partial shards for resource %r at %r: %s", resource.id, partial_uri, exc)
+
+
+def destination_health(resource: Any, record: tuple[str, str, int, str], *, destination_uri: str) -> bool:
+    """Verify that a completed artifact exists at the current destination with matching bytes."""
+    from datasluice.io.filesystem import open_filesystem
+
+    base_uri = destination_uri.rstrip("/")
+    expected_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
+    final_uri, media_type, expected_size, checksum = record
+    if final_uri != expected_uri:
+        return False
+    try:
+        fs = open_filesystem(base_uri)
+        if not fs.exists(final_uri) or int(fs.info(final_uri)["size"]) != expected_size:
+            return False
+        return _destination_checksum(fs, final_uri, media_type) == checksum
+    except Exception:
+        return False
 
 
 def _batch_shard_uri(partial_uri: str, batch_index: int) -> str:
@@ -181,8 +210,25 @@ def _existing_record(
 ) -> tuple[str, str, int, str] | None:
     if stored_checksum != checksum or not fs.exists(final_uri):
         return None
-    size = int(fs.info(final_uri)["size"])
+    try:
+        size = int(fs.info(final_uri)["size"])
+        if _destination_checksum(fs, final_uri, media_type) != checksum:
+            return None
+    except Exception:
+        return None
     return final_uri, media_type, size, checksum
+
+
+def _destination_checksum(fs: Any, final_uri: str, media_type: str) -> str:
+    if media_type == "application/x-parquet":
+        import pyarrow.parquet as pq
+
+        from datasluice.sync._hashing import logical_sha256
+
+        with fs.open(final_uri, "rb") as source:
+            return logical_sha256(pq.read_table(source))
+    with fs.open(final_uri, "rb") as source:
+        return hashlib.sha256(source.read()).hexdigest()
 
 
 def _raw_media_type(resource: Any) -> str:

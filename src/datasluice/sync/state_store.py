@@ -32,10 +32,12 @@ _ADVERSARIAL_VALIDATOR_READY = True
 _ATOMIC_CAS_READY = True
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
+_COMPLETED_ARTIFACT_KEYS = {"destination_uri", "destination_size", "destination_checksum"}
 _CHECKPOINT_KEYS = {"version", "status", "next_batch_index", "position"}
 _CHECKPOINT_POSITION_KEYS = {"kind", "row_group_index"}
 _MAX_TIMESTAMP_LENGTH = 128
 _MAX_WATERMARK_LENGTH = 256
+_MAX_DESTINATION_URI_LENGTH = 4096
 _ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 
 # fsspec backends whose ``mv`` is a true atomic rename (CR-11). On these
@@ -463,6 +465,9 @@ def _validate_extra(extra: Any) -> None:
         raise StateStoreError("Invalid durable SyncState at state.extra")
     if not extra:
         return
+    if set(extra) == {"datasluice_completed_artifact"}:
+        _validate_completed_artifact(extra["datasluice_completed_artifact"])
+        return
     if set(extra) != {"datasluice_checkpoint"}:
         raise StateStoreError("Invalid durable SyncState at state.extra")
     checkpoint = extra["datasluice_checkpoint"]
@@ -496,6 +501,25 @@ def _validate_checkpoint_v2(checkpoint: dict[str, Any]) -> None:
         or not _is_source_version(source_version)
     ):
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+
+
+def _validate_completed_artifact(artifact: Any) -> None:
+    if not isinstance(artifact, dict) or set(artifact) != _COMPLETED_ARTIFACT_KEYS:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact")
+    destination_uri = artifact["destination_uri"]
+    destination_size = artifact["destination_size"]
+    destination_checksum = artifact["destination_checksum"]
+    if (
+        not isinstance(destination_uri, str)
+        or not destination_uri
+        or len(destination_uri) > _MAX_DESTINATION_URI_LENGTH
+        or any(ord(character) < 0x20 for character in destination_uri)
+        or type(destination_size) is not int
+        or destination_size < 0
+        or not isinstance(destination_checksum, str)
+        or not _is_source_version(destination_checksum)
+    ):
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact")
 
 
 def _is_source_version(value: Any) -> bool:

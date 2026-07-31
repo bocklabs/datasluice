@@ -19,6 +19,7 @@ logger = get_logger("sync.sync")
 _CONDITIONAL_SYNC_READY = True
 _WITHIN_RESOURCE_RESUME_READY = True
 _FAILURE_BOUNDARY_READY = True
+_ARTIFACT_HEALTH_READY = True
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,12 @@ def sync_resources(
     resume: bool = False,
 ) -> Iterator[SyncOutcome]:
     """Synchronize resources and emit each outcome after its state checkpoint."""
-    from datasluice.sync.materialize import materialize, materialize_checkpointed
+    from datasluice.sync.materialize import (
+        cleanup_checkpointed,
+        destination_health,
+        materialize,
+        materialize_checkpointed,
+    )
 
     resource_list = list(resources)
     validate_unique_identities(resource_list)
@@ -64,8 +70,12 @@ def sync_resources(
         prior = state_store.get(key)
         checkpoint = _decode_checkpoint(prior) if prior is not None else None
         if resume and prior is not None and checkpoint is None:
-            yield SyncOutcome(resource, action="resumed", state_key=key)
-            continue
+            completed_record = _completed_artifact_record(prior)
+            if completed_record is not None and destination_health(
+                resource, completed_record, destination_uri=destination_uri
+            ):
+                yield SyncOutcome(resource, action="resumed", record=completed_record, state_key=key)
+                continue
 
         if checkpoint is not None:
             current_version = _compute_source_version(resource)
@@ -82,6 +92,10 @@ def sync_resources(
                 prior = None
 
         watermark = prior.cursor.get(key) if prior is not None else None
+        prior_artifact = _completed_artifact_record(prior)
+        destination_was_healthy = prior_artifact is not None and destination_health(
+            resource, prior_artifact, destination_uri=destination_uri
+        )
         materialize_reader = reader
         fresh_watermark: str | None = None
         access = resource.access
@@ -99,8 +113,17 @@ def sync_resources(
                     if_modified_since=last_modified,
                 )
                 if result.status_code == 304:
-                    yield SyncOutcome(resource, action="skipped-unchanged", state_key=key)
-                    continue
+                    completed_record = _completed_artifact_record(prior)
+                    if completed_record is not None and destination_health(
+                        resource, completed_record, destination_uri=destination_uri
+                    ):
+                        yield SyncOutcome(
+                            resource,
+                            action="skipped-unchanged",
+                            record=completed_record,
+                            state_key=key,
+                        )
+                        continue
                 fresh_watermark = _preferred_watermark(result.headers)
                 if result.stream is not None and hasattr(reader, "open_response"):
                     materialize_reader = _SingleStreamReader(
@@ -168,15 +191,23 @@ def sync_resources(
                 stored_checksum=watermark,
             )
         checksum = record[3]
-        if fresh_watermark is None and watermark is not None and checksum == watermark:
+        if (
+            fresh_watermark is None
+            and watermark is not None
+            and checksum == watermark
+            and destination_was_healthy
+            and not use_checkpointed
+        ):
             yield SyncOutcome(resource, action="skipped-unchanged", record=record, state_key=key)
             continue
 
-        completed_state = _sync_state(key, fresh_watermark or checksum)
+        completed_state = _completed_sync_state(key, fresh_watermark or checksum, record)
         if is_atomic:
             state_store.conditional_put(key, completed_state, prior_version_box[0])
         else:
             state_store.put(key, completed_state)
+        if use_checkpointed:
+            cleanup_checkpointed(resource, destination_uri=destination_uri)
         yield SyncOutcome(resource, action=action, record=record, state_key=key)
 
 
@@ -184,6 +215,46 @@ def _sync_state(state_key: str, watermark: str) -> SyncState:
     from datasluice.domain import SyncState
 
     return SyncState(cursor={state_key: watermark}, last_synced_at=_utcnow_iso())
+
+
+def _completed_sync_state(state_key: str, watermark: str, record: tuple[str, str, int, str]) -> SyncState:
+    from datasluice.domain import SyncState
+
+    return SyncState(
+        cursor={state_key: watermark},
+        last_synced_at=_utcnow_iso(),
+        extra={
+            "datasluice_completed_artifact": {
+                "destination_uri": record[0],
+                "destination_size": record[2],
+                "destination_checksum": record[3],
+            }
+        },
+    )
+
+
+def _completed_artifact_record(state: SyncState | None) -> tuple[str, str, int, str] | None:
+    if state is None:
+        return None
+    artifact = state.extra.get("datasluice_completed_artifact")
+    if not isinstance(artifact, dict) or set(artifact) != {
+        "destination_uri",
+        "destination_size",
+        "destination_checksum",
+    }:
+        return None
+    uri = artifact["destination_uri"]
+    size = artifact["destination_size"]
+    checksum = artifact["destination_checksum"]
+    if (
+        not isinstance(uri, str)
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size < 0
+        or not isinstance(checksum, str)
+    ):
+        return None
+    return uri, "application/x-parquet", size, checksum
 
 
 def _in_progress_state(cursor: Any, source_version: str | None) -> SyncState:
@@ -229,10 +300,12 @@ def _decode_checkpoint_v2(checkpoint: dict[str, Any]) -> Any:
     if (
         checkpoint["status"] != "in_progress"
         or type(checkpoint["next_batch_index"]) is not int
+        or checkpoint["next_batch_index"] < 0
         or not isinstance(position, dict)
         or set(position) != position_keys
         or position["kind"] != "parquet_row_group"
         or type(position["row_group_index"]) is not int
+        or position["row_group_index"] < 0
         or not _is_source_version(source_version)
     ):
         raise DataSluiceError("Corrupt datasluice checkpoint v2: invalid field values")
@@ -252,10 +325,12 @@ def _decode_checkpoint_v1(checkpoint: dict[str, Any]) -> Any:
     if (
         checkpoint["status"] != "in_progress"
         or type(checkpoint["next_batch_index"]) is not int
+        or checkpoint["next_batch_index"] < 0
         or not isinstance(position, dict)
         or set(position) != position_keys
         or position["kind"] != "parquet_row_group"
         or type(position["row_group_index"]) is not int
+        or position["row_group_index"] < 0
     ):
         raise DataSluiceError("Corrupt datasluice checkpoint v1: invalid field values")
     return _Checkpoint(
