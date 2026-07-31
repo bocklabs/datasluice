@@ -19,6 +19,7 @@ if not hasattr(sync_module, "_CONDITIONAL_SYNC_READY") and os.environ.get("DATAS
 
 
 def _sync(tmp_path, resource, state_store, transport, *, cache=None):
+    _ = cache
     return list(
         sync_resources(
             [resource],
@@ -26,7 +27,6 @@ def _sync(tmp_path, resource, state_store, transport, *, cache=None):
             reader=DataPlaneResourceReader(transport=transport),
             destination_uri=f"file://{tmp_path}/dest",
             transport=transport,
-            cache=cache,
         )
     )
 

@@ -262,7 +262,6 @@ class DataSluiceSession:
             reader=selected_reader,
             destination_uri=destination_uri,
             transport=self._transport,
-            cache=self._cache,
             resume=resume,
         )
 

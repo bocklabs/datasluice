@@ -40,7 +40,6 @@ def sync_resources(
     reader: Any,
     destination_uri: str,
     transport: Any | None = None,
-    cache: Any | None = None,
     resume: bool = False,
 ) -> Iterator[SyncOutcome]:
     """Synchronize resources and emit each outcome after its state checkpoint."""

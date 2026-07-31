@@ -70,7 +70,6 @@ def test_session_sync_uses_selected_state_store(monkeypatch: Any) -> None:
     assert kwargs["destination_uri"] == "file:///tmp/datasluice-sync"
     assert kwargs["state_store"] is state_store
     assert kwargs["transport"] is session._transport
-    assert kwargs["cache"] is session._cache
     assert kwargs["reader"] is reader
     assert kwargs["resume"] is True
 
@@ -133,7 +132,6 @@ def test_sessions_swap_file_and_memory_state_stores(monkeypatch: Any, tmp_path: 
     assert captured[1]["state_store"] is memory_store
     for call in captured:
         assert call["transport"] is transport
-        assert call["cache"] is None
         assert call["reader"] is reader
         assert call["destination_uri"] == destination_uri
         assert call["resume"] is False
