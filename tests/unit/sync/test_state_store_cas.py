@@ -294,3 +294,14 @@ def test_sync_fallback_unconditional_put_for_non_atomic(tmp_path, csv_server, ma
     state_key = canonical_identity(resource)
     assert outcomes[0].action in ("materialized", "skipped-unchanged")
     assert store.get(state_key) is not None
+
+
+def test_per_key_lock_released_after_conditional_put(tmp_path) -> None:
+    store = FileStateStore(f"file://{tmp_path}/state")
+    key = "resource-1"
+    store.conditional_put(key, SyncState(cursor={key: '"etag"'}), None)
+
+    path = store._state_path(key)
+    with store._locks_guard:
+        assert path not in store._locks
+        assert path not in store._locks_users

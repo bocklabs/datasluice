@@ -14,6 +14,8 @@ import os
 import random
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -121,6 +123,7 @@ class FileStateStore:
             self._fs = open_filesystem(base_uri)
         self._fs.makedirs(self._base, exist_ok=True)
         self._locks: dict[str, threading.Lock] = {}
+        self._locks_users: dict[str, int] = {}
         self._locks_guard = threading.Lock()
 
     @property
@@ -139,7 +142,29 @@ class FileStateStore:
             if lock is None:
                 lock = threading.Lock()
                 self._locks[path] = lock
-            return lock
+        return lock
+
+    @contextmanager
+    def _key_lock_held(self, key: str) -> Iterator[threading.Lock]:
+        """Yield the per-key lock, tracking users so idle entries can be released."""
+        path = self._state_path(key)
+        with self._locks_guard:
+            lock = self._locks.get(path)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[path] = lock
+            self._locks_users[path] = self._locks_users.get(path, 0) + 1
+        try:
+            with lock:
+                yield lock
+        finally:
+            with self._locks_guard:
+                remaining = self._locks_users.get(path, 0) - 1
+                if remaining > 0:
+                    self._locks_users[path] = remaining
+                else:
+                    self._locks_users.pop(path, None)
+                    self._locks.pop(path, None)
 
     def _state_path(self, key: str) -> str:
         """Return the SHA-256-hexdigest (.json) path for *key* (T-07-03 mitigation)."""
@@ -287,8 +312,7 @@ class FileStateStore:
             )
         _validate_state_for_write(key, state)
         payload = _serialize_state(state)
-        lock = self._key_lock(key)
-        with lock:
+        with self._key_lock_held(key) as _lock:
             actual_prior = self.read_raw(key)
             expected_bytes = expected_prior if isinstance(expected_prior, bytes) else b""
             actual_bytes = actual_prior if actual_prior is not None else b""
