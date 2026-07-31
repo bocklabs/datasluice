@@ -386,3 +386,185 @@ def test_missing_checkpoint_referenced_shard_fails_as_corrupt_state(tmp_path) ->
         )
 
     assert reader.requested == []
+
+
+def _parquet_resource_three_groups(tmp_path) -> tuple[Any, list[int]]:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "three-groups.parquet"
+    schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
+    with pq.ParquetWriter(path, schema) as writer:
+        writer.write_table(pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema))
+        writer.write_table(pa.table({"group_id": [], "value": []}, schema=schema))
+        writer.write_table(pa.table({"group_id": [2, 3], "value": ["c", "d"]}, schema=schema))
+    return (
+        Resource(
+            id="three-groups",
+            name="three-groups",
+            format="PARQUET",
+            media_type="application/x-parquet",
+            access=LocalFile(path=str(path)),
+        ),
+        [0, 1, 2, 3],
+    )
+
+
+def test_empty_row_group_resume_correct(tmp_path) -> None:
+    import pyarrow.parquet as pq
+
+    resource, expected = _parquet_resource_three_groups(tmp_path)
+    inner_store = InMemoryStateStore()
+    crashing_store = FaultInjectingStateStore(inner_store, raise_on_put=3)
+    reader = DataPlaneResourceReader()
+    destination = f"file://{tmp_path}/empty-middle"
+    requested: list[int] = []
+
+    def recording_read(self: Any, parquet_file: Any, row_group_index: int) -> Any:
+        import pyarrow as pa
+
+        requested.append(row_group_index)
+        table = parquet_file.read_row_group(row_group_index).combine_chunks()
+        batches = table.to_batches(max_chunksize=max(table.num_rows, 1))
+        if batches:
+            batch = batches[0]
+        else:
+            batch = pa.RecordBatch.from_arrays(
+                [pa.array([], type=field.type) for field in table.schema],
+                schema=table.schema,
+            )
+        if row_group_index == 1:
+            return pa.RecordBatch.from_arrays(
+                [pa.array([], type=field.type) for field in batch.schema],
+                schema=batch.schema,
+            )
+        return batch
+
+    with patch.object(parquet_module.ParquetReader, "_read_row_group", recording_read):
+        with pytest.raises(RuntimeError, match="injected crash"):
+            list(
+                sync_resources(
+                    [resource],
+                    state_store=crashing_store,
+                    reader=reader,
+                    destination_uri=destination,
+                )
+            )
+
+        interrupted = inner_store.get(canonical_identity(resource))
+        assert interrupted is not None
+        checkpoint = interrupted.extra["datasluice_checkpoint"]
+        assert checkpoint["next_batch_index"] == 2
+        assert checkpoint["position"]["row_group_index"] == 3
+
+        requested.clear()
+        outcomes = list(
+            sync_resources(
+                [resource],
+                state_store=inner_store,
+                reader=reader,
+                destination_uri=destination,
+                resume=True,
+            )
+        )
+
+    assert requested == []
+    assert outcomes[0].action == "resumed"
+    assert outcomes[0].record is not None
+    assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == expected
+
+
+def test_source_replacement_detected_and_restarted(tmp_path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from datasluice.domain import SyncState
+
+    path = tmp_path / "replaceable.parquet"
+    schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
+    with pq.ParquetWriter(path, schema) as writer:
+        writer.write_table(pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema))
+        writer.write_table(pa.table({"group_id": [2, 3], "value": ["c", "d"]}, schema=schema))
+
+    resource = Resource(
+        id="replaceable",
+        name="replaceable",
+        format="PARQUET",
+        media_type="application/x-parquet",
+        access=LocalFile(path=str(path)),
+    )
+    reader = DataPlaneResourceReader()
+    destination = f"file://{tmp_path}/replaced"
+
+    inner_store = InMemoryStateStore()
+    crashing_store = FaultInjectingStateStore(inner_store, raise_on_put=2)
+    with pytest.raises(RuntimeError, match="injected crash"):
+        list(
+            sync_resources(
+                [resource],
+                state_store=crashing_store,
+                reader=reader,
+                destination_uri=destination,
+            )
+        )
+
+    interrupted = inner_store.get(canonical_identity(resource))
+    assert interrupted is not None
+    assert "datasluice_checkpoint" in interrupted.extra
+
+    with pq.ParquetWriter(path, schema) as writer:
+        writer.write_table(pa.table({"group_id": [100, 101], "value": ["x", "y"]}, schema=schema))
+        writer.write_table(pa.table({"group_id": [102, 103], "value": ["z", "w"]}, schema=schema))
+
+    store = InMemoryStateStore()
+    store.put(canonical_identity(resource), SyncState(extra=dict(interrupted.extra)))
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=store,
+            reader=reader,
+            destination_uri=destination,
+            resume=True,
+        )
+    )
+
+    assert outcomes[0].action == "materialized"
+    result = pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist()
+    assert result == [100, 101, 102, 103]
+    assert 0 not in result
+
+
+def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from datasluice.transport.httpx_transport import HttpxTransport
+
+    schema = pa.schema([("group_id", pa.int64())])
+    sink = pa.BufferOutputStream()
+    pq.write_table(pa.table({"group_id": [1, 2, 3]}, schema=schema), sink)
+    parquet_bytes = sink.getvalue().to_pybytes()
+
+    server, url = csv_server(body=parquet_bytes)
+    resource = make_resource(url, format="PARQUET", resource_id="http-parquet")
+    transport = HttpxTransport()
+    store = InMemoryStateStore()
+    reader = DataPlaneResourceReader(transport=transport)
+    destination = f"file://{tmp_path}/http-parquet"
+
+    with patch("datasluice.sync.materialize.materialize_checkpointed") as mock_mc:
+        mock_mc.side_effect = AssertionError("HTTP Parquet must not use checkpointed materialize")
+        outcomes = list(
+            sync_resources(
+                [resource],
+                state_store=store,
+                reader=reader,
+                destination_uri=destination,
+                transport=transport,
+            )
+        )
+
+    assert outcomes[0].action == "materialized"
+    state = store.get(canonical_identity(resource))
+    assert state is not None
+    assert "datasluice_checkpoint" not in state.extra
