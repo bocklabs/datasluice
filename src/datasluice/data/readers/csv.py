@@ -66,6 +66,8 @@ class CSVReader(BaseFormatReader):
 
 def _rechunk_reader(reader: Any, batch_size: int, pa: Any) -> Iterator[Any]:
     """Drain a ``pa.RecordBatchReader`` and re-chunk into ``batch_size``-row batches."""
+    if type(batch_size) is not int or batch_size <= 0:
+        raise FormatError("CSV batch_size must be a positive integer")
     pending: Any = None
     while True:
         try:

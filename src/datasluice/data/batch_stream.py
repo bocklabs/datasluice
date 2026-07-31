@@ -54,7 +54,9 @@ class BatchStream:
     Wraps a ``pa.RecordBatchReader`` (CSV/Parquet path) or a bare
     ``Iterator[RecordBatch]`` (XLSX/GeoJSON path) and exposes a uniform
     ``.schema`` property + ``.iter_batches()`` generator with
-    context-manager cleanup.
+    context-manager cleanup. Callers transfer ownership of acquired byte
+    sources through ``closeables`` so :meth:`close` releases them with the
+    wrapped reader.
 
     Attributes:
         _source: The wrapped reader or iterator.

@@ -29,7 +29,7 @@ from datasluice.data._byte_source import IterableBytesIO
 from datasluice.data.batch_stream import BatchCursor, BatchStream, ParquetRowGroupPosition
 from datasluice.data.compression import apply_compression
 from datasluice.data.readers import get_reader
-from datasluice.exceptions import UnsupportedAccessError
+from datasluice.exceptions import DataSluiceError, UnsupportedAccessError
 from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
@@ -41,6 +41,7 @@ logger = get_logger("data.access")
 
 
 _DEFAULT_BATCH_SIZE = 65536
+_BATCH_LIFECYCLE_READY = True
 
 
 class _StreamClosingBytesIO(IterableBytesIO):
@@ -50,8 +51,12 @@ class _StreamClosingBytesIO(IterableBytesIO):
         super().__init__(byte_iter)
         self._response = response
         self._stream_cm = stream_cm
+        self._stream_closed = False
 
     def close(self) -> None:
+        if self._stream_closed:
+            return
+        self._stream_closed = True
         try:
             super().close()
         finally:
@@ -111,8 +116,9 @@ class DataPlaneResourceReader:
                 (``query``, ``stream``) or no transport was supplied for HTTP.
         """
 
-        access = self._resolve_access(resource)
         effective_batch_size = batch_size if batch_size is not None else self.default_batch_size
+        _validate_batch_size(effective_batch_size)
+        access = self._resolve_access(resource)
 
         kind = access.kind
         if kind == "http_download":
@@ -159,16 +165,22 @@ class DataPlaneResourceReader:
         batch_size: int | None = None,
     ) -> BatchStream:
         """Open an already-fetched streaming response through the data plane."""
+        effective_batch_size = batch_size if batch_size is not None else self.default_batch_size
+        _validate_batch_size(effective_batch_size)
         response = stream_cm.__enter__()
+        entered = True
+        source: Any | None = None
         try:
             response_headers = dict(headers) if headers is not None else {}
             content_encoding = _content_encoding_from_headers(response_headers)
             source = _StreamClosingBytesIO(iter(response), response, stream_cm)
             decompressed = apply_compression(source, content_encoding)
-            effective_batch_size = batch_size if batch_size is not None else self.default_batch_size
             return self._build_batch_stream(resource, decompressed, effective_batch_size)
         except BaseException:
-            stream_cm.__exit__(None, None, None)
+            if source is not None:
+                source.close()
+            elif entered:
+                stream_cm.__exit__(None, None, None)
             raise
 
     def open_from_cursor(
@@ -179,6 +191,8 @@ class DataPlaneResourceReader:
         batch_size: int | None = None,
     ) -> BatchStream:
         """Open a seekable Parquet resource from an exact row-group cursor."""
+        effective_batch_size = batch_size if batch_size is not None else self.default_batch_size
+        _validate_batch_size(effective_batch_size)
         if not isinstance(cursor, BatchCursor) or not isinstance(cursor.position, ParquetRowGroupPosition):
             raise UnsupportedAccessError(
                 f"Continuation for resource {resource.id!r} requires a ParquetRowGroupPosition cursor"
@@ -216,8 +230,12 @@ class DataPlaneResourceReader:
     ) -> BatchStream:
         from datasluice.data.readers.parquet import ParquetReader
 
-        pairs = ParquetReader().read_batches_from_row_group(source, start_row_group_index=start_row_group_index)
-        first_pair = next(pairs, None)
+        try:
+            pairs = ParquetReader().read_batches_from_row_group(source, start_row_group_index=start_row_group_index)
+            first_pair = next(pairs, None)
+        except BaseException:
+            _close_source(source)
+            raise
         if first_pair is None:
             import pyarrow as pa
 
@@ -226,14 +244,18 @@ class DataPlaneResourceReader:
         else:
             schema = first_pair[1].schema
             pair_iter = _chain(first_pair, pairs)
-        return BatchStream(
-            pair_iter,
-            schema,
-            start_batch_index=start_batch_index,
-            start_row_group_index=start_row_group_index,
-            indexed=True,
-            closeables=(source,),
-        )
+        try:
+            return BatchStream(
+                pair_iter,
+                schema,
+                start_batch_index=start_batch_index,
+                start_row_group_index=start_row_group_index,
+                indexed=True,
+                closeables=(source,),
+            )
+        except BaseException:
+            _close_source(source)
+            raise
 
     def _build_batch_stream(
         self,
@@ -243,19 +265,23 @@ class DataPlaneResourceReader:
     ) -> BatchStream:
         """Dispatch to the format reader and wrap output in BatchStream."""
 
-        format_name = resource.format or "CSV"
-        reader = get_reader(format_name)
-        batches = reader.read_batches(source, batch_size=batch_size)
-        first_batch = next(batches, None)
-        if first_batch is None:
-            import pyarrow as pa
+        try:
+            format_name = resource.format or "CSV"
+            reader = get_reader(format_name)
+            batches = reader.read_batches(source, batch_size=batch_size)
+            first_batch = next(batches, None)
+            if first_batch is None:
+                import pyarrow as pa
 
-            schema = pa.schema([])
-            batch_iter: Iterator[Any] = iter(())
-        else:
-            schema = first_batch.schema
-            batch_iter = _chain(first_batch, batches)
-        return BatchStream(batch_iter, schema)
+                schema = pa.schema([])
+                batch_iter: Iterator[Any] = iter(())
+            else:
+                schema = first_batch.schema
+                batch_iter = _chain(first_batch, batches)
+            return BatchStream(batch_iter, schema, closeables=(source,))
+        except BaseException:
+            _close_source(source)
+            raise
 
     def _open_http_download(self, access: Any) -> tuple[Any, str | None]:
         """HttpDownload: stream via StreamingTransport or buffer via urllib fallback (D-P4-15)."""
@@ -311,6 +337,21 @@ class DataPlaneResourceReader:
 def _chain(first: Any, rest: Iterator[Any]) -> Iterator[Any]:
     yield first
     yield from rest
+
+
+def _validate_batch_size(batch_size: Any) -> None:
+    if type(batch_size) is not int or batch_size <= 0:
+        raise DataSluiceError(f"batch_size must be a positive integer, got {batch_size!r}")
+
+
+def _close_source(source: Any) -> None:
+    close = getattr(source, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        logger.warning("Failed to close byte source after data-plane construction failure")
 
 
 def _content_encoding_from_headers(headers: dict[str, str]) -> str | None:
