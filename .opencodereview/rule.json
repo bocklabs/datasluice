@@ -1,0 +1,100 @@
+{
+  "rules": [
+    {
+      "path": "src/datasluice/auth/**/*.py",
+      "rule": "Review authentication implementations for accidental credential disclosure, mutation of caller-owned headers, incorrect header precedence, unsafe string representations, malformed Basic or Bearer authentication, inability to redact tokens in repr/logs, and secrets appearing in exceptions. Verify implementations satisfy the authentication protocol and remain side-effect free.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/transport/**/*.py",
+      "rule": "Prioritize HTTP correctness, timeout behavior, retry safety (never retry non-idempotent operations), rate limiting, redirect handling, streaming and resource cleanup (clients, readers, file descriptors), checksum and integrity handling, cache consistency, user-agent behavior, and exception translation to stable package error types.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/connectors/**/*.py",
+      "rule": "Verify portal-specific JSON is mapped correctly into domain models across CKAN, data.gouv.fr, and Socrata. Check pagination termination, missing and nullable fields, malformed responses, URL construction and encoding, connector discovery via the datasluice.connectors entry-points group and the runtime PluginManager, stable identifiers, resource format handling, and preservation of portal-specific metadata. Flag behavior that silently drops valid datasets or resources.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/data/**/*.py",
+      "rule": "Check format detection, encoding, malformed and empty inputs, file-like versus path handling, resource cleanup (readers, streams, checkpoints), large-file and streaming behavior, and consistent return semantics. Heavy optional dependencies (pyarrow, openpyxl, pandas) must remain lazily imported inside functions and must produce a clear optional-dependency error when absent.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/integrations/**/*.py",
+      "rule": "Review optional dependency isolation, lazy imports, interoperability contracts, type correctness, resource ownership and cleanup, data conversion semantics, and behavior when the optional package is not installed. Importing the base datasluice package must not require integration extras.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/config/**/*.py",
+      "rule": "Check precedence between explicit arguments, environment variables, configuration files, and defaults. Flag secret exposure, surprising global state, mutation of shared configuration, invalid normalization, or platform-specific path errors.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/cli/**/*.py",
+      "rule": "Check that CLI behavior matches the Python API, Typer options use Annotated declarations, exit codes are correct, failures produce actionable messages without tracebacks or secrets, output is script-friendly where expected, and commands do not silently ignore invalid input.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/domain/**/*.py",
+      "rule": "Treat public domain models as compatibility-sensitive. Check validation, immutability assumptions, defaults, equality and serialization behavior, optional versus required fields, and backwards compatibility for consumers.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/io/**/*.py",
+      "rule": "Check downloader, cache, checksum, filesystem, and storage implementations for resource cleanup, atomic writes, cache/checksum consistency and integrity, race conditions, path traversal or unsafe path handling, cancellation, and fsspec-backed storage behavior. Flag leaked file descriptors or partial/corrupt artifacts.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/sync/**/*.py",
+      "rule": "Verify sync-state correctness, canonical resource identity scoping, incremental change detection, checksums, atomic state transitions, locking and deadlock avoidance, idempotency, DLT/duckdb materialization, and state rollback on failure. Flag state that diverges from the source portal or silently drops changed resources.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/runtime/**/*.py",
+      "rule": "Check the PluginManager and session/context composition for injected instances (no module-level singletons), entry-point discovery isolation, broken-plugin failure recording, and that connector factory import performs no unintended side effects.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "src/datasluice/**/*.py",
+      "rule": "This project supports Python 3.12 and later. Preserve the public API unless a breaking change is intentional and documented. Use PEP 695 type parameter syntax where applicable. Check correctness, typing, error handling, public API compatibility, unnecessary eager imports, and missing tests. Do not suggest cosmetic changes already enforced by Ruff or ty.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "tests/**/*.py",
+      "rule": "Check that tests would fail for the defect they claim to cover. Look for weak or tautological assertions, over-mocking, accidental live network calls, missing negative and boundary cases, leaked temporary resources, environment dependence, and gaps across supported Python versions and optional dependencies.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "pyproject.toml",
+      "rule": "Review dependency constraints, optional-extra grouping, Python compatibility, entry points, build metadata, Ruff and type-check configuration, pytest and coverage settings, and consistency with uv.lock. Flag runtime dependencies accidentally placed only in development groups or optional dependencies imported eagerly.",
+      "merge_system_rule": true
+    },
+    {
+      "path": ".github/workflows/**/*.{yml,yaml}",
+      "rule": "Review permissions, untrusted pull-request input, pull_request_target risks, script injection, secret handling, artifact provenance, environment protections, action pinning, cache poisoning, release safety, and consistency with the repository's Python 3.12 through 3.14 support.",
+      "merge_system_rule": true
+    },
+    {
+      "path": "docs/**/*.md",
+      "rule": "Check commands and public API examples against the implementation. Flag stale signatures, invalid imports, undocumented breaking changes, references to the wrong CLI entry point, or examples requiring optional dependencies without stating the required extra.",
+      "merge_system_rule": true
+    }
+  ],
+  "include": [
+    "tests/**/*.py"
+  ],
+  "exclude": [
+    ".planning/**",
+    "graphify-out/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/.mypy_cache/**",
+    "**/.venv/**",
+    "dist/**",
+    "build/**",
+    "htmlcov/**",
+    "coverage.xml"
+  ]
+}

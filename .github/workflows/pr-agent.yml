@@ -1,0 +1,33 @@
+name: PR Agent
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr_description:
+    name: Auto-generate PR title & description (PR-Agent /describe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ github.actor != 'renovate[bot]' && github.actor != 'dependabot[bot]' }}
+    steps:
+      - name: PR Agent /describe
+        uses: the-pr-agent/pr-agent@6ad7cf75d95cb3bbb54cf2ad92050eb03804964a # v0.40.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          config.model: ${{ secrets.OCR_LLM_MODEL }}
+          OPENAI_KEY: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          OPENAI.API_BASE: ${{ secrets.OCR_LLM_URL }}
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_review: "false"
+          github_action_config.auto_improve: "false"
+          github_action_config.pr_actions: '["opened", "reopened", "synchronize", "ready_for_review"]'
