@@ -187,6 +187,30 @@ def test_unsafe_checkpoint_and_extra_are_rejected_before_write(file_store: FileS
         assert file_store.get(key) == prior
 
 
+def test_credential_bearing_completed_artifact_uri_is_rejected_before_write(file_store: FileStateStore) -> None:
+    key = "resource-artifact-uri"
+    prior = SyncState(cursor={key: _sha_watermark("a")})
+    file_store.put(key, prior)
+    signed_destination = "s3://artifact-user:artifact-password@example.test/output?X-Amz-Signature=artifact-signature"
+
+    _assert_rejected_before_pipe(
+        file_store,
+        key,
+        SyncState(
+            cursor={key: _sha_watermark("b")},
+            extra={
+                "datasluice_completed_artifact": {
+                    "destination_uri": signed_destination,
+                    "destination_size": 12,
+                    "destination_checksum": _sha_watermark("c"),
+                }
+            },
+        ),
+        secret_fragments=("artifact-user", "artifact-password", "artifact-signature", signed_destination),
+    )
+    assert file_store.get(key) == prior
+
+
 def test_opaque_secret_under_neutral_extra_field_is_rejected_before_write(file_store: FileStateStore) -> None:
     key = "resource-neutral"
     opaque_secret = "zephyr-lantern-cobalt-7391"

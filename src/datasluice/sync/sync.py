@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
-from datasluice.sync._identity import canonical_identity, validate_unique_identities
+from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
 
 if TYPE_CHECKING:
     from datasluice.domain import SyncState
@@ -71,7 +71,7 @@ def sync_resources(
         prior = state_store.get(key)
         checkpoint = _decode_checkpoint(prior) if prior is not None else None
         if resume and prior is not None and checkpoint is None:
-            completed_record = _completed_artifact_record(prior)
+            completed_record = _completed_artifact_record(prior, resource, destination_uri)
             if completed_record is not None and destination_health(
                 resource, completed_record, destination_uri=destination_uri
             ):
@@ -91,9 +91,19 @@ def sync_resources(
                 )
                 checkpoint = None
                 prior = None
+            elif (
+                checkpoint.destination_identity is not None
+                and checkpoint.destination_identity != canonical_destination_identity(destination_uri)
+            ):
+                logger.warning(
+                    "Destination for resource %r changed since checkpoint; discarding checkpoint and restarting",
+                    resource.id,
+                )
+                checkpoint = None
+                prior = None
 
         watermark = prior.cursor.get(key) if prior is not None else None
-        prior_artifact = _completed_artifact_record(prior)
+        prior_artifact = _completed_artifact_record(prior, resource, destination_uri)
         destination_was_healthy = prior_artifact is not None and destination_health(
             resource, prior_artifact, destination_uri=destination_uri
         )
@@ -114,7 +124,7 @@ def sync_resources(
                     if_modified_since=last_modified,
                 )
                 if result.status_code == 304:
-                    completed_record = _completed_artifact_record(prior)
+                    completed_record = _completed_artifact_record(prior, resource, destination_uri)
                     if completed_record is not None and destination_health(
                         resource, completed_record, destination_uri=destination_uri
                     ):
@@ -150,7 +160,10 @@ def sync_resources(
         prior_version_box: list[bytes | None] = [state_store.read_version(key) if is_atomic else None]
 
         action = "materialized"
-        use_checkpointed = (resource.format or "").upper() == "PARQUET" and kind in ("local_file", "object_storage")
+        checkpointed_kind = (resource.format or "").upper() == "PARQUET" and kind in ("local_file", "object_storage")
+        use_checkpointed = checkpointed_kind and (
+            checkpoint is not None or prior_artifact is None or not destination_was_healthy
+        )
         if use_checkpointed:
             source_version = _compute_source_version(resource)
             if resume and checkpoint is not None:
@@ -179,7 +192,7 @@ def sync_resources(
                 _prior_version_box: list[bytes | None] = prior_version_box,
                 _source_version: str | None = source_version,
             ) -> None:
-                state = _in_progress_state(cursor, _source_version)
+                state = _in_progress_state(cursor, _source_version, destination_uri)
                 if is_atomic:
                     state_store.conditional_put(state_key, state, _prior_version_box[0])
                     _prior_version_box[0] = state_store.read_version(state_key)
@@ -211,7 +224,7 @@ def sync_resources(
             yield SyncOutcome(resource, action="skipped-unchanged", record=record, state_key=key)
             continue
 
-        completed_state = _completed_sync_state(key, fresh_watermark or checksum, record)
+        completed_state = _completed_sync_state(key, fresh_watermark or checksum, record, destination_uri)
         if is_atomic:
             state_store.conditional_put(key, completed_state, prior_version_box[0])
         else:
@@ -227,7 +240,12 @@ def _sync_state(state_key: str, watermark: str) -> SyncState:
     return SyncState(cursor={state_key: watermark}, last_synced_at=_utcnow_iso())
 
 
-def _completed_sync_state(state_key: str, watermark: str, record: tuple[str, str, int, str]) -> SyncState:
+def _completed_sync_state(
+    state_key: str,
+    watermark: str,
+    record: tuple[str, str, int, str],
+    destination_uri: str,
+) -> SyncState:
     from datasluice.domain import SyncState
 
     return SyncState(
@@ -235,7 +253,7 @@ def _completed_sync_state(state_key: str, watermark: str, record: tuple[str, str
         last_synced_at=_utcnow_iso(),
         extra={
             "datasluice_completed_artifact": {
-                "destination_uri": record[0],
+                "destination_identity": canonical_destination_identity(destination_uri),
                 "destination_size": record[2],
                 "destination_checksum": record[3],
             }
@@ -243,17 +261,27 @@ def _completed_sync_state(state_key: str, watermark: str, record: tuple[str, str
     )
 
 
-def _completed_artifact_record(state: SyncState | None) -> tuple[str, str, int, str] | None:
+def _completed_artifact_record(
+    state: SyncState | None,
+    resource: Any,
+    destination_uri: str,
+) -> tuple[str, str, int, str] | None:
     if state is None:
         return None
     artifact = state.extra.get("datasluice_completed_artifact")
-    if not isinstance(artifact, dict) or set(artifact) != {
-        "destination_uri",
-        "destination_size",
-        "destination_checksum",
-    }:
+    if not isinstance(artifact, dict):
         return None
-    uri = artifact["destination_uri"]
+    expected_uri = f"{destination_uri.rstrip('/')}/{canonical_identity(resource)}.parquet"
+    if set(artifact) == {"destination_identity", "destination_size", "destination_checksum"}:
+        if artifact["destination_identity"] != canonical_destination_identity(destination_uri):
+            return None
+        uri = expected_uri
+    elif set(artifact) == {"destination_uri", "destination_size", "destination_checksum"}:
+        uri = artifact["destination_uri"]
+        if uri != expected_uri:
+            return None
+    else:
+        return None
     size = artifact["destination_size"]
     checksum = artifact["destination_checksum"]
     if (
@@ -267,14 +295,14 @@ def _completed_artifact_record(state: SyncState | None) -> tuple[str, str, int, 
     return uri, "application/x-parquet", size, checksum
 
 
-def _in_progress_state(cursor: Any, source_version: str | None) -> SyncState:
+def _in_progress_state(cursor: Any, source_version: str | None, destination_uri: str) -> SyncState:
     from datasluice.data.batch_stream import BatchCursor, ParquetRowGroupPosition
     from datasluice.domain import SyncState
 
     if not isinstance(cursor, BatchCursor) or not isinstance(cursor.position, ParquetRowGroupPosition):
         raise DataSluiceError("Cannot persist an opaque or unsupported continuation cursor")
     checkpoint = {
-        "version": 2,
+        "version": 3,
         "status": "in_progress",
         "next_batch_index": cursor.next_batch_index,
         "position": {
@@ -282,6 +310,7 @@ def _in_progress_state(cursor: Any, source_version: str | None) -> SyncState:
             "row_group_index": cursor.position.row_group_index,
         },
         "source_version": source_version,
+        "destination_identity": canonical_destination_identity(destination_uri),
     }
     return SyncState(extra={"datasluice_checkpoint": checkpoint})
 
@@ -295,6 +324,8 @@ def _decode_checkpoint(state: SyncState) -> Any | None:
     version = checkpoint.get("version")
     if version == 2:
         return _decode_checkpoint_v2(checkpoint)
+    if version == 3:
+        return _decode_checkpoint_v3(checkpoint)
     if version == 1:
         return _decode_checkpoint_v1(checkpoint)
     raise DataSluiceError(f"Corrupt datasluice checkpoint: unsupported version {version!r}")
@@ -323,6 +354,35 @@ def _decode_checkpoint_v2(checkpoint: dict[str, Any]) -> Any:
         checkpoint["next_batch_index"],
         position["row_group_index"],
         source_version,
+        None,
+    )
+
+
+def _decode_checkpoint_v3(checkpoint: dict[str, Any]) -> Any:
+    expected_keys = {"version", "status", "next_batch_index", "position", "source_version", "destination_identity"}
+    if set(checkpoint) != expected_keys:
+        raise DataSluiceError("Corrupt datasluice checkpoint v3: unexpected keys")
+    position = checkpoint["position"]
+    source_version = checkpoint["source_version"]
+    destination_identity = checkpoint["destination_identity"]
+    if (
+        checkpoint["status"] != "in_progress"
+        or type(checkpoint["next_batch_index"]) is not int
+        or checkpoint["next_batch_index"] < 0
+        or not isinstance(position, dict)
+        or set(position) != {"kind", "row_group_index"}
+        or position["kind"] != "parquet_row_group"
+        or type(position["row_group_index"]) is not int
+        or position["row_group_index"] < 0
+        or not _is_source_version(source_version)
+        or not _is_sha256(destination_identity)
+    ):
+        raise DataSluiceError("Corrupt datasluice checkpoint v3: invalid field values")
+    return _Checkpoint(
+        checkpoint["next_batch_index"],
+        position["row_group_index"],
+        source_version,
+        destination_identity,
     )
 
 
@@ -347,6 +407,7 @@ def _decode_checkpoint_v1(checkpoint: dict[str, Any]) -> Any:
         checkpoint["next_batch_index"],
         position["row_group_index"],
         None,
+        None,
     )
 
 
@@ -357,10 +418,15 @@ class _Checkpoint:
     next_batch_index: int
     row_group_index: int
     source_version: str | None
+    destination_identity: str | None
 
 
 def _is_source_version(value: Any) -> bool:
-    return value is None or (
+    return value is None or _is_sha256(value)
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
         isinstance(value, str)
         and len(value) == 64
         and all(character in "0123456789abcdefABCDEF" for character in value)

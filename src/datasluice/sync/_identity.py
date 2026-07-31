@@ -53,6 +53,29 @@ def canonical_identity(resource: Resource) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def canonical_destination_identity(destination_uri: str) -> str:
+    """Return a secret-free SHA-256 identity for a destination URI."""
+    parts = urlsplit(destination_uri)
+    scheme = parts.scheme.lower()
+    host = parts.hostname
+    if host is None:
+        authority = parts.netloc.rsplit("@", 1)[-1].lower()
+    else:
+        authority = host.lower()
+        try:
+            port = parts.port
+        except ValueError:
+            port = None
+        if port is not None:
+            authority = f"{authority}:{port}"
+    path = parts.path.rstrip("/")
+    if scheme:
+        scope = f"{scheme}://{authority}{path}"
+    else:
+        scope = path or destination_uri.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    return hashlib.sha256(scope.encode()).hexdigest()
+
+
 def validate_unique_identities(resources: Iterable[Resource]) -> None:
     """Reject duplicate canonical identities before any artifact or state write.
 

@@ -16,10 +16,10 @@ logger = get_logger("integrations.dlt")
 
 def _sanitize(resource_id: str) -> str:
     """Return a deterministic destination-safe name for a resource ID."""
-    name = re.sub(r"[^A-Za-z0-9_]", "_", resource_id)[:64] or "_"
+    name = re.sub(r"[^A-Za-z0-9_]", "_", resource_id) or "_"
     if name[0].isdigit():
         name = f"_{name}"
-    return name
+    return name[:64]
 
 
 def datasluice_source(
@@ -63,6 +63,7 @@ def datasluice_source(
         from datasluice.sync._identity import canonical_identity
 
         seen_identities: dict[str, str] = {}
+        seen_table_names: dict[str, str] = {}
 
         for dataset in datasets:
             for resource in dataset.resources:
@@ -79,7 +80,16 @@ def datasluice_source(
                         f"Resource IDs {seen_identities[identity]!r} and {resource.id!r} collide on canonical "
                         f"identity {identity}"
                     )
+                if table_name.casefold() == "datasets":
+                    raise ValueError(f"Resource ID {resource.id!r} maps to reserved dlt table name 'datasets'")
+                normalized_table_name = table_name.casefold()
+                if normalized_table_name in seen_table_names:
+                    raise ValueError(
+                        f"Resource IDs {seen_table_names[normalized_table_name]!r} and {resource.id!r} "
+                        f"collide on sanitized dlt table name {table_name!r}"
+                    )
                 seen_identities[identity] = resource.id
+                seen_table_names[normalized_table_name] = resource.id
 
                 @dlt.resource(name=table_name, table_name=table_name, write_disposition="replace")
                 def _resource_body(resource: Any = resource, identity: str = identity) -> Any:

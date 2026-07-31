@@ -15,7 +15,7 @@ from datasluice.domain import LocalFile, Resource
 from datasluice.exceptions import DataSluiceError
 from datasluice.io.filesystem import open_filesystem
 from datasluice.sync import sync_resources
-from datasluice.sync._identity import canonical_identity
+from datasluice.sync._identity import canonical_destination_identity, canonical_identity
 from datasluice.sync.state_store import InMemoryStateStore
 from tests.unit.sync.conftest import FaultInjectingStateStore
 
@@ -50,6 +50,25 @@ def _checkpoint_v2(next_batch_index: int, row_group_index: int, source_version: 
             "row_group_index": row_group_index,
         },
         "source_version": source_version,
+    }
+
+
+def _checkpoint_v3(
+    next_batch_index: int,
+    row_group_index: int,
+    source_version: str | None,
+    destination_uri: str,
+) -> dict[str, Any]:
+    return {
+        "version": 3,
+        "status": "in_progress",
+        "next_batch_index": next_batch_index,
+        "position": {
+            "kind": "parquet_row_group",
+            "row_group_index": row_group_index,
+        },
+        "source_version": source_version,
+        "destination_identity": canonical_destination_identity(destination_uri),
     }
 
 
@@ -137,7 +156,7 @@ def test_interrupt_within_one_resource_resumes_without_refetching_completed_batc
     interrupted = store.get(canonical_identity(resource))
     assert interrupted is not None
     assert interrupted.cursor == {}
-    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v2(2, 2, _EMPTY_SHA)}
+    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v3(2, 2, _EMPTY_SHA, destination)}
     assert reader.requested == [0, 1, 2]
 
     reader.requested.clear()
@@ -196,7 +215,9 @@ def test_dataplane_parquet_resume_does_not_request_completed_row_groups(tmp_path
         interrupted = store.get(canonical_identity(resource))
         assert interrupted is not None
         assert isinstance(resource.access, LocalFile)
-        assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v2(2, 2, _file_sha256(resource.access.path))}
+        assert interrupted.extra == {
+            "datasluice_checkpoint": _checkpoint_v3(2, 2, _file_sha256(resource.access.path), destination)
+        }
 
         requested.clear()
         outcomes = list(
@@ -302,7 +323,7 @@ def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None
 
     state = store.get(canonical_identity(resource))
     assert state is not None
-    assert state.extra == {"datasluice_checkpoint": _checkpoint_v2(1, 1, _EMPTY_SHA)}
+    assert state.extra == {"datasluice_checkpoint": _checkpoint_v3(1, 1, _EMPTY_SHA, destination)}
     partial = _partial_uri(destination, canonical_identity(resource))
     assert fs.exists(f"{partial}/00000000000000000000.parquet")
     assert not fs.exists(f"{partial}/00000000000000000001.parquet")
@@ -368,7 +389,7 @@ def test_failure_after_checkpoint_put_resumes_at_following_batch(tmp_path) -> No
 
     interrupted = store.get(canonical_identity(resource))
     assert interrupted is not None
-    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v2(2, 2, _EMPTY_SHA)}
+    assert interrupted.extra == {"datasluice_checkpoint": _checkpoint_v3(2, 2, _EMPTY_SHA, destination)}
     reader.requested.clear()
     outcomes = list(
         sync_resources(
@@ -568,6 +589,49 @@ def test_source_replacement_detected_and_restarted(tmp_path) -> None:
     result = pq.read_table(record[0]).column("group_id").to_pylist()
     assert result == [100, 101, 102, 103]
     assert 0 not in result
+
+
+def test_destination_replacement_detected_and_restarted(tmp_path) -> None:
+    resource = Resource(
+        id="destination-replacement",
+        name="destination-replacement",
+        format="PARQUET",
+        access=LocalFile(path="/dev/null"),
+    )
+    reader = _CursorAwareReader()
+    store = InMemoryStateStore()
+    first_destination = f"file://{tmp_path}/first"
+    second_destination = f"file://{tmp_path}/second"
+
+    with pytest.raises(RuntimeError, match="injected batch failure"):
+        list(
+            sync_resources(
+                [resource],
+                state_store=store,
+                reader=reader,
+                destination_uri=first_destination,
+            )
+        )
+
+    checkpoint = store.get(canonical_identity(resource))
+    assert checkpoint is not None
+    assert checkpoint.extra["datasluice_checkpoint"]["destination_identity"] == canonical_destination_identity(
+        first_destination
+    )
+
+    reader.requested.clear()
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=store,
+            reader=reader,
+            destination_uri=second_destination,
+            resume=True,
+        )
+    )
+
+    assert reader.requested == [0, 1, 2, 3]
+    assert outcomes[0].action == "materialized"
 
 
 def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> None:

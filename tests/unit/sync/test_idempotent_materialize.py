@@ -11,9 +11,10 @@ from unittest.mock import patch
 import pytest
 
 from datasluice.data import DataPlaneResourceReader
-from datasluice.domain import Resource
+from datasluice.domain import LocalFile, Resource
 from datasluice.io.filesystem import open_filesystem
 from datasluice.sync import sync_resources
+from datasluice.sync.state_store import InMemoryStateStore
 from datasluice.transport.httpx_transport import HttpxTransport
 from tests.unit.sync.conftest import CSV_BYTES, write_counting_fs
 
@@ -73,6 +74,47 @@ def test_changed_content_rewrites(tmp_path, csv_server, make_resource, inmemory_
     assert first[0].record[3] != second[0].record[3]
     assert second[0].action == "materialized"
     assert counting_fs.pipe_file_count == writes_after_first + 1
+
+
+def test_two_passes_zero_writes_checkpointed_local_parquet(tmp_path) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    source_path = tmp_path / "source.parquet"
+    pq.write_table(pa.table({"id": [1, 2], "name": ["A", "B"]}), source_path)
+    resource = Resource(
+        id="checkpointed-local",
+        name="checkpointed-local",
+        format="PARQUET",
+        access=LocalFile(path=str(source_path)),
+    )
+    destination = f"file://{tmp_path}/dest"
+    store = InMemoryStateStore()
+    counting_fs = write_counting_fs(open_filesystem(destination))
+
+    with patch("datasluice.io.filesystem.open_filesystem", return_value=counting_fs):
+        first = list(
+            sync_resources(
+                [resource],
+                state_store=store,
+                reader=DataPlaneResourceReader(),
+                destination_uri=destination,
+            )
+        )
+        writes_after_first = counting_fs.pipe_file_count
+        second = list(
+            sync_resources(
+                [resource],
+                state_store=store,
+                reader=DataPlaneResourceReader(),
+                destination_uri=destination,
+            )
+        )
+
+    assert first[0].action == "materialized"
+    assert second[0].action == "skipped-unchanged"
+    assert counting_fs.pipe_file_count == writes_after_first
+    assert second[0].record == first[0].record
 
 
 class _RawReader:

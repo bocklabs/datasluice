@@ -152,6 +152,7 @@ def test_skip_unsupported_in_dlt(monkeypatch: pytest.MonkeyPatch) -> None:
     [
         ("my-resource.csv", "my_resource_csv"),
         ("9a3f12ab-cd34", "_9a3f12ab_cd34"),
+        ("9" * 64, "_" + "9" * 63),
         ("", "_"),
     ],
 )
@@ -168,6 +169,24 @@ def test_sanitize_collision_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match="collide on canonical identity"):
         datasluice_source("https://portal.test")
+
+
+def test_sanitized_table_name_collision_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    resources = [
+        Resource(id="a-b", url="https://portal.test/a.csv", format="CSV"),
+        Resource(id="a_b", url="https://portal.test/b.csv", format="CSV"),
+    ]
+    _install_portal(monkeypatch, resources)
+
+    with pytest.raises(ValueError, match="sanitized dlt table name"):
+        datasluice_source("https://portal.test")
+
+
+def test_reserved_metadata_table_name_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_portal(monkeypatch, [Resource(id="datasets", url="https://portal.test/data.csv", format="CSV")])
+
+    with pytest.raises(ValueError, match="reserved dlt table name"):
+        datasluice_source("https://portal.test", include_metadata=True)
 
 
 def test_three_run_roundtrip_structure(

@@ -32,7 +32,8 @@ _ADVERSARIAL_VALIDATOR_READY = True
 _ATOMIC_CAS_READY = True
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
-_COMPLETED_ARTIFACT_KEYS = {"destination_uri", "destination_size", "destination_checksum"}
+_COMPLETED_ARTIFACT_KEYS = {"destination_identity", "destination_size", "destination_checksum"}
+_LEGACY_COMPLETED_ARTIFACT_KEYS = {"destination_uri", "destination_size", "destination_checksum"}
 _CHECKPOINT_KEYS = {"version", "status", "next_batch_index", "position"}
 _CHECKPOINT_POSITION_KEYS = {"kind", "row_group_index"}
 _MAX_TIMESTAMP_LENGTH = 128
@@ -476,6 +477,8 @@ def _validate_extra(extra: Any) -> None:
     version = checkpoint.get("version")
     if version == 2:
         _validate_checkpoint_v2(checkpoint)
+    elif version == 3:
+        _validate_checkpoint_v3(checkpoint)
     elif version == 1:
         _validate_checkpoint_v1(checkpoint)
     else:
@@ -503,17 +506,50 @@ def _validate_checkpoint_v2(checkpoint: dict[str, Any]) -> None:
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
 
 
+def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
+    if set(checkpoint) != {
+        "version",
+        "status",
+        "next_batch_index",
+        "position",
+        "source_version",
+        "destination_identity",
+    }:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+    position = checkpoint["position"]
+    if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.position")
+    next_batch_index = checkpoint["next_batch_index"]
+    row_group_index = position["row_group_index"]
+    if (
+        type(next_batch_index) is not int
+        or type(row_group_index) is not int
+        or next_batch_index < 0
+        or row_group_index < 0
+        or position["kind"] != "parquet_row_group"
+        or checkpoint["status"] != "in_progress"
+        or not _is_source_version(checkpoint["source_version"])
+        or not _is_sha256(checkpoint["destination_identity"])
+    ):
+        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+
+
 def _validate_completed_artifact(artifact: Any) -> None:
-    if not isinstance(artifact, dict) or set(artifact) != _COMPLETED_ARTIFACT_KEYS:
+    if not isinstance(artifact, dict) or set(artifact) not in (
+        _COMPLETED_ARTIFACT_KEYS,
+        _LEGACY_COMPLETED_ARTIFACT_KEYS,
+    ):
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact")
-    destination_uri = artifact["destination_uri"]
     destination_size = artifact["destination_size"]
     destination_checksum = artifact["destination_checksum"]
+    if set(artifact) == _COMPLETED_ARTIFACT_KEYS:
+        destination_identity = artifact["destination_identity"]
+        valid_destination = _is_sha256(destination_identity)
+    else:
+        destination_uri = artifact["destination_uri"]
+        valid_destination = _is_safe_destination_uri(destination_uri)
     if (
-        not isinstance(destination_uri, str)
-        or not destination_uri
-        or len(destination_uri) > _MAX_DESTINATION_URI_LENGTH
-        or any(ord(character) < 0x20 for character in destination_uri)
+        not valid_destination
         or type(destination_size) is not int
         or destination_size < 0
         or not isinstance(destination_checksum, str)
@@ -522,8 +558,28 @@ def _validate_completed_artifact(artifact: Any) -> None:
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact")
 
 
+def _is_safe_destination_uri(value: Any) -> bool:
+    if not isinstance(value, str) or not value or len(value) > _MAX_DESTINATION_URI_LENGTH:
+        return False
+    if any(ord(character) < 0x20 for character in value):
+        return False
+    try:
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(value)
+        if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+            return False
+    except ValueError:
+        return False
+    return True
+
+
 def _is_source_version(value: Any) -> bool:
-    return value is None or (
+    return value is None or _is_sha256(value)
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
         isinstance(value, str)
         and len(value) == 64
         and all(character in "0123456789abcdefABCDEF" for character in value)
