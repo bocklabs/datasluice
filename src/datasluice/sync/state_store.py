@@ -27,13 +27,13 @@ logger = get_logger("sync.state_store")
 
 _UNSET = object()
 _SECRET_FREE_STATE_READY = True
-_ADVERSARIAL_VALIDATOR_READY = False
+_ADVERSARIAL_VALIDATOR_READY = True
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
 _CHECKPOINT_KEYS = {"version", "status", "next_batch_index", "position"}
 _CHECKPOINT_POSITION_KEYS = {"kind", "row_group_index"}
 _MAX_TIMESTAMP_LENGTH = 128
-_MAX_WATERMARK_LENGTH = 1024
+_MAX_WATERMARK_LENGTH = 256
 _ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 
 
@@ -52,6 +52,25 @@ class FileStateStore:
     discipline) and protected by detection-only optimistic CAS (re-read +
     hash-compare before the rename, D-P7-27 — portable across fsspec backends,
     where no advisory file lock exists).
+
+    Contract Reconciliation:
+
+        New durable writes enforce a producer-grounded closed schema as an
+        explicit accepted override of the general :class:`SyncState` model.
+        The general model (Phase 2) permits arbitrary cursor mappings,
+        partitions, and extra fields. Durable writes restrict to: one-entry
+        cursor (keyed by the canonical identity), empty partitions, and the
+        recognized ``datasluice_checkpoint`` extra. This restriction is an
+        accepted override because it is the only shape this producer emits —
+        no producer-legal state shape is silently rejected.
+
+        :class:`InMemoryStateStore` accepts the full :class:`SyncState` model
+        without restriction because it produces no durable bytes. Historical
+        schema-version-1 envelopes remain readable through their unconstrained
+        legacy shape. The durable write validation rejects adversarial
+        validator values (signed URLs, bearer tokens, credentials, control
+        bytes, oversized opaque strings) before serialization, naming only the
+        structural field path in error messages — never the rejected value.
 
     Attributes:
         base_uri: URI (``file://``, ``s3://``, …) of the directory holding the
@@ -256,18 +275,49 @@ def _validate_cursor(key: str, cursor: Any) -> None:
         raise StateStoreError("Invalid durable SyncState at state.cursor")
 
 
+_SECRET_SUBSTRINGS = (
+    "signature",
+    "credential",
+    "password",
+    "token",
+    "secret",
+    "bearer",
+    "apikey",
+    "api_key",
+    "authorization",
+)
+
+
 def _is_completed_watermark(watermark: str) -> bool:
     if not watermark or len(watermark) > _MAX_WATERMARK_LENGTH:
         return False
     if len(watermark) == 64 and all(character in "0123456789abcdefABCDEF" for character in watermark):
         return True
     if _ETAG_PATTERN.fullmatch(watermark) is not None:
-        return True
+        return not _contains_secret_material(watermark)
     try:
         parsed = parsedate_to_datetime(watermark)
     except (TypeError, ValueError, OverflowError):
         return False
     return parsed is not None and parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+def _contains_secret_material(watermark: str) -> bool:
+    lowered = watermark.lower()
+    if "://" in lowered:
+        return True
+    if "@" in lowered:
+        return True
+    if "?=" in lowered:
+        return True
+    for substring in _SECRET_SUBSTRINGS:
+        if substring in lowered:
+            return True
+    for char in watermark:
+        code = ord(char)
+        if code < 0x20:
+            return True
+    return False
 
 
 def _validate_last_synced_at(value: Any) -> None:
