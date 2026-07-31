@@ -47,6 +47,13 @@ def sync_resources(
     resource_list = list(resources)
     validate_unique_identities(resource_list)
 
+    # Probe once: stores implementing the additive AtomicStateStore capability
+    # (FileStateStore) get CAS-protected transitions; others (InMemoryStateStore,
+    # external implementors) fall back to unconditional put (CR-02).
+    from datasluice.ports import AtomicStateStore
+
+    is_atomic = isinstance(state_store, AtomicStateStore)
+
     for resource in resource_list:
         kind = resource.access.kind if resource.access is not None else "http_download"
         if kind in ("query", "stream"):
@@ -89,6 +96,12 @@ def sync_resources(
                     with result.stream:
                         pass
 
+        # Capture the prior raw version so every state transition passes it through the
+        # conditional-write path (CR-02). The box is mutated by the checkpoint callback so
+        # each batch checkpoint chains to the next and the completed write chains from the
+        # last checkpoint.
+        prior_version_box: list[bytes | None] = [state_store.read_version(key) if is_atomic else None]
+
         action = "materialized"
         if (resource.format or "").upper() == "PARQUET":
             if resume and checkpoint is not None:
@@ -106,8 +119,17 @@ def sync_resources(
                 stream = materialize_reader.open(resource)
                 start_batch_index = 0
 
-            def persist_batch(cursor: Any, state_key: str = key) -> None:
-                state_store.put(state_key, _in_progress_state(cursor))
+            def persist_batch(
+                cursor: Any,
+                state_key: str = key,
+                _prior_version_box: list[bytes | None] = prior_version_box,
+            ) -> None:
+                state = _in_progress_state(cursor)
+                if is_atomic:
+                    state_store.conditional_put(state_key, state, _prior_version_box[0])
+                    _prior_version_box[0] = state_store.read_version(state_key)
+                else:
+                    state_store.put(state_key, state)
 
             record = materialize_checkpointed(
                 resource,
@@ -128,7 +150,11 @@ def sync_resources(
             yield SyncOutcome(resource, action="skipped-unchanged", record=record, state_key=key)
             continue
 
-        state_store.put(key, _sync_state(key, fresh_watermark or checksum))
+        completed_state = _sync_state(key, fresh_watermark or checksum)
+        if is_atomic:
+            state_store.conditional_put(key, completed_state, prior_version_box[0])
+        else:
+            state_store.put(key, completed_state)
         yield SyncOutcome(resource, action=action, record=record, state_key=key)
 
 

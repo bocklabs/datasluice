@@ -16,7 +16,7 @@ import pytest
 
 from datasluice.domain import SyncState
 from datasluice.exceptions import SyncStateConflictError
-from datasluice.sync.state_store import FileStateStore
+from datasluice.sync.state_store import _UNSET, FileStateStore
 
 
 def test_cas_loser_raises(tmp_path: Path) -> None:
@@ -177,26 +177,52 @@ def test_in_memory_state_store_does_not_require_atomic_capability() -> None:
     assert not isinstance(store, AtomicStateStore)
 
 
+class _ConditionalPutSpy:
+    """Delegate to a FileStateStore while recording conditional_put invocations."""
+
+    def __init__(self, inner: FileStateStore) -> None:
+        self._inner = inner
+        self.conditional_put_calls: list[tuple[str, bytes | None]] = []
+
+    def get(self, key: str) -> Any:
+        return self._inner.get(key)
+
+    def put(self, key: str, state: Any, *, expected_prior: Any = _UNSET) -> None:
+        self._inner.put(key, state, expected_prior=expected_prior)
+
+    def delete(self, key: str) -> None:
+        self._inner.delete(key)
+
+    def read_version(self, key: str) -> bytes | None:
+        return self._inner.read_version(key)
+
+    def read_raw(self, key: str) -> bytes | None:
+        return self._inner.read_raw(key)
+
+    def conditional_put(self, key: str, state: Any, expected_prior: bytes | None) -> None:
+        self.conditional_put_calls.append((key, expected_prior))
+        self._inner.conditional_put(key, state, expected_prior)
+
+
 def test_sync_uses_cas_for_checkpoint_write(tmp_path, csv_server, make_resource) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     from datasluice.data import DataPlaneResourceReader
     from datasluice.sync import sync_resources
     from datasluice.sync._identity import canonical_identity
     from datasluice.transport.httpx_transport import HttpxTransport
 
-    _server, url = csv_server()
-    # Force Parquet so the materialize_checkpointed path is taken and persists a checkpoint.
+    schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
+    table = pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema)
+    parquet_buf = pa.BufferOutputStream()
+    pq.write_table(table, parquet_buf)
+    parquet_bytes = parquet_buf.getvalue().to_pybytes()
+
+    _server, url = csv_server(body=parquet_bytes)
     resource = make_resource(url, format="PARQUET")
 
-    store = FileStateStore(f"file://{tmp_path}/state")
-
-    captured: dict[str, list] = {"conditional_put": []}
-    original_conditional_put = store.conditional_put
-
-    def spy_conditional_put(key: str, state: Any, expected_prior: Any) -> None:
-        captured["conditional_put"].append((key, expected_prior))
-        original_conditional_put(key, state, expected_prior)
-
-    store.conditional_put = spy_conditional_put  # type: ignore[method-assign]
+    store = _ConditionalPutSpy(FileStateStore(f"file://{tmp_path}/state"))
 
     list(
         sync_resources(
@@ -208,7 +234,7 @@ def test_sync_uses_cas_for_checkpoint_write(tmp_path, csv_server, make_resource)
     )
 
     state_key = canonical_identity(resource)
-    checkpoint_writes = [ep for _k, ep in captured["conditional_put"] if _k == state_key]
+    checkpoint_writes = [ep for _k, ep in store.conditional_put_calls if _k == state_key]
     assert checkpoint_writes, "sync must use conditional_put for checkpoint writes"
     assert all(ep is None or isinstance(ep, bytes) for ep in checkpoint_writes), (
         "checkpoint conditional_put must carry an expected_prior"
@@ -224,16 +250,7 @@ def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) 
     _server, url = csv_server()
     resource = make_resource(url, format="CSV")
 
-    store = FileStateStore(f"file://{tmp_path}/state")
-
-    captured: dict[str, list] = {"conditional_put": []}
-    original_conditional_put = store.conditional_put
-
-    def spy_conditional_put(key: str, state: Any, expected_prior: Any) -> None:
-        captured["conditional_put"].append((key, expected_prior))
-        original_conditional_put(key, state, expected_prior)
-
-    store.conditional_put = spy_conditional_put  # type: ignore[method-assign]
+    store = _ConditionalPutSpy(FileStateStore(f"file://{tmp_path}/state"))
 
     outcomes = list(
         sync_resources(
@@ -246,7 +263,7 @@ def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) 
 
     state_key = canonical_identity(resource)
     assert outcomes[0].action in ("materialized", "skipped-unchanged")
-    completed_writes = [ep for k, ep in captured["conditional_put"] if k == state_key]
+    completed_writes = [ep for k, ep in store.conditional_put_calls if k == state_key]
     assert completed_writes, "sync must use conditional_put for the completed watermark write"
     first_completed_prior = completed_writes[0]
     assert first_completed_prior is None or isinstance(first_completed_prior, bytes)
