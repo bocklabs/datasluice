@@ -13,6 +13,7 @@ import json
 import os
 import random
 import re
+import threading
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,7 @@ logger = get_logger("sync.state_store")
 _UNSET = object()
 _SECRET_FREE_STATE_READY = True
 _ADVERSARIAL_VALIDATOR_READY = True
+_ATOMIC_CAS_READY = True
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
 _CHECKPOINT_KEYS = {"version", "status", "next_batch_index", "position"}
@@ -35,6 +37,13 @@ _CHECKPOINT_POSITION_KEYS = {"kind", "row_group_index"}
 _MAX_TIMESTAMP_LENGTH = 128
 _MAX_WATERMARK_LENGTH = 256
 _ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
+
+# fsspec backends whose ``mv`` is a true atomic rename (CR-11). On these
+# backends the per-key threading lock makes the compare-read and the rename
+# indivisible within a process, so CAS is preventive same-process. On any other
+# backend (generic copy-then-remove ``mv``) CAS is detection-only — a
+# cross-process observer may briefly see no file — and a warning is logged.
+_ATOMIC_MV_BACKENDS: frozenset[str] = frozenset({"file", "local", "memory"})
 
 
 class FileStateStore:
@@ -49,9 +58,28 @@ class FileStateStore:
     ``key`` and unconstrained state mappings remain readable.
 
     Writes are atomic (temp file + ``fs.mv`` rename, mirroring the content-cache
-    discipline) and protected by detection-only optimistic CAS (re-read +
-    hash-compare before the rename, D-P7-27 — portable across fsspec backends,
-    where no advisory file lock exists).
+    discipline). Compare-and-swap (CAS) is provided through the additive
+    :class:`datasluice.ports.state_store.AtomicStateStore` capability Protocol:
+    :meth:`read_version` returns the raw envelope bytes for CAS comparison and
+    :meth:`conditional_put` writes only when the on-disk version matches a
+    caller-supplied ``expected_prior``. A per-key :class:`threading.Lock`
+    (``_locks``) serializes the compare-read and the atomic-move so they are
+    indivisible within a single process — two barrier-synchronized
+    expected-absent writers cannot both succeed; the loser raises
+    :class:`SyncStateConflictError` (D-P7-27, CR-02).
+
+    Backend atomicity is declared via :data:`_ATOMIC_MV_BACKENDS`. On backends
+    whose ``mv`` is a true atomic rename (local ``file``/, ``memory``) the
+    per-key lock makes CAS *preventive* same-process. On non-atomic backends
+    (generic copy-then-remove ``mv`` on remote object stores) CAS is
+    *detection-only* — a cross-process observer may briefly see no file — and a
+    warning is logged; the per-key lock still provides same-process safety
+    (CR-11, 01-5, 06-7).
+
+    Backend errors are discriminated: only :class:`FileNotFoundError` maps to
+    absent state (``None``). :class:`PermissionError`, :class:`TimeoutError`,
+    and other :class:`OSError` subclasses surface as
+    :class:`StateStoreError` and are never swallowed as missing state (CR-03).
 
     Contract Reconciliation:
 
@@ -89,6 +117,26 @@ class FileStateStore:
 
             self._fs = open_filesystem(base_uri)
         self._fs.makedirs(self._base, exist_ok=True)
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    @property
+    def _is_atomic_mv(self) -> bool:
+        """Whether this backend's ``mv`` is a true atomic rename (CR-11)."""
+        protocol = self._fs.protocol
+        if isinstance(protocol, str):
+            return protocol in _ATOMIC_MV_BACKENDS
+        return any(entry in _ATOMIC_MV_BACKENDS for entry in protocol)
+
+    def _key_lock(self, key: str) -> threading.Lock:
+        """Return (lazily creating) the per-key lock for the SHA-256 path of *key*."""
+        path = self._state_path(key)
+        with self._locks_guard:
+            lock = self._locks.get(path)
+            if lock is None:
+                lock = threading.Lock()
+                self._locks[path] = lock
+            return lock
 
     def _state_path(self, key: str) -> str:
         """Return the SHA-256-hexdigest (.json) path for *key* (T-07-03 mitigation)."""
@@ -99,16 +147,19 @@ class FileStateStore:
         """Load the :class:`SyncState` for *key*, or ``None`` if absent.
 
         Raises:
-            StateStoreError: if the state file is corrupt (bad JSON), or its
-                envelope ``schema_version`` is unsupported. Never silently
-                treats corrupt state as "no state" (staleness is worse than a
-                loud failure — D-P7-03, T-07-01).
+            StateStoreError: if the state file is corrupt (bad JSON), its
+                envelope ``schema_version`` is unsupported, or a backend error
+                other than :class:`FileNotFoundError` occurs (permission,
+                timeout, I/O). Never silently treats a backend failure as "no
+                state" (CR-03) — staleness is worse than a loud failure (D-P7-03).
         """
         path = self._state_path(key)
         try:
             raw = self._fs.cat_file(path)
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError:
             return None
+        except OSError as exc:
+            raise StateStoreError(f"Failed to read state for key at {path}") from exc
         try:
             envelope = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -136,15 +187,26 @@ class FileStateStore:
     def read_raw(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key* (or ``None`` if absent) for CAS compare-and-swap.
 
-        Callers pass the returned bytes back into :meth:`put(..., expected_prior=...)`
-        so a concurrent writer's intervening commit is detected instead of
-        silently overwritten (D-P7-27).
+        Raises:
+            StateStoreError: on a backend error other than
+                :class:`FileNotFoundError` (CR-03).
         """
         path = self._state_path(key)
         try:
             return self._fs.cat_file(path)
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError:
             return None
+        except OSError as exc:
+            raise StateStoreError(f"Failed to read state for key at {path}") from exc
+
+    def read_version(self, key: str) -> bytes | None:
+        """Return the raw envelope bytes for *key*, or ``None`` if absent (:class:`AtomicStateStore`).
+
+        Alias for :meth:`read_raw`. Callers pass the returned bytes back into
+        :meth:`conditional_put` as ``expected_prior`` so a concurrent writer's
+        intervening commit is detected instead of silently overwritten (D-P7-27).
+        """
+        return self.read_raw(key)
 
     def put(self, key: str, state: SyncState, *, expected_prior: bytes | None | object = _UNSET) -> None:
         """Persist *state* under *key* via an atomic, optionally CAS-protected write.
@@ -160,6 +222,11 @@ class FileStateStore:
         fsspec backends expose no portable conditional-write/etag (RESEARCH
         Pitfall 5). Omit *expected_prior* for an unconditional write.
 
+        Note: the compare-read and rename in this method are NOT guarded by the
+        per-key lock — callers needing same-process indivisibility between two
+        writers must use :meth:`conditional_put` instead. This method remains
+        for unconditional writes and backward compatibility.
+
         Args:
             key: The sync-state key (resource-id-scoped, per Area 1).
             state: The :class:`SyncState` to persist (watermark strings, never
@@ -173,14 +240,7 @@ class FileStateStore:
             StateStoreError: on any write I/O failure.
         """
         _validate_state_for_write(key, state)
-        path = self._state_path(key)
-        payload = json.dumps(
-            {
-                "schema_version": 1,
-                "state": _encode_state(state),
-            },
-            sort_keys=True,
-        ).encode()
+        payload = _serialize_state(state)
 
         if expected_prior is not _UNSET:
             actual_prior = self.read_raw(key)
@@ -191,20 +251,74 @@ class FileStateStore:
             if actual_sha != expected_sha:
                 raise SyncStateConflictError("State changed since last read (CAS mismatch); re-read and re-apply")
 
+        self._publish(key, payload)
+
+    def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> None:
+        """Persist *state* under *key* only if the current version matches ``expected_prior``.
+
+        The per-key threading lock (``_locks``) is held across the version check
+        and the atomic write, making them indivisible within a single process.
+        Two same-process writers that both pass the version check cannot both
+        commit; the loser raises :class:`SyncStateConflictError` (CR-02).
+
+        On non-atomic-``mv`` backends (see :data:`_ATOMIC_MV_BACKENDS`) a
+        warning is logged and the write proceeds — CAS is detection-only
+        cross-process, but the per-key lock still serializes same-process
+        writers (CR-11, 01-5, 06-7).
+
+        Args:
+            key: The sync-state key.
+            state: The :class:`SyncState` to persist.
+            expected_prior: Raw bytes from :meth:`read_version` (``None`` =
+                "expected absent").
+
+        Raises:
+            SyncStateConflictError: if the on-disk version does not match
+                ``expected_prior`` (CAS lost a race).
+            StateStoreError: on any write I/O failure.
+        """
+        if not self._is_atomic_mv:
+            logger.warning(
+                "conditional_put on non-atomic-mv backend (%s): CAS is detection-only cross-process",
+                self._fs.protocol,
+            )
+        _validate_state_for_write(key, state)
+        payload = _serialize_state(state)
+        lock = self._key_lock(key)
+        with lock:
+            actual_prior = self.read_raw(key)
+            expected_bytes = expected_prior if isinstance(expected_prior, bytes) else b""
+            actual_bytes = actual_prior if actual_prior is not None else b""
+            expected_sha = hashlib.sha256(expected_bytes).hexdigest()
+            actual_sha = hashlib.sha256(actual_bytes).hexdigest()
+            if actual_sha != expected_sha:
+                raise SyncStateConflictError("State changed since last read (CAS mismatch); re-read and re-apply")
+            self._publish(key, payload)
+
+    def delete(self, key: str) -> None:
+        """Remove the state file for *key*; a missing file is tolerated (idempotent).
+
+        Raises:
+            StateStoreError: on a backend error other than
+                :class:`FileNotFoundError` (CR-03).
+        """
+        path = self._state_path(key)
+        try:
+            self._fs.rm(path)
+        except FileNotFoundError:
+            logger.debug("delete: state file absent (tolerated): %s", path)
+        except OSError as exc:
+            raise StateStoreError(f"Failed to delete state for key at {path}") from exc
+
+    def _publish(self, key: str, payload: bytes) -> None:
+        """Write ``payload`` to the key's path via temp-file + atomic rename."""
+        path = self._state_path(key)
         tmp_path = f"{self._base}/.{self._sha256_bytes(payload)}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
         try:
             self._fs.pipe_file(tmp_path, payload)
             self._fs.mv(tmp_path, path)
         except OSError as exc:
             raise StateStoreError("Failed to publish durable state envelope") from exc
-
-    def delete(self, key: str) -> None:
-        """Remove the state file for *key*; a missing file is tolerated (idempotent)."""
-        path = self._state_path(key)
-        try:
-            self._fs.rm(path)
-        except (FileNotFoundError, OSError):
-            logger.debug("delete: state file absent (tolerated): %s", path)
 
     @staticmethod
     def _sha256_bytes(data: bytes) -> str:
@@ -253,6 +367,17 @@ def _encode_state(state: SyncState) -> dict[str, Any]:
         "last_synced_at": state.last_synced_at,
         "extra": state.extra,
     }
+
+
+def _serialize_state(state: SyncState) -> bytes:
+    """Serialize *state* into the canonical sorted-key envelope bytes for durable publish."""
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "state": _encode_state(state),
+        },
+        sort_keys=True,
+    ).encode()
 
 
 def _validate_state_for_write(key: str, state: SyncState) -> None:

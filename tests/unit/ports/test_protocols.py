@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from datasluice.ports import (
+    AtomicStateStore,
     CachePort,
     CatalogPort,
     CredentialProvider,
@@ -18,6 +19,7 @@ from datasluice.ports import (
 )
 
 ALL_PROTOCOLS = [
+    AtomicStateStore,
     CachePort,
     CatalogPort,
     CredentialProvider,
@@ -65,6 +67,7 @@ def test_organization_catalog_extends_catalog_port() -> None:
 
 def test_all_protocols_importable_individually() -> None:
     for name in [
+        "AtomicStateStore",
         "CachePort",
         "CatalogPort",
         "CheckpointableResourceReader",
@@ -85,10 +88,10 @@ def test_all_protocols_importable_individually() -> None:
         assert hasattr(ports, name), f"{name} missing from datasluice.ports"
 
 
-def test_ports_all_contains_fourteen_names() -> None:
+def test_ports_all_contains_fifteen_names() -> None:
     import datasluice.ports as ports
 
-    assert len(ports.__all__) == 14
+    assert len(ports.__all__) == 15
 
 
 def test_transport_declares_request_get_json_download() -> None:
