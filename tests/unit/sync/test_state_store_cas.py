@@ -175,3 +175,105 @@ def test_in_memory_state_store_does_not_require_atomic_capability() -> None:
     store = InMemoryStateStore()
     # InMemoryStateStore remains a valid StateStore without the CAS capability.
     assert not isinstance(store, AtomicStateStore)
+
+
+def test_sync_uses_cas_for_checkpoint_write(tmp_path, csv_server, make_resource) -> None:
+    from datasluice.data import DataPlaneResourceReader
+    from datasluice.sync import sync_resources
+    from datasluice.sync._identity import canonical_identity
+    from datasluice.transport.httpx_transport import HttpxTransport
+
+    _server, url = csv_server()
+    # Force Parquet so the materialize_checkpointed path is taken and persists a checkpoint.
+    resource = make_resource(url, format="PARQUET")
+
+    store = FileStateStore(f"file://{tmp_path}/state")
+
+    captured: dict[str, list] = {"conditional_put": []}
+    original_conditional_put = store.conditional_put
+
+    def spy_conditional_put(key: str, state: Any, expected_prior: Any) -> None:
+        captured["conditional_put"].append((key, expected_prior))
+        original_conditional_put(key, state, expected_prior)
+
+    store.conditional_put = spy_conditional_put  # type: ignore[method-assign]
+
+    list(
+        sync_resources(
+            [resource],
+            state_store=store,
+            reader=DataPlaneResourceReader(transport=HttpxTransport()),
+            destination_uri=f"file://{tmp_path}/dest",
+        )
+    )
+
+    state_key = canonical_identity(resource)
+    checkpoint_writes = [ep for _k, ep in captured["conditional_put"] if _k == state_key]
+    assert checkpoint_writes, "sync must use conditional_put for checkpoint writes"
+    assert all(ep is None or isinstance(ep, bytes) for ep in checkpoint_writes), (
+        "checkpoint conditional_put must carry an expected_prior"
+    )
+
+
+def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) -> None:
+    from datasluice.data import DataPlaneResourceReader
+    from datasluice.sync import sync_resources
+    from datasluice.sync._identity import canonical_identity
+    from datasluice.transport.httpx_transport import HttpxTransport
+
+    _server, url = csv_server()
+    resource = make_resource(url, format="CSV")
+
+    store = FileStateStore(f"file://{tmp_path}/state")
+
+    captured: dict[str, list] = {"conditional_put": []}
+    original_conditional_put = store.conditional_put
+
+    def spy_conditional_put(key: str, state: Any, expected_prior: Any) -> None:
+        captured["conditional_put"].append((key, expected_prior))
+        original_conditional_put(key, state, expected_prior)
+
+    store.conditional_put = spy_conditional_put  # type: ignore[method-assign]
+
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=store,
+            reader=DataPlaneResourceReader(transport=HttpxTransport()),
+            destination_uri=f"file://{tmp_path}/dest",
+        )
+    )
+
+    state_key = canonical_identity(resource)
+    assert outcomes[0].action in ("materialized", "skipped-unchanged")
+    completed_writes = [ep for k, ep in captured["conditional_put"] if k == state_key]
+    assert completed_writes, "sync must use conditional_put for the completed watermark write"
+    first_completed_prior = completed_writes[0]
+    assert first_completed_prior is None or isinstance(first_completed_prior, bytes)
+
+
+def test_sync_fallback_unconditional_put_for_non_atomic(tmp_path, csv_server, make_resource) -> None:
+    from datasluice.data import DataPlaneResourceReader
+    from datasluice.sync import sync_resources
+    from datasluice.sync._identity import canonical_identity
+    from datasluice.sync.state_store import InMemoryStateStore
+    from datasluice.transport.httpx_transport import HttpxTransport
+
+    _server, url = csv_server()
+    resource = make_resource(url, format="CSV")
+
+    store = InMemoryStateStore()
+    assert not hasattr(store, "conditional_put")
+
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=store,
+            reader=DataPlaneResourceReader(transport=HttpxTransport()),
+            destination_uri=f"file://{tmp_path}/dest",
+        )
+    )
+
+    state_key = canonical_identity(resource)
+    assert outcomes[0].action in ("materialized", "skipped-unchanged")
+    assert store.get(state_key) is not None
