@@ -141,3 +141,48 @@ def test_local_resource_without_url_still_gets_stable_identity() -> None:
         access=LocalFile(path="/tmp/data.csv"),
     )
     assert canonical_identity(other) == identity
+
+
+def test_local_resource_same_id_different_paths_get_distinct_identities() -> None:
+    from datasluice.domain import LocalFile
+
+    dataset_a = Resource(
+        id="data.parquet",
+        name="data.parquet",
+        format="PARQUET",
+        access=LocalFile(path="/a/data.parquet"),
+    )
+    dataset_b = Resource(
+        id="data.parquet",
+        name="data.parquet",
+        format="PARQUET",
+        access=LocalFile(path="/b/data.parquet"),
+    )
+
+    assert canonical_identity(dataset_a) != canonical_identity(dataset_b)
+
+
+def test_object_storage_same_id_different_uris_get_distinct_identities() -> None:
+    from datasluice.domain import ObjectStorage
+
+    bucket_a = Resource(
+        id="data.parquet",
+        name="data.parquet",
+        format="PARQUET",
+        access=ObjectStorage(uri="s3://a/data.parquet"),
+    )
+    bucket_b = Resource(
+        id="data.parquet",
+        name="data.parquet",
+        format="PARQUET",
+        access=ObjectStorage(uri="s3://b/data.parquet"),
+    )
+
+    assert canonical_identity(bucket_a) != canonical_identity(bucket_b)
+
+
+def test_file_url_resource_scopes_by_path() -> None:
+    resource = _http_resource("data", "file:///a/data.csv")
+    other = _http_resource("data", "file:///b/data.csv")
+
+    assert canonical_identity(resource) != canonical_identity(other)

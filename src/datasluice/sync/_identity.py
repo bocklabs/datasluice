@@ -8,7 +8,8 @@ datasets could alias artifacts and state.
 This module derives one canonical namespaced identity per resource, hashed with
 SHA-256 over ``f"{url_origin}/{resource.id}"``. The hash is a 64-character
 lowercase hex string with no path separators, so it can never form a path
-escape, and equal ids at different URL origins produce distinct identities.
+escape, and equal ids at different URL origins, access locators (local paths,
+object URIs), or URL paths produce distinct identities.
 
 The module is dependency-free (``hashlib`` plus ``urllib.parse``) so it imports
 cleanly on bare installs (D-P7-29) and is stable across repeated calls on the
@@ -36,10 +37,11 @@ def canonical_identity(resource: Resource) -> str:
     """Return the SHA-256 canonical identity for *resource*.
 
     The identity is ``sha256(f"{url_origin}/{resource.id}")`` where
-    ``url_origin`` is the resource access URL's ``scheme://netloc`` (or a
-    stable sentinel when no URL is available, so local-only resources still
-    receive a portal-distinct scoped identity). The result is a 64-character
-    lowercase hex string with no path separators.
+    ``url_origin`` is the resource access URL's ``scheme://netloc``, the
+    access locator (local path or object URI) when the access carries one, or
+    a stable sentinel when neither is available, so local-only resources still
+    receive a scoped identity. The result is a 64-character lowercase hex
+    string with no path separators.
 
     Args:
         resource: A resource-like object carrying ``id`` plus an access URL or
@@ -106,21 +108,27 @@ def validate_unique_identities(resources: Iterable[Resource]) -> None:
 
 
 def _url_origin(resource: Resource) -> str:
-    """Extract the ``scheme://netloc`` origin from *resource*.
+    """Extract the origin scope for canonical identity hashing.
 
-    Falls back to a stable sentinel when no URL is available so local-file
-    resources still get a stable scoped identity distinct from any HTTP
-    origin.
+    HTTP(S) resources scope by ``scheme://netloc``. Resources whose access
+    carries a locator — an object-storage URI or a local path — scope by that
+    locator, so equal ids at different paths cannot alias artifacts or state.
+    Scheme-bearing URLs without a netloc (``file://``) scope by their path
+    component. Falls back to a stable sentinel when nothing else is available.
     """
     access = resource.access
-    url: str | None = None
-    if access is not None:
-        url = getattr(access, "url", None)
-    if url is None:
-        url = resource.url
-    if not url:
-        return _LOCAL_ORIGIN
-    parts = urlsplit(url)
-    if parts.scheme and parts.netloc:
-        return f"{parts.scheme}://{parts.netloc}"
+    url = getattr(access, "url", None) or resource.url
+    loc = getattr(access, "uri", None) or getattr(access, "path", None)
+    if url:
+        parts = urlsplit(url)
+        if parts.scheme and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}"
+        if loc:
+            return f"local:{loc}"
+        if parts.scheme and parts.path:
+            return f"{parts.scheme}:{parts.path}"
+        if parts.path:
+            return f"path:{parts.path}"
+    if loc:
+        return f"local:{loc}"
     return _LOCAL_ORIGIN
