@@ -194,6 +194,43 @@ class HttpxTransport:
             raise PortalError(f"Redirect limit {self._max_redirects} exceeded for {url}")
         return response
 
+    def _try_credential_refresh(
+        self,
+        *,
+        response: httpx.Response,
+        url: str,
+        method: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        status: int,
+        refreshed: bool,
+        stream: bool = False,
+    ) -> tuple[httpx.Response, int, bool]:
+        """Evict and re-apply credentials for a 401/403 exactly once (D-P3-15).
+
+        Re-issues the request against the refreshed credential when the
+        transport is bound to a :class:`HostCredentialProvider` and a refresh
+        has not already occurred. *headers* is mutated in place with the
+        refreshed authorization. Returns ``(response, status, refreshed)`` —
+        the (possibly re-issued) response, its final status code, and whether
+        a refresh was performed. When no refresh is applicable the original
+        *response* and *status* are returned unchanged.
+        """
+        if status not in (401, 403) or refreshed:
+            return response, status, False
+        provider_type = _host_credential_provider_type()
+        credential_provider = self._credential_provider
+        if provider_type is None or credential_provider is None or not isinstance(credential_provider, provider_type):
+            return response, status, False
+        host = urlparse(url).hostname or ""
+        credential_provider.evict(host)
+        new_auth = credential_provider.resolve(host)
+        applied, _ = new_auth.apply(dict(headers), {})
+        headers.clear()
+        headers.update(applied)
+        refreshed_response = self._send_with_redirects(url, method, headers, body, stream=stream)
+        return refreshed_response, refreshed_response.status_code, True
+
     def request(
         self,
         url: str,
@@ -224,7 +261,6 @@ class HttpxTransport:
             url = f"{url}{separator}{urlencode(params, doseq=True)}"
 
         refreshed: list[bool] = [False]
-        credential_provider = self._credential_provider
 
         def _do_request() -> bytes:
             if self.rate_limiter:
@@ -234,27 +270,22 @@ class HttpxTransport:
             status = response.status_code
 
             if status in (401, 403):
-                provider_type = _host_credential_provider_type()
-                if (
-                    provider_type is not None
-                    and credential_provider is not None
-                    and isinstance(credential_provider, provider_type)
-                    and not refreshed[0]
-                ):
-                    refreshed[0] = True
-                    host = urlparse(url).hostname or ""
-                    credential_provider.evict(host)
-                    new_auth = credential_provider.resolve(host)
-                    applied, _ = new_auth.apply(dict(request_headers), {})
-                    request_headers.clear()
-                    request_headers.update(applied)
-                    response = self._send_with_redirects(url, method, request_headers, body)
-                    status = response.status_code
-                    if status in (401, 403):
-                        response.read()
-                        raise PortalError(
-                            f"HTTP {status} from {url} after credential refresh: {_truncate_body(response.content)}"
-                        )
+                refreshed_response, status, did_refresh = self._try_credential_refresh(
+                    response=response,
+                    url=url,
+                    method=method,
+                    headers=request_headers,
+                    body=body,
+                    status=status,
+                    refreshed=refreshed[0],
+                )
+                refreshed[0] = True
+                response = refreshed_response
+                if did_refresh and status in (401, 403):
+                    response.read()
+                    raise PortalError(
+                        f"HTTP {status} from {url} after credential refresh: {_truncate_body(response.content)}"
+                    )
 
             response.read()
             if status == 429:
@@ -315,6 +346,20 @@ class HttpxTransport:
 
         response = self._send_with_redirects(url, "GET", headers, None, stream=True)
         status = response.status_code
+
+        if status in (401, 403):
+            refreshed_response, status, _did_refresh = self._try_credential_refresh(
+                response=response,
+                url=url,
+                method="GET",
+                headers=headers,
+                body=None,
+                status=status,
+                refreshed=False,
+                stream=True,
+            )
+            response = refreshed_response
+
         response_headers = response.headers
 
         if status == 304:
@@ -356,6 +401,18 @@ class HttpxTransport:
         response = self._send_with_redirects(url, "GET", headers, None, stream=True)
         try:
             resp = response
+            if resp.status_code in (401, 403):
+                refreshed_response, status, _did_refresh = self._try_credential_refresh(
+                    response=resp,
+                    url=url,
+                    method="GET",
+                    headers=headers,
+                    body=None,
+                    status=resp.status_code,
+                    refreshed=False,
+                    stream=True,
+                )
+                resp = refreshed_response
             if resp.status_code >= 400:
                 resp.read()
                 if resp.status_code == 429:

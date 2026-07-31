@@ -323,6 +323,60 @@ def test_401_after_refresh_still_401_raises() -> None:
         server.server_close()
 
 
+def test_conditional_fetch_refreshes_and_recovers() -> None:
+    """conditional_fetch evicts + retries once on 401 and returns the refreshed body."""
+
+    server, base = start_test_server(
+        {"/pub": [MockResponse(status=401, body=b"no"), MockResponse(status=200, body=b"ok", headers={"ETag": '"e"'})]}
+    )
+    try:
+        provider = _evicting_provider(BearerAuth("refreshed"))
+        transport = HttpxTransport(auth=BearerAuth("stale"), credential_provider=provider)
+        result = transport.conditional_fetch(f"{base}/pub")
+        assert result.status_code == 200
+        with result.stream as response:
+            assert b"".join(response) == b"ok"
+        assert result.headers["ETag"] == '"e"'
+        provider.evict.assert_called_once()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_conditional_fetch_401_after_refresh_raises() -> None:
+    """conditional_fetch surfaces a still-401 after a single refresh as PortalError."""
+
+    server, base = start_test_server(
+        {"/pub": [MockResponse(status=401, body=b"no"), MockResponse(status=401, body=b"still-no")]}
+    )
+    try:
+        provider = _evicting_provider(BearerAuth("refreshed"))
+        transport = HttpxTransport(auth=BearerAuth("stale"), credential_provider=provider)
+        with pytest.raises(PortalError):
+            transport.conditional_fetch(f"{base}/pub")
+        provider.evict.assert_called_once()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stream_refreshes_and_recovers() -> None:
+    """stream() evicts + retries once on 401 and yields the refreshed body."""
+
+    server, base = start_test_server(
+        {"/pub": [MockResponse(status=401, body=b"no"), MockResponse(status=200, body=b"stream-body")]}
+    )
+    try:
+        provider = _evicting_provider(BearerAuth("refreshed"))
+        transport = HttpxTransport(auth=BearerAuth("stale"), credential_provider=provider)
+        with transport.stream(f"{base}/pub") as response:
+            assert b"".join(response) == b"stream-body"
+        provider.evict.assert_called_once()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 # --------------------------------------------------------------------------- #
 # get_json / download
 # --------------------------------------------------------------------------- #
