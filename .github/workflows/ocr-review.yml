@@ -42,12 +42,18 @@ jobs:
           upload_artifacts: 'true'
 
           background: >-
-            DataSluice is a Python 3.12+ open-data SDK and CLI. Preserve public
-            API compatibility and consistent behavior across different data 
-            portal adapters. Optional format and integration
-            dependencies must remain lazily imported so the base package works
-            without extras. Adapter imports perform intentional registry side
-            effects. Prioritize HTTP correctness, pagination, retries, rate limiting, resource
-            cleanup, credential safety, mapping correctness, typing, and tests
-            for changed behavior. Avoid style-only findings already covered by
-            Ruff and ty.
+            DataSluice is a Python 3.12+ open-data SDK and CLI for discovery, extraction,
+            format normalization, and pipeline integration against CKAN, data.gouv.fr,
+            Socrata, and custom portals. Preserve public API compatibility and consistent
+            behavior across all portal connectors. Connectors are discovered via the
+            datasluice.connectors entry-points group by the injected runtime
+            PluginManager (no module-level registry, no import side effects; broken
+            third-party plugins are recorded as failures, never fatal). Optional format,
+            storage, and integration dependencies (httpx, fsspec, pyarrow, pandas,
+            polars, openpyxl, zstandard, dlt, duckdb, airflow) must remain lazily
+            imported so the base package works without extras. Prioritize HTTP
+            correctness, pagination, retries, rate limiting, redirect handling, resource
+            and file-descriptor cleanup (streams, readers, clients), credential and
+            secret safety, portal mapping correctness, cache/checksum integrity, sync
+            state correctness, typing, and tests for changed behavior. Avoid style-only
+            findings already covered by Ruff and ty.
