@@ -123,18 +123,23 @@ def materialize_checkpointed(
             next_batch_index = cursor.next_batch_index
 
     if next_batch_index == 0:
-        raise DataSluiceError(f"Cannot finalize empty checkpointed resource {resource.id!r}")
-    shard_uris = [_batch_shard_uri(partial_uri, index) for index in range(next_batch_index)]
-    for batch_index, shard_uri in enumerate(shard_uris):
-        if not fs.exists(shard_uri):
-            raise DataSluiceError(
-                f"Corrupt continuation for resource {resource.id!r}: completed shard {batch_index} is missing"
-            )
-    tables = []
-    for shard_uri in shard_uris:
-        with fs.open(shard_uri, "rb") as source:
-            tables.append(pq.read_table(source))
-    table = pa.concat_tables(tables)
+        # Valid empty Parquet: the cursor reader yielded no batches because
+        # the file has no non-empty row groups. Publish a zero-row table that
+        # retains the source schema (CR-08) — the previous code raised, so a
+        # schema-bearing empty Parquet could not be synchronized.
+        table = pa.Table.from_batches([], schema=stream.schema)
+    else:
+        shard_uris = [_batch_shard_uri(partial_uri, index) for index in range(next_batch_index)]
+        for batch_index, shard_uri in enumerate(shard_uris):
+            if not fs.exists(shard_uri):
+                raise DataSluiceError(
+                    f"Corrupt continuation for resource {resource.id!r}: completed shard {batch_index} is missing"
+                )
+        tables = []
+        for shard_uri in shard_uris:
+            with fs.open(shard_uri, "rb") as source:
+                tables.append(pq.read_table(source))
+        table = pa.concat_tables(tables)
     checksum = logical_sha256(table)
     sink = pa.BufferOutputStream()
     pq.write_table(table, sink)

@@ -76,6 +76,12 @@ class ParquetReader(BaseFormatReader):
         yielding a tuple, keeping the physical index accurate for the next
         non-empty group.
 
+        The caller owns *source* lifetime: this method does NOT close *source*
+        so the caller can still read the Parquet footer (e.g. for an empty
+        file's schema, CR-08) after iteration completes. Pass *source* to a
+        ``BatchStream`` ``closeables`` tuple (or otherwise close it) to release
+        the underlying file handle.
+
         Args:
             source: A seekable binary Parquet source.
             start_row_group_index: Physical row-group index to resume from.
@@ -109,9 +115,6 @@ class ParquetReader(BaseFormatReader):
                     yield row_group_index, batch
         except pa.ArrowInvalid as exc:
             raise FormatError(f"Invalid Parquet row group: {exc}") from exc
-        finally:
-            if hasattr(source, "close"):
-                source.close()
 
     def _read_row_group(self, parquet_file: Any, row_group_index: int) -> Any:
         """Read one complete Parquet row group as one RecordBatch."""

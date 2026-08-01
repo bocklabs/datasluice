@@ -161,3 +161,46 @@ def test_destination_uri_is_uri_not_path(tmp_path, csv_server, make_resource) ->
     )
 
     assert record[0].startswith("file://")
+
+
+def test_empty_parquet_resource_syncs_with_schema(tmp_path) -> None:
+    """A schema-bearing zero-row Parquet resource still syncs under checkpointed materialization (CR-08)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from datasluice.sync.state_store import FileStateStore
+
+    schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
+    empty_table = pa.table({"group_id": pa.array([], type=pa.int64()), "value": pa.array([], type=pa.string())})
+    buf = pa.BufferOutputStream()
+    pq.write_table(empty_table, buf)
+    parquet_path = tmp_path / "empty.parquet"
+    parquet_path.write_bytes(buf.getvalue().to_pybytes())
+
+    resource = Resource(
+        id="empty-resource",
+        name="empty-resource",
+        format="PARQUET",
+        access=LocalFile(path=str(parquet_path)),
+    )
+    destination = f"file://{tmp_path}/dest"
+    store = FileStateStore(f"file://{tmp_path}/state")
+
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=store,
+            reader=DataPlaneResourceReader(),
+            destination_uri=destination,
+        )
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].action == "materialized"
+    record = outcomes[0].record
+    final_uri, _media_type, size, _checksum = record
+    # The published zero-row Parquet must retain the source schema.
+    with open(final_uri.replace("file://", ""), "rb") as published:
+        published_table = pq.read_table(published)
+    assert published_table.num_rows == 0
+    assert published_table.schema == schema
