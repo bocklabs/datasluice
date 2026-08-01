@@ -198,7 +198,8 @@ def test_empty_parquet_resource_syncs_with_schema(tmp_path) -> None:
     assert len(outcomes) == 1
     assert outcomes[0].action == "materialized"
     record = outcomes[0].record
-    final_uri, _media_type, size, _checksum = record
+    assert record is not None
+    final_uri = record[0]
     # The published zero-row Parquet must retain the source schema.
     with open(final_uri.replace("file://", ""), "rb") as published:
         published_table = pq.read_table(published)

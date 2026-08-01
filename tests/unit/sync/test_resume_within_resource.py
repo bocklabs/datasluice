@@ -596,7 +596,6 @@ def test_source_change_during_read_aborts_to_avoid_mixed_artifact(tmp_path) -> N
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-
     path = tmp_path / "shifting.parquet"
     schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
     with pq.ParquetWriter(path, schema) as writer:
