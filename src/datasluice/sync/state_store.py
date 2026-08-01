@@ -204,13 +204,29 @@ class FileStateStore:
                 timeout, I/O). Never silently treats a backend failure as "no
                 state" (CR-03) — staleness is worse than a loud failure (D-P7-03).
         """
-        path = self._state_path(key)
-        try:
-            raw = self._fs.cat_file(path)
-        except FileNotFoundError:
+        raw = self.read_raw(key)
+        if raw is None:
             return None
-        except OSError as exc:
-            raise StateStoreError(f"Failed to read state for key at {path}") from exc
+        return self._decode_envelope(key, raw)
+
+    def get_with_version(self, key: str) -> tuple[SyncState | None, bytes | None]:
+        """Atomically load the state and its CAS version from one backend read (CR-01).
+
+        Returns ``(state, version)`` where ``version`` is the raw envelope
+        bytes read for *key* (or ``None`` if absent) and ``state`` is the
+        decoded :class:`SyncState` (or ``None``). Both values are derived from
+        one :meth:`read_raw` call, so no intervening writer can split the
+        state used for sync decisions from the version used as the CAS
+        ``expected_prior``. Pass the returned ``version`` directly into the
+        next :meth:`conditional_put`; do not call :meth:`read_version`
+        separately between read and write.
+        """
+        raw = self.read_raw(key)
+        if raw is None:
+            return None, None
+        return self._decode_envelope(key, raw), raw
+
+    def _decode_envelope(self, key: str, raw: bytes) -> SyncState:
         try:
             envelope = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -304,7 +320,7 @@ class FileStateStore:
 
         self._publish(key, payload)
 
-    def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> None:
+    def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> bytes:
         """Persist *state* under *key* only if the current version matches ``expected_prior``.
 
         The per-key threading lock (``_locks``) is held across the version check
@@ -322,6 +338,14 @@ class FileStateStore:
             state: The :class:`SyncState` to persist.
             expected_prior: Raw bytes from :meth:`read_version` (``None`` =
                 "expected absent").
+
+        Returns:
+            The committed envelope bytes (the new CAS version). Callers that
+            chain another :meth:`conditional_put` MUST pass the returned bytes
+            as the next ``expected_prior`` rather than re-reading the version
+            separately (CR-01: re-reading after the write opens a TOCTOU gap
+            where an interloper can commit between this return and the next
+            expected_prior).
 
         Raises:
             SyncStateConflictError: if the on-disk version does not match
@@ -344,6 +368,7 @@ class FileStateStore:
             if actual_sha != expected_sha:
                 raise SyncStateConflictError("State changed since last read (CAS mismatch); re-read and re-apply")
             self._publish(key, payload)
+        return payload
 
     def delete(self, key: str) -> None:
         """Remove the state file for *key*; a missing file is tolerated (idempotent).

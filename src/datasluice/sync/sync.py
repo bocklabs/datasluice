@@ -67,7 +67,11 @@ def sync_resources(
             continue
 
         key = canonical_identity(resource)
-        prior = state_store.get(key)
+        if is_atomic:
+            prior, prior_version = state_store.get_with_version(key)
+        else:
+            prior = state_store.get(key)
+            prior_version = None
         checkpoint = _decode_checkpoint(prior) if prior is not None else None
         if resume and prior is not None and checkpoint is None:
             completed_record = _completed_artifact_record(prior, resource, destination_uri)
@@ -90,6 +94,7 @@ def sync_resources(
                 )
                 checkpoint = None
                 prior = None
+                prior_version = None
             elif (
                 checkpoint.destination_identity is not None
                 and checkpoint.destination_identity != canonical_destination_identity(destination_uri)
@@ -100,6 +105,7 @@ def sync_resources(
                 )
                 checkpoint = None
                 prior = None
+                prior_version = None
 
         watermark = prior.cursor.get(key) if prior is not None else None
         prior_artifact = _completed_artifact_record(prior, resource, destination_uri)
@@ -152,11 +158,14 @@ def sync_resources(
                             type(reader).__name__,
                         )
 
-        # Capture the prior raw version so every state transition passes it through the
-        # conditional-write path (CR-02). The box is mutated by the checkpoint callback so
-        # each batch checkpoint chains to the next and the completed write chains from the
-        # last checkpoint.
-        prior_version_box: list[bytes | None] = [state_store.read_version(key) if is_atomic else None]
+        # Capture the prior CAS version atomically with the state read above so
+        # every state transition chains through the conditional-write path
+        # (CR-01/CR-02). The box is mutated by the checkpoint callback: each
+        # batch checkpoint stores the version returned by its conditional_put,
+        # and the completed write chains from the last checkpoint's returned
+        # version. Never re-read the version after a write — that opens a
+        # TOCTOU gap (CR-01).
+        prior_version_box: list[bytes | None] = [prior_version]
 
         action = "materialized"
         checkpointed_kind = (resource.format or "").upper() == "PARQUET" and kind in ("local_file", "object_storage")
@@ -193,8 +202,7 @@ def sync_resources(
             ) -> None:
                 state = _in_progress_state(cursor, _source_version, destination_uri)
                 if is_atomic:
-                    state_store.conditional_put(state_key, state, _prior_version_box[0])
-                    _prior_version_box[0] = state_store.read_version(state_key)
+                    _prior_version_box[0] = state_store.conditional_put(state_key, state, _prior_version_box[0])
                 else:
                     state_store.put(state_key, state)
 

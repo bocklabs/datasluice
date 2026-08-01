@@ -83,9 +83,43 @@ def test_conditional_put_with_correct_prior_succeeds(tmp_path: Path) -> None:
     assert expected_prior is not None
 
     second = SyncState(cursor={"resource-1": '"etag-2"'})
-    store.conditional_put(key, second, expected_prior)
+
+    committed_version = store.conditional_put(key, second, expected_prior)
+    assert committed_version is not None
+    assert committed_version == store.read_version(key)
 
     assert store.get(key) == second
+
+
+def test_get_with_version_returns_one_read_pair(tmp_path: Path) -> None:
+    """get_with_version decodes state and version from a single backend read (CR-01)."""
+    store = FileStateStore(f"file://{tmp_path}/state")
+    key = "resource-1"
+    state = SyncState(cursor={"resource-1": '"etag-1"'})
+    store.put(key, state)
+
+    decoded, version = store.get_with_version(key)
+    assert decoded is not None
+    assert decoded == state
+    assert version == store.read_raw(key)
+
+
+def test_get_with_version_absent_returns_none_pair(tmp_path: Path) -> None:
+    store = FileStateStore(f"file://{tmp_path}/state")
+    assert store.get_with_version("missing") == (None, None)
+
+
+def test_conditional_put_chain_uses_returned_version(tmp_path: Path) -> None:
+    """Chained conditional_put calls pass the returned version as the next expected_prior (CR-01)."""
+    store = FileStateStore(f"file://{tmp_path}/state")
+    key = "resource-1"
+
+    v0 = store.conditional_put(key, SyncState(cursor={key: '"a"'}), None)
+    v1 = store.conditional_put(key, SyncState(cursor={key: '"b"'}), v0)
+    v2 = store.conditional_put(key, SyncState(cursor={key: '"c"'}), v1)
+    assert v0 != v1 != v2
+
+    assert store.read_version(key) == v2
 
 
 def test_conditional_put_with_stale_prior_raises_conflict(tmp_path: Path) -> None:
@@ -182,6 +216,7 @@ class _ConditionalPutSpy:
     def __init__(self, inner: FileStateStore) -> None:
         self._inner = inner
         self.conditional_put_calls: list[tuple[str, bytes | None]] = []
+        self.get_with_version_calls: list[str] = []
 
     def get(self, key: str) -> Any:
         return self._inner.get(key)
@@ -198,9 +233,13 @@ class _ConditionalPutSpy:
     def read_raw(self, key: str) -> bytes | None:
         return self._inner.read_raw(key)
 
-    def conditional_put(self, key: str, state: Any, expected_prior: bytes | None) -> None:
+    def get_with_version(self, key: str) -> tuple[Any, bytes | None]:
+        self.get_with_version_calls.append(key)
+        return self._inner.get_with_version(key)
+
+    def conditional_put(self, key: str, state: Any, expected_prior: bytes | None) -> bytes:
         self.conditional_put_calls.append((key, expected_prior))
-        self._inner.conditional_put(key, state, expected_prior)
+        return self._inner.conditional_put(key, state, expected_prior)
 
 
 def test_sync_uses_cas_for_checkpoint_write(tmp_path, csv_server, make_resource) -> None:
