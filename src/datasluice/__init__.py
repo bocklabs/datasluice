@@ -44,9 +44,11 @@ from datasluice.exceptions import (
     DownloadError,
     FormatError,
     NotFoundError,
+    OpenedResourceConsumedError,
     PortalDetectionError,
     PortalError,
     RateLimitError,
+    ResourceResolutionError,
     StateStoreError,
     SyncStateConflictError,
 )
@@ -96,4 +98,6 @@ __all__ = [
     "ChecksumMismatchError",
     "FormatError",
     "ConfigError",
+    "ResourceResolutionError",
+    "OpenedResourceConsumedError",
 ]

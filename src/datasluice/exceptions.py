@@ -12,6 +12,14 @@ class DataSluiceError(Exception):
     """Base exception for all DataSluice errors."""
 
 
+class ResourceResolutionError(DataSluiceError):
+    """Raised when a public resource locator cannot select exactly one resource."""
+
+
+class OpenedResourceConsumedError(DataSluiceError):
+    """Raised when an opened resource is consumed or closed more than once."""
+
+
 class PortalError(DataSluiceError):
     """Raised when a portal returns an error or is unreachable."""
 

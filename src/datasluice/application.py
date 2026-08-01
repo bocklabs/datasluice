@@ -11,9 +11,9 @@ from urllib.parse import unquote, urlsplit
 
 from datasluice._uri import sanitize_uri
 from datasluice.data.access import DataPlaneResourceReader
-from datasluice.domain import HttpDownload, LocalFile, Query, Resource
+from datasluice.domain import DetectionResult, HttpDownload, LocalFile, Query, Resource, SearchResult
 from datasluice.domain.artifact import _freeze_extensions
-from datasluice.exceptions import DataSluiceError, NotFoundError, StreamClosedError
+from datasluice.exceptions import DataSluiceError, ResourceResolutionError, StreamClosedError
 from datasluice.runtime.session import DataSluiceSession
 
 _DIRECT_LOCATOR_KEYS = frozenset({"schema_version", "kind", "uri", "format", "media_type", "extensions"})
@@ -171,21 +171,168 @@ def resource_locator_from_dict(value: object) -> ResourceLocator:
     raise _contract_error("kind")
 
 
+def search_datasets(
+    session: Any,
+    url: str,
+    query: str | Query | None = None,
+    *,
+    portal_type: str | None = None,
+    **kwargs: Any,
+) -> SearchResult:
+    """Search one portal through injected session dependencies."""
+    selected_query = query if isinstance(query, Query) else Query(text=query, **kwargs)
+    return session.portal(url, portal_type=portal_type).search(selected_query)
+
+
+def detect_portal(url: str, *, transport: Any, plugin_manager: Any) -> DetectionResult:
+    """Detect a portal through caller-supplied infrastructure."""
+    from datasluice.discovery import detect
+
+    return detect(url, transport=transport, plugin_manager=plugin_manager)
+
+
+def read_stream(resource: Resource, *, reader: Any) -> Any:
+    """Open one resource through the injected data-plane reader."""
+    return reader.open(resource)
+
+
+def run_transform_pipeline(stream: Any, pipeline: Any) -> Any:
+    """Apply a reusable transform pipeline to an existing stream."""
+    return pipeline.run(stream)
+
+
+def open_resource(resource: Resource, *, source_locator: ResourceLocator, reader: Any) -> OpenedResource:
+    """Wrap one resolved resource for lazy, single-use consumption."""
+    return OpenedResource(resource, source_locator=source_locator, reader=reader)
+
+
+def materialize(
+    resource: Resource,
+    *,
+    destination_uri: str,
+    source_locator: ResourceLocator,
+    reader: Any | None = None,
+    stream: Any | None = None,
+    mode: str = "parquet",
+    transforms: tuple[str, ...] = (),
+) -> Any:
+    """Materialize one resource into its canonical Artifact record."""
+    from datasluice.sync.materialize import materialize_artifact
+
+    return materialize_artifact(
+        resource,
+        destination_uri=destination_uri,
+        source_locator=source_locator,
+        reader=reader,
+        stream=stream,
+        mode=mode,
+        transforms=transforms,
+    )
+
+
+def _sanitized_resource_selectors(resources: list[Resource]) -> str:
+    selectors = sorted({sanitize_uri(resource.id) for resource in resources})
+    return ", ".join(selectors) or "(none)"
+
+
+def _resolve_catalog_resource(session: Any, locator: CatalogResourceLocator) -> Resource:
+    dataset = session.portal(locator.portal_url).get_dataset(locator.dataset_id)
+    matches = [resource for resource in dataset.resources if resource.id == locator.resource_id]
+    selectors = _sanitized_resource_selectors(dataset.resources)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ResourceResolutionError(
+            f"Resource selector {sanitize_uri(locator.resource_id)!r} was not found in dataset "
+            f"{sanitize_uri(locator.dataset_id)!r}. Valid selectors: {selectors}"
+        )
+    raise ResourceResolutionError(
+        f"Resource selector {sanitize_uri(locator.resource_id)!r} is ambiguous in dataset "
+        f"{sanitize_uri(locator.dataset_id)!r}. Valid selectors: {selectors}"
+    )
+
+
+def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
+    parts = urlsplit(locator.uri)
+    identity_source = str(locator.to_dict()["uri"])
+    resource_id = hashlib.sha256(identity_source.encode()).hexdigest()
+    if parts.scheme == "file":
+        access = LocalFile(path=unquote(parts.path))
+    elif parts.scheme:
+        access = HttpDownload(url=locator.uri)
+    else:
+        access = LocalFile(path=locator.uri)
+    return Resource(
+        id=resource_id,
+        name=Path(unquote(parts.path or locator.uri)).name or None,
+        url=locator.uri,
+        format=locator.format,
+        media_type=locator.media_type,
+        access=access,
+    )
+
+
+class _ApplicationServices:
+    """Private coordinator for application operations over one composition substrate."""
+
+    def __init__(self, session: Any, reader: Any) -> None:
+        self._session = session
+        self._reader = reader
+
+    def search(
+        self,
+        url: str,
+        query: str | Query | None = None,
+        *,
+        portal_type: str | None = None,
+        **kwargs: Any,
+    ) -> SearchResult:
+        """Search through the injected composition substrate."""
+        return search_datasets(self._session, url, query, portal_type=portal_type, **kwargs)
+
+    def detect(self, url: str) -> DetectionResult:
+        """Run injected portal detection without facade-specific mapping."""
+        return detect_portal(url, transport=self._session._transport, plugin_manager=self._session.plugins)
+
+    def resolve(self, locator: ResourceLocator) -> Resource:
+        """Resolve one public locator to the canonical Resource model."""
+        if isinstance(locator, DirectResourceLocator):
+            return _resolve_direct_resource(locator)
+        return _resolve_catalog_resource(self._session, locator)
+
+    def open(self, resource: Resource | ResourceLocator) -> OpenedResource:
+        """Build one lazy opened-resource wrapper."""
+        if isinstance(resource, Resource):
+            resolved = resource
+            source_locator = _locator_from_resource(resource)
+        else:
+            resolved = self.resolve(resource)
+            source_locator = resource
+        return open_resource(resolved, source_locator=source_locator, reader=self._reader)
+
+    def materialize(
+        self,
+        resource: Resource | ResourceLocator,
+        destination_uri: str,
+        *,
+        mode: str = "parquet",
+    ) -> Any:
+        """Materialize one resource through the application operation."""
+        opened = self.open(resource)
+        return opened.materialize(destination_uri, mode=mode)
+
+
 class Portal:
     """Stable application wrapper for a portal URL."""
 
-    def __init__(self, data_sluice: DataSluice, url: str, portal_type: str | None = None) -> None:
-        self._data_sluice = data_sluice
+    def __init__(self, services: _ApplicationServices, url: str, portal_type: str | None = None) -> None:
+        self._services = services
         self._url = url
         self._portal_type = portal_type
 
-    def search(self, query: str | Query | None = None, **kwargs: Any) -> Any:
+    def search(self, query: str | Query | None = None, **kwargs: Any) -> SearchResult:
         """Search through the facade without exposing a connector."""
-        if self._portal_type is None:
-            return self._data_sluice.search(self._url, query, **kwargs)
-        connector = self._data_sluice._session.portal(self._url, portal_type=self._portal_type)
-        selected_query = query if isinstance(query, Query) else Query(text=query, **kwargs)
-        return connector.search(selected_query)
+        return self._services.search(self._url, query, portal_type=self._portal_type, **kwargs)
 
 
 class DataSluice:
@@ -194,7 +341,7 @@ class DataSluice:
     def __init__(
         self,
         *,
-        session: DataSluiceSession | None = None,
+        session: Any | None = None,
         reader: Any | None = None,
         **session_kwargs: Any,
     ) -> None:
@@ -202,47 +349,33 @@ class DataSluice:
             raise DataSluiceError("session= cannot be combined with session configuration")
         self._session = session if session is not None else DataSluiceSession(**session_kwargs)
         self._reader = reader if reader is not None else DataPlaneResourceReader(transport=self._session._transport)
+        self._services = _ApplicationServices(self._session, self._reader)
         self._closed = False
 
     def portal(self, url: str, portal_type: str | None = None) -> Portal:
         """Return a stable Portal wrapper for *url*."""
         self._ensure_open()
-        return Portal(self, url, portal_type)
+        return Portal(self._services, url, portal_type)
 
-    def search(self, url: str, query: str | Query | None = None, **kwargs: Any) -> Any:
+    def search(self, url: str, query: str | Query | None = None, **kwargs: Any) -> SearchResult:
         """Search one portal through the session substrate."""
         self._ensure_open()
-        return self._session.search(url, query, **kwargs)
+        return self._services.search(url, query, **kwargs)
 
-    def detect(self, url: str) -> Any:
+    def detect(self, url: str) -> DetectionResult:
         """Detect a portal through the session's injected infrastructure."""
         self._ensure_open()
-        from datasluice.discovery import detect
-
-        return detect(url, transport=self._session._transport, plugin_manager=self._session.plugins)
+        return self._services.detect(url)
 
     def resolve(self, locator: ResourceLocator) -> Resource:
         """Resolve one public locator into the canonical Resource model."""
         self._ensure_open()
-        if isinstance(locator, DirectResourceLocator):
-            return self._resolve_direct(locator)
-        connector = self._session.portal(locator.portal_url)
-        dataset = connector.get_dataset(locator.dataset_id)
-        for resource in dataset.resources:
-            if resource.id == locator.resource_id:
-                return resource
-        raise NotFoundError("Catalog resource was not found")
+        return self._services.resolve(locator)
 
     def open(self, resource: Resource | ResourceLocator) -> OpenedResource:
         """Return a lazy, single-use OpenedResource wrapper."""
         self._ensure_open()
-        if isinstance(resource, Resource):
-            resolved = resource
-            source_locator = _locator_from_resource(resource)
-        else:
-            resolved = self.resolve(resource)
-            source_locator = resource
-        return OpenedResource(resolved, source_locator=source_locator, reader=self._reader)
+        return self._services.open(resource)
 
     def materialize(
         self,
@@ -252,7 +385,7 @@ class DataSluice:
         mode: str = "parquet",
     ) -> Any:
         """Materialize one Resource or ResourceLocator into an Artifact."""
-        return self.open(resource).materialize(destination_uri, mode=mode)
+        return self._services.materialize(resource, destination_uri, mode=mode)
 
     def close(self) -> None:
         """Close this facade and any resource wrappers it owns."""
@@ -268,25 +401,6 @@ class DataSluice:
     def _ensure_open(self) -> None:
         if self._closed:
             raise StreamClosedError("DataSluice is closed")
-
-    def _resolve_direct(self, locator: DirectResourceLocator) -> Resource:
-        parts = urlsplit(locator.uri)
-        identity_source = str(locator.to_dict()["uri"])
-        resource_id = hashlib.sha256(identity_source.encode()).hexdigest()
-        if parts.scheme == "file":
-            access = LocalFile(path=unquote(parts.path))
-        elif parts.scheme:
-            access = HttpDownload(url=locator.uri)
-        else:
-            access = LocalFile(path=locator.uri)
-        return Resource(
-            id=resource_id,
-            name=Path(unquote(parts.path or locator.uri)).name or None,
-            url=locator.uri,
-            format=locator.format,
-            media_type=locator.media_type,
-            access=access,
-        )
 
 
 class OpenedResource:
@@ -348,26 +462,24 @@ class OpenedResource:
         """Materialize this resource once and return its Artifact envelope."""
         self._ensure_available()
         self._consumed = True
-        from datasluice.sync.materialize import materialize_artifact
-
         transforms = () if self._pipeline is None else tuple(type(step).__name__ for step in self._pipeline.steps)
         try:
             if self._pipeline is None:
-                return materialize_artifact(
+                return materialize(
                     self._resource,
-                    reader=self._reader,
                     destination_uri=destination_uri,
                     source_locator=self._source_locator,
+                    reader=self._reader,
                     mode=mode,
                 )
             raw_stream = self._reader.open(self._resource)
             self._stream = raw_stream
-            stream = self._pipeline.run(raw_stream)
-            return materialize_artifact(
+            stream = run_transform_pipeline(raw_stream, self._pipeline)
+            return materialize(
                 self._resource,
-                stream=stream,
                 destination_uri=destination_uri,
                 source_locator=self._source_locator,
+                stream=stream,
                 mode=mode,
                 transforms=transforms,
             )
@@ -408,9 +520,9 @@ class OpenedResource:
         self._ensure_available()
         self._consumed = True
         try:
-            raw_stream = self._reader.open(self._resource)
+            raw_stream = read_stream(self._resource, reader=self._reader)
             self._stream = raw_stream
-            stream = raw_stream if self._pipeline is None else self._pipeline.run(raw_stream)
+            stream = raw_stream if self._pipeline is None else run_transform_pipeline(raw_stream, self._pipeline)
             return raw_stream, stream
         except BaseException:
             self._closed = True

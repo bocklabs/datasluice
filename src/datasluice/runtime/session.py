@@ -1,4 +1,4 @@
-"""DataSluiceSession — the public facade and composition root (ARCH-03).
+"""DataSluiceSession — internal composition substrate (ARCH-03).
 
 The session wires :class:`PluginManager` (Plan 02-03), the transport factory
 (:func:`create_default_transport`), and explicit auth into a zero-config
@@ -65,7 +65,7 @@ class _StaticCredentialProvider:
 
 
 class DataSluiceSession:
-    """Public facade and composition root for DataSluice.
+    """Internal composition substrate for the public DataSluice facade.
 
     Wires the :class:`PluginManager`, transport, auth, state store, and
     optional storage / cache / credential provider into a zero-config session.

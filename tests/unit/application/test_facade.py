@@ -31,6 +31,10 @@ DataSluice = application_contracts.DataSluice
 CatalogResourceLocator = application_contracts.CatalogResourceLocator
 ResourceResolutionError = application_contracts.ResourceResolutionError
 detect_portal = application_contracts.detect_portal
+materialize_resource = application_contracts.materialize
+open_resource = application_contracts.open_resource
+read_stream = application_contracts.read_stream
+run_transform_pipeline = application_contracts.run_transform_pipeline
 search_datasets = application_contracts.search_datasets
 
 
@@ -60,6 +64,26 @@ class _Session:
     def portal(self, url: str, portal_type: str | None = None) -> _Connector:
         self.portal_calls.append((url, portal_type))
         return self._connector
+
+
+class _Reader:
+    def __init__(self, stream: object) -> None:
+        self._stream = stream
+        self.opened: list[Resource] = []
+
+    def open(self, resource: Resource) -> object:
+        self.opened.append(resource)
+        return self._stream
+
+
+class _Pipeline:
+    def __init__(self, transformed: object) -> None:
+        self._transformed = transformed
+        self.streams: list[object] = []
+
+    def run(self, stream: object) -> object:
+        self.streams.append(stream)
+        return self._transformed
 
 
 def _resource(resource_id: str, url: str = "https://data.example.test/observations.csv") -> Resource:
@@ -123,6 +147,58 @@ def test_detect_returns_the_injected_detector_result_unchanged(monkeypatch: pyte
     assert calls == [
         ("https://catalog.example.test", session._transport, session.plugins),
         ("https://catalog.example.test", session._transport, session.plugins),
+    ]
+
+
+def test_resource_operations_delegate_to_explicit_reader_pipeline_and_materializer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The remaining use cases delegate without eagerly opening a resource."""
+    resource = _resource("observations")
+    source_locator = application_contracts.DirectResourceLocator(uri="https://data.example.test/observations.csv")
+    raw_stream = object()
+    transformed_stream = object()
+    reader = _Reader(raw_stream)
+    pipeline = _Pipeline(transformed_stream)
+    artifact = object()
+    materialize_calls: list[dict[str, object]] = []
+
+    def _materialize_artifact(resource: Resource, **kwargs: object) -> object:
+        materialize_calls.append({"resource": resource, **kwargs})
+        return artifact
+
+    monkeypatch.setattr(
+        importlib.import_module("datasluice.sync.materialize"), "materialize_artifact", _materialize_artifact
+    )
+
+    opened = open_resource(resource, source_locator=source_locator, reader=reader)
+
+    assert reader.opened == []
+    assert read_stream(resource, reader=reader) is raw_stream
+    assert run_transform_pipeline(raw_stream, pipeline) is transformed_stream
+    assert (
+        materialize_resource(
+            resource,
+            destination_uri="memory://artifacts",
+            source_locator=source_locator,
+            stream=transformed_stream,
+            transforms=("SelectColumns",),
+        )
+        is artifact
+    )
+    assert opened.is_open is False
+    assert reader.opened == [resource]
+    assert pipeline.streams == [raw_stream]
+    assert materialize_calls == [
+        {
+            "resource": resource,
+            "destination_uri": "memory://artifacts",
+            "source_locator": source_locator,
+            "reader": None,
+            "stream": transformed_stream,
+            "mode": "parquet",
+            "transforms": ("SelectColumns",),
+        }
     ]
 
 
