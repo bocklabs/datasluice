@@ -400,3 +400,118 @@ def test_get_json_wraps_non_dict() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+# --------------------------------------------------------------------------- #
+# CR-04: refresh must close the rejected 401/403 response before retrying
+# CR-05: query-position credentials must be preserved and refreshed
+# CR-06: same-host different-port redirects strip Authorization
+# --------------------------------------------------------------------------- #
+
+
+def test_refresh_closes_rejected_response_under_single_connection_pool() -> None:
+    """Refresh succeeds even when the client pool allows only one connection (CR-04).
+
+    Without closing the rejected 401/403 response first, the streamed body
+    holds the sole connection and the retry raises PoolTimeout. We assert both
+    that the retry succeeds and that the rejected response ends up closed.
+    """
+    import httpx
+
+    server, base = start_test_server(
+        {"/secret": [MockResponse(status=401, body=b"no"), MockResponse(status=200, body=b"ok")]}
+    )
+    try:
+        provider = _evicting_provider(BearerAuth("refreshed"))
+        transport = HttpxTransport(
+            auth=BearerAuth("stale"),
+            credential_provider=provider,
+            retry_policy=_fast_policy(),
+        )
+        # Replace the default unbounded-pool client with a one-connection pool
+        # so the regression is reproducible.
+        transport._client.close()
+        transport._client = httpx.Client(
+            timeout=httpx.Timeout(5.0),
+            follow_redirects=False,
+            max_redirects=transport._max_redirects,
+            limits=httpx.Limits(max_connections=1),
+        )
+        result = transport.request(f"{base}/secret")
+        assert result == b"ok"
+        provider.evict.assert_called_once()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_query_auth_credentials_applied_on_request_and_download() -> None:
+    """APIKeyAuth(in_query=True) credentials reach the wire for ordinary requests (CR-05)."""
+    from datasluice.auth import APIKeyAuth
+
+    server, base = start_test_server({"/x": MockResponse(body=b"ok")})
+    try:
+        transport = HttpxTransport(auth=APIKeyAuth("TOPSECRET", param_name="api_key", in_header=False, in_query=True))
+        transport.download(f"{base}/x")
+        assert server.captured_paths == ["/x?api_key=TOPSECRET"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_query_auth_credentials_refreshed_on_401() -> None:
+    """Refresh replaces the stale query credential instead of resending it (CR-05)."""
+    from datasluice.auth import APIKeyAuth
+
+    server, base = start_test_server(
+        {"/x": [MockResponse(status=401, body=b"no"), MockResponse(status=200, body=b"ok")]}
+    )
+    try:
+        provider = _evicting_provider(
+            APIKeyAuth("fresh", param_name="api_key", in_header=False, in_query=True),
+        )
+        transport = HttpxTransport(
+            auth=APIKeyAuth("stale", param_name="api_key", in_header=False, in_query=True),
+            credential_provider=provider,
+            retry_policy=_fast_policy(),
+        )
+        assert transport.request(f"{base}/x") == b"ok"
+        assert server.captured_paths == ["/x?api_key=stale", "/x?api_key=fresh"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_same_hostname_different_port_strips_authorization() -> None:
+    """A redirect from https://host:443 to https://host:8443 strips Authorization (CR-06)."""
+    transport = HttpxTransport(auth=BearerAuth("secret"))
+    assert (
+        transport._should_strip_authorization("https://example.test:443/start", "https://example.test:8443/target")
+        is True
+    )
+
+
+def test_scheme_default_port_matches_same_origin() -> None:
+    """A redirect from https://host:443 to https://host (default port) is same-origin (CR-06)."""
+    transport = HttpxTransport(auth=BearerAuth("secret"))
+    assert (
+        transport._should_strip_authorization("https://example.test:443/start", "https://example.test/target") is False
+    )
+
+
+def test_transport_errors_redact_query_credentials() -> None:
+    """PortalError text must not echo the raw query credential value (CR-07)."""
+    from datasluice.auth import APIKeyAuth
+
+    server, base = start_test_server({"/missing": MockResponse(status=404, body=b"nope")})
+    try:
+        transport = HttpxTransport(
+            auth=APIKeyAuth("TOPSECRET", param_name="api_key", in_header=False, in_query=True),
+            retry_policy=_fast_policy(),
+        )
+        with pytest.raises(PortalError) as exc_info:
+            transport.request(f"{base}/missing")
+        assert "TOPSECRET" not in str(exc_info.value)
+    finally:
+        server.shutdown()
+        server.server_close()
