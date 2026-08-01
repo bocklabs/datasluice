@@ -334,6 +334,7 @@ def test_conditional_fetch_refreshes_and_recovers() -> None:
         transport = HttpxTransport(auth=BearerAuth("stale"), credential_provider=provider)
         result = transport.conditional_fetch(f"{base}/pub")
         assert result.status_code == 200
+        assert result.stream is not None
         with result.stream as response:
             assert b"".join(response) == b"ok"
         assert result.headers["ETag"] == '"e"'
