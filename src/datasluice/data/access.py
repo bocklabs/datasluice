@@ -57,12 +57,24 @@ class _StreamClosingBytesIO(IterableBytesIO):
         if self._stream_closed:
             return
         self._stream_closed = True
+        first_exc: BaseException | None = None
         try:
             super().close()
-        finally:
-            if hasattr(self._response, "close"):
+        except BaseException as exc:
+            first_exc = exc
+        if hasattr(self._response, "close"):
+            try:
                 self._response.close()
+            except BaseException as exc:
+                if first_exc is None:
+                    first_exc = exc
+        try:
             self._stream_cm.__exit__(None, None, None)
+        except BaseException as exc:
+            if first_exc is None:
+                first_exc = exc
+        if first_exc is not None:
+            raise first_exc
 
 
 class DataPlaneResourceReader:
