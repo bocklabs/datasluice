@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib
 import os
 import urllib.parse
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -57,6 +58,22 @@ def test_httpx_transport_satisfies_both_protocols() -> None:
     transport = HttpxTransport()
     assert isinstance(transport, Transport)
     assert isinstance(transport, StreamingTransport)
+
+
+@pytest.mark.skipif(
+    os.environ.get("DATASLUICE_TDD_RED") == "1", reason="transport cleanup implementation pending GREEN phase"
+)
+def test_httpx_transport_close_is_idempotent() -> None:
+    """Closing a pooled transport closes its client at most once."""
+    transport = HttpxTransport()
+    client = MagicMock()
+    transport._client = client
+    transport_contract = cast(Any, transport)
+
+    transport_contract.close()
+    transport_contract.close()
+
+    client.close.assert_called_once_with()
 
 
 # --------------------------------------------------------------------------- #

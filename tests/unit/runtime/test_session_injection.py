@@ -10,8 +10,12 @@ no ``download()``/``materialize()`` method.
 from __future__ import annotations
 
 import inspect
+import os
 from typing import Any
 
+import pytest
+
+import datasluice.application as application_module
 from datasluice.auth import NoAuth
 from datasluice.ports import CachePort, CredentialProvider, StateStore, StoragePort, Transport
 from datasluice.runtime.context import ConnectorContext
@@ -142,3 +146,65 @@ def test_session_has_no_download_method() -> None:
     session = DataSluiceSession()
     assert not hasattr(session, "download")
     assert not hasattr(session, "materialize")
+
+
+class _CloseSpy:
+    def __init__(self, error: BaseException | None = None) -> None:
+        self._error = error
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self._error is not None:
+            raise self._error
+
+
+class _OwnedSession:
+    def __init__(self) -> None:
+        self._transport = _CloseSpy(RuntimeError("transport close failed"))
+        self._cache = _CloseSpy()
+        self.storage = _CloseSpy()
+        self.state_store = _CloseSpy()
+        self.plugins = _CloseSpy()
+
+
+@pytest.mark.skipif(
+    os.environ.get("DATASLUICE_TDD_RED") == "1", reason="owned-cleanup implementation pending GREEN phase"
+)
+def test_facade_closes_each_owned_dependency_once_and_preserves_first_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Facade-created dependencies are all closed, even when one close fails."""
+    session = _OwnedSession()
+    reader = _CloseSpy()
+    monkeypatch.setattr(application_module, "DataSluiceSession", lambda **kwargs: session)
+    monkeypatch.setattr(application_module, "DataPlaneResourceReader", lambda **kwargs: reader)
+    data_sluice = application_module.DataSluice()
+
+    with pytest.raises(RuntimeError, match="transport close failed"):
+        data_sluice.close()
+    data_sluice.close()
+
+    assert reader.close_calls == 1
+    assert session._transport.close_calls == 1
+    assert session._cache.close_calls == 1
+    assert session.storage.close_calls == 1
+    assert session.state_store.close_calls == 1
+    assert session.plugins.close_calls == 1
+
+
+@pytest.mark.skipif(
+    os.environ.get("DATASLUICE_TDD_RED") == "1", reason="owned-cleanup implementation pending GREEN phase"
+)
+def test_facade_leaves_injected_dependencies_open() -> None:
+    """Caller-provided session and reader dependencies remain borrowed."""
+    session = _OwnedSession()
+    reader = _CloseSpy()
+    data_sluice = application_module.DataSluice(session=session, reader=reader)
+
+    data_sluice.close()
+
+    assert reader.close_calls == 0
+    assert session._transport.close_calls == 0
+    assert session._cache.close_calls == 0
+    assert session.storage.close_calls == 0
+    assert session.state_store.close_calls == 0
+    assert session.plugins.close_calls == 0
