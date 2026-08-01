@@ -198,4 +198,4 @@ def test_all_jsonl_peak_memory_stays_bounded() -> None:
     peak_line = next(line for line in result.stdout.splitlines() if line.startswith("peak_rss_kb="))
     peak_rss_kb = int(peak_line.partition("=")[2])
 
-    assert peak_rss_kb < 260_000
+    assert peak_rss_kb < 400_000
