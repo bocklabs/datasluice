@@ -44,22 +44,23 @@ def sanitize_uri(uri: str) -> str:
     never reuse it for actual I/O, because the redaction discards
     credentials the destination filesystem still needs.
 
-    Strings that are not URI-shaped (no scheme + hostname) are returned
-    unchanged so this helper is safe to call on path-like state keys, bare
-    paths, or opaque identifiers.
+    Strings without a scheme are returned unchanged so this helper is safe to
+    call on path-like state keys, bare paths, or opaque identifiers.
     """
     try:
         parts = urlsplit(uri)
     except ValueError:
         return uri
-    if not parts.scheme or parts.hostname is None:
+    if not parts.scheme:
         return uri
-    try:
-        port = parts.port
-    except ValueError:
-        port = None
-    host = parts.hostname
-    netloc = host if port is None else f"{host}:{port}"
+    if parts.hostname is None:
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+    else:
+        try:
+            port = parts.port
+        except ValueError:
+            port = None
+        netloc = parts.hostname if port is None else f"{parts.hostname}:{port}"
     redacted: list[tuple[str, str]] = []
     if parts.query:
         try:

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import dataclasses
+from datetime import UTC, datetime
 
 import pytest
 
+from datasluice.application import DirectResourceLocator
 from datasluice.domain import (
     Artifact,
+    ArtifactProvenance,
     CatalogCapabilities,
     DetectionResult,
+    Digest,
     HttpDownload,
     LocalFile,
     ObjectStorage,
@@ -96,19 +100,36 @@ def test_detection_evidence_is_frozen() -> None:
 
 
 def test_artifact_defaults() -> None:
-    artifact = Artifact(uri="file:///tmp/out.parquet")
+    artifact = _artifact()
     assert artifact.uri == "file:///tmp/out.parquet"
-    assert artifact.media_type is None
-    assert artifact.size is None
-    assert artifact.checksum is None
+    assert artifact.media_type == "application/x-parquet"
+    assert artifact.size == 0
     assert artifact.metadata == {}
-    assert artifact.extra == {}
+    assert artifact.extensions == {}
 
 
 def test_artifact_is_frozen() -> None:
-    artifact = Artifact(uri="u", checksum="sha256:abc")
+    artifact = _artifact()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        artifact.checksum = "sha256:def"  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        artifact.size = 1  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+
+
+def _artifact() -> Artifact:
+    digest = Digest(algorithm="sha256", value="0" * 64)
+    provenance = ArtifactProvenance(
+        source_locator=DirectResourceLocator(uri="file:///tmp/source.csv"),
+        resource_identity="1" * 64,
+        created_at=datetime(2026, 8, 1, tzinfo=UTC),
+        materialization_mode="parquet",
+    )
+    return Artifact(
+        uri="file:///tmp/out.parquet",
+        media_type="application/x-parquet",
+        size=0,
+        content_digest=digest,
+        blob_digest=digest,
+        provenance=provenance,
+    )
 
 
 def test_sync_state_defaults() -> None:

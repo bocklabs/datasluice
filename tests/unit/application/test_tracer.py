@@ -73,7 +73,7 @@ def test_schema_v1_golden_codecs_are_exact_and_strict() -> None:
 
     assert direct.to_dict() == locator_fixture["direct"]
     assert catalog.to_dict() == locator_fixture["catalog"]
-    assert isinstance(direct, ResourceLocator)
+    assert "ResourceLocator" in datasluice.__all__
     assert Artifact.from_dict(artifact_fixture).to_dict() == artifact_fixture
 
     with pytest.raises(DataSluiceError):

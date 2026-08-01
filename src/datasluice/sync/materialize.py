@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import random
+from datetime import UTC, datetime
 from typing import Any
 
 from datasluice._uri import sanitize_uri
@@ -16,6 +17,43 @@ _IDEMPOTENT_MATERIALIZE_READY = True
 _ARTIFACT_HEALTH_READY = True
 
 logger = get_logger("sync.materialize")
+
+
+def materialize_artifact(
+    resource: Any,
+    *,
+    destination_uri: str,
+    source_locator: Any,
+    reader: Any | None = None,
+    stream: Any | None = None,
+    mode: str = "parquet",
+    transforms: tuple[str, ...] = (),
+) -> Any:
+    """Materialize one public resource and return a strict Artifact envelope."""
+    from datasluice.domain.artifact import Artifact, ArtifactProvenance, Digest
+
+    if (reader is None) == (stream is None):
+        raise DataSluiceError("Artifact materialization requires exactly one reader or stream")
+    if reader is not None:
+        record = materialize(resource, reader=reader, destination_uri=destination_uri, mode=mode)
+    else:
+        record = _materialize_stream(resource, stream=stream, destination_uri=destination_uri, mode=mode)
+    uri, media_type, size, content_digest = record
+    blob_digest = content_digest if mode == "raw" else _blob_digest(uri)
+    return Artifact(
+        uri=uri,
+        media_type=media_type,
+        size=size,
+        content_digest=Digest(algorithm="sha256", value=content_digest),
+        blob_digest=Digest(algorithm="sha256", value=blob_digest),
+        provenance=ArtifactProvenance(
+            source_locator=source_locator,
+            resource_identity=canonical_identity(resource),
+            created_at=datetime.now(UTC),
+            materialization_mode=mode,
+            transforms=transforms,
+        ),
+    )
 
 
 def materialize(
@@ -77,6 +115,43 @@ def materialize(
             f"Failed to materialize resource {resource.id!r} to {sanitize_uri(final_uri)!r}: {exc}"
         ) from exc
     return final_uri, media_type, len(payload), checksum
+
+
+def _materialize_stream(
+    resource: Any,
+    *,
+    stream: Any,
+    destination_uri: str,
+    mode: str,
+) -> tuple[str, str, int, str]:
+    if mode != "parquet":
+        raise DataSluiceError("Transformed Artifact materialization supports only parquet mode")
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from datasluice.integrations.arrow import to_arrow
+    from datasluice.io.filesystem import open_filesystem
+    from datasluice.sync._hashing import logical_sha256
+
+    base_uri = destination_uri.rstrip("/")
+    fs = open_filesystem(base_uri)
+    fs.makedirs(base_uri, exist_ok=True)
+    table = to_arrow(stream)
+    content_digest = logical_sha256(table)
+    sink = pa.BufferOutputStream()
+    pq.write_table(table, sink)
+    payload = sink.getvalue().to_pybytes()
+    final_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
+    _atomic_pipe(fs, final_uri, payload)
+    return final_uri, "application/x-parquet", len(payload), content_digest
+
+
+def _blob_digest(uri: str) -> str:
+    from datasluice.io.filesystem import open_filesystem
+
+    fs = open_filesystem(uri)
+    with fs.open(uri, "rb") as source:
+        return hashlib.sha256(source.read()).hexdigest()
 
 
 def materialize_checkpointed(

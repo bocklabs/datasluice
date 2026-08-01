@@ -22,6 +22,11 @@ def test_redacts_known_secret_query_keys() -> None:
         assert "secret-value" not in sanitized, key
 
 
+def test_redacts_sensitive_query_values_on_file_uris() -> None:
+    sanitized = sanitize_uri("file:///tmp/source.csv?api_key=secret-value")
+    assert sanitized == "file:///tmp/source.csv?api_key=***"
+
+
 def test_preserves_port() -> None:
     sanitized = sanitize_uri("https://api.example.test:8443/x?api_key=verylongsecret")
     assert sanitized.startswith("https://api.example.test:8443/")
