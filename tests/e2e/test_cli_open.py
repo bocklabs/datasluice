@@ -132,7 +132,7 @@ def test_all_jsonl_emits_each_row_without_collecting(monkeypatch: pytest.MonkeyP
     source = Path(open_command.__file__).read_text()
     assert "to_arrow" not in source
     assert "to_pandas" not in source
-    assert "list(" not in source
+    assert "render_jsonl_rows(_iter_rows" in source
 
 
 _SUBPROCESS_CODE = """
