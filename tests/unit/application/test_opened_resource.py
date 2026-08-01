@@ -49,6 +49,7 @@ class _Session:
 class _Pipeline:
     def __init__(self, transformed: _Stream) -> None:
         self._transformed = transformed
+        self.steps: list[object] = []
         self.runs: list[_Stream] = []
 
     def run(self, stream: _Stream) -> _Stream:

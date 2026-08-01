@@ -13,7 +13,12 @@ from datasluice._uri import sanitize_uri
 from datasluice.data.access import DataPlaneResourceReader
 from datasluice.domain import DetectionResult, HttpDownload, LocalFile, Query, Resource, SearchResult
 from datasluice.domain.artifact import _freeze_extensions
-from datasluice.exceptions import DataSluiceError, ResourceResolutionError, StreamClosedError
+from datasluice.exceptions import (
+    DataSluiceError,
+    OpenedResourceConsumedError,
+    ResourceResolutionError,
+    StreamClosedError,
+)
 from datasluice.runtime.session import DataSluiceSession
 
 _DIRECT_LOCATOR_KEYS = frozenset({"schema_version", "kind", "uri", "format", "media_type", "extensions"})
@@ -347,9 +352,12 @@ class DataSluice:
     ) -> None:
         if session is not None and session_kwargs:
             raise DataSluiceError("session= cannot be combined with session configuration")
+        self._owns_session_dependencies = session is None
+        self._owns_reader = reader is None
         self._session = session if session is not None else DataSluiceSession(**session_kwargs)
         self._reader = reader if reader is not None else DataPlaneResourceReader(transport=self._session._transport)
         self._services = _ApplicationServices(self._session, self._reader)
+        self._owned_closeables = self._collect_owned_closeables(session_kwargs)
         self._closed = False
 
     def portal(self, url: str, portal_type: str | None = None) -> Portal:
@@ -389,7 +397,18 @@ class DataSluice:
 
     def close(self) -> None:
         """Close this facade and any resource wrappers it owns."""
+        if self._closed:
+            return
         self._closed = True
+        first_error: BaseException | None = None
+        for closeable in self._owned_closeables:
+            try:
+                closeable.close()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
     def __enter__(self) -> DataSluice:
         self._ensure_open()
@@ -402,6 +421,30 @@ class DataSluice:
         if self._closed:
             raise StreamClosedError("DataSluice is closed")
 
+    def _collect_owned_closeables(self, session_kwargs: Mapping[str, Any]) -> tuple[Any, ...]:
+        candidates: list[Any] = []
+        if self._owns_reader:
+            candidates.append(self._reader)
+        if self._owns_session_dependencies:
+            if session_kwargs.get("transport") is None:
+                candidates.append(self._session._transport)
+            if session_kwargs.get("cache") is None:
+                candidates.append(self._session._cache)
+            if session_kwargs.get("storage") is None:
+                candidates.append(self._session.storage)
+            if session_kwargs.get("state_store") is None:
+                candidates.append(self._session.state_store)
+            if session_kwargs.get("plugins") is None:
+                candidates.append(self._session.plugins)
+        closeables: list[Any] = []
+        seen: set[int] = set()
+        for candidate in candidates:
+            if candidate is None or not hasattr(candidate, "close") or id(candidate) in seen:
+                continue
+            seen.add(id(candidate))
+            closeables.append(candidate)
+        return tuple(closeables)
+
 
 class OpenedResource:
     """Lazy, single-use application wrapper over a Resource reader."""
@@ -411,14 +454,16 @@ class OpenedResource:
         self._source_locator = source_locator
         self._reader = reader
         self._pipeline: Any | None = None
-        self._stream: Any | None = None
+        self._raw_stream: Any | None = None
+        self._transformed_stream: Any | None = None
         self._consumed = False
         self._closed = False
+        self._manual_iteration = False
 
     @property
     def is_open(self) -> bool:
         """Whether the underlying data stream is currently open."""
-        return self._stream is not None and not self._closed
+        return self._raw_stream is not None and not self._closed
 
     def transform(self, pipeline: Any) -> OpenedResource:
         """Attach one transform pipeline without opening the resource."""
@@ -429,6 +474,8 @@ class OpenedResource:
     def iter_batches(self) -> Iterator[Any]:
         """Iterate batches once, closing every stream when iteration finishes."""
         self._ensure_available()
+        if not self._manual_iteration:
+            raise OpenedResourceConsumedError("Manual batch iteration requires an OpenedResource context manager")
         return self._iter_batches()
 
     def __iter__(self) -> Iterator[Any]:
@@ -460,22 +507,9 @@ class OpenedResource:
 
     def materialize(self, destination_uri: str, *, mode: str = "parquet") -> Any:
         """Materialize this resource once and return its Artifact envelope."""
-        self._ensure_available()
-        self._consumed = True
         transforms = () if self._pipeline is None else tuple(type(step).__name__ for step in self._pipeline.steps)
-        try:
-            if self._pipeline is None:
-                return materialize(
-                    self._resource,
-                    destination_uri=destination_uri,
-                    source_locator=self._source_locator,
-                    reader=self._reader,
-                    mode=mode,
-                )
-            raw_stream = self._reader.open(self._resource)
-            self._stream = raw_stream
-            stream = run_transform_pipeline(raw_stream, self._pipeline)
-            return materialize(
+        return self._consume(
+            lambda stream: materialize(
                 self._resource,
                 destination_uri=destination_uri,
                 source_locator=self._source_locator,
@@ -483,62 +517,92 @@ class OpenedResource:
                 mode=mode,
                 transforms=transforms,
             )
-        finally:
-            self._finish(self._stream, None)
+        )
 
     def close(self) -> None:
         """Close an opened stream or prevent future consumption."""
         if self._closed:
             return
-        self._closed = True
-        if self._stream is not None:
-            self._stream.close()
-            self._stream = None
+        self._finish(self._raw_stream, self._transformed_stream)
 
     def __enter__(self) -> OpenedResource:
         self._ensure_available()
+        self._manual_iteration = True
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        self.close()
+        try:
+            self.close()
+        finally:
+            self._manual_iteration = False
 
     def _iter_batches(self) -> Iterator[Any]:
         raw_stream, stream = self._begin()
         try:
             yield from stream.iter_batches()
-        finally:
+        except BaseException:
+            self._finish_after_failure(raw_stream, stream)
+            raise
+        else:
             self._finish(raw_stream, stream)
 
     def _consume(self, operation: Callable[[Any], Any]) -> Any:
         raw_stream, stream = self._begin()
         try:
-            return operation(stream)
-        finally:
+            result = operation(stream)
+        except BaseException:
+            self._finish_after_failure(raw_stream, stream)
+            raise
+        else:
             self._finish(raw_stream, stream)
+            return result
 
     def _begin(self) -> tuple[Any, Any]:
         self._ensure_available()
         self._consumed = True
+        raw_stream: Any | None = None
+        stream: Any | None = None
         try:
             raw_stream = read_stream(self._resource, reader=self._reader)
-            self._stream = raw_stream
+            self._raw_stream = raw_stream
             stream = raw_stream if self._pipeline is None else run_transform_pipeline(raw_stream, self._pipeline)
+            self._transformed_stream = stream
             return raw_stream, stream
         except BaseException:
-            self._closed = True
+            self._finish_after_failure(raw_stream, stream)
             raise
 
     def _finish(self, raw_stream: Any | None, stream: Any | None) -> None:
-        self._stream = None
+        self._raw_stream = None
+        self._transformed_stream = None
         self._closed = True
-        if stream is not None and stream is not raw_stream:
-            stream.close()
-        if raw_stream is not None:
-            raw_stream.close()
+        first_error: BaseException | None = None
+        for candidate in (stream, raw_stream):
+            if candidate is None or candidate is raw_stream and stream is raw_stream:
+                continue
+            try:
+                candidate.close()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if raw_stream is not None and stream is raw_stream:
+            try:
+                raw_stream.close()
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
+    def _finish_after_failure(self, raw_stream: Any | None, stream: Any | None) -> None:
+        try:
+            self._finish(raw_stream, stream)
+        except BaseException:
+            pass
 
     def _ensure_available(self) -> None:
         if self._closed or self._consumed:
-            raise StreamClosedError("OpenedResource has already been consumed or closed")
+            raise OpenedResourceConsumedError("OpenedResource has already been consumed or closed")
 
 
 def _locator_from_resource(resource: Resource) -> DirectResourceLocator:

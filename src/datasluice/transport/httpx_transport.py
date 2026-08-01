@@ -170,11 +170,19 @@ class HttpxTransport:
         self.user_agent = user_agent or build_user_agent()
         self._credential_scope = credential_scope
         self._max_redirects = max_redirects
+        self._closed = False
         self._client = httpx.Client(
             timeout=httpx.Timeout(timeout),
             follow_redirects=False,
             max_redirects=max_redirects,
         )
+
+    def close(self) -> None:
+        """Close the pooled HTTP client exactly once."""
+        if self._closed:
+            return
+        self._closed = True
+        self._client.close()
 
     def _should_strip_authorization(self, old_url: str, new_url: str) -> bool:
         """Return whether sensitive headers must be stripped on this redirect hop.
