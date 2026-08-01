@@ -100,12 +100,16 @@ def sync_resources(
                     yield SyncOutcome(resource, action="resumed", record=completed_record, state_key=key)
                     continue
 
+            checkpointed_kind_pre = (resource.format or "").upper() == "PARQUET" and kind in (
+                "local_file",
+                "object_storage",
+            )
+            stable_source_version = _compute_source_version(resource) if checkpointed_kind_pre else None
             if checkpoint is not None:
-                current_version = _compute_source_version(resource)
                 if (
-                    current_version is not None
+                    stable_source_version is not None
                     and checkpoint.source_version is not None
-                    and current_version != checkpoint.source_version
+                    and stable_source_version != checkpoint.source_version
                 ):
                     logger.warning(
                         "Source for resource %r changed since checkpoint; discarding checkpoint and restarting",
@@ -125,7 +129,6 @@ def sync_resources(
                     checkpoint = None
                     prior = None
                     prior_version = None
-
             watermark = prior.cursor.get(key) if prior is not None else None
             prior_artifact = _completed_artifact_record(prior, resource, destination_uri)
             destination_was_healthy = prior_artifact is not None and destination_health(
@@ -187,15 +190,12 @@ def sync_resources(
             prior_version_box: list[bytes | None] = [prior_version]
 
             action = "materialized"
-            checkpointed_kind = (resource.format or "").upper() == "PARQUET" and kind in (
-                "local_file",
-                "object_storage",
-            )
+            checkpointed_kind = checkpointed_kind_pre
             use_checkpointed = checkpointed_kind and (
                 checkpoint is not None or prior_artifact is None or not destination_was_healthy
             )
             if use_checkpointed:
-                source_version = _compute_source_version(resource)
+                source_version = stable_source_version
                 if resume and checkpoint is not None:
                     from datasluice.data.batch_stream import BatchCursor, ParquetRowGroupPosition
                     from datasluice.ports import CheckpointableResourceReader
@@ -235,6 +235,24 @@ def sync_resources(
                     start_batch_index=start_batch_index,
                     on_batch_persisted=persist_batch,
                 )
+                # Verify the source did not change during the read (CR-09). A
+                # change mid-read means the published artifact mixes pre- and
+                # post-change content while the in-progress state records claim
+                # a single source_version. Discard staging and abort so the
+                # next pass treats the in-progress checkpoint as stale
+                # (stable_source_version no longer matches the live source) and
+                # restarts from batch zero.
+                post_source_version = _compute_source_version(resource)
+                if (
+                    post_source_version is not None
+                    and stable_source_version is not None
+                    and post_source_version != stable_source_version
+                ):
+                    cleanup_checkpointed(resource, destination_uri=destination_uri)
+                    raise DataSluiceError(
+                        f"Source for resource {resource.id!r} changed during sync; "
+                        "aborting to avoid publishing a mixed-version artifact. Retry the sync."
+                    )
             else:
                 record = materialize(
                     resource,
