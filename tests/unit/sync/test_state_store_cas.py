@@ -381,3 +381,72 @@ def test_cross_instance_per_key_lock_serializes_writers(tmp_path) -> None:
     final_state = store_a.get(key)
     assert final_state is not None
     assert final_state.cursor == {key: f'"{winner_value}"'}
+
+
+def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, make_resource) -> None:
+    """Two concurrent sync_resources calls for the same resource leave a consistent state+artifact (CR-03)."""
+    import threading
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from datasluice.data import DataPlaneResourceReader
+    from datasluice.sync import sync_resources
+    from datasluice.sync._identity import canonical_identity
+    from datasluice.transport.httpx_transport import HttpxTransport
+
+    schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
+    table = pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema)
+    parquet_buf = pa.BufferOutputStream()
+    pq.write_table(table, parquet_buf)
+    parquet_bytes = parquet_buf.getvalue().to_pybytes()
+
+    _server, url = csv_server(body=parquet_bytes)
+    resource = make_resource(url, format="PARQUET")
+
+    store = FileStateStore(f"file://{tmp_path}/state")
+    dest = f"file://{tmp_path}/dest"
+    errors: list[BaseException] = []
+    outcomes: list[Any] = []
+    barrier = threading.Barrier(2)
+
+    def run_sync() -> None:
+        try:
+            barrier.wait(timeout=5)
+            local_outcomes = list(
+                sync_resources(
+                    [resource],
+                    state_store=store,
+                    reader=DataPlaneResourceReader(transport=HttpxTransport()),
+                    destination_uri=dest,
+                )
+            )
+            outcomes.extend(local_outcomes)
+        except BaseException as exc:
+            errors.append(exc)
+
+    # Reconfigure resource access to local file so both writers target the same artifact path deterministically.
+    thread_a = threading.Thread(target=run_sync)
+    thread_b = threading.Thread(target=run_sync)
+    thread_a.start()
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+
+    # At least one writer must have succeeded (the other may have raised SyncStateConflictError).
+    successful = [o for o in outcomes if o.action in ("materialized", "skipped-unchanged")]
+    assert successful, f"expected at least one successful sync outcome; got outcomes={outcomes}, errors={errors}"
+
+    # The committed state MUST describe the artifact that currently lives at final_uri (no corruption).
+    state_key = canonical_identity(resource)
+    final_state = store.get(state_key)
+    assert final_state is not None, "the winning CAS must have committed a state record"
+    artifact = final_state.extra["datasluice_completed_artifact"]
+    expected_uri = f"{dest}/{state_key}.parquet"
+    # destination_health re-reads the artifact and compares checksums — this asserts state matches artifact bytes.
+    from datasluice.sync.materialize import destination_health
+
+    record = (expected_uri, "application/x-parquet", artifact["destination_size"], artifact["destination_checksum"])
+    assert destination_health(resource, record, destination_uri=dest), (
+        "state checksum must match the artifact currently published at final_uri (CR-03)"
+    )
