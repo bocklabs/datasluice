@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from datasluice.data import DataPlaneResourceReader
-from datasluice.domain import LocalFile, Resource
+from datasluice.domain import Artifact, LocalFile, Resource
 from datasluice.io.filesystem import open_filesystem
 from datasluice.sync import sync_resources
 from datasluice.sync.state_store import InMemoryStateStore
@@ -51,6 +51,7 @@ def test_two_passes_zero_writes_pass2(tmp_path, csv_server, make_resource, inmem
         second = _sync(tmp_path, resource, inmemory_state, transport)
 
     assert first[0].action == "materialized"
+    assert isinstance(first[0].record, Artifact)
     assert second[0].action == "skipped-unchanged"
     assert counting_fs.pipe_file_count == writes_after_first
     assert counting_fs.cat_file(uri) == first_bytes
@@ -112,6 +113,7 @@ def test_two_passes_zero_writes_checkpointed_local_parquet(tmp_path) -> None:
         )
 
     assert first[0].action == "materialized"
+    assert isinstance(first[0].record, Artifact)
     assert second[0].action == "skipped-unchanged"
     assert counting_fs.pipe_file_count == writes_after_first
     assert second[0].record == first[0].record
@@ -127,7 +129,11 @@ class _RawReader:
 
 def test_raw_passthrough() -> None:
     raw = b"\x00raw\nbytes\xff"
-    resource = Resource(id="raw-resource", media_type="application/octet-stream")
+    resource = Resource(
+        id="raw-resource",
+        url="https://data.example.test/raw-resource.bin",
+        media_type="application/octet-stream",
+    )
     destination = "memory://materialize/raw"
     counting_fs = write_counting_fs(open_filesystem(destination))
     reader = _RawReader(raw)
@@ -141,6 +147,7 @@ def test_raw_passthrough() -> None:
             destination_uri=destination,
             mode="raw",
             stored_checksum=first[3],
+            stored_artifact=first,
         )
 
     assert counting_fs.cat_file(first[0]) == raw

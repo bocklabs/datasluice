@@ -608,11 +608,16 @@ def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
 
 
 def _validate_completed_artifact(artifact: Any) -> None:
-    if not isinstance(artifact, dict) or set(artifact) not in (
-        _COMPLETED_ARTIFACT_KEYS,
-        _LEGACY_COMPLETED_ARTIFACT_KEYS,
-    ):
+    if not isinstance(artifact, dict):
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact")
+    if set(artifact) not in (_COMPLETED_ARTIFACT_KEYS, _LEGACY_COMPLETED_ARTIFACT_KEYS):
+        try:
+            from datasluice.domain import Artifact
+
+            Artifact.from_dict(artifact)
+        except Exception as exc:
+            raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact") from exc
+        return
     destination_size = artifact["destination_size"]
     destination_checksum = artifact["destination_checksum"]
     if set(artifact) == _COMPLETED_ARTIFACT_KEYS:

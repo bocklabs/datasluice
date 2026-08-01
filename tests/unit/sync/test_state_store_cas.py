@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from datasluice.domain import SyncState
+from datasluice.domain import Artifact, SyncState
 from datasluice.exceptions import SyncStateConflictError
 from datasluice.sync.state_store import _UNSET, FileStateStore
 
@@ -460,11 +460,9 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
     final_state = store.get(state_key)
     assert final_state is not None, "the winning CAS must have committed a state record"
     artifact = final_state.extra["datasluice_completed_artifact"]
-    expected_uri = f"{dest}/{state_key}.parquet"
     # destination_health re-reads the artifact and compares checksums — this asserts state matches artifact bytes.
     from datasluice.sync.materialize import destination_health
 
-    record = (expected_uri, "application/x-parquet", artifact["destination_size"], artifact["destination_checksum"])
-    assert destination_health(resource, record, destination_uri=dest), (
+    assert destination_health(resource, Artifact.from_dict(artifact), destination_uri=dest), (
         "state checksum must match the artifact currently published at final_uri (CR-03)"
     )

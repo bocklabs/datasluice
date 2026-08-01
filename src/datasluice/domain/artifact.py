@@ -8,7 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from datasluice._uri import sanitize_uri
 from datasluice.exceptions import DataSluiceError
@@ -55,6 +56,18 @@ def _object_dict(value: object, path: str) -> dict[str, object]:
             raise _contract_error(path)
         result[key] = nested
     return result
+
+
+def _public_uri(value: object, path: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise _contract_error(path)
+    try:
+        parts = urlsplit(value)
+    except ValueError as exc:
+        raise _contract_error(path) from exc
+    if parts.username is not None or parts.password is not None or sanitize_uri(value) != value:
+        raise _contract_error(path)
+    return value
 
 
 def _freeze_json(value: object, path: str = "value") -> object:
@@ -211,8 +224,7 @@ class Artifact:
     extensions: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.uri, str) or not self.uri:
-            raise _contract_error("uri")
+        _public_uri(self.uri, "uri")
         if not isinstance(self.media_type, str) or not self.media_type:
             raise _contract_error("media_type")
         if type(self.size) is not int or self.size < 0:
@@ -224,7 +236,7 @@ class Artifact:
         metadata = _freeze_json(self.metadata, "metadata")
         if not isinstance(metadata, Mapping):
             raise _contract_error("metadata")
-        object.__setattr__(self, "uri", sanitize_uri(self.uri))
+        object.__setattr__(self, "uri", self.uri)
         object.__setattr__(self, "metadata", metadata)
         object.__setattr__(self, "extensions", _freeze_extensions(self.extensions))
 
@@ -242,6 +254,9 @@ class Artifact:
             "metadata": _thaw_json(self.metadata),
             "extensions": _thaw_json(self.extensions),
         }
+
+    def __getitem__(self, index: int) -> Any:
+        return (self.uri, self.media_type, self.size, self.content_digest.value)[index]
 
     @classmethod
     def from_dict(cls, value: object) -> Artifact:

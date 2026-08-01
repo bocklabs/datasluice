@@ -260,18 +260,19 @@ def sync_resources(
                     destination_uri=destination_uri,
                     stored_checksum=watermark,
                 )
-            checksum = record[3]
+            checksum = record.content_digest.value
             if (
                 fresh_watermark is None
                 and watermark is not None
                 and checksum == watermark
                 and destination_was_healthy
                 and not use_checkpointed
+                and _is_schema_v1_artifact(prior_artifact)
             ):
-                yield SyncOutcome(resource, action="skipped-unchanged", record=record, state_key=key)
+                yield SyncOutcome(resource, action="skipped-unchanged", record=prior_artifact, state_key=key)
                 continue
 
-            completed_state = _completed_sync_state(key, fresh_watermark or checksum, record, destination_uri)
+            completed_state = _completed_sync_state(key, fresh_watermark or checksum, record)
             if is_atomic:
                 state_store.conditional_put(key, completed_state, prior_version_box[0])
             else:
@@ -290,21 +291,14 @@ def _sync_state(state_key: str, watermark: str) -> SyncState:
 def _completed_sync_state(
     state_key: str,
     watermark: str,
-    record: tuple[str, str, int, str],
-    destination_uri: str,
+    record: Any,
 ) -> SyncState:
     from datasluice.domain import SyncState
 
     return SyncState(
         cursor={state_key: watermark},
         last_synced_at=_utcnow_iso(),
-        extra={
-            "datasluice_completed_artifact": {
-                "destination_identity": canonical_destination_identity(destination_uri),
-                "destination_size": record[2],
-                "destination_checksum": record[3],
-            }
-        },
+        extra={"datasluice_completed_artifact": record.to_dict()},
     )
 
 
@@ -312,12 +306,18 @@ def _completed_artifact_record(
     state: SyncState | None,
     resource: Any,
     destination_uri: str,
-) -> tuple[str, str, int, str] | None:
+) -> Any | None:
     if state is None:
         return None
     artifact = state.extra.get("datasluice_completed_artifact")
     if not isinstance(artifact, dict):
         return None
+    from datasluice.domain import Artifact
+
+    try:
+        return Artifact.from_dict(artifact)
+    except DataSluiceError:
+        pass
     expected_uri = f"{destination_uri.rstrip('/')}/{canonical_identity(resource)}.parquet"
     if set(artifact) == {"destination_identity", "destination_size", "destination_checksum"}:
         if artifact["destination_identity"] != canonical_destination_identity(destination_uri):
@@ -340,6 +340,12 @@ def _completed_artifact_record(
     ):
         return None
     return uri, "application/x-parquet", size, checksum
+
+
+def _is_schema_v1_artifact(value: Any) -> bool:
+    from datasluice.domain import Artifact
+
+    return isinstance(value, Artifact)
 
 
 def _in_progress_state(cursor: Any, source_version: str | None, destination_uri: str) -> SyncState:

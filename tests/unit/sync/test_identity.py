@@ -50,7 +50,12 @@ class _RawReader:
 
 
 def test_traversal_resource_id_cannot_escape_destination(tmp_path) -> None:
-    resource = Resource(id="/../../escaped", name="escaped", media_type="application/octet-stream")
+    resource = Resource(
+        id="/../../escaped",
+        name="escaped",
+        url="https://data.example.test/escaped.bin",
+        media_type="application/octet-stream",
+    )
 
     identity = canonical_identity(resource)
 

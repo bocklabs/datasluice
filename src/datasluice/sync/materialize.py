@@ -6,6 +6,7 @@ import hashlib
 import os
 import random
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from datasluice._uri import sanitize_uri
@@ -30,29 +31,24 @@ def materialize_artifact(
     transforms: tuple[str, ...] = (),
 ) -> Any:
     """Materialize one public resource and return a strict Artifact envelope."""
-    from datasluice.domain.artifact import Artifact, ArtifactProvenance, Digest
-
     if (reader is None) == (stream is None):
         raise DataSluiceError("Artifact materialization requires exactly one reader or stream")
     if reader is not None:
-        record = materialize(resource, reader=reader, destination_uri=destination_uri, mode=mode)
-    else:
-        record = _materialize_stream(resource, stream=stream, destination_uri=destination_uri, mode=mode)
-    uri, media_type, size, content_digest = record
-    blob_digest = content_digest if mode == "raw" else _blob_digest(uri)
-    return Artifact(
-        uri=uri,
-        media_type=media_type,
-        size=size,
-        content_digest=Digest(algorithm="sha256", value=content_digest),
-        blob_digest=Digest(algorithm="sha256", value=blob_digest),
-        provenance=ArtifactProvenance(
+        return materialize(
+            resource,
+            reader=reader,
+            destination_uri=destination_uri,
+            mode=mode,
             source_locator=source_locator,
-            resource_identity=canonical_identity(resource),
-            created_at=datetime.now(UTC),
-            materialization_mode=mode,
             transforms=transforms,
-        ),
+        )
+    return _materialize_stream(
+        resource,
+        stream=stream,
+        destination_uri=destination_uri,
+        mode=mode,
+        source_locator=source_locator,
+        transforms=transforms,
     )
 
 
@@ -63,8 +59,12 @@ def materialize(
     destination_uri: str,
     mode: str = "parquet",
     stored_checksum: str | None = None,
-) -> tuple[str, str, int, str]:
-    """Materialize a resource and return its URI, media type, size, and checksum."""
+    stored_artifact: Any | None = None,
+    source_locator: Any | None = None,
+    created_at: datetime | None = None,
+    transforms: tuple[str, ...] = (),
+) -> Any:
+    """Materialize a resource and return its canonical Artifact."""
     from datasluice.io.filesystem import open_filesystem
 
     base_uri = destination_uri.rstrip("/")
@@ -81,40 +81,85 @@ def materialize(
 
         with reader.open(resource) as stream:
             table = to_arrow(stream)
-        checksum = logical_sha256(table)
+        content_digest = logical_sha256(table)
         final_uri = f"{base_uri}/{identity}.parquet"
         media_type = "application/x-parquet"
-        existing = _existing_record(fs, final_uri, media_type, checksum, stored_checksum)
+        existing = _existing_record(fs, final_uri, media_type, content_digest, stored_checksum)
         if existing is not None:
-            return existing
+            uri, existing_media_type, size, existing_content_digest = existing
+            blob_digest = _blob_digest_from_fs(fs, uri)
+            if _is_current_artifact(
+                stored_artifact,
+                uri=uri,
+                media_type=existing_media_type,
+                size=size,
+                content_digest=existing_content_digest,
+                blob_digest=blob_digest,
+                mode=mode,
+            ):
+                return stored_artifact
+            return _artifact(
+                resource,
+                uri=uri,
+                media_type=existing_media_type,
+                size=size,
+                content_digest=existing_content_digest,
+                blob_digest=blob_digest,
+                mode=mode,
+                source_locator=source_locator,
+                created_at=created_at,
+                transforms=transforms,
+            )
         sink = pa.BufferOutputStream()
         pq.write_table(table, sink)
         payload = sink.getvalue().to_pybytes()
     elif mode == "raw":
         payload = _read_raw(resource, reader)
-        checksum = hashlib.sha256(payload).hexdigest()
+        content_digest = hashlib.sha256(payload).hexdigest()
         final_uri = f"{base_uri}/{identity}.bin"
         media_type = _raw_media_type(resource)
-        existing = _existing_record(fs, final_uri, media_type, checksum, stored_checksum)
+        existing = _existing_record(fs, final_uri, media_type, content_digest, stored_checksum)
         if existing is not None:
-            return existing
+            uri, existing_media_type, size, existing_content_digest = existing
+            if _is_current_artifact(
+                stored_artifact,
+                uri=uri,
+                media_type=existing_media_type,
+                size=size,
+                content_digest=existing_content_digest,
+                blob_digest=existing_content_digest,
+                mode=mode,
+            ):
+                return stored_artifact
+            return _artifact(
+                resource,
+                uri=uri,
+                media_type=existing_media_type,
+                size=size,
+                content_digest=existing_content_digest,
+                blob_digest=existing_content_digest,
+                mode=mode,
+                source_locator=source_locator,
+                created_at=created_at,
+                transforms=transforms,
+            )
     else:
         raise ValueError(f"Unsupported materialize mode {mode!r}; expected 'parquet' or 'raw'")
 
-    tmp_uri = f"{base_uri}/.{identity}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
-    try:
-        fs.pipe_file(tmp_uri, payload)
-        fs.mv(tmp_uri, final_uri)
-    except OSError as exc:
-        try:
-            if fs.exists(tmp_uri):
-                fs.rm(tmp_uri)
-        except OSError:
-            pass
-        raise DownloadError(
-            f"Failed to materialize resource {resource.id!r} to {sanitize_uri(final_uri)!r}: {exc}"
-        ) from exc
-    return final_uri, media_type, len(payload), checksum
+    blob_digest = hashlib.sha256(payload).hexdigest()
+    _atomic_pipe(fs, final_uri, payload)
+    return _artifact(
+        resource,
+        uri=final_uri,
+        media_type=media_type,
+        size=len(payload),
+        content_digest=content_digest,
+        blob_digest=blob_digest,
+        mode=mode,
+        source_locator=source_locator,
+        created_at=created_at,
+        transforms=transforms,
+    )
 
 
 def _materialize_stream(
@@ -123,7 +168,10 @@ def _materialize_stream(
     stream: Any,
     destination_uri: str,
     mode: str,
-) -> tuple[str, str, int, str]:
+    source_locator: Any | None,
+    created_at: datetime | None = None,
+    transforms: tuple[str, ...] = (),
+) -> Any:
     if mode != "parquet":
         raise DataSluiceError("Transformed Artifact materialization supports only parquet mode")
     import pyarrow as pa
@@ -142,8 +190,20 @@ def _materialize_stream(
     pq.write_table(table, sink)
     payload = sink.getvalue().to_pybytes()
     final_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
+    blob_digest = hashlib.sha256(payload).hexdigest()
     _atomic_pipe(fs, final_uri, payload)
-    return final_uri, "application/x-parquet", len(payload), content_digest
+    return _artifact(
+        resource,
+        uri=final_uri,
+        media_type="application/x-parquet",
+        size=len(payload),
+        content_digest=content_digest,
+        blob_digest=blob_digest,
+        mode=mode,
+        source_locator=source_locator,
+        created_at=created_at,
+        transforms=transforms,
+    )
 
 
 def _blob_digest(uri: str) -> str:
@@ -161,7 +221,10 @@ def materialize_checkpointed(
     destination_uri: str,
     start_batch_index: int,
     on_batch_persisted: Any,
-) -> tuple[str, str, int, str]:
+    source_locator: Any | None = None,
+    created_at: datetime | None = None,
+    transforms: tuple[str, ...] = (),
+) -> Any:
     """Stage cursor-bearing Parquet batches and atomically publish one final artifact."""
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -220,8 +283,20 @@ def materialize_checkpointed(
     pq.write_table(table, sink)
     payload = sink.getvalue().to_pybytes()
     final_uri = f"{base_uri}/{identity}.parquet"
+    blob_digest = hashlib.sha256(payload).hexdigest()
     _atomic_pipe(fs, final_uri, payload)
-    return final_uri, "application/x-parquet", len(payload), checksum
+    return _artifact(
+        resource,
+        uri=final_uri,
+        media_type="application/x-parquet",
+        size=len(payload),
+        content_digest=checksum,
+        blob_digest=blob_digest,
+        mode="parquet",
+        source_locator=source_locator,
+        created_at=created_at,
+        transforms=transforms,
+    )
 
 
 def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
@@ -242,20 +317,34 @@ def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
         )
 
 
-def destination_health(resource: Any, record: tuple[str, str, int, str], *, destination_uri: str) -> bool:
+def destination_health(resource: Any, record: Any, *, destination_uri: str) -> bool:
     """Verify that a completed artifact exists at the current destination with matching bytes."""
     from datasluice.io.filesystem import open_filesystem
 
     base_uri = destination_uri.rstrip("/")
-    expected_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
-    final_uri, media_type, expected_size, checksum = record
+    from datasluice.domain import Artifact
+
+    if isinstance(record, Artifact):
+        suffix = "bin" if record.provenance.materialization_mode == "raw" else "parquet"
+        expected_uri = f"{base_uri}/{canonical_identity(resource)}.{suffix}"
+        final_uri = record.uri
+        media_type = record.media_type
+        expected_size = record.size
+        content_digest = record.content_digest.value
+        blob_digest = record.blob_digest.value
+    else:
+        expected_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
+        final_uri, media_type, expected_size, content_digest = record
+        blob_digest = None
     if final_uri != expected_uri:
         return False
     try:
         fs = open_filesystem(base_uri)
         if not fs.exists(final_uri) or int(fs.info(final_uri)["size"]) != expected_size:
             return False
-        return _destination_checksum(fs, final_uri, media_type) == checksum
+        return _destination_checksum(fs, final_uri, media_type) == content_digest and (
+            blob_digest is None or _blob_digest_from_fs(fs, final_uri) == blob_digest
+        )
     except Exception:
         return False
 
@@ -317,6 +406,79 @@ def _destination_checksum(fs: Any, final_uri: str, media_type: str) -> str:
             return logical_sha256(pq.read_table(source))
     with fs.open(final_uri, "rb") as source:
         return hashlib.sha256(source.read()).hexdigest()
+
+
+def _blob_digest_from_fs(fs: Any, uri: str) -> str:
+    with fs.open(uri, "rb") as source:
+        return hashlib.sha256(source.read()).hexdigest()
+
+
+def _artifact(
+    resource: Any,
+    *,
+    uri: str,
+    media_type: str,
+    size: int,
+    content_digest: str,
+    blob_digest: str,
+    mode: str,
+    source_locator: Any | None,
+    created_at: datetime | None,
+    transforms: tuple[str, ...],
+) -> Any:
+    from datasluice.domain import Artifact, ArtifactProvenance, Digest
+
+    return Artifact(
+        uri=sanitize_uri(uri),
+        media_type=media_type,
+        size=size,
+        content_digest=Digest(algorithm="sha256", value=content_digest),
+        blob_digest=Digest(algorithm="sha256", value=blob_digest),
+        provenance=ArtifactProvenance(
+            source_locator=_source_locator(resource, source_locator),
+            resource_identity=canonical_identity(resource),
+            created_at=created_at or datetime.now(UTC),
+            materialization_mode=mode,
+            transforms=transforms,
+        ),
+    )
+
+
+def _source_locator(resource: Any, source_locator: Any | None) -> Any:
+    if source_locator is not None:
+        return source_locator
+    from datasluice.application import DirectResourceLocator
+
+    access = resource.access
+    uri = getattr(access, "url", None) or getattr(access, "uri", None) or resource.url
+    if uri is None and access is not None and getattr(access, "kind", None) == "local_file":
+        uri = Path(access.path).expanduser().resolve().as_uri()
+    if not isinstance(uri, str) or not uri:
+        raise DataSluiceError("Artifact materialization requires a serializable source locator")
+    return DirectResourceLocator(uri=uri, format=resource.format, media_type=resource.media_type)
+
+
+def _is_current_artifact(
+    value: Any,
+    *,
+    uri: str,
+    media_type: str,
+    size: int,
+    content_digest: str,
+    blob_digest: str,
+    mode: str,
+) -> bool:
+    from datasluice.domain import Artifact
+
+    return (
+        isinstance(value, Artifact)
+        and value.uri == sanitize_uri(uri)
+        and value.media_type == media_type
+        and value.size == size
+        and value.content_digest.value == content_digest
+        and value.blob_digest.value == blob_digest
+        and value.provenance.materialization_mode == mode
+    )
 
 
 def _raw_media_type(resource: Any) -> str:

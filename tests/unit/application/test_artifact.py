@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,10 +12,8 @@ import pytest
 
 from datasluice.domain import Artifact, LocalFile, Resource
 from datasluice.exceptions import DataSluiceError
+from datasluice.sync._hashing import logical_sha256
 from datasluice.sync.materialize import materialize
-
-if os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("Artifact producer implementation pending GREEN phase", allow_module_level=True)
 
 
 class _RawReader:
@@ -23,6 +22,18 @@ class _RawReader:
 
     def read_bytes(self, resource: Any) -> bytes:
         return self.payload
+
+
+class _ParquetReader:
+    def __init__(self) -> None:
+        import pyarrow as pa
+
+        self.table = pa.table({"id": [1, 2], "name": ["Ada", "Lin"]})
+
+    def open(self, resource: Any) -> Any:
+        from datasluice.data.batch_stream import BatchStream
+
+        return BatchStream(iter(self.table.to_batches()), self.table.schema)
 
 
 def _fixture() -> dict[str, object]:
@@ -38,18 +49,47 @@ def test_raw_materialize_returns_one_canonical_artifact(tmp_path: Path) -> None:
         access=LocalFile(path=str(tmp_path / "source.bin")),
     )
 
+    created_at = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     artifact = materialize(
         resource,
         reader=_RawReader(payload),
         destination_uri=f"file://{tmp_path}/destination",
         mode="raw",
+        created_at=created_at,
     )
 
     assert isinstance(artifact, Artifact)
     assert artifact.content_digest == artifact.blob_digest
+    assert artifact.provenance.created_at == created_at
     payload_dict = artifact.to_dict()
     provenance = cast(dict[str, object], payload_dict["provenance"])
     assert provenance["materialization_mode"] == "raw"
+
+
+def test_parquet_materialize_reports_independent_logical_and_blob_digests(tmp_path: Path) -> None:
+    reader = _ParquetReader()
+    resource = Resource(
+        id="parquet-artifact",
+        name="parquet-artifact",
+        format="CSV",
+        media_type="text/csv",
+        access=LocalFile(path=str(tmp_path / "source.csv")),
+    )
+
+    artifact = materialize(
+        resource,
+        reader=reader,
+        destination_uri=f"file://{tmp_path}/destination",
+        created_at=datetime(2026, 8, 1, 12, 1, tzinfo=UTC),
+    )
+
+    assert isinstance(artifact, Artifact)
+    assert artifact.content_digest.value == logical_sha256(reader.table)
+    assert (
+        artifact.blob_digest.value
+        == hashlib.sha256(Path(artifact.uri.removeprefix("file://")).read_bytes()).hexdigest()
+    )
+    assert artifact.content_digest != artifact.blob_digest
 
 
 def test_artifact_codec_round_trips_the_locked_golden_payload() -> None:
@@ -90,7 +130,7 @@ def test_artifact_codec_deeply_freezes_and_freshly_thaws_values() -> None:
         ("unexpected", "value"),
         ("size", True),
         ("content_digest", {"algorithm": "sha256", "value": "upper"}),
-        ("provenance.created_at", "2026-08-01T00:00:00+00:00"),
+        ("provenance.created_at", "2026-08-01T00:00:00"),
         ("uri", "https://user:password@example.test/output.parquet"),
     ],
 )
