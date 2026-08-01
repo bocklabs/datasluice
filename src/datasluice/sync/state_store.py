@@ -20,6 +20,7 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
+from datasluice._uri import sanitize_uri
 from datasluice.exceptions import StateStoreError, SyncStateConflictError
 from datasluice.logging import get_logger
 
@@ -264,7 +265,7 @@ class FileStateStore:
         except FileNotFoundError:
             return None
         except OSError as exc:
-            raise StateStoreError(f"Failed to read state for key at {path}") from exc
+            raise StateStoreError(f"Failed to read state for key at {sanitize_uri(path)}") from exc
 
     def read_version(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key*, or ``None`` if absent (:class:`AtomicStateStore`).
@@ -381,9 +382,9 @@ class FileStateStore:
         try:
             self._fs.rm(path)
         except FileNotFoundError:
-            logger.debug("delete: state file absent (tolerated): %s", path)
+            logger.debug("delete: state file absent (tolerated): %s", sanitize_uri(path))
         except OSError as exc:
-            raise StateStoreError(f"Failed to delete state for key at {path}") from exc
+            raise StateStoreError(f"Failed to delete state for key at {sanitize_uri(path)}") from exc
 
     def _publish(self, key: str, payload: bytes) -> None:
         """Write ``payload`` to the key's path via temp-file + atomic rename."""

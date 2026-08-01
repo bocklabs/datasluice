@@ -7,6 +7,7 @@ import os
 import random
 from typing import Any
 
+from datasluice._uri import sanitize_uri
 from datasluice.exceptions import DataSluiceError, DownloadError
 from datasluice.logging import get_logger
 from datasluice.sync._identity import canonical_identity
@@ -72,7 +73,9 @@ def materialize(
                 fs.rm(tmp_uri)
         except OSError:
             pass
-        raise DownloadError(f"Failed to materialize resource {resource.id!r} to {final_uri!r}: {exc}") from exc
+        raise DownloadError(
+            f"Failed to materialize resource {resource.id!r} to {sanitize_uri(final_uri)!r}: {exc}"
+        ) from exc
     return final_uri, media_type, len(payload), checksum
 
 
@@ -151,7 +154,12 @@ def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
         fs = open_filesystem(base_uri)
         fs.rm(partial_uri, recursive=True)
     except OSError as exc:
-        logger.warning("Failed to remove partial shards for resource %r at %r: %s", resource.id, partial_uri, exc)
+        logger.warning(
+            "Failed to remove partial shards for resource %r at %r: %s",
+            resource.id,
+            sanitize_uri(partial_uri),
+            exc,
+        )
 
 
 def destination_health(resource: Any, record: tuple[str, str, int, str], *, destination_uri: str) -> bool:
@@ -198,7 +206,7 @@ def _atomic_pipe(fs: Any, final_uri: str, payload: bytes) -> None:
                 fs.rm(tmp_uri)
         except OSError:
             pass
-        raise DownloadError(f"Failed to atomically publish {final_uri!r}: {exc}") from exc
+        raise DownloadError(f"Failed to atomically publish {sanitize_uri(final_uri)!r}: {exc}") from exc
 
 
 def _existing_record(
