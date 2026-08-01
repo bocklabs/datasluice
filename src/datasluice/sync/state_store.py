@@ -28,6 +28,10 @@ if TYPE_CHECKING:
 
 logger = get_logger("sync.state_store")
 
+_GLOBAL_LOCKS: dict[str, threading.RLock] = {}
+_GLOBAL_LOCKS_USERS: dict[str, int] = {}
+_GLOBAL_LOCKS_GUARD = threading.Lock()
+
 _UNSET = object()
 _SECRET_FREE_STATE_READY = True
 _ADVERSARIAL_VALIDATOR_READY = True
@@ -122,9 +126,6 @@ class FileStateStore:
 
             self._fs = open_filesystem(base_uri)
         self._fs.makedirs(self._base, exist_ok=True)
-        self._locks: dict[str, threading.Lock] = {}
-        self._locks_users: dict[str, int] = {}
-        self._locks_guard = threading.Lock()
 
     @property
     def _is_atomic_mv(self) -> bool:
@@ -134,37 +135,59 @@ class FileStateStore:
             return protocol in _ATOMIC_MV_BACKENDS
         return any(entry in _ATOMIC_MV_BACKENDS for entry in protocol)
 
-    def _key_lock(self, key: str) -> threading.Lock:
-        """Return (lazily creating) the per-key lock for the SHA-256 path of *key*."""
-        path = self._state_path(key)
-        with self._locks_guard:
-            lock = self._locks.get(path)
-            if lock is None:
-                lock = threading.Lock()
-                self._locks[path] = lock
-        return lock
+    def _lock_scope(self, key: str) -> str:
+        """Return the process-global lock scope for *key* on this store (CR-02).
+
+        Two :class:`FileStateStore` instances that target the same backend
+        protocol and the same base URI produce the same scope for the same
+        *key*, so their per-key locks coordinate even when the instances do
+        not share Python identity. Backends with different protocols never
+        share storage even when paths collide, so the protocol is part of the
+        scope.
+        """
+        protocol = self._fs.protocol
+        if isinstance(protocol, str):
+            protocol_str = protocol
+        else:
+            protocol_str = "+".join(sorted(protocol))
+        return f"{protocol_str}::{self._base}::{self._state_path(key)}"
 
     @contextmanager
-    def _key_lock_held(self, key: str) -> Iterator[threading.Lock]:
-        """Yield the per-key lock, tracking users so idle entries can be released."""
-        path = self._state_path(key)
-        with self._locks_guard:
-            lock = self._locks.get(path)
+    def key_lock(self, key: str) -> Iterator[threading.RLock]:
+        """Hold the per-key lock for *key* so callers serialize a multi-step transaction (CR-03).
+
+        Returns a re-entrant lock scoped by backend+base URI+state path, so a
+        caller that holds this lock around (materialize artifact + CAS state)
+        serializes publication end-to-end against any other writer for the same
+        key, including writers using a separate :class:`FileStateStore`
+        instance (CR-02). Re-entrancy lets the same thread call
+        :meth:`conditional_put` (which acquires the same lock) inside this
+        context without deadlock.
+        """
+        with self._key_lock_held(key) as lock:
+            yield lock
+
+    @contextmanager
+    def _key_lock_held(self, key: str) -> Iterator[threading.RLock]:
+        """Acquire (lazily creating) the process-global per-key lock, tracking users (CR-02)."""
+        scope = self._lock_scope(key)
+        with _GLOBAL_LOCKS_GUARD:
+            lock = _GLOBAL_LOCKS.get(scope)
             if lock is None:
-                lock = threading.Lock()
-                self._locks[path] = lock
-            self._locks_users[path] = self._locks_users.get(path, 0) + 1
+                lock = threading.RLock()
+                _GLOBAL_LOCKS[scope] = lock
+            _GLOBAL_LOCKS_USERS[scope] = _GLOBAL_LOCKS_USERS.get(scope, 0) + 1
         try:
             with lock:
                 yield lock
         finally:
-            with self._locks_guard:
-                remaining = self._locks_users.get(path, 0) - 1
+            with _GLOBAL_LOCKS_GUARD:
+                remaining = _GLOBAL_LOCKS_USERS.get(scope, 0) - 1
                 if remaining > 0:
-                    self._locks_users[path] = remaining
+                    _GLOBAL_LOCKS_USERS[scope] = remaining
                 else:
-                    self._locks_users.pop(path, None)
-                    self._locks.pop(path, None)
+                    _GLOBAL_LOCKS_USERS.pop(scope, None)
+                    _GLOBAL_LOCKS.pop(scope, None)
 
     def _state_path(self, key: str) -> str:
         """Return the SHA-256-hexdigest (.json) path for *key* (T-07-03 mitigation)."""

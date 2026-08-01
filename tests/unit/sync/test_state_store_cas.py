@@ -112,18 +112,17 @@ def test_barrier_synchronized_dual_writer_loser_raises(tmp_path: Path) -> None:
     store = FileStateStore(f"file://{tmp_path}/state")
     key = "resource-1"
 
-    barrier = threading.Event()
+    barrier = threading.Barrier(2)
     results: dict[str, Any] = {"exceptions": [], "returns": []}
 
     def writer(value: str) -> None:
         try:
+            barrier.wait(timeout=5)
             store.conditional_put(key, SyncState(cursor={key: f'"{value}"'}), expected_prior=None)
         except SyncStateConflictError as exc:
             results["exceptions"].append((value, exc))
         else:
             results["returns"].append(value)
-        finally:
-            barrier.set()
 
     thread_a = threading.Thread(target=writer, args=("alpha",))
     thread_b = threading.Thread(target=writer, args=("beta",))
@@ -297,11 +296,49 @@ def test_sync_fallback_unconditional_put_for_non_atomic(tmp_path, csv_server, ma
 
 
 def test_per_key_lock_released_after_conditional_put(tmp_path) -> None:
+    from datasluice.sync import state_store as module
+
     store = FileStateStore(f"file://{tmp_path}/state")
     key = "resource-1"
     store.conditional_put(key, SyncState(cursor={key: '"etag"'}), None)
 
-    path = store._state_path(key)
-    with store._locks_guard:
-        assert path not in store._locks
-        assert path not in store._locks_users
+    scope = store._lock_scope(key)
+    with module._GLOBAL_LOCKS_GUARD:
+        assert scope not in module._GLOBAL_LOCKS
+        assert scope not in module._GLOBAL_LOCKS_USERS
+
+
+def test_cross_instance_per_key_lock_serializes_writers(tmp_path) -> None:
+    """Two FileStateStore instances on the same base URI share one per-key lock (CR-02)."""
+    base_uri = f"file://{tmp_path}/state"
+    store_a = FileStateStore(base_uri)
+    store_b = FileStateStore(base_uri)
+    key = "resource-1"
+    results: dict[str, Any] = {"exceptions": [], "returns": []}
+    barrier = threading.Barrier(2)
+
+    def writer(store: FileStateStore, value: str) -> None:
+        try:
+            barrier.wait(timeout=5)
+            store.conditional_put(key, SyncState(cursor={key: f'"{value}"'}), expected_prior=None)
+        except SyncStateConflictError as exc:
+            results["exceptions"].append((value, exc))
+        else:
+            results["returns"].append(value)
+
+    thread_a = threading.Thread(target=writer, args=(store_a, "alpha"))
+    thread_b = threading.Thread(target=writer, args=(store_b, "beta"))
+    thread_a.start()
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+
+    assert len(results["returns"]) == 1, "exactly one of the two store instances must win"
+    assert len(results["exceptions"]) == 1, "the other instance must raise SyncStateConflictError"
+    winner_value = results["returns"][0]
+    loser_value, loser_exc = results["exceptions"][0]
+    assert isinstance(loser_exc, SyncStateConflictError)
+    assert {winner_value, loser_value} == {"alpha", "beta"}
+    final_state = store_a.get(key)
+    assert final_state is not None
+    assert final_state.cursor == {key: f'"{winner_value}"'}
