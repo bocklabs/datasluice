@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from datasluice.data import DataPlaneResourceReader
+from datasluice.domain import Artifact
 from datasluice.io.filesystem import open_filesystem
 from datasluice.sync import sync_resources
 from datasluice.sync._identity import canonical_identity
@@ -32,6 +33,19 @@ def _sync(tmp_path, resource, store, transport, *, resume: bool = False):
             resume=resume,
         )
     )
+
+
+@pytest.mark.skipif(
+    os.environ.get("DATASLUICE_TDD_RED") != "1",
+    reason="Artifact boundary implementation pending GREEN phase",
+)
+def test_sync_outcome_record_is_not_tuple_compatible(tmp_path, csv_server, make_resource) -> None:
+    _server, url = csv_server()
+    outcome = _sync(tmp_path, make_resource(url), InMemoryStateStore(), HttpxTransport())[0]
+
+    assert isinstance(outcome.record, Artifact)
+    with pytest.raises(TypeError):
+        _ = outcome.record[0]
 
 
 @pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
