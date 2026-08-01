@@ -22,12 +22,6 @@ jobs:
     timeout-minutes: 180
     if: github.event_name == 'pull_request_target' && github.actor != 'renovate[bot]' && github.actor != 'dependabot[bot]'
     steps:
-      - name: Set up UV
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
-
-      - name: Install Graphify
-        run: uv tool install graphifyy
-
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@802af6b461d17408856fac0d07a18f9b17d6d38c # v1.7.7
         with:
@@ -35,12 +29,12 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
-          
+
           llm_extra_body: '{"thinking":{"type":"enabled"},"reasoning_effort": "high"}'
-          
+
           review_concurrency: '4'
           language: 'English'
-          
+
           github_token: ${{ secrets.GITHUB_TOKEN }}
           sticky_summary: 'true'
           incremental: 'true'
