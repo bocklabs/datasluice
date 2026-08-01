@@ -80,8 +80,11 @@ def datasluice_source(
                         f"Resource IDs {seen_identities[identity]!r} and {resource.id!r} collide on canonical "
                         f"identity {identity}"
                     )
-                if table_name.casefold() == "datasets":
-                    raise ValueError(f"Resource ID {resource.id!r} maps to reserved dlt table name 'datasets'")
+                if include_metadata and table_name.casefold() == "datasets":
+                    raise ValueError(
+                        f"Resource ID {resource.id!r} maps to reserved dlt table name 'datasets' "
+                        f"(reserved for the metadata resource emitted when include_metadata=True)"
+                    )
                 normalized_table_name = table_name.casefold()
                 if normalized_table_name in seen_table_names:
                     raise ValueError(

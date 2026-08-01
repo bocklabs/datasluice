@@ -126,7 +126,14 @@ class BatchStream:
         row groups that are skipped internally do not corrupt the cursor
         position (CR-06). ``next_batch_index`` (shard count) and
         ``position.row_group_index`` (physical position) may diverge.
+
+        Raises:
+            StreamClosedError: If called after :meth:`close` or ``__exit__``
+                (WR-01: previously the indexed path bypassed the closed-stream
+                guard that :meth:`iter_batches` enforces).
         """
+        if self._closed:
+            raise StreamClosedError("BatchStream is closed; cannot iterate batches")
         next_batch_index = self._start_batch_index
         if self._indexed:
             last_physical = self._start_row_group_index - 1
@@ -151,15 +158,32 @@ class BatchStream:
                 previous = next_batch
 
     def close(self) -> None:
-        """Release the underlying reader; idempotent (safe to call multiple times)."""
+        """Release the underlying reader and any owned closeables; idempotent (WR-02).
+
+        Every owned resource is attempted even when an earlier close raises,
+        so one failing closeable cannot prevent later ones from releasing
+        (WR-02). The first close exception is re-raised after all closeables
+        have been attempted so the caller still sees the original failure.
+        """
         if self._closed:
             return
         self._closed = True
+        first_exc: BaseException | None = None
         if hasattr(self._source, "close"):
-            self._source.close()
+            try:
+                self._source.close()
+            except BaseException as exc:
+                first_exc = exc
         for closeable in self._closeables:
-            if hasattr(closeable, "close"):
+            if not hasattr(closeable, "close"):
+                continue
+            try:
                 closeable.close()
+            except BaseException as exc:
+                if first_exc is None:
+                    first_exc = exc
+        if first_exc is not None:
+            raise first_exc
 
     def __enter__(self) -> BatchStream:
         return self

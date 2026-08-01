@@ -57,12 +57,24 @@ class _StreamClosingBytesIO(IterableBytesIO):
         if self._stream_closed:
             return
         self._stream_closed = True
+        first_exc: BaseException | None = None
         try:
             super().close()
-        finally:
-            if hasattr(self._response, "close"):
+        except BaseException as exc:
+            first_exc = exc
+        if hasattr(self._response, "close"):
+            try:
                 self._response.close()
+            except BaseException as exc:
+                if first_exc is None:
+                    first_exc = exc
+        try:
             self._stream_cm.__exit__(None, None, None)
+        except BaseException as exc:
+            if first_exc is None:
+                first_exc = exc
+        if first_exc is not None:
+            raise first_exc
 
 
 class DataPlaneResourceReader:
@@ -237,9 +249,18 @@ class DataPlaneResourceReader:
             _close_source(source)
             raise
         if first_pair is None:
-            import pyarrow as pa
+            # No non-empty row groups were yielded. Read the Parquet footer so
+            # the published zero-row table retains the file's actual column
+            # schema instead of pa.schema([]) (CR-08); a valid empty Parquet
+            # with a real schema must still be synchronizable.
+            try:
+                import pyarrow.parquet as pq
 
-            schema = pa.schema([])
+                schema = pq.ParquetFile(source).schema_arrow
+            except Exception:
+                import pyarrow as pa
+
+                schema = pa.schema([])
             pair_iter: Iterator[Any] = iter(())
         else:
             schema = first_pair[1].schema

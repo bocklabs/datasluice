@@ -20,6 +20,7 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
+from datasluice._uri import sanitize_uri
 from datasluice.exceptions import StateStoreError, SyncStateConflictError
 from datasluice.logging import get_logger
 
@@ -27,6 +28,10 @@ if TYPE_CHECKING:
     from datasluice.domain import SyncState
 
 logger = get_logger("sync.state_store")
+
+_GLOBAL_LOCKS: dict[str, threading.RLock] = {}
+_GLOBAL_LOCKS_USERS: dict[str, int] = {}
+_GLOBAL_LOCKS_GUARD = threading.Lock()
 
 _UNSET = object()
 _SECRET_FREE_STATE_READY = True
@@ -122,9 +127,6 @@ class FileStateStore:
 
             self._fs = open_filesystem(base_uri)
         self._fs.makedirs(self._base, exist_ok=True)
-        self._locks: dict[str, threading.Lock] = {}
-        self._locks_users: dict[str, int] = {}
-        self._locks_guard = threading.Lock()
 
     @property
     def _is_atomic_mv(self) -> bool:
@@ -134,37 +136,59 @@ class FileStateStore:
             return protocol in _ATOMIC_MV_BACKENDS
         return any(entry in _ATOMIC_MV_BACKENDS for entry in protocol)
 
-    def _key_lock(self, key: str) -> threading.Lock:
-        """Return (lazily creating) the per-key lock for the SHA-256 path of *key*."""
-        path = self._state_path(key)
-        with self._locks_guard:
-            lock = self._locks.get(path)
-            if lock is None:
-                lock = threading.Lock()
-                self._locks[path] = lock
-        return lock
+    def _lock_scope(self, key: str) -> str:
+        """Return the process-global lock scope for *key* on this store (CR-02).
+
+        Two :class:`FileStateStore` instances that target the same backend
+        protocol and the same base URI produce the same scope for the same
+        *key*, so their per-key locks coordinate even when the instances do
+        not share Python identity. Backends with different protocols never
+        share storage even when paths collide, so the protocol is part of the
+        scope.
+        """
+        protocol = self._fs.protocol
+        if isinstance(protocol, str):
+            protocol_str = protocol
+        else:
+            protocol_str = "+".join(sorted(protocol))
+        return f"{protocol_str}::{self._base}::{self._state_path(key)}"
 
     @contextmanager
-    def _key_lock_held(self, key: str) -> Iterator[threading.Lock]:
-        """Yield the per-key lock, tracking users so idle entries can be released."""
-        path = self._state_path(key)
-        with self._locks_guard:
-            lock = self._locks.get(path)
+    def key_lock(self, key: str) -> Iterator[threading.RLock]:
+        """Hold the per-key lock for *key* so callers serialize a multi-step transaction (CR-03).
+
+        Returns a re-entrant lock scoped by backend+base URI+state path, so a
+        caller that holds this lock around (materialize artifact + CAS state)
+        serializes publication end-to-end against any other writer for the same
+        key, including writers using a separate :class:`FileStateStore`
+        instance (CR-02). Re-entrancy lets the same thread call
+        :meth:`conditional_put` (which acquires the same lock) inside this
+        context without deadlock.
+        """
+        with self._key_lock_held(key) as lock:
+            yield lock
+
+    @contextmanager
+    def _key_lock_held(self, key: str) -> Iterator[threading.RLock]:
+        """Acquire (lazily creating) the process-global per-key lock, tracking users (CR-02)."""
+        scope = self._lock_scope(key)
+        with _GLOBAL_LOCKS_GUARD:
+            lock = _GLOBAL_LOCKS.get(scope)
             if lock is None:
-                lock = threading.Lock()
-                self._locks[path] = lock
-            self._locks_users[path] = self._locks_users.get(path, 0) + 1
+                lock = threading.RLock()
+                _GLOBAL_LOCKS[scope] = lock
+            _GLOBAL_LOCKS_USERS[scope] = _GLOBAL_LOCKS_USERS.get(scope, 0) + 1
         try:
             with lock:
                 yield lock
         finally:
-            with self._locks_guard:
-                remaining = self._locks_users.get(path, 0) - 1
+            with _GLOBAL_LOCKS_GUARD:
+                remaining = _GLOBAL_LOCKS_USERS.get(scope, 0) - 1
                 if remaining > 0:
-                    self._locks_users[path] = remaining
+                    _GLOBAL_LOCKS_USERS[scope] = remaining
                 else:
-                    self._locks_users.pop(path, None)
-                    self._locks.pop(path, None)
+                    _GLOBAL_LOCKS_USERS.pop(scope, None)
+                    _GLOBAL_LOCKS.pop(scope, None)
 
     def _state_path(self, key: str) -> str:
         """Return the SHA-256-hexdigest (.json) path for *key* (T-07-03 mitigation)."""
@@ -181,13 +205,29 @@ class FileStateStore:
                 timeout, I/O). Never silently treats a backend failure as "no
                 state" (CR-03) — staleness is worse than a loud failure (D-P7-03).
         """
-        path = self._state_path(key)
-        try:
-            raw = self._fs.cat_file(path)
-        except FileNotFoundError:
+        raw = self.read_raw(key)
+        if raw is None:
             return None
-        except OSError as exc:
-            raise StateStoreError(f"Failed to read state for key at {path}") from exc
+        return self._decode_envelope(key, raw)
+
+    def get_with_version(self, key: str) -> tuple[SyncState | None, bytes | None]:
+        """Atomically load the state and its CAS version from one backend read (CR-01).
+
+        Returns ``(state, version)`` where ``version`` is the raw envelope
+        bytes read for *key* (or ``None`` if absent) and ``state`` is the
+        decoded :class:`SyncState` (or ``None``). Both values are derived from
+        one :meth:`read_raw` call, so no intervening writer can split the
+        state used for sync decisions from the version used as the CAS
+        ``expected_prior``. Pass the returned ``version`` directly into the
+        next :meth:`conditional_put`; do not call :meth:`read_version`
+        separately between read and write.
+        """
+        raw = self.read_raw(key)
+        if raw is None:
+            return None, None
+        return self._decode_envelope(key, raw), raw
+
+    def _decode_envelope(self, key: str, raw: bytes) -> SyncState:
         try:
             envelope = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -225,7 +265,7 @@ class FileStateStore:
         except FileNotFoundError:
             return None
         except OSError as exc:
-            raise StateStoreError(f"Failed to read state for key at {path}") from exc
+            raise StateStoreError(f"Failed to read state for key at {sanitize_uri(path)}") from exc
 
     def read_version(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key*, or ``None`` if absent (:class:`AtomicStateStore`).
@@ -281,7 +321,7 @@ class FileStateStore:
 
         self._publish(key, payload)
 
-    def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> None:
+    def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> bytes:
         """Persist *state* under *key* only if the current version matches ``expected_prior``.
 
         The per-key threading lock (``_locks``) is held across the version check
@@ -299,6 +339,14 @@ class FileStateStore:
             state: The :class:`SyncState` to persist.
             expected_prior: Raw bytes from :meth:`read_version` (``None`` =
                 "expected absent").
+
+        Returns:
+            The committed envelope bytes (the new CAS version). Callers that
+            chain another :meth:`conditional_put` MUST pass the returned bytes
+            as the next ``expected_prior`` rather than re-reading the version
+            separately (CR-01: re-reading after the write opens a TOCTOU gap
+            where an interloper can commit between this return and the next
+            expected_prior).
 
         Raises:
             SyncStateConflictError: if the on-disk version does not match
@@ -321,6 +369,7 @@ class FileStateStore:
             if actual_sha != expected_sha:
                 raise SyncStateConflictError("State changed since last read (CAS mismatch); re-read and re-apply")
             self._publish(key, payload)
+        return payload
 
     def delete(self, key: str) -> None:
         """Remove the state file for *key*; a missing file is tolerated (idempotent).
@@ -333,9 +382,9 @@ class FileStateStore:
         try:
             self._fs.rm(path)
         except FileNotFoundError:
-            logger.debug("delete: state file absent (tolerated): %s", path)
+            logger.debug("delete: state file absent (tolerated): %s", sanitize_uri(path))
         except OSError as exc:
-            raise StateStoreError(f"Failed to delete state for key at {path}") from exc
+            raise StateStoreError(f"Failed to delete state for key at {sanitize_uri(path)}") from exc
 
     def _publish(self, key: str, payload: bytes) -> None:
         """Write ``payload`` to the key's path via temp-file + atomic rename."""

@@ -591,6 +591,60 @@ def test_source_replacement_detected_and_restarted(tmp_path) -> None:
     assert 0 not in result
 
 
+def test_source_change_during_read_aborts_to_avoid_mixed_artifact(tmp_path) -> None:
+    """A source change between initial hash and post-materialize verification aborts (CR-09)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "shifting.parquet"
+    schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
+    with pq.ParquetWriter(path, schema) as writer:
+        writer.write_table(pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema))
+        writer.write_table(pa.table({"group_id": [2, 3], "value": ["c", "d"]}, schema=schema))
+
+    resource = Resource(
+        id="shifting",
+        name="shifting",
+        format="PARQUET",
+        media_type="application/x-parquet",
+        access=LocalFile(path=str(path)),
+    )
+    destination = f"file://{tmp_path}/shifted"
+
+    real_compute = sync_module._compute_source_version
+    call_count = {"n": 0}
+
+    def shifting_compute(resource):
+        call_count["n"] += 1
+        result = real_compute(resource)
+        # On the post-materialize verification call (the 2nd hash for this
+        # resource pass), rewrite the source file so its bytes differ from
+        # the pre-read hash. This simulates a source change during the read.
+        if call_count["n"] == 2:
+            with pq.ParquetWriter(path, schema) as writer:
+                writer.write_table(pa.table({"group_id": [100, 101], "value": ["x", "y"]}, schema=schema))
+                writer.write_table(pa.table({"group_id": [102, 103], "value": ["z", "w"]}, schema=schema))
+            return real_compute(resource)
+        return result
+
+    store = InMemoryStateStore()
+    with patch.object(sync_module, "_compute_source_version", side_effect=shifting_compute):
+        with pytest.raises(DataSluiceError, match="changed during sync"):
+            list(
+                sync_resources(
+                    [resource],
+                    state_store=store,
+                    reader=DataPlaneResourceReader(),
+                    destination_uri=destination,
+                )
+            )
+
+    # The completed state MUST NOT have been written for the mixed artifact.
+    state = store.get(canonical_identity(resource))
+    if state is not None and "datasluice_completed_artifact" in state.extra:
+        pytest.fail("completed state was written despite the mid-sync source change")
+
+
 def test_destination_replacement_detected_and_restarted(tmp_path) -> None:
     resource = Resource(
         id="destination-replacement",

@@ -99,3 +99,33 @@ def test_batch_size_negative_rejected_before_source_acquisition(monkeypatch) -> 
         reader.open(_local_csv_resource(), batch_size=-1)
 
     assert acquisitions == []
+
+
+def test_indexed_iter_batches_with_cursors_respects_closed_stream() -> None:
+    """iter_batches_with_cursors on an indexed stream raises StreamClosedError after close (WR-01)."""
+    from datasluice.exceptions import StreamClosedError
+
+    indexed_source = iter([(0, "batch-a"), (1, "batch-b")])
+    stream = BatchStream(indexed_source, schema=None, indexed=True)
+    stream.close()
+    with pytest.raises(StreamClosedError):
+        list(stream.iter_batches_with_cursors())
+
+
+def test_close_attempts_every_owned_closeable_even_on_failure() -> None:
+    """A failing closeable does not prevent later closeables from being closed (WR-02)."""
+
+    class _FailingCloseable:
+        def close(self) -> None:
+            raise RuntimeError("injected close failure")
+
+    source = _CloseSpy()
+    failing = _FailingCloseable()
+    later = _CloseSpy()
+    stream = BatchStream(source, schema=None, closeables=(failing, later))
+    with pytest.raises(RuntimeError, match="injected close failure"):
+        stream.close()
+    # The source AND the later closeable must still have been closed even
+    # though the failing closeable raised mid-cleanup.
+    assert source.close_calls == 1
+    assert later.close_calls == 1

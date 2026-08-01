@@ -189,6 +189,16 @@ def test_reserved_metadata_table_name_rejected(monkeypatch: pytest.MonkeyPatch) 
         datasluice_source("https://portal.test", include_metadata=True)
 
 
+def test_reserved_metadata_table_name_allowed_when_metadata_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resource named 'datasets' is usable when include_metadata=False (WR-03)."""
+    _install_portal(monkeypatch, [Resource(id="datasets", url="https://portal.test/data.csv", format="CSV")])
+
+    # No raise — the metadata resource that would conflict is never emitted.
+    source = datasluice_source("https://portal.test", include_metadata=False)
+
+    assert source is not None
+
+
 def test_three_run_roundtrip_structure(
     tmp_path: Path,
     csv_portal: Resource,

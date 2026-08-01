@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode, urlparse
 
+from datasluice._uri import sanitize_uri
 from datasluice.auth import NoAuth
 from datasluice.config.defaults import DEFAULT_TIMEOUT
 from datasluice.exceptions import PortalError, RateLimitError, RetryableHTTPError
@@ -45,6 +46,44 @@ if TYPE_CHECKING:
     from datasluice.ports.transport import ConditionalFetchResult
 
 logger = get_logger("transport.httpx")
+
+
+def _default_port(scheme: str | None) -> int | None:
+    """Return the IANA default port for *scheme*, or ``None`` when unknown (CR-06)."""
+    if scheme == "https":
+        return 443
+    if scheme == "http":
+        return 80
+    return None
+
+
+def _effective_origin(parsed: Any) -> tuple[str, str, int | None]:
+    """Return ``(scheme, hostname, effective_port)`` for a parsed URL (CR-06).
+
+    ``effective_port`` falls back to the IANA default for the scheme so a
+    redirect from ``https://host:443`` to ``https://host`` is treated as the
+    same origin, while ``https://host`` to ``https://host:8443`` is not.
+    """
+    scheme = (parsed.scheme or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = _default_port(scheme)
+    return scheme, parsed.hostname or "", port
+
+
+def _url_with_params(url: str, params: dict[str, Any]) -> str:
+    """Return *url* with *params* appended (preserving any existing query).
+
+    Used to rebuild auth-applied URLs from a base URL plus refreshed auth
+    params (CR-05).
+    """
+    if not params:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{urlencode(params, doseq=True)}"
 
 
 def _host_credential_provider_type() -> type[Any] | None:
@@ -158,7 +197,11 @@ class HttpxTransport:
                 or new_parsed.scheme not in scope.allowed_schemes
                 or not scope.send_on_redirect
             )
-        return scheme_downgrade or old_parsed.hostname != new_parsed.hostname
+        # Compare scheme + hostname + effective port so a redirect from
+        # https://host:443 to https://host:8443 (same hostname, different port)
+        # strips Authorization — the original hostname-only check leaked
+        # credentials to a different service on the same host (CR-06).
+        return scheme_downgrade or _effective_origin(old_parsed) != _effective_origin(new_parsed)
 
     def _send_with_redirects(
         self,
@@ -198,23 +241,28 @@ class HttpxTransport:
         self,
         *,
         response: httpx.Response,
-        url: str,
+        base_url: str,
         method: str,
         headers: dict[str, str],
         body: bytes | None,
         status: int,
         refreshed: bool,
+        params_box: list[dict[str, Any]],
         stream: bool = False,
     ) -> tuple[httpx.Response, int, bool]:
-        """Evict and re-apply credentials for a 401/403 exactly once (D-P3-15).
+        """Evict and re-apply credentials for a 401/403 exactly once (D-P3-15, CR-04/CR-05).
 
         Re-issues the request against the refreshed credential when the
         transport is bound to a :class:`HostCredentialProvider` and a refresh
-        has not already occurred. *headers* is mutated in place with the
-        refreshed authorization. Returns ``(response, status, refreshed)`` —
-        the (possibly re-issued) response, its final status code, and whether
-        a refresh was performed. When no refresh is applicable the original
-        *response* and *status* are returned unchanged.
+        has not already occurred. The rejected *response* is closed BEFORE the
+        retry so the connection it occupies is released back to the pool
+        (CR-04). *headers* and *params_box* are mutated in place: the refreshed
+        auth's header credentials overwrite *headers* and its query credentials
+        overwrite the entries in ``params_box[0]``, then the request URL is
+        rebuilt from *base_url* with the refreshed params so stale query
+        credentials cannot survive into the retry (CR-05). Returns
+        ``(response, status, refreshed)``. When no refresh is applicable the
+        original *response* and *status* are returned unchanged.
         """
         if status not in (401, 403) or refreshed:
             return response, status, False
@@ -222,13 +270,23 @@ class HttpxTransport:
         credential_provider = self._credential_provider
         if provider_type is None or credential_provider is None or not isinstance(credential_provider, provider_type):
             return response, status, False
-        host = urlparse(url).hostname or ""
+        host = urlparse(base_url).hostname or ""
         credential_provider.evict(host)
         new_auth = credential_provider.resolve(host)
-        applied, _ = new_auth.apply(dict(headers), {})
+        applied_headers, applied_params = new_auth.apply(dict(headers), params_box[0])
         headers.clear()
-        headers.update(applied)
-        refreshed_response = self._send_with_redirects(url, method, headers, body, stream=stream)
+        headers.update(applied_headers)
+        params_box[0] = applied_params
+        refreshed_url = _url_with_params(base_url, applied_params)
+        # Close the rejected response before issuing the retry so the original
+        # connection is released; otherwise a single-connection client pool
+        # raises PoolTimeout when the retry tries to acquire a second slot
+        # while the streamed 401/403 body remains unread (CR-04).
+        try:
+            response.close()
+        except Exception:
+            logger.debug("Ignored error closing rejected 401/403 response before credential refresh", exc_info=True)
+        refreshed_response = self._send_with_redirects(refreshed_url, method, headers, body, stream=stream)
         return refreshed_response, refreshed_response.status_code, True
 
     def request(
@@ -248,58 +306,60 @@ class HttpxTransport:
             RetryableHTTPError: On HTTP 5xx responses.
         """
 
+        base_url = url
         request_headers = dict(headers or {})
         request_headers.setdefault("User-Agent", self.user_agent)
-
-        if params:
-            request_headers, params = self.auth.apply(request_headers, params)
-        else:
-            request_headers, _ = self.auth.apply(request_headers, {})
-
-        if params:
-            separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}{urlencode(params, doseq=True)}"
+        # Always preserve the auth-applied params (CR-05): the previous code
+        # discarded query credentials when the caller supplied no params of
+        # its own, so APIKeyAuth(in_query=True) sent /x instead of /x?api_key=...
+        request_headers, auth_params = self.auth.apply(request_headers, params or {})
+        params_box: list[dict[str, Any]] = [auth_params]
 
         refreshed: list[bool] = [False]
 
         def _do_request() -> bytes:
             if self.rate_limiter:
                 self.rate_limiter.acquire()
-            logger.debug("%s %s", method, url)
-            response = self._send_with_redirects(url, method, request_headers, body)
+            current_url = _url_with_params(base_url, params_box[0])
+            display_url = sanitize_uri(current_url)
+            logger.debug("%s %s", method, display_url)
+            response = self._send_with_redirects(current_url, method, request_headers, body)
             status = response.status_code
 
             if status in (401, 403):
                 refreshed_response, status, did_refresh = self._try_credential_refresh(
                     response=response,
-                    url=url,
+                    base_url=base_url,
                     method=method,
                     headers=request_headers,
                     body=body,
                     status=status,
                     refreshed=refreshed[0],
+                    params_box=params_box,
                 )
                 refreshed[0] = True
                 response = refreshed_response
+                current_url = _url_with_params(base_url, params_box[0])
+                display_url = sanitize_uri(current_url)
                 if did_refresh and status in (401, 403):
                     response.read()
                     raise PortalError(
-                        f"HTTP {status} from {url} after credential refresh: {_truncate_body(response.content)}"
+                        f"HTTP {status} from {display_url} after credential refresh: {_truncate_body(response.content)}"
                     )
 
             response.read()
             if status == 429:
                 raise RateLimitError(
-                    f"Rate limited by {url}",
+                    f"Rate limited by {display_url}",
                     retry_after=_parse_retry_after(response.headers.get("Retry-After")),
                 )
             if status >= 500:
                 raise RetryableHTTPError(
-                    f"HTTP {status} from {url}: {_truncate_body(response.content)}",
+                    f"HTTP {status} from {display_url}: {_truncate_body(response.content)}",
                     status_code=status,
                 )
             if status >= 400:
-                raise PortalError(f"HTTP {status} from {url}: {_truncate_body(response.content)}")
+                raise PortalError(f"HTTP {status} from {display_url}: {_truncate_body(response.content)}")
             return response.content
 
         return with_retry(_do_request, self.retry_policy)
@@ -333,32 +393,35 @@ class HttpxTransport:
         """
         from datasluice.ports.transport import ConditionalFetchResult
 
+        base_url = url
         headers: dict[str, str] = {}
         if if_none_match is not None:
             headers["If-None-Match"] = if_none_match
         if if_modified_since is not None:
             headers["If-Modified-Since"] = if_modified_since
         headers.setdefault("User-Agent", self.user_agent)
-        headers, params = self.auth.apply(headers, {})
-        if params:
-            separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}{urlencode(params, doseq=True)}"
+        headers, auth_params = self.auth.apply(headers, {})
+        params_box: list[dict[str, Any]] = [auth_params]
+        current_url = _url_with_params(base_url, auth_params)
+        display_url = sanitize_uri(current_url)
 
-        response = self._send_with_redirects(url, "GET", headers, None, stream=True)
+        response = self._send_with_redirects(current_url, "GET", headers, None, stream=True)
         status = response.status_code
 
         if status in (401, 403):
-            refreshed_response, status, _did_refresh = self._try_credential_refresh(
+            response, status, _did_refresh = self._try_credential_refresh(
                 response=response,
-                url=url,
+                base_url=base_url,
                 method="GET",
                 headers=headers,
                 body=None,
                 status=status,
                 refreshed=False,
+                params_box=params_box,
                 stream=True,
             )
-            response = refreshed_response
+            current_url = _url_with_params(base_url, params_box[0])
+            display_url = sanitize_uri(current_url)
 
         response_headers = response.headers
 
@@ -371,15 +434,15 @@ class HttpxTransport:
             response.close()
             if status == 429:
                 raise RateLimitError(
-                    f"Rate limited by {url}",
+                    f"Rate limited by {display_url}",
                     retry_after=_parse_retry_after(response_headers.get("Retry-After")),
                 )
             if status >= 500:
                 raise RetryableHTTPError(
-                    f"HTTP {status} from {url}: {_truncate_body(response.content)}",
+                    f"HTTP {status} from {display_url}: {_truncate_body(response.content)}",
                     status_code=status,
                 )
-            raise PortalError(f"HTTP {status} from {url}: {_truncate_body(response.content)}")
+            raise PortalError(f"HTTP {status} from {display_url}: {_truncate_body(response.content)}")
         return ConditionalFetchResult(status, response_headers, _stream_response(response))
 
     @contextmanager
@@ -392,40 +455,48 @@ class HttpxTransport:
         response as a successful stream.
         """
 
+        base_url = url
         headers = dict(kwargs.pop("headers", None) or {})
         headers.setdefault("User-Agent", self.user_agent)
-        headers, params = self.auth.apply(headers, {})
-        if params:
-            separator = "&" if "?" in url else "?"
-            url = f"{url}{separator}{urlencode(params, doseq=True)}"
-        response = self._send_with_redirects(url, "GET", headers, None, stream=True)
+        headers, auth_params = self.auth.apply(headers, {})
+        params_box: list[dict[str, Any]] = [auth_params]
+        current_url = _url_with_params(base_url, auth_params)
+        display_url = sanitize_uri(current_url)
+        response = self._send_with_redirects(current_url, "GET", headers, None, stream=True)
+        # Track the actual final response (which may change after a refresh) so
+        # the finally block closes the response the caller actually consumed —
+        # the original code closed the rejected 401/403 response instead of the
+        # refreshed one, leaking the refreshed connection (CR-04).
+        resp = response
         try:
-            resp = response
             if resp.status_code in (401, 403):
                 refreshed_response, status, _did_refresh = self._try_credential_refresh(
                     response=resp,
-                    url=url,
+                    base_url=base_url,
                     method="GET",
                     headers=headers,
                     body=None,
                     status=resp.status_code,
                     refreshed=False,
+                    params_box=params_box,
                     stream=True,
                 )
                 resp = refreshed_response
+                current_url = _url_with_params(base_url, params_box[0])
+                display_url = sanitize_uri(current_url)
             if resp.status_code >= 400:
                 resp.read()
                 if resp.status_code == 429:
                     raise RateLimitError(
-                        f"Rate limited by {url}",
+                        f"Rate limited by {display_url}",
                         retry_after=_parse_retry_after(resp.headers.get("Retry-After")),
                     )
                 if resp.status_code >= 500:
                     raise RetryableHTTPError(
-                        f"HTTP {resp.status_code} from {url}: {_truncate_body(resp.content)}",
+                        f"HTTP {resp.status_code} from {display_url}: {_truncate_body(resp.content)}",
                         status_code=resp.status_code,
                     )
-                raise PortalError(f"HTTP {resp.status_code} from {url}: {_truncate_body(resp.content)}")
+                raise PortalError(f"HTTP {resp.status_code} from {display_url}: {_truncate_body(resp.content)}")
             yield StreamResponse(resp)
         finally:
-            response.close()
+            resp.close()
