@@ -50,8 +50,8 @@ class DataSluiceOperator:
         **kwargs: Any,
     ) -> type:
         BaseOperator = _import_operator()
-        from datasluice import DataSluiceSession
         from datasluice.domain import Query
+        from datasluice.runtime.session import DataSluiceSession
 
         class _Operator(BaseOperator):  # ty: ignore[unsupported-base]
             template_fields = ("portal", "query", "dest_dir")

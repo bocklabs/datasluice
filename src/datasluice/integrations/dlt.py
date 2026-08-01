@@ -49,15 +49,15 @@ def datasluice_source(
     except ImportError as exc:
         raise ImportError("dlt integration requires 'dlt'. Install with: pip install datasluice[dlt]") from exc
 
-    from datasluice import DataSluiceSession
+    from datasluice import DataSluice
     from datasluice.data.access import DataPlaneResourceReader
     from datasluice.domain import Query
     from datasluice.transport.httpx_transport import HttpxTransport
 
     @dlt.source(name="datasluice")
     def _source() -> Any:
-        session = DataSluiceSession()
-        result = session.search(portal, Query(text=query, limit=limit, **kwargs))
+        data_sluice = DataSluice()
+        result = data_sluice.search(portal, Query(text=query, limit=limit, **kwargs))
         datasets = result.datasets
         reader = DataPlaneResourceReader(transport=HttpxTransport())
         from datasluice.sync._identity import canonical_identity

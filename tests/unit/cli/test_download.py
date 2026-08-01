@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-import datasluice
 from datasluice.cli.app import app
 from datasluice.domain import Dataset, Resource
+from datasluice.runtime import session as session_module
 
 runner = CliRunner()
 
@@ -55,7 +55,7 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, dataset: Dataset) -> _Recordi
         def portal(self, url: str) -> FakeConnector:
             return FakeConnector(url)
 
-    monkeypatch.setattr(datasluice, "DataSluiceSession", FakeDataSluiceSession)
+    monkeypatch.setattr(session_module, "DataSluiceSession", FakeDataSluiceSession)
     return downloader
 
 

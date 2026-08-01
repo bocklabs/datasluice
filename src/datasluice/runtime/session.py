@@ -96,7 +96,7 @@ class DataSluiceSession:
             :class:`InMemoryStateStore` owned by this session.
 
     Example:
-        >>> from datasluice import DataSluiceSession
+        >>> from datasluice.runtime.session import DataSluiceSession
         >>> session = DataSluiceSession()
         >>> connector = session.portal("https://catalog.data.gov")
         >>> results = connector.search()

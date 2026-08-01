@@ -50,12 +50,10 @@ from datasluice.exceptions import (
     StateStoreError,
     SyncStateConflictError,
 )
-from datasluice.runtime.session import DataSluiceSession
 
 __all__ = [
     "__version__",
     "DataSluice",
-    "DataSluiceSession",
     "Portal",
     "OpenedResource",
     "DirectResourceLocator",

@@ -18,7 +18,7 @@ def download(
     fmt: Annotated[str | None, typer.Option("--format", "-f", help="Filter resources by format")] = None,
 ) -> None:
     """Download all resources from a dataset."""
-    from datasluice import DataSluiceSession
+    from datasluice.runtime.session import DataSluiceSession
 
     ds = DataSluiceSession()
     connector = ds.portal(portal)

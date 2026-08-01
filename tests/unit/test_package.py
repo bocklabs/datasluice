@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 import datasluice
 
 
@@ -12,13 +14,18 @@ def test_version() -> None:
 
 
 def test_public_api_exports() -> None:
-    assert hasattr(datasluice, "DataSluiceSession")
+    assert hasattr(datasluice, "DataSluice")
     assert hasattr(datasluice, "Dataset")
     assert hasattr(datasluice, "Resource")
     assert hasattr(datasluice, "Organization")
     assert hasattr(datasluice, "Query")
     assert hasattr(datasluice, "SearchResult")
     assert hasattr(datasluice, "DataSluiceError")
+
+
+def test_legacy_session_is_not_a_top_level_import() -> None:
+    with pytest.raises(ImportError):
+        exec("from datasluice import DataSluiceSession", {})
 
 
 def test_exceptions_hierarchy() -> None:
