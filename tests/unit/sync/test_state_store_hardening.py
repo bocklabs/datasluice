@@ -211,6 +211,23 @@ def test_credential_bearing_completed_artifact_uri_is_rejected_before_write(file
     assert file_store.get(key) == prior
 
 
+def test_schema_v1_artifact_with_unknown_core_is_rejected_without_echo(file_store: FileStateStore) -> None:
+    key = "resource-schema-v1"
+    opaque_value = "unknown-artifact-core-90210"
+    artifact = json.loads((Path(__file__).parents[2] / "fixtures/contracts/artifact-v1.json").read_text())
+    artifact["unexpected_core"] = opaque_value
+
+    _assert_rejected_before_pipe(
+        file_store,
+        key,
+        SyncState(
+            cursor={key: _sha_watermark("d")},
+            extra={"datasluice_completed_artifact": artifact},
+        ),
+        secret_fragments=(opaque_value,),
+    )
+
+
 def test_opaque_secret_under_neutral_extra_field_is_rejected_before_write(file_store: FileStateStore) -> None:
     key = "resource-neutral"
     opaque_secret = "zephyr-lantern-cobalt-7391"

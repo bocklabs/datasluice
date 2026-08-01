@@ -25,14 +25,13 @@ def test_sync_one_resource(tmp_path, csv_server, make_resource, inmemory_state) 
     assert outcomes[0].action == "materialized"
     record = outcomes[0].record
     assert record is not None
-    uri, media_type, size, checksum = record
-    assert uri.startswith("file://")
-    assert media_type == "application/x-parquet"
-    assert size > 0
-    assert checksum
+    assert record.uri.startswith("file://")
+    assert record.media_type == "application/x-parquet"
+    assert record.size > 0
+    assert record.content_digest.value
     state = inmemory_state.get(canonical_identity(resource))
     assert state is not None
-    assert state.cursor == {canonical_identity(resource): checksum}
+    assert state.cursor == {canonical_identity(resource): record.content_digest.value}
 
 
 def test_skip_unsupported(tmp_path, inmemory_state) -> None:

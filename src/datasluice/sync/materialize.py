@@ -7,12 +7,17 @@ import os
 import random
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasluice._uri import sanitize_uri
 from datasluice.exceptions import DataSluiceError, DownloadError
 from datasluice.logging import get_logger
 from datasluice.sync._identity import canonical_identity
+
+if TYPE_CHECKING:
+    from datasluice.domain import Artifact
+
+LegacyArtifactRecord = tuple[str, str, int, str]
 
 _IDEMPOTENT_MATERIALIZE_READY = True
 _ARTIFACT_HEALTH_READY = True
@@ -29,7 +34,7 @@ def materialize_artifact(
     stream: Any | None = None,
     mode: str = "parquet",
     transforms: tuple[str, ...] = (),
-) -> Any:
+) -> Artifact:
     """Materialize one public resource and return a strict Artifact envelope."""
     if (reader is None) == (stream is None):
         raise DataSluiceError("Artifact materialization requires exactly one reader or stream")
@@ -59,11 +64,11 @@ def materialize(
     destination_uri: str,
     mode: str = "parquet",
     stored_checksum: str | None = None,
-    stored_artifact: Any | None = None,
+    stored_artifact: Artifact | None = None,
     source_locator: Any | None = None,
     created_at: datetime | None = None,
     transforms: tuple[str, ...] = (),
-) -> Any:
+) -> Artifact:
     """Materialize a resource and return its canonical Artifact."""
     from datasluice.io.filesystem import open_filesystem
 
@@ -97,6 +102,7 @@ def materialize(
                 blob_digest=blob_digest,
                 mode=mode,
             ):
+                assert stored_artifact is not None
                 return stored_artifact
             return _artifact(
                 resource,
@@ -130,6 +136,7 @@ def materialize(
                 blob_digest=existing_content_digest,
                 mode=mode,
             ):
+                assert stored_artifact is not None
                 return stored_artifact
             return _artifact(
                 resource,
@@ -171,7 +178,7 @@ def _materialize_stream(
     source_locator: Any | None,
     created_at: datetime | None = None,
     transforms: tuple[str, ...] = (),
-) -> Any:
+) -> Artifact:
     if mode != "parquet":
         raise DataSluiceError("Transformed Artifact materialization supports only parquet mode")
     import pyarrow as pa
@@ -224,7 +231,7 @@ def materialize_checkpointed(
     source_locator: Any | None = None,
     created_at: datetime | None = None,
     transforms: tuple[str, ...] = (),
-) -> Any:
+) -> Artifact:
     """Stage cursor-bearing Parquet batches and atomically publish one final artifact."""
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -317,7 +324,7 @@ def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
         )
 
 
-def destination_health(resource: Any, record: Any, *, destination_uri: str) -> bool:
+def destination_health(resource: Any, record: Artifact | LegacyArtifactRecord, *, destination_uri: str) -> bool:
     """Verify that a completed artifact exists at the current destination with matching bytes."""
     from datasluice.io.filesystem import open_filesystem
 
@@ -425,7 +432,7 @@ def _artifact(
     source_locator: Any | None,
     created_at: datetime | None,
     transforms: tuple[str, ...],
-) -> Any:
+) -> Artifact:
     from datasluice.domain import Artifact, ArtifactProvenance, Digest
 
     return Artifact(
@@ -459,7 +466,7 @@ def _source_locator(resource: Any, source_locator: Any | None) -> Any:
 
 
 def _is_current_artifact(
-    value: Any,
+    value: Artifact | None,
     *,
     uri: str,
     media_type: str,

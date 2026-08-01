@@ -45,17 +45,21 @@ def test_two_passes_zero_writes_pass2(tmp_path, csv_server, make_resource, inmem
 
     with patch("datasluice.io.filesystem.open_filesystem", return_value=counting_fs):
         first = _sync(tmp_path, resource, inmemory_state, transport)
-        uri, _media_type, _size, checksum = first[0].record
+        first_record = first[0].record
+        assert isinstance(first_record, Artifact)
+        uri = first_record.uri
+        checksum = first_record.content_digest.value
         first_bytes = counting_fs.cat_file(uri)
         writes_after_first = counting_fs.pipe_file_count
         second = _sync(tmp_path, resource, inmemory_state, transport)
 
     assert first[0].action == "materialized"
-    assert isinstance(first[0].record, Artifact)
     assert second[0].action == "skipped-unchanged"
+    second_record = second[0].record
+    assert isinstance(second_record, Artifact)
     assert counting_fs.pipe_file_count == writes_after_first
     assert counting_fs.cat_file(uri) == first_bytes
-    assert second[0].record[3] == checksum
+    assert second_record.content_digest.value == checksum
     assert server.captured_paths == ["/data.csv", "/data.csv"]
 
 
@@ -72,7 +76,11 @@ def test_changed_content_rewrites(tmp_path, csv_server, make_resource, inmemory_
         server.responses["/data.csv"].body = b"id,name\n1,A\n2,changed\n"
         second = _sync(tmp_path, resource, inmemory_state, transport)
 
-    assert first[0].record[3] != second[0].record[3]
+    first_record = first[0].record
+    second_record = second[0].record
+    assert isinstance(first_record, Artifact)
+    assert isinstance(second_record, Artifact)
+    assert first_record.content_digest.value != second_record.content_digest.value
     assert second[0].action == "materialized"
     assert counting_fs.pipe_file_count == writes_after_first + 1
 
@@ -146,12 +154,12 @@ def test_raw_passthrough() -> None:
             reader=reader,
             destination_uri=destination,
             mode="raw",
-            stored_checksum=first[3],
+            stored_checksum=first.content_digest.value,
             stored_artifact=first,
         )
 
-    assert counting_fs.cat_file(first[0]) == raw
-    assert first[3] == hashlib.sha256(raw).hexdigest()
+    assert counting_fs.cat_file(first.uri) == raw
+    assert first.content_digest.value == hashlib.sha256(raw).hexdigest()
     assert second == first
     assert counting_fs.pipe_file_count == writes_after_first
 
@@ -167,7 +175,7 @@ def test_destination_uri_is_uri_not_path(tmp_path, csv_server, make_resource) ->
         destination_uri=f"file://{tmp_path}/dest",
     )
 
-    assert record[0].startswith("file://")
+    assert record.uri.startswith("file://")
 
 
 def test_empty_parquet_resource_syncs_with_schema(tmp_path) -> None:
@@ -206,7 +214,7 @@ def test_empty_parquet_resource_syncs_with_schema(tmp_path) -> None:
     assert outcomes[0].action == "materialized"
     record = outcomes[0].record
     assert record is not None
-    final_uri = record[0]
+    final_uri = record.uri
     # The published zero-row Parquet must retain the source schema.
     with open(final_uri.replace("file://", ""), "rb") as published:
         published_table = pq.read_table(published)

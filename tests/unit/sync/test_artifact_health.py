@@ -35,10 +35,6 @@ def _sync(tmp_path, resource, store, transport, *, resume: bool = False):
     )
 
 
-@pytest.mark.skipif(
-    os.environ.get("DATASLUICE_TDD_RED") != "1",
-    reason="Artifact boundary implementation pending GREEN phase",
-)
 def test_sync_outcome_record_is_not_tuple_compatible(tmp_path, csv_server, make_resource) -> None:
     _server, url = csv_server()
     outcome = _sync(tmp_path, make_resource(url), InMemoryStateStore(), HttpxTransport())[0]
@@ -62,16 +58,17 @@ def test_corrupt_destination_rematerializes(tmp_path, csv_server, make_resource)
         first = _sync(tmp_path, resource, store, transport)
         record = first[0].record
         assert record is not None
-        expected_bytes = fs.cat_file(record[0])
-        fs.pipe_file(record[0], b"foreign destination bytes")
+        expected_bytes = fs.cat_file(record.uri)
+        fs.pipe_file(record.uri, b"foreign destination bytes")
         second = _sync(tmp_path, resource, store, transport)
 
     assert second[0].action == "materialized"
-    assert second[0].record is not None
-    assert fs.cat_file(second[0].record[0]) == expected_bytes
+    second_record = second[0].record
+    assert second_record is not None
+    assert fs.cat_file(second_record.uri) == expected_bytes
     state = store.get(canonical_identity(resource))
     assert state is not None
-    assert state.cursor[canonical_identity(resource)] == second[0].record[3]
+    assert state.cursor[canonical_identity(resource)] == second_record.content_digest.value
 
 
 @pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
@@ -88,12 +85,13 @@ def test_missing_destination_rematerializes(tmp_path, csv_server, make_resource)
         first = _sync(tmp_path, resource, store, transport)
         record = first[0].record
         assert record is not None
-        fs.rm(record[0])
+        fs.rm(record.uri)
         second = _sync(tmp_path, resource, store, transport)
 
     assert second[0].action == "materialized"
-    assert second[0].record is not None
-    assert fs.exists(second[0].record[0])
+    second_record = second[0].record
+    assert second_record is not None
+    assert fs.exists(second_record.uri)
 
 
 @pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
@@ -127,12 +125,13 @@ def test_completed_resume_rematerializes_unhealthy_destination(tmp_path, csv_ser
     record = first[0].record
     assert record is not None
     fs = open_filesystem(destination)
-    fs.rm(record[0])
+    fs.rm(record.uri)
     resumed = _sync(tmp_path, resource, store, transport, resume=True)
 
     assert resumed[0].action == "materialized"
-    assert resumed[0].record is not None
-    assert fs.exists(resumed[0].record[0])
+    resumed_record = resumed[0].record
+    assert resumed_record is not None
+    assert fs.exists(resumed_record.uri)
 
 
 @pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
@@ -147,9 +146,10 @@ def test_304_rematerializes_unhealthy_destination(tmp_path, csv_server, make_res
     record = first[0].record
     assert record is not None
     fs = open_filesystem(destination)
-    fs.pipe_file(record[0], b"foreign destination bytes")
+    fs.pipe_file(record.uri, b"foreign destination bytes")
     second = _sync(tmp_path, resource, store, transport)
 
     assert second[0].action == "materialized"
-    assert second[0].record is not None
-    assert fs.exists(second[0].record[0])
+    second_record = second[0].record
+    assert second_record is not None
+    assert fs.exists(second_record.uri)

@@ -73,7 +73,7 @@ def test_traversal_resource_id_cannot_escape_destination(tmp_path) -> None:
         destination_uri=destination,
         mode="raw",
     )
-    final_uri = record[0]
+    final_uri = record.uri
     expected = f"{destination}/{identity}.bin"
     assert final_uri == expected
 

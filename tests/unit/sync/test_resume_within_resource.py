@@ -172,12 +172,13 @@ def test_interrupt_within_one_resource_resumes_without_refetching_completed_batc
 
     assert reader.requested == [2, 3]
     assert [outcome.action for outcome in outcomes] == ["resumed"]
-    assert outcomes[0].record is not None
+    record = outcomes[0].record
+    assert record is not None
     final = store.get(canonical_identity(resource))
     assert final is not None
     assert "datasluice_checkpoint" not in final.extra
     assert len(final.cursor[canonical_identity(resource)]) == 64
-    assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == [0, 1, 2, 3]
+    assert pq.read_table(record.uri).column("group_id").to_pylist() == [0, 1, 2, 3]
 
 
 def test_dataplane_parquet_resume_does_not_request_completed_row_groups(tmp_path) -> None:
@@ -232,8 +233,9 @@ def test_dataplane_parquet_resume_does_not_request_completed_row_groups(tmp_path
 
     assert requested == [2, 3]
     assert outcomes[0].action == "resumed"
-    assert outcomes[0].record is not None
-    assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == expected
+    record = outcomes[0].record
+    assert record is not None
+    assert pq.read_table(record.uri).column("group_id").to_pylist() == expected
     completed = store.get(canonical_identity(resource))
     assert completed is not None
     assert "datasluice_checkpoint" not in completed.extra
@@ -525,8 +527,9 @@ def test_empty_row_group_resume_correct(tmp_path) -> None:
 
     assert requested == [1, 2]
     assert outcomes[0].action == "resumed"
-    assert outcomes[0].record is not None
-    assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == expected
+    record = outcomes[0].record
+    assert record is not None
+    assert pq.read_table(record.uri).column("group_id").to_pylist() == expected
 
 
 def test_source_replacement_detected_and_restarted(tmp_path) -> None:
@@ -586,7 +589,7 @@ def test_source_replacement_detected_and_restarted(tmp_path) -> None:
     assert outcomes[0].action == "materialized"
     record = outcomes[0].record
     assert record is not None
-    result = pq.read_table(record[0]).column("group_id").to_pylist()
+    result = pq.read_table(record.uri).column("group_id").to_pylist()
     assert result == [100, 101, 102, 103]
     assert 0 not in result
 
@@ -770,6 +773,7 @@ def test_publication_failure_leaves_artifact_and_prior_checkpoint_recoverable(tm
     )
 
     assert outcomes[0].action == "resumed"
-    assert outcomes[0].record is not None
-    assert pq.read_table(outcomes[0].record[0]).column("group_id").to_pylist() == [0, 1, 2, 3]
+    record = outcomes[0].record
+    assert record is not None
+    assert pq.read_table(record.uri).column("group_id").to_pylist() == [0, 1, 2, 3]
     assert not fs.exists(partial_uri)

@@ -13,7 +13,9 @@ from datasluice.logging import get_logger
 from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
 
 if TYPE_CHECKING:
-    from datasluice.domain import SyncState
+    from datasluice.domain import Artifact, SyncState
+
+LegacyArtifactRecord = tuple[str, str, int, str]
 
 logger = get_logger("sync.sync")
 
@@ -30,7 +32,7 @@ class SyncOutcome:
 
     resource: Any
     action: str
-    record: Any | None = None
+    record: Artifact | None = None
     state_key: str | None = None
 
 
@@ -61,6 +63,7 @@ def sync_resources(
     resume: bool = False,
 ) -> Iterator[SyncOutcome]:
     """Synchronize resources and emit each outcome after its state checkpoint."""
+    from datasluice.domain import Artifact
     from datasluice.sync.materialize import (
         cleanup_checkpointed,
         destination_health,
@@ -94,7 +97,7 @@ def sync_resources(
             checkpoint = _decode_checkpoint(prior) if prior is not None else None
             if resume and prior is not None and checkpoint is None:
                 completed_record = _completed_artifact_record(prior, resource, destination_uri)
-                if completed_record is not None and destination_health(
+                if isinstance(completed_record, Artifact) and destination_health(
                     resource, completed_record, destination_uri=destination_uri
                 ):
                     yield SyncOutcome(resource, action="resumed", record=completed_record, state_key=key)
@@ -152,7 +155,7 @@ def sync_resources(
                     )
                     if result.status_code == 304:
                         completed_record = _completed_artifact_record(prior, resource, destination_uri)
-                        if completed_record is not None and destination_health(
+                        if isinstance(completed_record, Artifact) and destination_health(
                             resource, completed_record, destination_uri=destination_uri
                         ):
                             yield SyncOutcome(
@@ -267,7 +270,7 @@ def sync_resources(
                 and checksum == watermark
                 and destination_was_healthy
                 and not use_checkpointed
-                and _is_schema_v1_artifact(prior_artifact)
+                and isinstance(prior_artifact, Artifact)
             ):
                 yield SyncOutcome(resource, action="skipped-unchanged", record=prior_artifact, state_key=key)
                 continue
@@ -291,7 +294,7 @@ def _sync_state(state_key: str, watermark: str) -> SyncState:
 def _completed_sync_state(
     state_key: str,
     watermark: str,
-    record: Any,
+    record: Artifact,
 ) -> SyncState:
     from datasluice.domain import SyncState
 
@@ -306,7 +309,7 @@ def _completed_artifact_record(
     state: SyncState | None,
     resource: Any,
     destination_uri: str,
-) -> Any | None:
+) -> Artifact | LegacyArtifactRecord | None:
     if state is None:
         return None
     artifact = state.extra.get("datasluice_completed_artifact")
@@ -340,12 +343,6 @@ def _completed_artifact_record(
     ):
         return None
     return uri, "application/x-parquet", size, checksum
-
-
-def _is_schema_v1_artifact(value: Any) -> bool:
-    from datasluice.domain import Artifact
-
-    return isinstance(value, Artifact)
 
 
 def _in_progress_state(cursor: Any, source_version: str | None, destination_uri: str) -> SyncState:

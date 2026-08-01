@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from datasluice._uri import sanitize_uri
@@ -254,9 +254,6 @@ class Artifact:
             "metadata": _thaw_json(self.metadata),
             "extensions": _thaw_json(self.extensions),
         }
-
-    def __getitem__(self, index: int) -> Any:
-        return (self.uri, self.media_type, self.size, self.content_digest.value)[index]
 
     @classmethod
     def from_dict(cls, value: object) -> Artifact:
