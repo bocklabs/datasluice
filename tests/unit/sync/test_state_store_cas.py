@@ -242,23 +242,36 @@ class _ConditionalPutSpy:
         return self._inner.conditional_put(key, state, expected_prior)
 
 
-def test_sync_uses_cas_for_checkpoint_write(tmp_path, csv_server, make_resource) -> None:
+def test_sync_uses_cas_for_checkpoint_write(tmp_path) -> None:
+    """Checkpointed local Parquet writes use conditional_put for both in-progress and completed state (WR-05).
+
+    The previous version served an HTTP Parquet body, which the production
+    guard deliberately excludes from checkpointed materialization — so its
+    observed conditional write was only the completed-state write, not the
+    intermediate per-batch checkpoint writes the test name claims to cover.
+    Use local Parquet with multiple row groups so materialize_checkpointed
+    actually runs and emits in-progress checkpoints before the final write.
+    """
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     from datasluice.data import DataPlaneResourceReader
+    from datasluice.domain import LocalFile, Resource
     from datasluice.sync import sync_resources
     from datasluice.sync._identity import canonical_identity
-    from datasluice.transport.httpx_transport import HttpxTransport
 
     schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
-    table = pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema)
-    parquet_buf = pa.BufferOutputStream()
-    pq.write_table(table, parquet_buf)
-    parquet_bytes = parquet_buf.getvalue().to_pybytes()
+    parquet_path = tmp_path / "multi_rowgroup.parquet"
+    with pq.ParquetWriter(parquet_path, schema) as writer:
+        writer.write_table(pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema))
+        writer.write_table(pa.table({"group_id": [2, 3], "value": ["c", "d"]}, schema=schema))
 
-    _server, url = csv_server(body=parquet_bytes)
-    resource = make_resource(url, format="PARQUET")
+    resource = Resource(
+        id="multi-rowgroup",
+        name="multi-rowgroup",
+        format="PARQUET",
+        access=LocalFile(path=str(parquet_path)),
+    )
 
     store = _ConditionalPutSpy(FileStateStore(f"file://{tmp_path}/state"))
 
@@ -266,7 +279,7 @@ def test_sync_uses_cas_for_checkpoint_write(tmp_path, csv_server, make_resource)
         sync_resources(
             [resource],
             state_store=store,
-            reader=DataPlaneResourceReader(transport=HttpxTransport()),
+            reader=DataPlaneResourceReader(),
             destination_uri=f"file://{tmp_path}/dest",
         )
     )
@@ -277,6 +290,11 @@ def test_sync_uses_cas_for_checkpoint_write(tmp_path, csv_server, make_resource)
     assert all(ep is None or isinstance(ep, bytes) for ep in checkpoint_writes), (
         "checkpoint conditional_put must carry an expected_prior"
     )
+    # Multiple row groups mean at least one in-progress checkpoint write
+    # precedes the final completed-state write (WR-05: the previous test
+    # observed only the completed write because HTTP Parquet is not
+    # checkpointed).
+    assert len(checkpoint_writes) >= 2, "expected at least one in-progress checkpoint write plus one completed write"
 
 
 def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) -> None:
