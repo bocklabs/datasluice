@@ -13,6 +13,7 @@ import pyarrow as pa
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from datasluice.domain import Dataset, HttpDownload, Resource
@@ -23,10 +24,10 @@ if importlib.util.find_spec("datasluice.cli.scan") is None:
         pytest.fail("bounded scan CLI contracts pending GREEN phase", pytrace=False)
     pytest.skip("bounded scan CLI contracts pending GREEN phase", allow_module_level=True)
 
-from datasluice.cli.app import app
-
 scan_command = cast(Any, importlib.import_module("datasluice.cli.scan"))
 parse_locator = cast(Any, importlib.import_module("datasluice.cli._resolver")).parse_locator
+scan_app = typer.Typer()
+scan_app.command()(scan_command.scan)
 
 runner = CliRunner()
 
@@ -128,8 +129,21 @@ def test_parser_round_trips_direct_and_catalog_locators_to_locked_contract() -> 
         resource="resource-7",
     )
 
-    assert direct.to_dict() == fixture["direct"]
-    assert catalog.to_dict() == fixture["catalog"]
+    expected_direct = {**fixture["direct"], "format": "CSV", "extensions": {}}
+    expected_catalog = {**fixture["catalog"], "extensions": {}}
+
+    assert direct.to_dict() == expected_direct
+    assert catalog.to_dict() == expected_catalog
+    assert (
+        parse_locator(
+            None,
+            portal="https://catalog.example.test/api",
+            dataset="dataset-42",
+            resource="https://data.example.test/observations.csv?token=secret",
+        )
+        .to_dict()["resource_id"]
+        .endswith("token=***")
+    )
 
 
 @pytest.mark.parametrize("suffix", [".csv", ".parquet"])
@@ -138,12 +152,13 @@ def test_scan_reads_at_most_default_bound_from_local_inputs(tmp_path: Path, suff
     source = tmp_path / f"observations{suffix}"
     _write_fixture(source, suffix, 1_005)
 
-    outcome = runner.invoke(app, ["scan", str(source), "--output", "json"])
+    outcome = runner.invoke(scan_app, [str(source), "--output", "json"])
 
     assert outcome.exit_code == 0, outcome.output
     result = json.loads(outcome.stdout)
     assert result["rows"] == 1_000
-    assert result["sample"] == [{"city": "city-0", "value": 0}]
+    assert result["sample"][0] == {"city": "city-0", "value": 0}
+    assert len(result["sample"]) == 20
     assert result["columns"][0]["name"] == "city"
     assert "Scanning resource" in outcome.stderr
 
@@ -154,7 +169,7 @@ def test_scan_default_bound_does_not_process_more_than_one_thousand_rows(monkeyp
     facade = _Facade(_resource(), opened)
     _patch_facade(monkeypatch, facade)
 
-    outcome = runner.invoke(app, ["scan", "https://data.example.test/observations.csv", "--output", "json"])
+    outcome = runner.invoke(scan_app, ["https://data.example.test/observations.csv", "--output", "json"])
 
     assert outcome.exit_code == 0, outcome.output
     assert json.loads(outcome.stdout)["rows"] == 1_000
@@ -169,8 +184,8 @@ def test_scan_full_computes_exact_statistics(monkeypatch: pytest.MonkeyPatch) ->
     _patch_facade(monkeypatch, facade)
 
     outcome = runner.invoke(
-        app,
-        ["scan", "https://data.example.test/observations.csv", "--full", "--output", "json"],
+        scan_app,
+        ["https://data.example.test/observations.csv", "--full", "--output", "json"],
     )
 
     assert outcome.exit_code == 0, outcome.output
@@ -193,8 +208,8 @@ def test_ambiguous_catalog_reference_lists_sanitized_selectors_before_opening(mo
     _patch_facade(monkeypatch, facade)
 
     outcome = runner.invoke(
-        app,
-        ["scan", "--portal", "https://catalog.example.test", "--dataset", "weather", "--output", "json"],
+        scan_app,
+        ["--portal", "https://catalog.example.test", "--dataset", "weather", "--output", "json"],
     )
 
     assert outcome.exit_code == 1
@@ -211,7 +226,7 @@ def test_machine_result_and_error_diagnostics_use_separate_streams(monkeypatch: 
     facade = _Facade(_resource(), opened)
     _patch_facade(monkeypatch, facade)
 
-    success = runner.invoke(app, ["scan", "https://data.example.test/observations.csv", "--output", "json"])
+    success = runner.invoke(scan_app, ["https://data.example.test/observations.csv", "--output", "json"])
     assert success.exit_code == 0, success.output
     assert json.loads(success.stdout)["rows"] == 2
     assert "Scanning resource" in success.stderr
@@ -220,7 +235,7 @@ def test_machine_result_and_error_diagnostics_use_separate_streams(monkeypatch: 
         raise DataSluiceError("resource warning")
 
     monkeypatch.setattr(facade, "resolve", _fail)
-    failed = runner.invoke(app, ["scan", "https://data.example.test/observations.csv", "--output", "json"])
+    failed = runner.invoke(scan_app, ["https://data.example.test/observations.csv", "--output", "json"])
     assert failed.exit_code == 1
     assert failed.stdout == ""
     assert "resource warning" in failed.stderr

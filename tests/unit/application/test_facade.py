@@ -115,6 +115,17 @@ def test_one_shot_and_portal_search_share_connector_agnostic_service() -> None:
     assert not hasattr(portal, "_session")
 
 
+def test_portal_dataset_lookup_keeps_the_connector_private() -> None:
+    """Portal exposes catalog lookup through the application service only."""
+    data_sluice, session, connector, _result = _facade(_resource("observations"))
+
+    dataset = data_sluice.portal("https://catalog.example.test").get_dataset("weather")
+
+    assert dataset is connector._dataset
+    assert connector.dataset_ids == ["weather"]
+    assert session.portal_calls == [("https://catalog.example.test", None)]
+
+
 def test_search_service_preserves_explicit_portal_type_and_query_identity() -> None:
     """The dependency-explicit search service uses the supplied session unchanged."""
     data_sluice, session, connector, result = _facade(_resource("observations"))

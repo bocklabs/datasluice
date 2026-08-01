@@ -135,8 +135,8 @@ class CatalogResourceLocator:
             "schema_version": 1,
             "kind": "catalog",
             "portal_url": sanitize_uri(self.portal_url),
-            "dataset_id": self.dataset_id,
-            "resource_id": self.resource_id,
+            "dataset_id": sanitize_uri(self.dataset_id),
+            "resource_id": sanitize_uri(self.resource_id),
             "extensions": _thaw_json(self.extensions),
         }
 
@@ -295,6 +295,10 @@ class _ApplicationServices:
         """Search through the injected composition substrate."""
         return search_datasets(self._session, url, query, portal_type=portal_type, **kwargs)
 
+    def get_dataset(self, url: str, dataset_id: str, *, portal_type: str | None = None) -> Any:
+        """Retrieve catalog metadata through the private session substrate."""
+        return self._session.portal(url, portal_type=portal_type).get_dataset(dataset_id)
+
     def detect(self, url: str) -> DetectionResult:
         """Run injected portal detection without facade-specific mapping."""
         return detect_portal(url, transport=self._session._transport, plugin_manager=self._session.plugins)
@@ -338,6 +342,10 @@ class Portal:
     def search(self, query: str | Query | None = None, **kwargs: Any) -> SearchResult:
         """Search through the facade without exposing a connector."""
         return self._services.search(self._url, query, portal_type=self._portal_type, **kwargs)
+
+    def get_dataset(self, dataset_id: str) -> Any:
+        """Retrieve one dataset without exposing the underlying connector."""
+        return self._services.get_dataset(self._url, dataset_id, portal_type=self._portal_type)
 
 
 class DataSluice:
