@@ -350,6 +350,28 @@ def test_legacy_v1_envelope_with_key_remains_readable(file_store: FileStateStore
     assert file_store.get(key) == legacy_state
 
 
+def test_legacy_envelope_wrong_lookup_key_rejected(file_store: FileStateStore) -> None:
+    embedded_key = "legacy-resource"
+    lookup_key = "different-lookup-key"
+    legacy_state = SyncState(cursor={"legacy-cursor-key": "legacy-watermark"})
+    payload = json.dumps(
+        {
+            "schema_version": 1,
+            "key": embedded_key,
+            "state": asdict(legacy_state),
+        },
+        sort_keys=True,
+    ).encode()
+    # A historically-copied state file lands at a different lookup path than its
+    # embedded key claims. It must decode only under the lookup key it belongs to.
+    file_store._fs.pipe_file(file_store._state_path(lookup_key), payload)
+
+    with pytest.raises(StateStoreError, match="does not match lookup key"):
+        file_store.get(lookup_key)
+    # The embedded key is a non-secret identity; assert it is not echoed as a value.
+    assert embedded_key not in "legacy-watermark"
+
+
 def test_repeated_identical_put_has_same_path_and_bytes(file_store: FileStateStore) -> None:
     key = "resource-deterministic"
     state = SyncState(

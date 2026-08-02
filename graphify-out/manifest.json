@@ -310,9 +310,9 @@
     "semantic_hash": ""
   },
   "src/datasluice/io/__init__.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "e68307ea4389dc3ddb00fb4bdc256e24",
-    "semantic_hash": "e68307ea4389dc3ddb00fb4bdc256e24"
+    "mtime": 1785704437.3581896,
+    "ast_hash": "85c415912b8a49658143cdb9139b28fc",
+    "semantic_hash": ""
   },
   "src/datasluice/io/cache.py": {
     "mtime": 1785539626.8502548,
@@ -325,9 +325,9 @@
     "semantic_hash": "3bd0602222dfbdf97e3398b90acb2f4f"
   },
   "src/datasluice/io/content_cache.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "0b453404f7d867e380a8bdd863401b2f",
-    "semantic_hash": "0b453404f7d867e380a8bdd863401b2f"
+    "mtime": 1785704507.0130496,
+    "ast_hash": "5e3d460f3e7e8e6ed588bca7af025bfc",
+    "semantic_hash": ""
   },
   "src/datasluice/io/downloader.py": {
     "mtime": 1782061945.0489817,
@@ -335,9 +335,9 @@
     "semantic_hash": "a3869c3c1c883eb5e20a5f7d3d5dce4e"
   },
   "src/datasluice/io/filesystem.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "a321a377512e7ecd0bbe6d41a305c044",
-    "semantic_hash": "a321a377512e7ecd0bbe6d41a305c044"
+    "mtime": 1785704423.6479537,
+    "ast_hash": "099fcff0de036f3f2c9bcbff3284131e",
+    "semantic_hash": ""
   },
   "src/datasluice/io/fsspec_storage.py": {
     "mtime": 1785539626.8502548,
@@ -605,13 +605,13 @@
     "semantic_hash": ""
   },
   "src/datasluice/sync/materialize.py": {
-    "mtime": 1785614806.1401854,
-    "ast_hash": "00b50a2a08db8e4817b68ccd98d79d7c",
+    "mtime": 1785704458.954388,
+    "ast_hash": "462e8f134f14f442c6ce1f475651025b",
     "semantic_hash": ""
   },
   "src/datasluice/sync/state_store.py": {
-    "mtime": 1785613730.0843205,
-    "ast_hash": "c4b983bcf596ef6ca8b48499564ea80a",
+    "mtime": 1785704483.0287852,
+    "ast_hash": "a4b07ce76f0fd7f46af4e418133d64db",
     "semantic_hash": ""
   },
   "src/datasluice/sync/sync.py": {

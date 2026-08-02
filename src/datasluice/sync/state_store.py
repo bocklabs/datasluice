@@ -241,6 +241,8 @@ class FileStateStore:
         from datasluice.domain import SyncState
 
         if "key" in envelope:
+            if envelope["key"] != key:
+                raise StateStoreError("Legacy state envelope key does not match lookup key")
             return _decode_legacy_state(s)
         if set(envelope) != {"schema_version", "state"}:
             raise StateStoreError("Corrupt state envelope at top level")
