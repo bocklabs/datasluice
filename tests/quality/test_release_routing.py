@@ -264,3 +264,148 @@ def test_candidate_smoke_precedes_production() -> None:
     assert "get_provider_info" in provider_smoke["run"]
     assert "DataSluiceHook" in provider_smoke["run"]
     assert "example_datasluice.py" in provider_smoke["run"]
+
+
+def test_manifest_components() -> None:
+    """Config tracks both packages with component tags; the manifest records only actual releases."""
+    _require(_manifest_ready(), "two-component manifest not yet configured")
+    config = _load_json(RELEASE_CONFIG)
+    manifest = _load_json(RELEASE_MANIFEST)
+    packages = config["packages"]
+    assert set(packages) == {".", PROVIDER_PATH}
+    root = packages["."]
+    provider = packages[PROVIDER_PATH]
+    assert root["component"] == "datasluice"
+    assert provider["component"] == "apache-airflow-providers-datasluice"
+    assert root["include-component-in-tag"] is True
+    assert provider["include-component-in-tag"] is True
+    assert root["version-file"] == "pyproject.toml"
+    assert provider["version-file"] == "pyproject.toml"
+    assert provider["initial-version"] == "0.1.0"
+    assert "release-as" not in root
+    assert "release-as" not in provider
+    assert manifest == {".": "0.1.0"}
+
+
+def test_initial_release_versions_and_tags() -> None:
+    """One-time root Release-As plus provider initial-version yield exact versions and component tags."""
+    _require(_manifest_ready(), "two-component manifest not yet configured")
+    config = _load_json(RELEASE_CONFIG)
+    manifest = _load_json(RELEASE_MANIFEST)
+    commits = [
+        _Commit(package=".", kind="feat", release_as="1.0.0"),
+        _Commit(package=PROVIDER_PATH, kind="feat"),
+    ]
+    core = _release_proposal(config, manifest, commits, ".")
+    provider = _release_proposal(config, manifest, commits, PROVIDER_PATH)
+    assert core is not None and provider is not None
+    assert core == ("1.0.0", "datasluice-v1.0.0")
+    assert provider == ("0.1.0", "apache-airflow-providers-datasluice-v0.1.0")
+    merged = _post_merge_manifest(config, manifest, {".": core, PROVIDER_PATH: provider})
+    assert merged == {".": "1.0.0", PROVIDER_PATH: "0.1.0"}
+
+    provider_only = [_Commit(package=PROVIDER_PATH, kind="fix")]
+    assert _release_proposal(config, merged, provider_only, ".") is None
+    provider_fix = _release_proposal(config, merged, provider_only, PROVIDER_PATH)
+    assert provider_fix is not None
+    assert provider_fix == ("0.1.1", "apache-airflow-providers-datasluice-v0.1.1")
+
+    root_fix = [_Commit(package=".", kind="fix")]
+    assert _release_proposal(config, merged, root_fix, ".") == ("1.0.1", "datasluice-v1.0.1")
+
+
+def test_release_outputs_route_without_release_event() -> None:
+    """Release Please outputs route into the typed publish interface without a release event."""
+    _require(
+        _publish_interface_ready() and _routing_ready(),
+        "output routing not yet wired to the publish interface",
+    )
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    assert "release" not in workflow["on"], "package publication must not listen for release events"
+    raw = RELEASE_PLEASE_WORKFLOW.read_text(encoding="utf-8")
+    assert "release: published" not in raw
+    assert "github.event.release" not in raw
+
+    jobs = workflow["jobs"]
+    outputs = jobs["release-please"]["outputs"]
+    assert outputs["core--release_created"] == "${{ steps.release.outputs.release_created }}"
+    assert outputs["core--version"] == "${{ steps.release.outputs.version }}"
+    assert outputs["core--tag_name"] == "${{ steps.release.outputs.tag_name }}"
+    assert outputs["provider--release_created"] == (
+        "${{ steps.release.outputs['providers/apache-airflow--release_created'] }}"
+    )
+    assert outputs["provider--version"] == "${{ steps.release.outputs['providers/apache-airflow--version'] }}"
+
+    release_steps = [s for s in jobs["release-please"]["steps"] if s.get("id") == "release"]
+    assert len(release_steps) == 1
+    assert "release-please-action" in release_steps[0]["uses"]
+
+    core = jobs["publish-core"]
+    provider = jobs["publish-provider"]
+    assert core["uses"] == "./.github/workflows/publish.yml"
+    assert provider["uses"] == "./.github/workflows/publish.yml"
+    assert "core--release_created" in str(core.get("if", ""))
+    assert "'true'" in str(core.get("if", ""))
+    for job in (core, provider):
+        supplied = job.get("with") or {}
+        missing = [name for name in REQUIRED_PUBLISH_INPUTS if name not in supplied]
+        assert not missing, f"caller job missing publish inputs: {missing}"
+
+
+def test_provider_only_and_joint_dependencies() -> None:
+    """Provider publication is ordered after core in joint releases but survives provider-only runs."""
+    _require(
+        _publish_interface_ready() and _routing_ready(),
+        "core-before-provider routing not yet wired",
+    )
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    jobs = workflow["jobs"]
+    core = jobs["publish-core"]
+    provider = jobs["publish-provider"]
+    assert "publish-core" in provider["needs"]
+    core_if = str(core.get("if", ""))
+    assert "core--release_created" in core_if and "'true'" in core_if
+    provider_if = str(provider.get("if", ""))
+    assert "always()" in provider_if
+    assert "provider--release_created" in provider_if
+    assert "core--release_created" in provider_if
+    assert "publish-core.result" in provider_if
+
+    def runs(*, core_created: bool, provider_created: bool, core_result: str) -> bool:
+        return _eval_provider_condition(
+            provider_if,
+            core_created=core_created,
+            provider_created=provider_created,
+            core_result=core_result,
+        )
+
+    assert runs(core_created=True, provider_created=True, core_result="success") is True
+    assert runs(core_created=True, provider_created=True, core_result="failure") is False
+    assert runs(core_created=False, provider_created=True, core_result="skipped") is True
+    assert runs(core_created=False, provider_created=False, core_result="skipped") is False
+
+
+def test_distinct_production_environments() -> None:
+    """Core and provider callers supply four distinct environment values to the typed interface."""
+    _require(
+        _publish_interface_ready() and _routing_ready(),
+        "distinct environments not yet wired",
+    )
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    jobs = workflow["jobs"]
+    core = jobs["publish-core"]["with"]
+    provider = jobs["publish-provider"]["with"]
+    environments = {
+        "core-test-pypi": core["testpypi_environment"],
+        "core-pypi": core["pypi_environment"],
+        "provider-test-pypi": provider["testpypi_environment"],
+        "provider-pypi": provider["pypi_environment"],
+    }
+    expected = {
+        "core-test-pypi": "core-test-pypi",
+        "core-pypi": "core-pypi",
+        "provider-test-pypi": "provider-test-pypi",
+        "provider-pypi": "provider-pypi",
+    }
+    assert environments == expected
+    assert len(set(environments.values())) == 4
