@@ -295,8 +295,8 @@
     "semantic_hash": ""
   },
   "src/datasluice/integrations/dlt.py": {
-    "mtime": 1785612294.3103936,
-    "ast_hash": "9d1102087de085623f82795e060f64a0",
+    "mtime": 1785705109.8575594,
+    "ast_hash": "4d31cf5fd4c22e9ba85f5882f81e078f",
     "semantic_hash": ""
   },
   "src/datasluice/integrations/duckdb.py": {

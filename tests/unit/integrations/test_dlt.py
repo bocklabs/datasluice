@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -29,7 +30,7 @@ if "DataSluiceSession" in inspect.getsource(datasluice_source) and os.environ.ge
     pytest.skip("dlt canonical facade migration pending GREEN phase", allow_module_level=True)
 
 from datasluice.domain import Dataset, HttpDownload, QueryAccess, Resource, SearchResult  # noqa: E402
-from datasluice.integrations.dlt import _sanitize  # noqa: E402
+from datasluice.integrations.dlt import _sanitize, mirror_dlt_state  # noqa: E402
 from datasluice.sync._identity import canonical_identity  # noqa: E402
 from datasluice.sync.state_store import InMemoryStateStore  # noqa: E402
 from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
@@ -116,6 +117,7 @@ def test_state_roundtrip_run1_seeds_state(tmp_path: Path, csv_portal: Resource) 
     pipeline, _, _ = _make_pipeline(tmp_path, "state_run1")
 
     _extract_and_load(pipeline, datasluice_source("https://portal.test", state_store=store))
+    mirror_dlt_state(pipeline, store)
 
     state = store.get(canonical_identity(csv_portal))
     assert state is not None
@@ -249,6 +251,7 @@ def test_three_run_roundtrip_structure(
 
     for _ in range(3):
         _extract_and_load(pipeline, datasluice_source("https://portal.test", state_store=store))
+        mirror_dlt_state(pipeline, store)
         state = store.get(canonical_identity(csv_portal))
         assert state is not None
         watermarks.append(state.cursor[canonical_identity(csv_portal)])
@@ -337,6 +340,7 @@ def test_state_writeback_durable_across_pipeline_recreation(
     store = InMemoryStateStore()
     first_pipeline, _, _ = _make_pipeline(tmp_path, "durable_first")
     _extract_and_load(first_pipeline, datasluice_source("https://portal.test", state_store=store))
+    mirror_dlt_state(first_pipeline, store)
     first_state = store.get(canonical_identity(csv_portal))
     assert first_state is not None
     first_watermark = first_state.cursor[canonical_identity(csv_portal)]
@@ -353,8 +357,80 @@ def test_state_writeback_durable_across_pipeline_recreation(
     monkeypatch.setattr(arrow, "to_arrow", recording_to_arrow)
     second_pipeline, _, _ = _make_pipeline(tmp_path, "durable_second")
     _extract_and_load(second_pipeline, datasluice_source("https://portal.test", state_store=store))
+    mirror_dlt_state(second_pipeline, store)
     second_state = store.get(canonical_identity(csv_portal))
 
     assert second_state is not None
     assert seeded_watermarks == [first_watermark]
     assert second_state.cursor[canonical_identity(csv_portal)] == first_watermark
+
+
+def test_extraction_does_not_advance_external_store(tmp_path: Path, csv_portal: Resource) -> None:
+    """Extraction must not write the external store; writeback is load-coupled via mirror_dlt_state."""
+    store = InMemoryStateStore()
+    pipeline, _, _ = _make_pipeline(tmp_path, "no_advance")
+
+    source = datasluice_source("https://portal.test", state_store=store)
+    pipeline.extract(source)
+    pipeline.normalize()
+
+    assert store.get(canonical_identity(csv_portal)) is None
+
+
+def test_failed_load_leaves_external_store_empty(
+    tmp_path: Path, csv_portal: Resource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed destination load must not advance the external store (writeback is post-load only)."""
+    store = InMemoryStateStore()
+    pipeline, _, _ = _make_pipeline(tmp_path, "failed_load")
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("injected load failure")
+
+    monkeypatch.setattr(pipeline, "load", _boom)
+    pipeline.extract(datasluice_source("https://portal.test", state_store=store))
+    pipeline.normalize()
+    with pytest.raises(Exception, match="injected load failure"):
+        pipeline.load()
+
+    assert store.get(canonical_identity(csv_portal)) is None
+
+
+def test_mirror_uses_conditional_put_on_atomic_store(tmp_path: Path, csv_portal: Resource) -> None:
+    """mirror_dlt_state must route through conditional_put when the store is an AtomicStateStore."""
+    from datasluice.sync.state_store import FileStateStore
+
+    store = FileStateStore(f"file://{tmp_path}/state")
+    pipeline, _, _ = _make_pipeline(tmp_path, "mirror_cas")
+
+    _extract_and_load(pipeline, datasluice_source("https://portal.test", state_store=store))
+
+    calls: list[tuple[Any, Any]] = []
+    original = store.conditional_put
+
+    def _spy(key: Any, state: Any, expected_prior: Any) -> Any:
+        calls.append((key, expected_prior))
+        return original(key, state, expected_prior)
+
+    with patch.object(store, "conditional_put", side_effect=_spy):
+        mirror_dlt_state(pipeline, store)
+
+    assert len(calls) == 1
+    assert calls[0][0] == canonical_identity(csv_portal)
+
+
+def test_mirror_is_idempotent(tmp_path: Path, csv_portal: Resource) -> None:
+    """Re-running mirror over the same committed load writes the same watermark."""
+    store = InMemoryStateStore()
+    pipeline, _, _ = _make_pipeline(tmp_path, "mirror_idem")
+
+    _extract_and_load(pipeline, datasluice_source("https://portal.test", state_store=store))
+    mirror_dlt_state(pipeline, store)
+    first = store.get(canonical_identity(csv_portal))
+
+    mirror_dlt_state(pipeline, store)
+    second = store.get(canonical_identity(csv_portal))
+
+    assert first is not None
+    assert second is not None
+    assert first.cursor[canonical_identity(csv_portal)] == second.cursor[canonical_identity(csv_portal)]

@@ -36,7 +36,10 @@ def datasluice_source(
     Args:
         portal: Base URL of the open-data portal.
         query: Optional free-text search query.
-        state_store: Optional durable store for per-resource watermarks.
+        state_store: Optional durable store seeded with prior per-resource
+            watermarks at the start of each resource (read-only during the run).
+            Load-committed watermarks are mirrored back into it after the
+            pipeline completes via :func:`mirror_dlt_state`.
         limit: Maximum number of datasets to fetch.
         include_metadata: Whether to include the dataset catalog as a sibling resource.
         **kwargs: Additional fields forwarded to :class:`~datasluice.domain.Query`.
@@ -95,32 +98,23 @@ def datasluice_source(
 
                 @dlt.resource(name=table_name, table_name=table_name, write_disposition="replace")
                 def _resource_body(resource: Any = resource, identity: str = identity) -> Any:
-                    from datasluice.domain import SyncState
                     from datasluice.integrations.arrow import to_arrow
                     from datasluice.sync._hashing import logical_sha256
 
                     transport = HttpxTransport()
                     reader = DataPlaneResourceReader(transport=transport)
                     try:
+                        state: dict[str, Any] = {"identity": identity, "watermark": None}
                         if state_store is not None:
                             prior = state_store.get(identity)
-                            watermark = prior.cursor.get(identity) if prior is not None else None
-                            dlt.current.resource_state()["datasluice"] = {"watermark": watermark}
+                            state["watermark"] = prior.cursor.get(identity) if prior is not None else None
+                        dlt.current.resource_state()["datasluice"] = state
 
                         with reader.open(resource) as stream:
                             table = to_arrow(stream)
                         yield table
 
-                        fresh_watermark = logical_sha256(table)
-                        if state_store is not None:
-                            state_store.put(
-                                identity,
-                                SyncState(
-                                    cursor={identity: fresh_watermark},
-                                    last_synced_at=datetime.now(UTC).isoformat(),
-                                ),
-                            )
-                        dlt.current.resource_state().setdefault("datasluice", {})["watermark"] = fresh_watermark
+                        dlt.current.resource_state()["datasluice"]["watermark"] = logical_sha256(table)
                     finally:
                         transport.close()
 
@@ -148,3 +142,43 @@ def datasluice_source(
             yield _datasets
 
     return _source()
+
+
+def mirror_dlt_state(pipeline: Any, state_store: Any, *, source_name: str = "datasluice") -> None:
+    """Mirror dlt's load-committed per-resource watermarks into a DataSluice StateStore.
+
+    dlt persists ``resource_state`` only after a successful load, so the
+    watermarks read here reflect rows that actually landed in the destination.
+    Call this after ``pipeline.run`` (or ``extract`` + ``normalize`` + ``load``)
+    to copy the committed watermarks into *state_store*. Writes are
+    compare-and-swap protected when *state_store* satisfies
+    :class:`datasluice.ports.state_store.AtomicStateStore`; otherwise plain
+    ``put`` is used.
+
+    Resources without a committed ``datasluice`` watermark (e.g. the metadata
+    sibling) are skipped. Re-running this after an identical load is a no-op
+    against the committed state.
+
+    Args:
+        pipeline: A ``dlt.Pipeline`` that has completed a load.
+        state_store: The :class:`~datasluice.ports.state_store.StateStore` to mirror into.
+        source_name: The dlt source name to read committed state from.
+    """
+    from datasluice.domain import SyncState
+    from datasluice.ports import AtomicStateStore
+
+    resources = pipeline.state.get("sources", {}).get(source_name, {}).get("resources", {})
+    is_atomic = isinstance(state_store, AtomicStateStore)
+    for resource_state in resources.values():
+        datasluice_state = resource_state.get("datasluice") if isinstance(resource_state, dict) else None
+        if not isinstance(datasluice_state, dict):
+            continue
+        identity = datasluice_state.get("identity")
+        watermark = datasluice_state.get("watermark")
+        if not identity or not watermark:
+            continue
+        state = SyncState(cursor={identity: watermark}, last_synced_at=datetime.now(UTC).isoformat())
+        if is_atomic:
+            state_store.conditional_put(identity, state, state_store.read_version(identity))
+        else:
+            state_store.put(identity, state)
