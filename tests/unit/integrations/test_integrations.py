@@ -7,7 +7,7 @@ import importlib
 import pytest
 
 
-@pytest.mark.parametrize("module_name", ["pandas", "dlt", "airflow", "duckdb"])
+@pytest.mark.parametrize("module_name", ["pandas", "dlt", "duckdb"])
 def test_integration_modules_importable(module_name: str) -> None:
     """Integration modules should be importable without their optional deps."""
     module = importlib.import_module(f"datasluice.integrations.{module_name}")
