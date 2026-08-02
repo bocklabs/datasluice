@@ -22,9 +22,7 @@ jobs:
       core--release_created: ${{ steps.release.outputs.release_created }}
       core--tag_name: ${{ steps.release.outputs.tag_name }}
       core--version: ${{ steps.release.outputs.version }}
-      provider--release_created: ${{ steps.release.outputs['providers/apache-airflow--release_created'] }}
-      provider--tag_name: ${{ steps.release.outputs['providers/apache-airflow--tag_name'] }}
-      provider--version: ${{ steps.release.outputs['providers/apache-airflow--version'] }}
+      provider-releases: ${{ steps.collect.outputs.releases }}
     steps:
       - id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -32,15 +30,38 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - id: collect
+        if: always()
+        env:
+          RELEASE_OUTPUTS: ${{ toJSON(steps.release.outputs) }}
+        run: |
+          releases=$(python3 -c '
+          import json, os
+          with open("providers/registry.json") as f:
+              registry = json.load(f)
+          outputs_raw = os.environ.get("RELEASE_OUTPUTS", "{}")
+          release_outputs = json.loads(outputs_raw) if outputs_raw.strip() else {}
+          releases = []
+          for provider in registry.get("providers", []):
+              path = provider["path"]
+              if release_outputs.get(f"{path}--release_created") == "true":
+                  releases.append({
+                      "slug": provider["slug"],
+                      "path": path,
+                      "package_name": provider["package_name"],
+                      "version": release_outputs[f"{path}--version"],
+                      "tag_name": release_outputs[f"{path}--tag_name"],
+                      "testpypi_env": provider["testpypi_env"],
+                      "pypi_env": provider["pypi_env"],
+                  })
+          print(json.dumps(releases))
+          ')
+          echo "releases=$releases" >> "$GITHUB_OUTPUT"
+
   publish-core:
     name: Publish core
     needs: release-please
     if: needs.release-please.outputs.core--release_created == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
     uses: ./.github/workflows/publish.yml
     with:
       component: core
@@ -48,29 +69,25 @@ jobs:
       package_name: datasluice
       version: ${{ needs.release-please.outputs.core--version }}
       ref: ${{ needs.release-please.outputs.core--tag_name }}
-      testpypi_environment: core-test-pypi
-      pypi_environment: core-pypi
+      testpypi_environment: test-pypi
+      pypi_environment: pypi
     secrets: inherit
 
-  publish-provider:
-    name: Publish provider
+  publish-providers:
+    name: Publish provider ${{ matrix.provider.slug }}
     needs: [release-please, publish-core]
-    if: |
-      always() &&
-      needs.release-please.outputs.provider--release_created == 'true' &&
-      (needs.release-please.outputs.core--release_created == 'false' || needs.publish-core.result == 'success')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
+    if: always() && needs.release-please.outputs.provider-releases != '[]' && (needs.release-please.outputs.core--release_created != 'true' || needs.publish-core.result == 'success')
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     uses: ./.github/workflows/publish.yml
     with:
-      component: provider
-      package_path: providers/apache-airflow
-      package_name: apache-airflow-providers-datasluice
-      version: ${{ needs.release-please.outputs.provider--version }}
-      ref: ${{ needs.release-please.outputs.provider--tag_name }}
-      testpypi_environment: provider-test-pypi
-      pypi_environment: provider-pypi
+      component: ${{ matrix.provider.slug }}
+      package_path: ${{ matrix.provider.path }}
+      package_name: ${{ matrix.provider.package_name }}
+      version: ${{ matrix.provider.version }}
+      ref: ${{ matrix.provider.tag_name }}
+      testpypi_environment: ${{ matrix.provider.testpypi_env }}
+      pypi_environment: ${{ matrix.provider.pypi_env }}
     secrets: inherit
