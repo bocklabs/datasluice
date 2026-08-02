@@ -1,16 +1,16 @@
 # Graph Report - datasluice  (2026-08-02)
 
 ## Corpus Check
-- 130 files · ~42,446 words
+- 130 files · ~42,460 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1565 nodes · 3048 edges · 105 communities (83 shown, 22 thin omitted)
+- 1565 nodes · 3043 edges · 107 communities (84 shown, 23 thin omitted)
 - Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 145 edges (avg confidence: 0.64)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `a5c7b8cf`
+- Built from commit: `a942ccd6`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -36,7 +36,7 @@
 - _ApplicationServices
 - detect
 - application.py
-- Resource
+- datagouv/mapper.py
 - checks.py
 - logging.py
 - CI Workflow
@@ -74,7 +74,7 @@
 - PortalError
 - geojson.py
 - DataPlaneResourceReader
-- domain/__init__.py
+- Resource
 - Pre-commit Configuration
 - DataSluiceError
 - ParquetReader
@@ -103,7 +103,7 @@
 - Any
 - SyncState
 - exceptions.py
-- CKANPage
+- CKANAdapter
 - materialize
 - .read_batches
 - DataGouvAdapter
@@ -115,6 +115,8 @@
 - _content_encoding_from_headers
 - _parse_retry_after
 - SyncState
+- socrata/mapper.py
+- Any
 - .apply
 - Any
 - IterableBytesIO
@@ -130,8 +132,8 @@
 6. `BaseAdapter` - 25 edges
 7. `OpenedResource` - 24 edges
 8. `Dataset` - 23 edges
-9. `open_filesystem()` - 20 edges
-10. `DataPlaneResourceReader` - 20 edges
+9. `DataPlaneResourceReader` - 20 edges
+10. `TransformContext` - 20 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `DataSluice Logo (Brand Mark)` --semantically_similar_to--> `Datasluice Brand Logo (no background)`  [INFERRED] [semantically similar]
@@ -158,11 +160,11 @@
 - **DataSluice unified open-data portal access pattern** — datasluice_class, portal_ckan, portal_datagouv, portal_socrata [INFERRED 0.95]
 - **Pre-commit quality gate pipeline (format, lint, typecheck, test)** — precommit_config, lib_ruff, lib_ty, lib_pytest [EXTRACTED 1.00]
 
-## Communities (105 total, 22 thin omitted)
+## Communities (107 total, 23 thin omitted)
 
 ### Community 0 - "sync/state_store.py"
 Cohesion: 0.07
-Nodes (43): RLock, _contains_secret_material(), _decode_completed_cursor(), _decode_legacy_state(), _encode_state(), FileStateStore, InMemoryStateStore, _is_completed_watermark() (+35 more)
+Nodes (43): Any, RLock, _contains_secret_material(), _decode_completed_cursor(), _decode_legacy_state(), _encode_state(), FileStateStore, InMemoryStateStore (+35 more)
 
 ### Community 1 - "ContentCache"
 Cohesion: 0.13
@@ -240,9 +242,9 @@ Nodes (11): detect(), _detection_json(), Any, Argument, help, Option, ``dataslui
 Cohesion: 0.16
 Nodes (15): CatalogResourceLocator, _contract_error(), DirectResourceLocator, _locator_from_resource(), _object_dict(), Public application facade, locators, and opened-resource lifecycle., A validated, serializable catalog resource reference., Return a fresh, secret-free locator envelope. (+7 more)
 
-### Community 21 - "Resource"
-Cohesion: 0.07
-Nodes (48): map_dataset(), map_license(), map_organization(), map_resource(), Any, Mapping functions to convert data.gouv.fr (udata) JSON into domain models., Convert a udata license dict into a :class:`License`., Resolve the resource access descriptor per D-P5-02 for udata resources. udata… (+40 more)
+### Community 21 - "datagouv/mapper.py"
+Cohesion: 0.12
+Nodes (25): map_dataset(), map_license(), map_organization(), map_resource(), Any, Mapping functions to convert data.gouv.fr (udata) JSON into domain models., Convert a udata license dict into a :class:`License`., Resolve the resource access descriptor per D-P5-02 for udata resources. udata… (+17 more)
 
 ### Community 22 - "checks.py"
 Cohesion: 0.08
@@ -285,8 +287,8 @@ Cohesion: 0.17
 Nodes (8): PluginFailure, PluginManager, Record of a failed plugin discovery or load. Attributes: name: Entry-point name…, Registry-free connector manager backed by ``importlib.metadata``. Built-in…, Register *factory* programmatically (used by tests, D-06)., Return the factory callable for *name*. Raises: AdapterNotFoundError: If no…, Return a sorted list of all registered connector names., Return a copy of the recorded plugin load failures.
 
 ### Community 33 - "ckan/mapper.py"
-Cohesion: 0.10
-Nodes (24): CKANAdapter, Fetch organization metadata via ``organization_show``., Adapter for CKAN-powered open-data portals. Uses the CKAN Action API at…, Call a CKAN Action API endpoint and return the ``result`` dict., Search datasets via ``package_search``. Translates every set supported…, Fetch a dataset via ``package_show``., Return resources for *dataset_id*., CKAN portal adapter. CKAN is the world's most widely deployed open-data… (+16 more)
+Cohesion: 0.19
+Nodes (15): map_dataset(), map_license(), map_organization(), map_resource(), Any, Mapping functions to convert CKAN-native JSON into domain models., Convert a CKAN package dict into a :class:`Dataset`. ``base_url`` is forwarded…, Convert a CKAN license dict into a :class:`License`. (+7 more)
 
 ### Community 34 - "DataSluice"
 Cohesion: 0.15
@@ -380,17 +382,17 @@ Nodes (11): _batch_from_rows(), _fmt_coord(), GeoJSONReader, Any, Streaming GeoJ
 Cohesion: 0.22
 Nodes (10): DataPlaneResourceReader, Open *resource* as a :class:`BatchStream` of Arrow ``RecordBatch``. Dispatches…, Open a seekable Parquet resource from an exact row-group cursor., HttpDownload: stream via StreamingTransport or buffer via urllib fallback…, ObjectStorage: open via open_filesystem().open() (D-P4-07)., LocalFile: open(path, 'rb')., Concrete ``ResourceReader`` implementing access-kind dispatch (DATA-04). Args:…, Return the resource's access descriptor, defaulting to HttpDownload (D-P4-06). (+2 more)
 
-### Community 59 - "domain/__init__.py"
-Cohesion: 0.10
-Nodes (23): Abstract base class for all portal adapters., CKAN adapter implementation. Communicates with the CKAN Action API…, data.gouv.fr (udata) adapter implementation. Communicates with the udata REST…, _is_set(), Pre-flight reject policy for unsupported ``Query`` filter fields (D-P5-06). The…, Raise ``UnsupportedQueryFieldError`` if *query* uses a field not in…, Return ``True`` when *value* counts as a set filter field. ``None``, empty…, _reject_unsupported_fields() (+15 more)
+### Community 59 - "Resource"
+Cohesion: 0.08
+Nodes (32): Abstract base class for all portal adapters., CKAN adapter implementation. Communicates with the CKAN Action API…, data.gouv.fr (udata) adapter implementation. Communicates with the udata REST…, _is_set(), Pre-flight reject policy for unsupported ``Query`` filter fields (D-P5-06). The…, Raise ``UnsupportedQueryFieldError`` if *query* uses a field not in…, Return ``True`` when *value* counts as a set filter field. ``None``, empty…, _reject_unsupported_fields() (+24 more)
 
 ### Community 60 - "Pre-commit Configuration"
 Cohesion: 0.50
 Nodes (5): pre-commit-hooks (basic hooks), pytest testing framework, Ruff linter and formatter, ty type checker (Astral), Pre-commit Configuration
 
 ### Community 61 - "DataSluiceError"
-Cohesion: 0.15
-Nodes (15): Exception, BatchCursor, ParquetRowGroupPosition, Any, BatchStream — context-managed Arrow RecordBatch stream (DATA-01, DATA-02,…, Yield batches with the closed cursor for the next unread row group. In…, Return a PyCapsule for zero-copy Arrow interop (Phase 6 terminals). Delegates…, Logical position at the next unread Parquet row group. (+7 more)
+Cohesion: 0.16
+Nodes (14): Exception, BatchCursor, ParquetRowGroupPosition, Any, BatchStream — context-managed Arrow RecordBatch stream (DATA-01, DATA-02,…, Yield batches with the closed cursor for the next unread row group. In…, Return a PyCapsule for zero-copy Arrow interop (Phase 6 terminals). Delegates…, Logical position at the next unread Parquet row group. (+6 more)
 
 ### Community 62 - "ParquetReader"
 Cohesion: 0.23
@@ -460,13 +462,13 @@ Nodes (3): HTTPMessage, Request, Return the follow-up request, stripping sensiti
 Cohesion: 0.15
 Nodes (18): AdapterError, AdapterNotFoundError, AuthenticationError, ConfigError, OpenedResourceConsumedError, Exception hierarchy for DataSluice., Raised when configuration is invalid or incomplete., Raised when a state store cannot read or write durable sync state (D-P7-26). A… (+10 more)
 
-### Community 88 - "CKANPage"
-Cohesion: 0.25
-Nodes (5): CKANPage, Pagination helpers for the CKAN Action API., Parameters for a single CKAN search results page. CKAN uses ``start`` (offset)…, Return the parameters for the following page., Convert to query-string parameters for the CKAN API.
+### Community 88 - "CKANAdapter"
+Cohesion: 0.11
+Nodes (13): CKANAdapter, Fetch organization metadata via ``organization_show``., Adapter for CKAN-powered open-data portals. Uses the CKAN Action API at…, Call a CKAN Action API endpoint and return the ``result`` dict., Search datasets via ``package_search``. Translates every set supported…, Fetch a dataset via ``package_show``., Return resources for *dataset_id*., CKAN portal adapter. CKAN is the world's most widely deployed open-data… (+5 more)
 
 ### Community 89 - "materialize"
 Cohesion: 0.08
-Nodes (26): Any, Argument, callback, help, is_eager, Option, main(), help (+18 more)
+Nodes (25): Argument, callback, help, is_eager, Option, main(), help, Option (+17 more)
 
 ### Community 91 - "DataGouvAdapter"
 Cohesion: 0.11
@@ -479,6 +481,10 @@ Nodes (9): APIKeyAuth, Any, API-key authentication strategy. Supports passing th
 ### Community 96 - "BaseFormatReader"
 Cohesion: 0.18
 Nodes (13): BaseFormatReader, ABC, Abstract base class for streaming format readers (D-P4-10). Each reader…, Protocol for decoding a single file format into Arrow ``RecordBatch`` objects.…, CSVReader, Streaming CSV reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).…, Stream a CSV ``BinaryIO`` source into Arrow ``RecordBatch`` objects. Args:…, get_reader() (+5 more)
+
+### Community 100 - "socrata/mapper.py"
+Cohesion: 0.19
+Nodes (16): map_dataset(), map_organization(), map_resource(), Any, Mapping functions to convert Socrata-native JSON into domain models., Resolve the resource access descriptor per D-P5-02 for Socrata views. Socrata…, Best-effort schema extraction per D-P5-03 for Socrata views. Socrata's catalog…, Convert a Socrata view/resource dict into a :class:`Resource`. Populates… (+8 more)
 
 ### Community 115 - "IterableBytesIO"
 Cohesion: 0.13
@@ -495,16 +501,16 @@ Nodes (9): CatalogPort, OrganizationCatalog, Protocol, Catalog port Protocols fo
 ## Knowledge Gaps
 - **21 isolated node(s):** `Funding Config (Buy Me a Coffee: nitishraj)`, `Bug Report Issue Template`, `Issue Template Config (blank issues enabled)`, `Feature Request Issue Template`, `CI Lint & format job (ruff)` (+16 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **22 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **23 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `PortalDetectionError` connect `PortalDetectionError` to `DataSluiceSession`, `DataSluiceError`, `exceptions.py`?**
   _High betweenness centrality (0.058) - this node is a cross-community bridge._
-- **Why does `BatchStream` connect `BatchStream` to `TransformContext`, `duckdb.py`, `Any`, `to_arrow`, `data/access.py`, `data/__init__.py`, `DataPlaneResourceReader`, `DataSluiceError`?**
+- **Why does `BatchStream` connect `BatchStream` to `TransformContext`, `duckdb.py`, `Any`, `to_arrow`, `data/access.py`, `data/__init__.py`, `DataPlaneResourceReader`, `Resource`, `DataSluiceError`?**
   _High betweenness centrality (0.047) - this node is a cross-community bridge._
-- **Why does `OpenedResource` connect `Any` to `Resource`, `DataSluice`, `application.py`, `exceptions.py`?**
+- **Why does `Resource` connect `Resource` to `ckan/mapper.py`, `socrata/mapper.py`, `Any`, `downloader.py`, `BatchStream`, `_identity.py`, `SocrataAdapter`, `.download`, `data/access.py`, `datagouv/mapper.py`, `checks.py`, `FileCache`, `CKANAdapter`, `DataPlaneResourceReader`, `DataGouvAdapter`?**
   _High betweenness centrality (0.041) - this node is a cross-community bridge._
 - **Are the 8 inferred relationships involving `BatchStream` (e.g. with `DataPlaneResourceReader` and `_StreamClosingBytesIO`) actually correct?**
   _`BatchStream` has 8 INFERRED edges - model-reasoned connections that need verification._

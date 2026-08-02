@@ -610,8 +610,8 @@
     "semantic_hash": ""
   },
   "src/datasluice/sync/state_store.py": {
-    "mtime": 1785704483.0287852,
-    "ast_hash": "a4b07ce76f0fd7f46af4e418133d64db",
+    "mtime": 1785704731.5478206,
+    "ast_hash": "1e8025f3a97dce81b8c71ce7327422d1",
     "semantic_hash": ""
   },
   "src/datasluice/sync/sync.py": {

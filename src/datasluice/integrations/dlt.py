@@ -59,7 +59,6 @@ def datasluice_source(
         data_sluice = DataSluice()
         result = data_sluice.search(portal, Query(text=query, limit=limit, **kwargs))
         datasets = result.datasets
-        reader = DataPlaneResourceReader(transport=HttpxTransport())
         from datasluice.sync._identity import canonical_identity
 
         seen_identities: dict[str, str] = {}
@@ -100,25 +99,30 @@ def datasluice_source(
                     from datasluice.integrations.arrow import to_arrow
                     from datasluice.sync._hashing import logical_sha256
 
-                    if state_store is not None:
-                        prior = state_store.get(identity)
-                        watermark = prior.cursor.get(identity) if prior is not None else None
-                        dlt.current.resource_state()["datasluice"] = {"watermark": watermark}
+                    transport = HttpxTransport()
+                    reader = DataPlaneResourceReader(transport=transport)
+                    try:
+                        if state_store is not None:
+                            prior = state_store.get(identity)
+                            watermark = prior.cursor.get(identity) if prior is not None else None
+                            dlt.current.resource_state()["datasluice"] = {"watermark": watermark}
 
-                    with reader.open(resource) as stream:
-                        table = to_arrow(stream)
-                    yield table
+                        with reader.open(resource) as stream:
+                            table = to_arrow(stream)
+                        yield table
 
-                    fresh_watermark = logical_sha256(table)
-                    if state_store is not None:
-                        state_store.put(
-                            identity,
-                            SyncState(
-                                cursor={identity: fresh_watermark},
-                                last_synced_at=datetime.now(UTC).isoformat(),
-                            ),
-                        )
-                    dlt.current.resource_state().setdefault("datasluice", {})["watermark"] = fresh_watermark
+                        fresh_watermark = logical_sha256(table)
+                        if state_store is not None:
+                            state_store.put(
+                                identity,
+                                SyncState(
+                                    cursor={identity: fresh_watermark},
+                                    last_synced_at=datetime.now(UTC).isoformat(),
+                                ),
+                            )
+                        dlt.current.resource_state().setdefault("datasluice", {})["watermark"] = fresh_watermark
+                    finally:
+                        transport.close()
 
                 yield _resource_body
 

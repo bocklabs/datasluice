@@ -130,6 +130,31 @@ def test_state_store_none_light_path(tmp_path: Path, csv_portal: Resource) -> No
     assert "my_resource_csv" in _table_names(db_path, dataset_name)
 
 
+def test_resource_body_closes_transport_after_extraction(
+    tmp_path: Path, csv_portal: Resource, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each resource body must close its HttpxTransport once extraction completes (no socket leak)."""
+    import datasluice.transport.httpx_transport as httpx_transport
+
+    created: list[Any] = []
+    real_cls = httpx_transport.HttpxTransport
+
+    class _ClosingSpy(real_cls):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(httpx_transport, "HttpxTransport", _ClosingSpy)
+
+    pipeline, _, _ = _make_pipeline(tmp_path, "close_transport")
+    _extract_and_load(pipeline, datasluice_source("https://portal.test"))
+
+    assert created, "expected at least one HttpxTransport to be created during extraction"
+    assert all(getattr(t, "_closed", False) for t in created), (
+        f"transports left open after extraction: {[t._closed for t in created]}"
+    )
+
+
 def test_skip_unsupported_in_dlt(monkeypatch: pytest.MonkeyPatch) -> None:
     query_resource = Resource(
         id="query-only",
