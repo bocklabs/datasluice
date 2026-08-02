@@ -56,7 +56,6 @@ site/
 
 # GSD planning
 .planning/
-!.planning/codebase/*
 
 # Data
 */data/
