@@ -28,6 +28,13 @@ def _sha_watermark(character: str = "a") -> str:
     return character * 64
 
 
+def _assert_no_orphan_temp_files(store: FileStateStore) -> None:
+    """Assert no leftover ``.tmp.*`` files remain under the store's base after a failed publish."""
+    entries = store._fs.find(store._base)
+    orphans = [path for path in entries if ".tmp." in path.rsplit("/", 1)[-1]]
+    assert orphans == [], f"orphan temp files left behind: {orphans}"
+
+
 def _checkpoint(index: int = 2) -> dict[str, Any]:
     return {
         "version": 1,
@@ -430,6 +437,7 @@ def test_move_failure_preserves_prior_complete_state(file_store: FileStateStore)
     assert file_store.get(key) == old_state
     assert file_store._fs.cat_file(final_path) == old_bytes
     assert json.loads(old_bytes)["schema_version"] == 1
+    _assert_no_orphan_temp_files(file_store)
 
 
 def test_delete_then_get_none(file_store: FileStateStore) -> None:

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice._uri import sanitize_uri
 from datasluice.exceptions import StateStoreError, SyncStateConflictError
+from datasluice.io.filesystem import safe_remove
 from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
@@ -394,6 +395,7 @@ class FileStateStore:
             self._fs.pipe_file(tmp_path, payload)
             self._fs.mv(tmp_path, path)
         except OSError as exc:
+            safe_remove(self._fs, tmp_path)
             raise StateStoreError("Failed to publish durable state envelope") from exc
 
     @staticmethod

@@ -19,6 +19,7 @@ __all__ = [
     "verify_checksum",
     "ensure_dir",
     "open_filesystem",
+    "safe_remove",
     "save_bytes",
     "safe_filename",
 ]
@@ -47,4 +48,9 @@ def __getattr__(name: str):  # PEP 562
 
         globals()["open_filesystem"] = open_filesystem
         return open_filesystem
+    if name == "safe_remove":
+        from datasluice.io.filesystem import safe_remove
+
+        globals()["safe_remove"] = safe_remove
+        return safe_remove
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice._uri import sanitize_uri
 from datasluice.exceptions import DataSluiceError, DownloadError
+from datasluice.io.filesystem import safe_remove
 from datasluice.logging import get_logger
 from datasluice.sync._identity import canonical_identity
 
@@ -377,11 +378,7 @@ def _atomic_pipe(fs: Any, final_uri: str, payload: bytes) -> None:
         fs.pipe_file(tmp_uri, payload)
         fs.mv(tmp_uri, final_uri)
     except OSError as exc:
-        try:
-            if fs.exists(tmp_uri):
-                fs.rm(tmp_uri)
-        except OSError:
-            pass
+        safe_remove(fs, tmp_uri)
         raise DownloadError(f"Failed to atomically publish {sanitize_uri(final_uri)!r}: {exc}") from exc
 
 

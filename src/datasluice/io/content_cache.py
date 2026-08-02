@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice.config.defaults import DEFAULT_CACHE_TTL
 from datasluice.exceptions import DownloadError
+from datasluice.io.filesystem import safe_remove
 from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
@@ -203,6 +204,7 @@ class ContentCache:
                 rollback.execute("COMMIT")
             finally:
                 rollback.close()
+            safe_remove(self._fs, tmp_path)
             raise DownloadError(f"Failed to write content for key {key!r}: {exc}") from exc
 
         conn = self._connect()

@@ -51,3 +51,18 @@ def open_filesystem(uri: str, credentials: dict[str, Any] | None = None) -> fssp
 
     fs, _path = fsspec.core.url_to_fs(uri, **(credentials or {}))
     return fs
+
+
+def safe_remove(fs: Any, path: str) -> None:
+    """Best-effort removal of *path* on *fs*; ignore absence and secondary OSError.
+
+    Used by atomic-publish paths (temp-file + ``mv``) to clean up an orphaned
+    temporary file after a failed ``pipe_file``/``mv``. A missing path and any
+    OSError raised while removing are swallowed so the original failure (which
+    is re-raised by the caller) is never masked by a cleanup error.
+    """
+    try:
+        if fs.exists(path):
+            fs.rm(path)
+    except OSError:
+        pass

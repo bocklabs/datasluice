@@ -256,6 +256,23 @@ def test_writer_crash_mid_two_phase_rolls_back_metadata(tmp_path: Path) -> None:
     assert cache.get("k") is None
 
 
+def test_mv_failure_cleans_orphan_temp_file(tmp_path: Path) -> None:
+    """An ``mv`` failure after ``pipe_file`` succeeds must not leave a temp-file orphan."""
+    cache = ContentCache(str(tmp_path / "cache"))
+    original_pipe = cache._fs.pipe_file
+
+    with (
+        patch.object(cache._fs, "pipe_file", wraps=original_pipe),
+        patch.object(cache._fs, "mv", side_effect=OSError("injected move failure")),
+    ):
+        with pytest.raises(DownloadError):
+            cache.put("k", b"data")
+
+    entries = cache._fs.find(cache.cache_dir)
+    orphans = [path for path in entries if ".tmp." in path.rsplit("/", 1)[-1]]
+    assert orphans == [], f"orphan temp files left behind: {orphans}"
+
+
 def test_metadata_returns_none_for_writing_status(tmp_path: Path) -> None:
     """get_metadata returns None for in-flight 'writing' rows."""
     cache = ContentCache(str(tmp_path / "cache"))
