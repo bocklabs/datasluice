@@ -45,3 +45,15 @@ include = [
     "tests",
     "pyproject.toml",
 ]
+
+[tool.coverage.run]
+branch = true
+parallel = true
+source = ["airflow/providers/datasluice"]
+data_file = ".coverage.provider"
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+precision = 2
+fail_under = 80.00

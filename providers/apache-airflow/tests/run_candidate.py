@@ -221,10 +221,19 @@ def _run_in_clean_venv(
                 str(provider_wheel),
                 f"apache-airflow=={airflow_version}",
                 "pytest",
+                "coverage",
             ],
             env=env,
         )
         _assert_datasluice_is_local(core_wheel, venv)
+        if command and command[0] == "--cover-provider":
+            runner = REPO_ROOT / "providers" / "apache-airflow" / "tests" / "measure_coverage.py"
+            result = subprocess.run(
+                [str(venv / "bin" / "python"), str(runner), "--", *command[1:]],
+                env=env,
+                cwd=str(REPO_ROOT),
+            )
+            return result.returncode
         result = subprocess.run(command, env=env, cwd=str(REPO_ROOT))
         return result.returncode
 

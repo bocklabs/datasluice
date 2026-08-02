@@ -90,7 +90,7 @@ def test_coverage_isolated_source_branch_precision_threshold(pyproject_path: Pat
         assert source == ["airflow/providers/datasluice"], f"provider measures {source}, expected only its namespace"
 
     assert report_cfg.get("precision") == 2, f"{label} precision must be 2"
-    assert str(report_cfg.get("fail_under", "")) == "80.00", f"{label} fail_under must be 80.00"
+    assert report_cfg.get("fail_under") == 80.0, f"{label} fail_under must be 80.00"
 
     # Neither distribution may include tests in its own measurement window.
     flat = " ".join(str(v) for v in [source, report_cfg])
@@ -182,7 +182,7 @@ def _coverage_report_for(directory: Path, coveragerc: dict, label: str) -> tuple
         text=True,
     )
     total_line = next((line for line in report.stdout.splitlines() if line.strip().startswith("TOTAL")), "")
-    total = float(total_line.split()[-2]) if total_line else 0.0
+    total = float(total_line.split()[-1].rstrip("%")) if total_line else 0.0
     return total, report.returncode
 
 

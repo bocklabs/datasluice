@@ -112,12 +112,14 @@ select = [
 [tool.coverage.run]
 branch = true
 parallel = true
-source = ["src/", "tests/"]
+source = ["src/datasluice"]
+data_file = ".coverage.core"
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 50
+precision = 2
+fail_under = 80.00
 exclude_also = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
