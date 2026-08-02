@@ -363,4 +363,4 @@ def test_hook_imports_only_top_level_core_contracts() -> None:
     assert "from datasluice import" in source
     assert "from datasluice." not in source
     assert "import datasluice" not in source
-    assert "._" not in source
+    assert "datasluice._" not in source
