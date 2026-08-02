@@ -56,17 +56,19 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 - ✓ Cursor/watermark state, per-batch checkpoint emission, physical Parquet resume, and source/destination replacement handling — Phase 7 (SYNC-03, SYNC-04, SYNC-05)
 - ✓ ETag/Last-Modified conditional GETs, idempotent materialization, destination health checks, and secret-free durable metadata — Phase 7 (SYNC-06, SYNC-07)
 - ✓ dlt resources yield real Arrow data and round-trip DataSluice incremental state — Phase 7 (INTG-05, INTG-06)
+- ✓ Capability metadata (`CatalogCapabilities`) with reject/warn policy for unsupported filters — Phase 5
+- ✓ Non-functioning `CustomAdapter` removed (dual source/import guard) — Phase 5
+- ✓ fsspec storage abstraction (local, S3, GCS, Azure Blob, HTTP) — Phase 3
+- ✓ Composable transformation pipeline (SelectColumns, RenameColumns, CastSchema, NormalizeTimestamps, Filtering, Flattening) — Phase 6
+- ✓ Consistent terminal conversions (to_arrow, to_pandas, to_polars, to_duckdb) consuming shared `BatchStream` — Phase 6
+- ✓ Separate Airflow provider distribution (`apache-airflow-providers-datasluice`), standalone build root — Phase 8 (INTG-07)
+- ✓ Connector contract test suite (reusable per-connector conformance tests) — Phase 5
+- ✓ Coverage threshold raised to 80% and enforced independently per distribution — Phase 8 (QUAL-11)
+- ✓ Public `DataSluice` facade + seven-command CLI + generic matrix release routing — Phase 8 (APP-01..08, QUAL-08)
 
 ### Active
 
-- [ ] Introduce capability metadata (`CatalogCapabilities`) with reject/warn policy for unsupported filters
-- [ ] Remove the non-functioning `CustomAdapter`
-- [ ] Adopt fsspec for storage (local, S3, GCS, Azure Blob, HTTP)
-- [ ] Composable transformation pipeline (SelectColumns, RenameColumns, CastSchema, NormalizeTimestamps, Filtering, Flattening)
-- [ ] Consistent terminal conversions (to_arrow, to_pandas, to_polars, to_duckdb) consuming shared `BatchStream`
-- [ ] Separate Airflow provider distribution (`apache-airflow-provider-datasluice`)
-- [ ] Connector contract test suite (reusable per-connector conformance tests)
-- [ ] Raise coverage threshold from 50% to 80-85%
+*All v1.0.0 requirements delivered — milestone complete. Next active work is defined at the next milestone.*
 
 ### Out of Scope
 
@@ -79,7 +81,11 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 
 ## Context
 
-**Current state (v0.1.0):** The project has a clean initial package structure with per-portal connector subpackages, separated mappers, lazy optional deps, and a working CLI + library API on PyPI. Through Phases 1–7 the correctness/security issues are fixed, a hexagonal composition root with narrow Protocol ports and plugin-based connectors is in place, the data plane streams Arrow `RecordBatch` with bounded memory, and incremental sync now supports checkpointed resume, idempotent materialization, conditional fetches, and real dlt resource data. Remaining v1.0.0 work is the final application layer, CLI assembly, separate Airflow provider, end-to-end coverage, and release gate in Phase 8.
+**Current state (v1.0.0 — all 8 phases complete):** DataSluice is now a hexagonal, plugin-based, streaming open-data platform. The public `DataSluice` facade is the sole application boundary; all seven CLI commands (search, inspect, download, detect, scan, open, materialize) are facade-mediated. The data plane streams Arrow `RecordBatch` with bounded memory; incremental sync supports checkpointed resume, idempotent materialization, conditional fetches, and real dlt resource data. The Apache Airflow provider ships as a separate, independently-versioned distribution (`apache-airflow-providers-datasluice`) with native discovery, a connection-aware Hook, and bounded search/materialize operators. Quality is enforced by independent 80% branch gates per distribution and a finite Core × Airflow × Python compatibility matrix in CI. Release Please routes two (and future N) distributions through a generic collect-and-matrix pipeline with per-provider approval environments. The milestone is verified (VERIFICATION passed, SECURITY SECURED, UAT 12/12).
+
+## Next Milestone Goals
+
+No next milestone has been defined. Use `/gsd-new-milestone` to gather the next requirements from release feedback and usage evidence.
 
 **Architecture audit (July 2026):** A comprehensive audit recommended evolving to hexagonal architecture (ports and adapters) with capability-based connector plugins, streaming Arrow-oriented processing, credential scoping, fsspec storage, rebuilt integrations, and incremental synchronization. The audit is accepted wholesale as the design contract for v1.0.0.
 
@@ -106,15 +112,19 @@ Discover open data, resolve resources, read them reliably, normalize them, and e
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Adopt hexagonal architecture (ports and adapters) | Separates unstable external boundaries from domain logic; enables plugin extensibility | — Pending |
-| Replace urllib with httpx | Connection pooling, streaming responses, explicit timeouts, redirect policy, retry for 5xx | — Pending |
-| Use Apache Arrow RecordBatch as canonical tabular representation | Streaming, schema-aware, zero-copy interop with pandas/Polars/DuckDB | — Pending |
-| Use fsspec for storage abstraction | Unified API for local/S3/GCS/Azure/HTTP; avoids custom filesystem code | — Pending |
-| Python entry_points for plugin discovery | Standard packaging mechanism; enables separately distributed connectors | — Pending |
-| Separate Airflow provider distribution | Avoids forcing core CI to install full Airflow stack | — Pending |
-| Keep modular monolith (not microrepos) | Simplicity; entry-point contract allows external distribution when needed | — Pending |
+| Adopt hexagonal architecture (ports and adapters) | Separates unstable external boundaries from domain logic; enables plugin extensibility | ✓ Done — v1.0.0 |
+| Replace urllib with httpx | Connection pooling, streaming responses, explicit timeouts, redirect policy, retry for 5xx | ✓ Done — Phase 3 |
+| Use Apache Arrow RecordBatch as canonical tabular representation | Streaming, schema-aware, zero-copy interop with pandas/Polars/DuckDB | ✓ Done — Phase 4 |
+| Use fsspec for storage abstraction | Unified API for local/S3/GCS/Azure/HTTP; avoids custom filesystem code | ✓ Done — Phase 3 |
+| Python entry_points for plugin discovery | Standard packaging mechanism; enables separately distributed connectors | ✓ Done — Phase 2/5 |
+| Separate Airflow provider distribution | Avoids forcing core CI to install full Airflow stack | ✓ Done — Phase 8 |
+| Keep modular monolith (not microrepos) | Simplicity; entry-point contract allows external distribution when needed | ✓ Done — v1.0.0 |
 | DuckDB Python relation API (not f-string SQL) for injection-proofing | URL flows as a C-string bind arg, never parsed as SQL; table_name regex-validated | ✓ Done — Phase 1 |
 | Credential scoping via frozen `CredentialScope` + opener-based redirect handler | Credentials never leak cross-host or on scheme downgrade; zero-config safe default | ✓ Done — Phase 1 |
+| Public `DataSluice` facade is the sole application boundary | CLI and integrations depend only on top-level public contracts; no private-core imports (AST-enforced) | ✓ Done — Phase 8 |
+| Generic collect-and-matrix release routing driven by `providers/registry.json` | Adding a provider = one registry row + GitHub envs; zero workflow YAML edits; core on its own lane | ✓ Done — Phase 8 |
+| Per-provider slug-based release environments (`<slug>-test-pypi`/`<slug>-pypi`) | Independent required-reviewer approval per provider; short, stable names | ✓ Done — Phase 8 |
+| Convention-based provider smoke (`<pkg>/tests/smoke.py`) | Generic publish-time verification with no per-provider command strings (no injection surface) | ✓ Done — Phase 8 |
 
 ## Evolution
 
@@ -134,4 +144,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-31 after Phase 7 — incremental sync and dlt integration complete (checkpoint/resume, conditional fetch, idempotent materialization, secure durable state, and real Arrow resources). 614 tests passing, 6 skipped.*
+*Last updated: 2026-08-02 after Phase 8 — application layer, seven-command facade CLI, separate Airflow provider distribution, independent 80% coverage gates, and generic matrix release routing complete. Milestone v1.0.0 all phases done: VERIFICATION passed, SECURITY SECURED, UAT 12/12. 756 tests passing, 6 skipped.*
