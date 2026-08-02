@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -14,11 +13,6 @@ from typer.testing import CliRunner
 import datasluice.cli.inspect as inspect_cmd
 from datasluice.cli.app import app
 from datasluice.domain import Dataset, Organization, Resource
-
-if not hasattr(inspect_cmd, "DataSluice"):
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.fail("inspect facade refactor pending GREEN phase", pytrace=False)
-    pytest.skip("inspect facade refactor pending GREEN phase", allow_module_level=True)
 
 runner = CliRunner()
 
