@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,7 +32,28 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 _CORE_NAME = "datasluice"
 _PROVIDER_NAME = "apache-airflow-providers-datasluice"
 _PROVIDER_VERSION = "0.1.0"
-_PROVIDER_REQUIRES = frozenset({"datasluice>=1.0,<2", "apache-airflow>=3.2,<4"})
+_PROVIDER_REQUIRES = {
+    "datasluice": ">=1.0,<2",
+    "apache-airflow": ">=3.2,<4",
+}
+
+
+def _normalize_requires(lines: list[str]) -> dict[str, str]:
+    """Normalize Requires-Dist lines to a name -> canonical-specifier mapping.
+
+    Wheel METADATA may reorder PEP 508 version specifiers (e.g. ``<2,>=1.0`` vs
+    ``>=1.0,<2``); ``packaging.requirements.Requirement`` canonicalizes them so
+    comparisons are order-independent.
+    """
+    from packaging.requirements import Requirement
+
+    normalized: dict[str, str] = {}
+    for line in lines:
+        if not line:
+            continue
+        requirement = Requirement(line)
+        normalized[requirement.name.lower()] = ",".join(sorted(str(specifier) for specifier in requirement.specifier))
+    return normalized
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -134,7 +156,8 @@ def _build_provider_wheel() -> Path:
 
 
 def _single_wheel(out_dir: Path, project_name: str) -> Path:
-    wheels = sorted(out_dir.glob(f"{project_name}-*.whl"))
+    normalized = re.sub(r"[-_.]+", "_", project_name)
+    wheels = sorted(out_dir.glob(f"{normalized}-*.whl"))
     if len(wheels) != 1:
         raise RuntimeError(f"expected exactly one {project_name} wheel in {out_dir}, found: {wheels}")
     return wheels[0]
@@ -167,11 +190,14 @@ def _validate_provider_wheel(wheel: Path) -> None:
         raise RuntimeError(f"provider wheel Name={meta['Name']!r}, expected {_PROVIDER_NAME!r}")
     if meta["Version"] != _PROVIDER_VERSION:
         raise RuntimeError(f"provider wheel Version={meta['Version']!r}, expected {_PROVIDER_VERSION!r}")
-    requires = frozenset(meta.get_all("Requires-Dist") or [])
-    if requires != _PROVIDER_REQUIRES:
-        missing = _PROVIDER_REQUIRES - requires
-        extra = requires - _PROVIDER_REQUIRES
-        raise RuntimeError(f"provider Requires-Dist mismatch: missing={sorted(missing)}, extra={sorted(extra)}")
+    actual = _normalize_requires(meta.get_all("Requires-Dist") or [])
+    expected = _normalize_requires(list(f"{name}{specifier}" for name, specifier in _PROVIDER_REQUIRES.items()))
+    missing = {name: spec for name, spec in expected.items() if name not in actual or actual[name] != spec}
+    extra = {name: spec for name, spec in actual.items() if name not in _PROVIDER_REQUIRES}
+    if missing or extra:
+        raise RuntimeError(
+            f"provider Requires-Dist mismatch: missing={sorted(missing.items())}, extra={sorted(extra.items())}"
+        )
 
 
 def _run_in_clean_venv(
@@ -194,6 +220,7 @@ def _run_in_clean_venv(
                 str(core_wheel),
                 str(provider_wheel),
                 f"apache-airflow=={airflow_version}",
+                "pytest",
             ],
             env=env,
         )
