@@ -123,6 +123,12 @@ def _manifest_ready() -> bool:
     if not (RELEASE_CONFIG.exists() and RELEASE_MANIFEST.exists()):
         return False
     config = _load_json(RELEASE_CONFIG)
+    if config.get("release-type") != "python":
+        return False
+    if not isinstance(config.get("changelog-types"), list) or not config["changelog-types"]:
+        return False
+    if config.get("include-component-in-tag") is not True:
+        return False
     packages = config.get("packages") or {}
     if set(packages) != {".", PROVIDER_PATH}:
         return False
@@ -134,6 +140,10 @@ def _manifest_ready() -> bool:
         return False
     if provider.get("initial-version") != "0.1.0":
         return False
+    if "changelog-types" in root or "changelog-types" in provider:
+        return False
+    if "release-type" in root or "release-type" in provider:
+        return False
     return _load_json(RELEASE_MANIFEST) == {".": "0.1.0"}
 
 
@@ -142,18 +152,23 @@ def _routing_ready() -> bool:
         return False
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow.get("jobs") or {}
-    if not isinstance(jobs.get("publish-core"), dict) or not isinstance(jobs.get("publish-provider"), dict):
+    if not isinstance(jobs.get("publish-core"), dict) or not isinstance(jobs.get("publish-providers"), dict):
         return False
     release_job = jobs.get("release-please")
     if not isinstance(release_job, dict):
         return False
-    return any(
+    steps = release_job.get("steps") or []
+    has_release = any(
         isinstance(step, dict)
         and step.get("id") == "release"
         and isinstance(step.get("uses"), str)
         and "release-please-action" in step["uses"]
-        for step in release_job.get("steps") or []
+        for step in steps
     )
+    has_collect = any(isinstance(step, dict) and step.get("id") == "collect" for step in steps)
+    outputs = release_job.get("outputs") or {}
+    has_provider_releases = "provider-releases" in outputs
+    return has_release and has_collect and has_provider_releases
 
 
 def _workflow_call_inputs(publish: dict) -> dict:
@@ -207,23 +222,43 @@ def _post_merge_manifest(config: dict, manifest: dict, proposals: dict[str, tupl
     return updated
 
 
-def _eval_provider_condition(
+def _eval_providers_condition(
     expr: str,
     *,
     core_created: bool,
-    provider_created: bool,
+    provider_releases_empty: bool,
     core_result: str,
 ) -> bool:
     expr = expr.replace("${{", "").replace("}}", "")
     expr = expr.replace("always()", "True")
     expr = expr.replace("needs.release-please.outputs.core--release_created", "'true'" if core_created else "'false'")
     expr = expr.replace(
-        "needs.release-please.outputs.provider--release_created",
-        "'true'" if provider_created else "'false'",
+        "needs.release-please.outputs.provider-releases",
+        "'[]'" if provider_releases_empty else '\'[{"slug":"x"}]\'',
     )
     expr = expr.replace("needs.publish-core.result", repr(core_result))
     expr = expr.replace("&&", " and ").replace("||", " or ")
     return bool(eval("(" + expr + ")", {"__builtins__": {}}, {}))
+
+
+def _collect_providers(registry: dict, release_outputs: dict) -> list[dict]:
+    """Mirror the collect step: filter registry providers whose path has a release_created == 'true' output."""
+    releases: list[dict] = []
+    for provider in registry.get("providers") or []:
+        path = provider["path"]
+        if release_outputs.get(f"{path}--release_created") == "true":
+            releases.append(
+                {
+                    "slug": provider["slug"],
+                    "path": path,
+                    "package_name": provider["package_name"],
+                    "version": release_outputs[f"{path}--version"],
+                    "tag_name": release_outputs[f"{path}--tag_name"],
+                    "testpypi_env": provider["testpypi_env"],
+                    "pypi_env": provider["pypi_env"],
+                }
+            )
+    return releases
 
 
 def test_reusable_publish_interface() -> None:
@@ -299,21 +334,28 @@ def test_candidate_smoke_precedes_production() -> None:
 
 
 def test_manifest_components() -> None:
-    """Config tracks both packages with component tags; the manifest records only actual releases."""
-    _require(_manifest_ready(), "two-component manifest not yet configured")
+    """Config uses top-level shared defaults with an N-entry packages map; manifest records only actual releases."""
+    _require(_manifest_ready(), "manifest with top-level defaults not yet configured")
     config = _load_json(RELEASE_CONFIG)
     manifest = _load_json(RELEASE_MANIFEST)
+    assert config["release-type"] == "python"
+    assert config["include-component-in-tag"] is True
+    assert config["include-v-in-tag"] is True
+    assert config["version-file"] == "pyproject.toml"
+    assert config["changelog-path"] == "CHANGELOG.md"
+    assert isinstance(config["changelog-types"], list)
+    assert len(config["changelog-types"]) >= 1
     packages = config["packages"]
     assert set(packages) == {".", PROVIDER_PATH}
     root = packages["."]
     provider = packages[PROVIDER_PATH]
     assert root["component"] == "datasluice"
     assert provider["component"] == "apache-airflow-providers-datasluice"
-    assert root["include-component-in-tag"] is True
-    assert provider["include-component-in-tag"] is True
-    assert root["version-file"] == "pyproject.toml"
-    assert provider["version-file"] == "pyproject.toml"
     assert provider["initial-version"] == "0.1.0"
+    assert "changelog-types" not in root
+    assert "changelog-types" not in provider
+    assert "release-type" not in root
+    assert "release-type" not in provider
     assert "release-as" not in root
     assert "release-as" not in provider
     assert manifest == {".": "0.1.0"}
@@ -347,10 +389,10 @@ def test_initial_release_versions_and_tags() -> None:
 
 
 def test_release_outputs_route_without_release_event() -> None:
-    """Release Please outputs route into the typed publish interface without a release event."""
+    """Release outputs route through a collect step into core and matrix publish callers without a release event."""
     _require(
         _publish_interface_ready() and _routing_ready(),
-        "output routing not yet wired to the publish interface",
+        "collect/matrix routing not yet wired to the publish interface",
     )
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     assert "release" not in workflow["on"], "package publication must not listen for release events"
@@ -359,88 +401,96 @@ def test_release_outputs_route_without_release_event() -> None:
     assert "github.event.release" not in raw
 
     jobs = workflow["jobs"]
-    outputs = jobs["release-please"]["outputs"]
+    release_job = jobs["release-please"]
+    outputs = release_job["outputs"]
     assert outputs["core--release_created"] == "${{ steps.release.outputs.release_created }}"
     assert outputs["core--version"] == "${{ steps.release.outputs.version }}"
     assert outputs["core--tag_name"] == "${{ steps.release.outputs.tag_name }}"
-    assert outputs["provider--release_created"] == (
-        "${{ steps.release.outputs['providers/apache-airflow--release_created'] }}"
-    )
-    assert outputs["provider--version"] == "${{ steps.release.outputs['providers/apache-airflow--version'] }}"
+    assert "provider-releases" in outputs
 
-    release_steps = [s for s in jobs["release-please"]["steps"] if s.get("id") == "release"]
+    release_steps = [s for s in release_job["steps"] if s.get("id") == "release"]
     assert len(release_steps) == 1
     assert "release-please-action" in release_steps[0]["uses"]
 
+    collect_steps = [s for s in release_job["steps"] if s.get("id") == "collect"]
+    assert len(collect_steps) == 1
+
     core = jobs["publish-core"]
-    provider = jobs["publish-provider"]
+    providers = jobs["publish-providers"]
     assert core["uses"] == "./.github/workflows/publish.yml"
-    assert provider["uses"] == "./.github/workflows/publish.yml"
+    assert providers["uses"] == "./.github/workflows/publish.yml"
     assert "core--release_created" in str(core.get("if", ""))
     assert "'true'" in str(core.get("if", ""))
-    for job in (core, provider):
-        supplied = job.get("with") or {}
-        missing = [name for name in REQUIRED_PUBLISH_INPUTS if name not in supplied]
-        assert not missing, f"caller job missing publish inputs: {missing}"
 
 
 def test_provider_only_and_joint_dependencies() -> None:
-    """Provider publication is ordered after core in joint releases but survives provider-only runs."""
+    """Provider matrix runs after core in joint releases but proceeds in provider-only and skips when empty."""
     _require(
         _publish_interface_ready() and _routing_ready(),
-        "core-before-provider routing not yet wired",
+        "core-before-providers matrix routing not yet wired",
     )
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]
     core = jobs["publish-core"]
-    provider = jobs["publish-provider"]
-    assert "publish-core" in provider["needs"]
+    providers = jobs["publish-providers"]
+    assert "publish-core" in providers["needs"]
+    assert "release-please" in providers["needs"]
     core_if = str(core.get("if", ""))
     assert "core--release_created" in core_if and "'true'" in core_if
-    provider_if = str(provider.get("if", ""))
-    assert "always()" in provider_if
-    assert "provider--release_created" in provider_if
-    assert "core--release_created" in provider_if
-    assert "publish-core.result" in provider_if
+    providers_if = str(providers.get("if", ""))
+    assert "always()" in providers_if
+    assert "provider-releases" in providers_if
+    assert "core--release_created" in providers_if
+    assert "publish-core.result" in providers_if
 
-    def runs(*, core_created: bool, provider_created: bool, core_result: str) -> bool:
-        return _eval_provider_condition(
-            provider_if,
+    def runs(*, core_created: bool, provider_releases_empty: bool, core_result: str) -> bool:
+        return _eval_providers_condition(
+            providers_if,
             core_created=core_created,
-            provider_created=provider_created,
+            provider_releases_empty=provider_releases_empty,
             core_result=core_result,
         )
 
-    assert runs(core_created=True, provider_created=True, core_result="success") is True
-    assert runs(core_created=True, provider_created=True, core_result="failure") is False
-    assert runs(core_created=False, provider_created=True, core_result="skipped") is True
-    assert runs(core_created=False, provider_created=False, core_result="skipped") is False
+    assert runs(core_created=True, provider_releases_empty=False, core_result="success") is True
+    assert runs(core_created=True, provider_releases_empty=False, core_result="failure") is False
+    assert runs(core_created=False, provider_releases_empty=False, core_result="skipped") is True
+    assert runs(core_created=False, provider_releases_empty=True, core_result="skipped") is False
+    assert runs(core_created=True, provider_releases_empty=True, core_result="success") is False
 
 
 def test_distinct_production_environments() -> None:
-    """Core and provider callers supply four distinct environment values to the typed interface."""
+    """Core uses test-pypi/pypi; each provider matrix cell uses slug-derived env names from the registry."""
     _require(
-        _publish_interface_ready() and _routing_ready(),
+        _publish_interface_ready() and _routing_ready() and _provider_registry_ready(),
         "distinct environments not yet wired",
     )
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]
-    core = jobs["publish-core"]["with"]
-    provider = jobs["publish-provider"]["with"]
-    environments = {
-        "core-test-pypi": core["testpypi_environment"],
-        "core-pypi": core["pypi_environment"],
-        "provider-test-pypi": provider["testpypi_environment"],
-        "provider-pypi": provider["pypi_environment"],
-    }
-    expected = {
-        "core-test-pypi": "core-test-pypi",
-        "core-pypi": "core-pypi",
-        "provider-test-pypi": "provider-test-pypi",
-        "provider-pypi": "provider-pypi",
-    }
-    assert environments == expected
-    assert len(set(environments.values())) == 4
+    core_with = jobs["publish-core"]["with"]
+    assert core_with["testpypi_environment"] == "test-pypi"
+    assert core_with["pypi_environment"] == "pypi"
+    assert core_with["testpypi_environment"] != core_with["pypi_environment"]
+
+    providers_with = jobs["publish-providers"]["with"]
+    assert providers_with["testpypi_environment"] == "${{ matrix.provider.testpypi_env }}"
+    assert providers_with["pypi_environment"] == "${{ matrix.provider.pypi_env }}"
+
+    registry = _load_json(REGISTRY_PATH)
+    release_outputs = {f"{p['path']}--release_created": "true" for p in registry["providers"]}
+    release_outputs.update({f"{p['path']}--version": p["initial_version"] for p in registry["providers"]})
+    release_outputs.update(
+        {f"{p['path']}--tag_name": f"{p['package_name']}-v{p['initial_version']}" for p in registry["providers"]}
+    )
+    collected = _collect_providers(registry, release_outputs)
+    env_values = set()
+    for entry in collected:
+        env_values.add(entry["testpypi_env"])
+        env_values.add(entry["pypi_env"])
+        assert entry["testpypi_env"] != "test-pypi"
+        assert entry["pypi_env"] != "pypi"
+    assert "test-pypi" not in env_values
+    assert "pypi" not in env_values
+    assert len(env_values) == len(collected) * 2
 
 
 def test_provider_registry_schema() -> None:
@@ -479,3 +529,133 @@ def test_provider_smoke_module_exists() -> None:
         smoke_path = REPO_ROOT / entry["path"] / "tests" / "smoke.py"
         assert smoke_path.exists(), f"smoke module missing: {smoke_path}"
         assert smoke_path.stat().st_size > 0, f"smoke module empty: {smoke_path}"
+
+
+def test_registry_config_parity() -> None:
+    """Every registry path appears in release-please-config packages; every non-root package has a registry entry."""
+    _require(_provider_registry_ready() and _manifest_ready(), "registry/config parity not yet established")
+    registry = _load_json(REGISTRY_PATH)
+    config = _load_json(RELEASE_CONFIG)
+    packages = config["packages"]
+    registry_paths = {p["path"] for p in registry["providers"]}
+    registry_components = {p["path"]: p["package_name"] for p in registry["providers"]}
+    for path in registry_paths:
+        assert path in packages, f"registry path {path} missing from release-please-config packages"
+        assert packages[path].get("component") == registry_components[path], (
+            f"component mismatch for {path}: "
+            f"config={packages[path].get('component')}, registry={registry_components[path]}"
+        )
+    non_root_packages = {p for p in packages if p != "."}
+    assert non_root_packages == registry_paths, (
+        f"non-root packages {non_root_packages} do not match registry paths {registry_paths}"
+    )
+
+
+def test_collect_step_filters_providers() -> None:
+    """The collect step serializes release outputs, filters against the registry, and emits provider-releases JSON."""
+    _require(_routing_ready() and _provider_registry_ready(), "collect step not yet implemented")
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    release_job = workflow["jobs"]["release-please"]
+
+    collect_steps = [s for s in release_job["steps"] if s.get("id") == "collect"]
+    assert len(collect_steps) == 1
+    collect = collect_steps[0]
+    assert collect.get("if") == "always()"
+    collect_env = collect.get("env") or {}
+    assert "toJSON(steps.release.outputs)" in str(collect_env.get("RELEASE_OUTPUTS", ""))
+    collect_run = str(collect.get("run", ""))
+    assert "providers/registry.json" in collect_run
+    assert "$GITHUB_OUTPUT" in collect_run
+
+    outputs = release_job.get("outputs") or {}
+    assert "provider-releases" in outputs
+    assert "collect" in str(outputs["provider-releases"])
+
+    registry = _load_json(REGISTRY_PATH)
+    assert _collect_providers(registry, {}) == []
+
+    single = {
+        "providers/apache-airflow--release_created": "true",
+        "providers/apache-airflow--version": "0.1.0",
+        "providers/apache-airflow--tag_name": "apache-airflow-providers-datasluice-v0.1.0",
+    }
+    result = _collect_providers(registry, single)
+    assert len(result) == 1
+    assert result[0]["slug"] == "airflow"
+    assert result[0]["version"] == "0.1.0"
+    assert result[0]["tag_name"] == "apache-airflow-providers-datasluice-v0.1.0"
+
+    multi_registry = {
+        "providers": [
+            {
+                "slug": "airflow",
+                "path": "providers/apache-airflow",
+                "package_name": "apache-airflow-providers-datasluice",
+                "initial_version": "0.1.0",
+                "testpypi_env": "airflow-test-pypi",
+                "pypi_env": "airflow-pypi",
+            },
+            {
+                "slug": "prefect",
+                "path": "providers/prefect",
+                "package_name": "prefect-datasluice",
+                "initial_version": "0.1.0",
+                "testpypi_env": "prefect-test-pypi",
+                "pypi_env": "prefect-pypi",
+            },
+        ]
+    }
+    result_multi = _collect_providers(multi_registry, single)
+    assert len(result_multi) == 1
+    assert result_multi[0]["slug"] == "airflow"
+
+    joint = {
+        **single,
+        "release_created": "true",
+        "version": "1.0.0",
+        "tag_name": "datasluice-v1.0.0",
+    }
+    result_joint = _collect_providers(registry, joint)
+    assert len(result_joint) == 1
+
+
+def test_matrix_expands_from_collect_output() -> None:
+    """publish-providers uses fromJson(provider-releases) as its matrix with seven inputs from matrix.provider.*."""
+    _require(_routing_ready(), "matrix routing not yet implemented")
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    providers_job = workflow["jobs"]["publish-providers"]
+
+    strategy = providers_job.get("strategy") or {}
+    matrix = strategy.get("matrix") or {}
+    assert "fromJson(needs.release-please.outputs.provider-releases)" in str(matrix.get("provider", ""))
+    assert strategy.get("fail-fast") is False
+
+    with_block = providers_job.get("with") or {}
+    assert "smoke_command" not in with_block
+    expected_matrix_inputs = {
+        "component": "${{ matrix.provider.slug }}",
+        "package_path": "${{ matrix.provider.path }}",
+        "package_name": "${{ matrix.provider.package_name }}",
+        "version": "${{ matrix.provider.version }}",
+        "ref": "${{ matrix.provider.tag_name }}",
+        "testpypi_environment": "${{ matrix.provider.testpypi_env }}",
+        "pypi_environment": "${{ matrix.provider.pypi_env }}",
+    }
+    for key, expected in expected_matrix_inputs.items():
+        assert with_block.get(key) == expected, f"matrix input {key}: expected {expected}, got {with_block.get(key)}"
+
+
+def test_core_not_in_matrix() -> None:
+    """publish-core is a standalone job; the matrix job has no hardcoded core reference."""
+    _require(_routing_ready(), "core/matrix separation not yet implemented")
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    jobs = workflow["jobs"]
+
+    core = jobs["publish-core"]
+    assert "strategy" not in core
+
+    providers = jobs["publish-providers"]
+    assert "strategy" in providers
+    providers_with = providers.get("with") or {}
+    assert providers_with.get("component") != "core"
+    assert providers_with.get("package_name") != "datasluice"
