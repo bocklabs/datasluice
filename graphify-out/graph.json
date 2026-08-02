@@ -166,6 +166,17 @@
       "norm_label": "any"
     },
     {
+      "label": "mirror_dlt_state()",
+      "file_type": "code",
+      "source_file": "src/datasluice/integrations/dlt.py",
+      "source_location": "L147",
+      "_origin": "ast",
+      "id": "src_datasluice_integrations_dlt_mirror_dlt_state",
+      "community": 0,
+      "community_name": "sync/state_store.py",
+      "norm_label": "mirror_dlt_state()"
+    },
+    {
       "label": "dlt (data load tool) integration: use DataSluice as a dlt source. Requires\u2026",
       "file_type": "rationale",
       "source_file": "src/datasluice/integrations/dlt.py",
@@ -197,6 +208,17 @@
       "community": 0,
       "community_name": "sync/state_store.py",
       "norm_label": "return a dlt source yielding one arrow-backed table per resource. args: portal:..."
+    },
+    {
+      "label": "Mirror dlt's load-committed per-resource watermarks into a DataSluice\u2026",
+      "file_type": "rationale",
+      "source_file": "src/datasluice/integrations/dlt.py",
+      "source_location": "L148",
+      "_origin": "ast",
+      "id": "src_datasluice_integrations_dlt_rationale_148",
+      "community": 0,
+      "community_name": "sync/state_store.py",
+      "norm_label": "mirror dlt's load-committed per-resource watermarks into a datasluice..."
     },
     {
       "label": "sync/state_store.py",
@@ -4351,7 +4373,7 @@
       "source_file": "src/datasluice/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "datasluice/__init__.py",
       "id": "src_datasluice_init"
@@ -4362,7 +4384,7 @@
       "source_file": "src/datasluice/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "datasluice \u2014 one python interface for open-data discovery, extraction, format...",
       "id": "src_datasluice_init_rationale_1"
@@ -4406,7 +4428,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "exceptions.py",
       "id": "src_datasluice_exceptions"
@@ -4418,7 +4440,7 @@
       "source_location": "L11",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "datasluiceerror",
       "id": "src_datasluice_exceptions_datasluiceerror"
     },
@@ -4429,7 +4451,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "exception",
       "id": "exception"
     },
@@ -4439,7 +4461,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L15",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "resourceresolutionerror",
       "id": "src_datasluice_exceptions_resourceresolutionerror"
@@ -4450,7 +4472,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L19",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "openedresourceconsumederror",
       "id": "src_datasluice_exceptions_openedresourceconsumederror"
@@ -4472,7 +4494,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L27",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "adaptererror",
       "id": "src_datasluice_exceptions_adaptererror"
@@ -4483,7 +4505,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L31",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "adapternotfounderror",
       "id": "src_datasluice_exceptions_adapternotfounderror"
@@ -4494,8 +4516,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L35",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 52,
+      "community_name": "PortalDetectionError",
       "norm_label": "portaldetectionerror",
       "id": "src_datasluice_exceptions_portaldetectionerror"
     },
@@ -4506,7 +4528,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "community": 52,
-      "community_name": ".__init__",
+      "community_name": "PortalDetectionError",
       "norm_label": ".__init__()",
       "id": "src_datasluice_exceptions_portaldetectionerror_init"
     },
@@ -4517,7 +4539,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 52,
-      "community_name": ".__init__",
+      "community_name": "PortalDetectionError",
       "norm_label": "detectionresult",
       "id": "src_datasluice_exceptions_py_detectionresult"
     },
@@ -4527,7 +4549,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L50",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "authenticationerror",
       "id": "src_datasluice_exceptions_authenticationerror"
@@ -4538,8 +4560,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L54",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 56,
+      "community_name": "PortalError",
       "norm_label": "ratelimiterror",
       "id": "src_datasluice_exceptions_ratelimiterror"
     },
@@ -4550,7 +4572,7 @@
       "source_location": "L57",
       "_origin": "ast",
       "community": 52,
-      "community_name": ".__init__",
+      "community_name": "PortalDetectionError",
       "norm_label": ".__init__()",
       "id": "src_datasluice_exceptions_ratelimiterror_init"
     },
@@ -4560,8 +4582,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L62",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 52,
+      "community_name": "PortalDetectionError",
       "norm_label": "retryablehttperror",
       "id": "src_datasluice_exceptions_retryablehttperror"
     },
@@ -4572,7 +4594,7 @@
       "source_location": "L65",
       "_origin": "ast",
       "community": 52,
-      "community_name": ".__init__",
+      "community_name": "PortalDetectionError",
       "norm_label": ".__init__()",
       "id": "src_datasluice_exceptions_retryablehttperror_init"
     },
@@ -4616,7 +4638,7 @@
       "source_location": "L81",
       "_origin": "ast",
       "community": 52,
-      "community_name": ".__init__",
+      "community_name": "PortalDetectionError",
       "norm_label": ".__init__()",
       "id": "src_datasluice_exceptions_checksummismatcherror_init"
     },
@@ -4638,7 +4660,7 @@
       "source_location": "L91",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "decompressionerror",
       "id": "src_datasluice_exceptions_decompressionerror"
     },
@@ -4659,7 +4681,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L110",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "configerror",
       "id": "src_datasluice_exceptions_configerror"
@@ -4670,7 +4692,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L114",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "statestoreerror",
       "id": "src_datasluice_exceptions_statestoreerror"
@@ -4681,7 +4703,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L125",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "syncstateconflicterror",
       "id": "src_datasluice_exceptions_syncstateconflicterror"
@@ -4704,7 +4726,7 @@
       "source_location": "L142",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "streamclosederror",
       "id": "src_datasluice_exceptions_streamclosederror"
     },
@@ -4714,8 +4736,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L152",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 51,
+      "community_name": "data/__init__.py",
       "norm_label": "schemaunificationerror",
       "id": "src_datasluice_exceptions_schemaunificationerror"
     },
@@ -4737,7 +4759,7 @@
       "source_location": "L177",
       "_origin": "ast",
       "community": 52,
-      "community_name": ".__init__",
+      "community_name": "PortalDetectionError",
       "norm_label": ".__init__()",
       "id": "src_datasluice_exceptions_unsupportedqueryfielderror_init"
     },
@@ -4747,7 +4769,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "exception hierarchy for datasluice.",
       "id": "src_datasluice_exceptions_rationale_1"
@@ -4759,7 +4781,7 @@
       "source_location": "L12",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "base exception for all datasluice errors.",
       "id": "src_datasluice_exceptions_rationale_12"
     },
@@ -4769,7 +4791,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L16",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when a public resource locator cannot select exactly one resource.",
       "id": "src_datasluice_exceptions_rationale_16"
@@ -4780,7 +4802,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when an opened resource is consumed or closed more than once.",
       "id": "src_datasluice_exceptions_rationale_20"
@@ -4802,7 +4824,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L28",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when an adapter cannot fulfil a request.",
       "id": "src_datasluice_exceptions_rationale_28"
@@ -4813,7 +4835,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L32",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when no adapter is registered for a portal type.",
       "id": "src_datasluice_exceptions_rationale_32"
@@ -4824,8 +4846,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L36",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 52,
+      "community_name": "PortalDetectionError",
       "norm_label": "raised when the portal type cannot be auto-detected. attributes:...",
       "id": "src_datasluice_exceptions_rationale_36"
     },
@@ -4835,7 +4857,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L51",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when authentication credentials are missing or invalid.",
       "id": "src_datasluice_exceptions_rationale_51"
@@ -4846,8 +4868,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L55",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 56,
+      "community_name": "PortalError",
       "norm_label": "raised when the portal rate-limits requests.",
       "id": "src_datasluice_exceptions_rationale_55"
     },
@@ -4857,8 +4879,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L63",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 52,
+      "community_name": "PortalDetectionError",
       "norm_label": "raised on http 5xx responses that should be retried.",
       "id": "src_datasluice_exceptions_rationale_63"
     },
@@ -4913,7 +4935,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "raised when a compressed resource cannot be decompressed (d-p4-21). compression...",
       "id": "src_datasluice_exceptions_rationale_92"
     },
@@ -4934,7 +4956,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L111",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when configuration is invalid or incomplete.",
       "id": "src_datasluice_exceptions_rationale_111"
@@ -4945,7 +4967,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L115",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when a state store cannot read or write durable sync state (d-p7-26). a...",
       "id": "src_datasluice_exceptions_rationale_115"
@@ -4956,7 +4978,7 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L126",
       "_origin": "ast",
-      "community": 61,
+      "community": 13,
       "community_name": "exceptions.py",
       "norm_label": "raised when a state write loses an optimistic compare-and-swap race (d-p7-27)....",
       "id": "src_datasluice_exceptions_rationale_126"
@@ -4979,7 +5001,7 @@
       "source_location": "L143",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "raised when operating on a closed :class:`batchstream` (d-p4-21). a direct...",
       "id": "src_datasluice_exceptions_rationale_143"
     },
@@ -4989,8 +5011,8 @@
       "source_file": "src/datasluice/exceptions.py",
       "source_location": "L153",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 51,
+      "community_name": "data/__init__.py",
       "norm_label": "raised when batch schemas cannot be unified under pyarrow promotion (d-p4-21)....",
       "id": "src_datasluice_exceptions_rationale_153"
     },
@@ -5011,8 +5033,8 @@
       "source_file": "src/datasluice/runtime/session.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 52,
+      "community_name": "PortalDetectionError",
       "norm_label": "session.py",
       "id": "src_datasluice_runtime_session"
     },
@@ -5253,8 +5275,8 @@
       "source_file": "src/datasluice/runtime/session.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 52,
+      "community_name": "PortalDetectionError",
       "norm_label": "datasluicesession \u2014 internal composition substrate (arch-03). the session wires...",
       "id": "src_datasluice_runtime_session_rationale_1"
     },
@@ -6199,8 +6221,8 @@
       "source_file": "src/datasluice/_version.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "_version.py",
       "id": "src_datasluice_version"
     },
@@ -6210,8 +6232,8 @@
       "source_file": "src/datasluice/_version.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "version information for datasluice, read from installed package metadata. kept...",
       "id": "src_datasluice_version_rationale_1"
     },
@@ -6221,8 +6243,8 @@
       "source_file": "src/datasluice/auth/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "auth/__init__.py",
       "id": "src_datasluice_auth_init"
     },
@@ -6232,8 +6254,8 @@
       "source_file": "src/datasluice/auth/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "authentication strategies for datasluice.",
       "id": "src_datasluice_auth_init_rationale_1"
     },
@@ -6243,8 +6265,8 @@
       "source_file": "src/datasluice/auth/api_key.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "api_key.py",
       "id": "src_datasluice_auth_api_key"
     },
@@ -6254,8 +6276,8 @@
       "source_file": "src/datasluice/auth/api_key.py",
       "source_location": "L14",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "apikeyauth",
       "id": "src_datasluice_auth_api_key_apikeyauth"
     },
@@ -6265,8 +6287,8 @@
       "source_file": "src/datasluice/auth/api_key.py",
       "source_location": "L27",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": ".__init__()",
       "id": "src_datasluice_auth_api_key_apikeyauth_init"
     },
@@ -6276,8 +6298,8 @@
       "source_file": "src/datasluice/auth/api_key.py",
       "source_location": "L42",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": ".__repr__()",
       "id": "src_datasluice_auth_api_key_apikeyauth_repr"
     },
@@ -6287,8 +6309,8 @@
       "source_file": "src/datasluice/auth/api_key.py",
       "source_location": "L48",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": ".apply()",
       "id": "src_datasluice_auth_api_key_apikeyauth_apply"
     },
@@ -6298,8 +6320,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "any",
       "id": "src_datasluice_auth_api_key_py_any"
     },
@@ -6309,8 +6331,8 @@
       "source_file": "src/datasluice/auth/api_key.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "api-key authentication strategy. supports passing the key via a header (default...",
       "id": "src_datasluice_auth_api_key_rationale_1"
     },
@@ -6320,8 +6342,8 @@
       "source_file": "src/datasluice/auth/api_key.py",
       "source_location": "L15",
       "_origin": "ast",
-      "community": 95,
-      "community_name": "APIKeyAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "authenticate requests using an api key. args: api_key: the api key value....",
       "id": "src_datasluice_auth_api_key_rationale_15"
     },
@@ -6419,8 +6441,8 @@
       "source_file": "src/datasluice/auth/basic.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 41,
-      "community_name": "BasicAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "basic.py",
       "id": "src_datasluice_auth_basic"
     },
@@ -6485,8 +6507,8 @@
       "source_file": "src/datasluice/auth/basic.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 41,
-      "community_name": "BasicAuth",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "http basic authentication strategy.",
       "id": "src_datasluice_auth_basic_rationale_1"
     },
@@ -6683,8 +6705,8 @@
       "source_file": "src/datasluice/auth/none.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "none.py",
       "id": "src_datasluice_auth_none"
     },
@@ -6694,8 +6716,8 @@
       "source_file": "src/datasluice/auth/none.py",
       "source_location": "L10",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "noauth",
       "id": "src_datasluice_auth_none_noauth"
     },
@@ -6705,8 +6727,8 @@
       "source_file": "src/datasluice/auth/none.py",
       "source_location": "L16",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": ".apply()",
       "id": "src_datasluice_auth_none_noauth_apply"
     },
@@ -6716,8 +6738,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "any",
       "id": "src_datasluice_auth_none_py_any"
     },
@@ -6727,8 +6749,8 @@
       "source_file": "src/datasluice/auth/none.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "no-op authentication strategy for public portals.",
       "id": "src_datasluice_auth_none_rationale_1"
     },
@@ -6738,8 +6760,8 @@
       "source_file": "src/datasluice/auth/none.py",
       "source_location": "L11",
       "_origin": "ast",
-      "community": 33,
-      "community_name": "auth/__init__.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "authentication strategy that adds no credentials. suitable for portals that are...",
       "id": "src_datasluice_auth_none_rationale_11"
     },
@@ -6782,8 +6804,8 @@
       "source_file": "src/datasluice/config/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 84,
-      "community_name": "config/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "config/__init__.py",
       "id": "src_datasluice_config_init"
     },
@@ -6793,8 +6815,8 @@
       "source_file": "src/datasluice/config/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 84,
-      "community_name": "config/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "configuration for datasluice.",
       "id": "src_datasluice_config_init_rationale_1"
     },
@@ -6804,8 +6826,8 @@
       "source_file": "src/datasluice/config/defaults.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 84,
-      "community_name": "config/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "config/defaults.py",
       "id": "src_datasluice_config_defaults"
     },
@@ -6815,8 +6837,8 @@
       "source_file": "src/datasluice/config/defaults.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 84,
-      "community_name": "config/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "default configuration constants.",
       "id": "src_datasluice_config_defaults_rationale_1"
     },
@@ -7299,8 +7321,8 @@
       "source_file": "src/datasluice/connectors/ckan/factory.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "ckan/factory.py",
       "id": "src_datasluice_connectors_ckan_factory"
     },
@@ -7310,8 +7332,8 @@
       "source_file": "src/datasluice/connectors/ckan/factory.py",
       "source_location": "L19",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "create_ckan_connector()",
       "id": "src_datasluice_connectors_ckan_factory_create_ckan_connector"
     },
@@ -7321,8 +7343,8 @@
       "source_file": "src/datasluice/connectors/ckan/factory.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "factory for the ckan connector (entry-point target). ``create_ckan_connector``...",
       "id": "src_datasluice_connectors_ckan_factory_rationale_1"
     },
@@ -7332,8 +7354,8 @@
       "source_file": "src/datasluice/connectors/ckan/factory.py",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "construct a :class:`ckanadapter` wired to the context's transport/auth.",
       "id": "src_datasluice_connectors_ckan_factory_rationale_20"
     },
@@ -7354,8 +7376,8 @@
       "source_file": "src/datasluice/connectors/ckan/mapper.py",
       "source_location": "L19",
       "_origin": "ast",
-      "community": 88,
-      "community_name": "CKANAdapter",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "map_license()",
       "id": "src_datasluice_connectors_ckan_mapper_map_license"
     },
@@ -7365,8 +7387,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 88,
-      "community_name": "CKANAdapter",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "any",
       "id": "src_datasluice_connectors_ckan_mapper_py_any"
     },
@@ -7409,8 +7431,8 @@
       "source_file": "src/datasluice/connectors/ckan/mapper.py",
       "source_location": "L91",
       "_origin": "ast",
-      "community": 88,
-      "community_name": "CKANAdapter",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "map_organization()",
       "id": "src_datasluice_connectors_ckan_mapper_map_organization"
     },
@@ -7420,8 +7442,8 @@
       "source_file": "src/datasluice/connectors/ckan/mapper.py",
       "source_location": "L107",
       "_origin": "ast",
-      "community": 88,
-      "community_name": "CKANAdapter",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "map_dataset()",
       "id": "src_datasluice_connectors_ckan_mapper_map_dataset"
     },
@@ -7442,8 +7464,8 @@
       "source_file": "src/datasluice/connectors/ckan/mapper.py",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 88,
-      "community_name": "CKANAdapter",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "convert a ckan license dict into a :class:`license`.",
       "id": "src_datasluice_connectors_ckan_mapper_rationale_20"
     },
@@ -7486,8 +7508,8 @@
       "source_file": "src/datasluice/connectors/ckan/mapper.py",
       "source_location": "L92",
       "_origin": "ast",
-      "community": 88,
-      "community_name": "CKANAdapter",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "convert a ckan organization/group dict into an :class:`organization`.",
       "id": "src_datasluice_connectors_ckan_mapper_rationale_92"
     },
@@ -7497,8 +7519,8 @@
       "source_file": "src/datasluice/connectors/ckan/mapper.py",
       "source_location": "L108",
       "_origin": "ast",
-      "community": 88,
-      "community_name": "CKANAdapter",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "convert a ckan package dict into a :class:`dataset`. ``base_url`` is forwarded...",
       "id": "src_datasluice_connectors_ckan_mapper_rationale_108"
     },
@@ -7684,8 +7706,8 @@
       "source_file": "src/datasluice/connectors/datagouv/adapter.py",
       "source_location": "L101",
       "_origin": "ast",
-      "community": 91,
-      "community_name": "DataGouvAdapter",
+      "community": 21,
+      "community_name": "datagouv/mapper.py",
       "norm_label": ".get_organization()",
       "id": "src_datasluice_connectors_datagouv_adapter_datagouvadapter_get_organization"
     },
@@ -7761,8 +7783,8 @@
       "source_file": "src/datasluice/connectors/datagouv/adapter.py",
       "source_location": "L102",
       "_origin": "ast",
-      "community": 91,
-      "community_name": "DataGouvAdapter",
+      "community": 21,
+      "community_name": "datagouv/mapper.py",
       "norm_label": "fetch organization metadata via ``/organizations/{slug}/``.",
       "id": "src_datasluice_connectors_datagouv_adapter_rationale_102"
     },
@@ -7816,8 +7838,8 @@
       "source_file": "src/datasluice/connectors/datagouv/factory.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 91,
+      "community_name": "DataGouvAdapter",
       "norm_label": "datagouv/factory.py",
       "id": "src_datasluice_connectors_datagouv_factory"
     },
@@ -7827,8 +7849,8 @@
       "source_file": "src/datasluice/connectors/datagouv/factory.py",
       "source_location": "L19",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 91,
+      "community_name": "DataGouvAdapter",
       "norm_label": "create_datagouv_connector()",
       "id": "src_datasluice_connectors_datagouv_factory_create_datagouv_connector"
     },
@@ -7838,8 +7860,8 @@
       "source_file": "src/datasluice/connectors/datagouv/factory.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 91,
+      "community_name": "DataGouvAdapter",
       "norm_label": "factory for the data.gouv.fr connector (entry-point target)....",
       "id": "src_datasluice_connectors_datagouv_factory_rationale_1"
     },
@@ -7849,8 +7871,8 @@
       "source_file": "src/datasluice/connectors/datagouv/factory.py",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 91,
+      "community_name": "DataGouvAdapter",
       "norm_label": "construct a :class:`datagouvadapter` wired to the context's transport/auth.",
       "id": "src_datasluice_connectors_datagouv_factory_rationale_20"
     },
@@ -8146,8 +8168,8 @@
       "source_file": "src/datasluice/connectors/socrata/adapter.py",
       "source_location": "L40",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 59,
+      "community_name": "domain/__init__.py",
       "norm_label": "_translate_sort()",
       "id": "src_datasluice_connectors_socrata_adapter_translate_sort"
     },
@@ -8179,8 +8201,8 @@
       "source_file": "src/datasluice/connectors/socrata/adapter.py",
       "source_location": "L94",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 59,
+      "community_name": "domain/__init__.py",
       "norm_label": ".search()",
       "id": "src_datasluice_connectors_socrata_adapter_socrataadapter_search"
     },
@@ -8223,8 +8245,8 @@
       "source_file": "src/datasluice/connectors/socrata/adapter.py",
       "source_location": "L41",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 59,
+      "community_name": "domain/__init__.py",
       "norm_label": "translate a ``query.sort`` spec into a socrata catalog ``order`` token. the...",
       "id": "src_datasluice_connectors_socrata_adapter_rationale_41"
     },
@@ -8256,8 +8278,8 @@
       "source_file": "src/datasluice/connectors/socrata/adapter.py",
       "source_location": "L95",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 59,
+      "community_name": "domain/__init__.py",
       "norm_label": "search datasets via the discovery api.",
       "id": "src_datasluice_connectors_socrata_adapter_rationale_95"
     },
@@ -8333,8 +8355,8 @@
       "source_file": "src/datasluice/connectors/socrata/factory.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "socrata/factory.py",
       "id": "src_datasluice_connectors_socrata_factory"
     },
@@ -8344,8 +8366,8 @@
       "source_file": "src/datasluice/connectors/socrata/factory.py",
       "source_location": "L19",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "create_socrata_connector()",
       "id": "src_datasluice_connectors_socrata_factory_create_socrata_connector"
     },
@@ -8355,8 +8377,8 @@
       "source_file": "src/datasluice/connectors/socrata/factory.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "factory for the socrata connector (entry-point target)....",
       "id": "src_datasluice_connectors_socrata_factory_rationale_1"
     },
@@ -8366,8 +8388,8 @@
       "source_file": "src/datasluice/connectors/socrata/factory.py",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "construct a :class:`socrataadapter` wired to the context's transport/auth.",
       "id": "src_datasluice_connectors_socrata_factory_rationale_20"
     },
@@ -8520,8 +8542,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": "socrata/pagination.py",
       "id": "src_datasluice_connectors_socrata_pagination"
     },
@@ -8531,8 +8553,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L12",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": "socratapage",
       "id": "src_datasluice_connectors_socrata_pagination_socratapage"
     },
@@ -8542,8 +8564,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L18",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": ".next_page()",
       "id": "src_datasluice_connectors_socrata_pagination_socratapage_next_page"
     },
@@ -8553,8 +8575,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L22",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": ".to_params()",
       "id": "src_datasluice_connectors_socrata_pagination_socratapage_to_params"
     },
@@ -8564,8 +8586,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": "pagination helpers for the socrata soda2 api. socrata uses offset / limit...",
       "id": "src_datasluice_connectors_socrata_pagination_rationale_1"
     },
@@ -8575,8 +8597,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L13",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": "parameters for a single socrata results page.",
       "id": "src_datasluice_connectors_socrata_pagination_rationale_13"
     },
@@ -8586,8 +8608,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L19",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": "return the parameters for the following page.",
       "id": "src_datasluice_connectors_socrata_pagination_rationale_19"
     },
@@ -8597,8 +8619,8 @@
       "source_file": "src/datasluice/connectors/socrata/pagination.py",
       "source_location": "L23",
       "_origin": "ast",
-      "community": 15,
-      "community_name": "SocrataAdapter",
+      "community": 38,
+      "community_name": "SocrataPage",
       "norm_label": "convert to query-string parameters for the soda2 api.",
       "id": "src_datasluice_connectors_socrata_pagination_rationale_23"
     },
@@ -9015,8 +9037,8 @@
       "source_file": "src/datasluice/credentials/host_provider.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "host_provider.py",
       "id": "src_datasluice_credentials_host_provider"
     },
@@ -9114,8 +9136,8 @@
       "source_file": "src/datasluice/credentials/host_provider.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 61,
-      "community_name": "exceptions.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "host-scoped credential resolver with single-flight refresh (infra-04)....",
       "id": "src_datasluice_credentials_host_provider_rationale_1"
     },
@@ -9224,8 +9246,8 @@
       "source_file": "src/datasluice/data/_byte_source.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 82,
-      "community_name": "_byte_source.py",
+      "community": 51,
+      "community_name": "data/__init__.py",
       "norm_label": "_byte_source.py",
       "id": "src_datasluice_data_byte_source"
     },
@@ -9356,8 +9378,8 @@
       "source_file": "src/datasluice/data/_byte_source.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 82,
-      "community_name": "_byte_source.py",
+      "community": 51,
+      "community_name": "data/__init__.py",
       "norm_label": "iterablebytesio \u2014 adapt an ``iterable[bytes]`` into a non-seekable binaryio...",
       "id": "src_datasluice_data_byte_source_rationale_1"
     },
@@ -9411,7 +9433,7 @@
       "source_file": "src/datasluice/data/access.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 5,
+      "community": 17,
       "community_name": "data/access.py",
       "norm_label": "data/access.py",
       "id": "src_datasluice_data_access"
@@ -9423,7 +9445,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "_streamclosingbytesio",
       "id": "src_datasluice_data_access_streamclosingbytesio"
     },
@@ -9434,7 +9456,7 @@
       "source_location": "L50",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": ".__init__()",
       "id": "src_datasluice_data_access_streamclosingbytesio_init"
     },
@@ -9445,7 +9467,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "any",
       "id": "src_datasluice_data_access_py_any"
     },
@@ -9456,7 +9478,7 @@
       "source_location": "L56",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": ".close()",
       "id": "src_datasluice_data_access_streamclosingbytesio_close"
     },
@@ -9478,7 +9500,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": ".__init__()",
       "id": "src_datasluice_data_access_dataplaneresourcereader_init"
     },
@@ -9511,7 +9533,7 @@
       "source_location": "L171",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": ".open_response()",
       "id": "src_datasluice_data_access_dataplaneresourcereader_open_response"
     },
@@ -9533,7 +9555,7 @@
       "source_location": "L236",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "._build_parquet_cursor_stream()",
       "id": "src_datasluice_data_access_dataplaneresourcereader_build_parquet_cursor_stream"
     },
@@ -9544,7 +9566,7 @@
       "source_location": "L281",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "._build_batch_stream()",
       "id": "src_datasluice_data_access_dataplaneresourcereader_build_batch_stream"
     },
@@ -9588,7 +9610,7 @@
       "source_location": "L358",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "_chain()",
       "id": "src_datasluice_data_access_chain"
     },
@@ -9599,7 +9621,7 @@
       "source_location": "L363",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "_validate_batch_size()",
       "id": "src_datasluice_data_access_validate_batch_size"
     },
@@ -9610,7 +9632,7 @@
       "source_location": "L368",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "_close_source()",
       "id": "src_datasluice_data_access_close_source"
     },
@@ -9621,7 +9643,7 @@
       "source_location": "L378",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "_content_encoding_from_headers()",
       "id": "src_datasluice_data_access_content_encoding_from_headers"
     },
@@ -9632,7 +9654,7 @@
       "source_location": "L387",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "_strip_scheme()",
       "id": "src_datasluice_data_access_strip_scheme"
     },
@@ -9642,7 +9664,7 @@
       "source_file": "src/datasluice/data/access.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 5,
+      "community": 17,
       "community_name": "data/access.py",
       "norm_label": "concrete ``resourcereader`` implementation with access-kind dispatch (data-04,...",
       "id": "src_datasluice_data_access_rationale_1"
@@ -9654,7 +9676,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "iterablebytesio that releases the streamresponse + transport context on close.",
       "id": "src_datasluice_data_access_rationale_48"
     },
@@ -9698,7 +9720,7 @@
       "source_location": "L179",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "open an already-fetched streaming response through the data plane.",
       "id": "src_datasluice_data_access_rationale_179"
     },
@@ -9720,7 +9742,7 @@
       "source_location": "L287",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "dispatch to the format reader and wrap output in batchstream.",
       "id": "src_datasluice_data_access_rationale_287"
     },
@@ -9764,7 +9786,7 @@
       "source_location": "L379",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "extract a lowercased content-encoding value from response headers.",
       "id": "src_datasluice_data_access_rationale_379"
     },
@@ -9775,7 +9797,7 @@
       "source_location": "L388",
       "_origin": "ast",
       "community": 5,
-      "community_name": "data/access.py",
+      "community_name": "Any",
       "norm_label": "strip the fsspec storage scheme from *uri* to produce the path component.",
       "id": "src_datasluice_data_access_rationale_388"
     },
@@ -9786,7 +9808,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "batch_stream.py",
       "id": "src_datasluice_data_batch_stream"
     },
@@ -9797,7 +9819,7 @@
       "source_location": "L22",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "parquetrowgroupposition",
       "id": "src_datasluice_data_batch_stream_parquetrowgroupposition"
     },
@@ -9808,7 +9830,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": ".__post_init__()",
       "id": "src_datasluice_data_batch_stream_parquetrowgroupposition_post_init"
     },
@@ -9819,7 +9841,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "batchcursor",
       "id": "src_datasluice_data_batch_stream_batchcursor"
     },
@@ -9830,7 +9852,7 @@
       "source_location": "L46",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": ".__post_init__()",
       "id": "src_datasluice_data_batch_stream_batchcursor_post_init"
     },
@@ -9852,7 +9874,7 @@
       "source_location": "L67",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": ".__init__()",
       "id": "src_datasluice_data_batch_stream_batchstream_init"
     },
@@ -9863,7 +9885,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "any",
       "id": "src_datasluice_data_batch_stream_py_any"
     },
@@ -9885,7 +9907,7 @@
       "source_location": "L94",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": ".iter_batches()",
       "id": "src_datasluice_data_batch_stream_batchstream_iter_batches"
     },
@@ -9896,7 +9918,7 @@
       "source_location": "L121",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": ".iter_batches_with_cursors()",
       "id": "src_datasluice_data_batch_stream_batchstream_iter_batches_with_cursors"
     },
@@ -9940,7 +9962,7 @@
       "source_location": "L194",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": ".__arrow_c_stream__()",
       "id": "src_datasluice_data_batch_stream_batchstream_arrow_c_stream"
     },
@@ -9951,7 +9973,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "batchstream \u2014 context-managed arrow recordbatch stream (data-01, data-02,...",
       "id": "src_datasluice_data_batch_stream_rationale_1"
     },
@@ -9962,7 +9984,7 @@
       "source_location": "L23",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "logical position at the next unread parquet row group.",
       "id": "src_datasluice_data_batch_stream_rationale_23"
     },
@@ -9973,7 +9995,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "closed continuation cursor for the next unread batch. ``next_batch_index``...",
       "id": "src_datasluice_data_batch_stream_rationale_34"
     },
@@ -10006,7 +10028,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "yield arrow ``recordbatch`` objects from the wrapped source. when ``indexed``...",
       "id": "src_datasluice_data_batch_stream_rationale_95"
     },
@@ -10017,7 +10039,7 @@
       "source_location": "L122",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "yield batches with the closed cursor for the next unread row group. in...",
       "id": "src_datasluice_data_batch_stream_rationale_122"
     },
@@ -10039,7 +10061,7 @@
       "source_location": "L195",
       "_origin": "ast",
       "community": 61,
-      "community_name": "exceptions.py",
+      "community_name": "DataSluiceError",
       "norm_label": "return a pycapsule for zero-copy arrow interop (phase 6 terminals). delegates...",
       "id": "src_datasluice_data_batch_stream_rationale_195"
     },
@@ -10050,7 +10072,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "compression.py",
       "id": "src_datasluice_data_compression"
     },
@@ -10061,7 +10083,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "_errortranslatingreader",
       "id": "src_datasluice_data_compression_errortranslatingreader"
     },
@@ -10072,7 +10094,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".__init__()",
       "id": "src_datasluice_data_compression_errortranslatingreader_init"
     },
@@ -10083,7 +10105,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "any",
       "id": "src_datasluice_data_compression_py_any"
     },
@@ -10094,7 +10116,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "baseexception",
       "id": "baseexception"
     },
@@ -10105,7 +10127,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".readable()",
       "id": "src_datasluice_data_compression_errortranslatingreader_readable"
     },
@@ -10116,7 +10138,7 @@
       "source_location": "L51",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".seekable()",
       "id": "src_datasluice_data_compression_errortranslatingreader_seekable"
     },
@@ -10127,7 +10149,7 @@
       "source_location": "L54",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".writable()",
       "id": "src_datasluice_data_compression_errortranslatingreader_writable"
     },
@@ -10138,7 +10160,7 @@
       "source_location": "L58",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".closed()",
       "id": "src_datasluice_data_compression_errortranslatingreader_closed"
     },
@@ -10149,7 +10171,7 @@
       "source_location": "L61",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".read()",
       "id": "src_datasluice_data_compression_errortranslatingreader_read"
     },
@@ -10160,7 +10182,7 @@
       "source_location": "L67",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".readinto()",
       "id": "src_datasluice_data_compression_errortranslatingreader_readinto"
     },
@@ -10171,7 +10193,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "writeablebuffer",
       "id": "src_datasluice_data_compression_py_writeablebuffer"
     },
@@ -10182,7 +10204,7 @@
       "source_location": "L79",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".close()",
       "id": "src_datasluice_data_compression_errortranslatingreader_close"
     },
@@ -10193,7 +10215,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "peekablereader",
       "id": "src_datasluice_data_compression_peekablereader"
     },
@@ -10204,7 +10226,7 @@
       "source_location": "L101",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".__init__()",
       "id": "src_datasluice_data_compression_peekablereader_init"
     },
@@ -10215,7 +10237,7 @@
       "source_location": "L106",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".readable()",
       "id": "src_datasluice_data_compression_peekablereader_readable"
     },
@@ -10226,7 +10248,7 @@
       "source_location": "L109",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".seekable()",
       "id": "src_datasluice_data_compression_peekablereader_seekable"
     },
@@ -10237,7 +10259,7 @@
       "source_location": "L112",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".writable()",
       "id": "src_datasluice_data_compression_peekablereader_writable"
     },
@@ -10248,7 +10270,7 @@
       "source_location": "L116",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".closed()",
       "id": "src_datasluice_data_compression_peekablereader_closed"
     },
@@ -10259,7 +10281,7 @@
       "source_location": "L119",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".peek()",
       "id": "src_datasluice_data_compression_peekablereader_peek"
     },
@@ -10270,7 +10292,7 @@
       "source_location": "L138",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".readinto()",
       "id": "src_datasluice_data_compression_peekablereader_readinto"
     },
@@ -10281,7 +10303,7 @@
       "source_location": "L156",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".read()",
       "id": "src_datasluice_data_compression_peekablereader_read"
     },
@@ -10292,7 +10314,7 @@
       "source_location": "L180",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": ".close()",
       "id": "src_datasluice_data_compression_peekablereader_close"
     },
@@ -10303,7 +10325,7 @@
       "source_location": "L188",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "_detect_format()",
       "id": "src_datasluice_data_compression_detect_format"
     },
@@ -10314,7 +10336,7 @@
       "source_location": "L211",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "_wrap_gzip()",
       "id": "src_datasluice_data_compression_wrap_gzip"
     },
@@ -10325,7 +10347,7 @@
       "source_location": "L219",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "_wrap_bzip2()",
       "id": "src_datasluice_data_compression_wrap_bzip2"
     },
@@ -10336,7 +10358,7 @@
       "source_location": "L227",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "_wrap_zstd()",
       "id": "src_datasluice_data_compression_wrap_zstd"
     },
@@ -10347,7 +10369,7 @@
       "source_location": "L245",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "_zip_largest_member()",
       "id": "src_datasluice_data_compression_zip_largest_member"
     },
@@ -10358,7 +10380,7 @@
       "source_location": "L277",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "apply_compression()",
       "id": "src_datasluice_data_compression_apply_compression"
     },
@@ -10369,7 +10391,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "transparent decompression decorator pipeline (data-06, d-p4-12). sits between...",
       "id": "src_datasluice_data_compression_rationale_1"
     },
@@ -10380,7 +10402,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "wrap a decompressed stream, translating stdlib decode errors to...",
       "id": "src_datasluice_data_compression_rationale_35"
     },
@@ -10391,7 +10413,7 @@
       "source_location": "L93",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "wrap a ``binaryio`` byte source with one-chunk lookahead. buffers peeked bytes...",
       "id": "src_datasluice_data_compression_rationale_93"
     },
@@ -10402,7 +10424,7 @@
       "source_location": "L120",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "read up to *n* bytes into the buffer without consuming them. the peeked bytes...",
       "id": "src_datasluice_data_compression_rationale_120"
     },
@@ -10413,7 +10435,7 @@
       "source_location": "L189",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "return the compression format key from magic bytes or content-encoding hint....",
       "id": "src_datasluice_data_compression_rationale_189"
     },
@@ -10424,7 +10446,7 @@
       "source_location": "L246",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "spool zip body to bytesio, extract the largest member (research pitfall 2 +...",
       "id": "src_datasluice_data_compression_rationale_246"
     },
@@ -10435,7 +10457,7 @@
       "source_location": "L278",
       "_origin": "ast",
       "community": 17,
-      "community_name": "compression.py",
+      "community_name": "data/access.py",
       "norm_label": "wrap *source* so compressed bytes are transparently decompressed (data-06)....",
       "id": "src_datasluice_data_compression_rationale_278"
     },
@@ -11611,8 +11633,8 @@
       "source_file": "src/datasluice/domain/credentials.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "domain/credentials.py",
       "id": "src_datasluice_domain_credentials"
     },
@@ -11622,8 +11644,8 @@
       "source_file": "src/datasluice/domain/credentials.py",
       "source_location": "L9",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "credentialscope",
       "id": "src_datasluice_domain_credentials_credentialscope"
     },
@@ -11633,8 +11655,8 @@
       "source_file": "src/datasluice/domain/credentials.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "credential scoping model for host-bound credential policy.",
       "id": "src_datasluice_domain_credentials_rationale_1"
     },
@@ -11644,8 +11666,8 @@
       "source_file": "src/datasluice/domain/credentials.py",
       "source_location": "L10",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "host-scoped policy controlling where credentials may be sent. attributes:...",
       "id": "src_datasluice_domain_credentials_rationale_10"
     },
@@ -11655,8 +11677,8 @@
       "source_file": "src/datasluice/domain/dataset.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 59,
-      "community_name": "domain/__init__.py",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "dataset.py",
       "id": "src_datasluice_domain_dataset"
     },
@@ -11677,8 +11699,8 @@
       "source_file": "src/datasluice/domain/dataset.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 59,
-      "community_name": "domain/__init__.py",
+      "community": 100,
+      "community_name": "Resource",
       "norm_label": "dataset model representing a collection of related open-data resources.",
       "id": "src_datasluice_domain_dataset_rationale_1"
     },
@@ -11809,8 +11831,8 @@
       "source_file": "src/datasluice/domain/organization.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 59,
-      "community_name": "domain/__init__.py",
+      "community": 21,
+      "community_name": "datagouv/mapper.py",
       "norm_label": "organization.py",
       "id": "src_datasluice_domain_organization"
     },
@@ -11820,8 +11842,8 @@
       "source_file": "src/datasluice/domain/organization.py",
       "source_location": "L10",
       "_origin": "ast",
-      "community": 59,
-      "community_name": "domain/__init__.py",
+      "community": 21,
+      "community_name": "datagouv/mapper.py",
       "norm_label": "organization",
       "id": "src_datasluice_domain_organization_organization"
     },
@@ -11831,8 +11853,8 @@
       "source_file": "src/datasluice/domain/organization.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 59,
-      "community_name": "domain/__init__.py",
+      "community": 21,
+      "community_name": "datagouv/mapper.py",
       "norm_label": "organization model representing a dataset publisher.",
       "id": "src_datasluice_domain_organization_rationale_1"
     },
@@ -11842,8 +11864,8 @@
       "source_file": "src/datasluice/domain/organization.py",
       "source_location": "L11",
       "_origin": "ast",
-      "community": 59,
-      "community_name": "domain/__init__.py",
+      "community": 21,
+      "community_name": "datagouv/mapper.py",
       "norm_label": "an organization or publisher of open-data datasets. attributes: id: portal-...",
       "id": "src_datasluice_domain_organization_rationale_11"
     },
@@ -12755,8 +12777,8 @@
       "source_file": "src/datasluice/io/fsspec_storage.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "fsspec_storage.py",
       "id": "src_datasluice_io_fsspec_storage"
     },
@@ -12854,8 +12876,8 @@
       "source_file": "src/datasluice/io/fsspec_storage.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "fsspec-backed storage adapter satisfying :class:`storageport` (infra-02,...",
       "id": "src_datasluice_io_fsspec_storage_rationale_1"
     },
@@ -13228,8 +13250,8 @@
       "source_file": "src/datasluice/logging.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "logging.py",
       "id": "src_datasluice_logging"
     },
@@ -13239,8 +13261,8 @@
       "source_file": "src/datasluice/logging.py",
       "source_location": "L31",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "get_logger()",
       "id": "src_datasluice_logging_get_logger"
     },
@@ -13250,8 +13272,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "logger",
       "id": "logger"
     },
@@ -13327,8 +13349,8 @@
       "source_file": "src/datasluice/logging.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "structured logging utilities for datasluice. owns the canonical...",
       "id": "src_datasluice_logging_rationale_1"
     },
@@ -13338,8 +13360,8 @@
       "source_file": "src/datasluice/logging.py",
       "source_location": "L32",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "return a logger for *name*, defaulting to the package logger. args: name:...",
       "id": "src_datasluice_logging_rationale_32"
     },
@@ -13371,7 +13393,7 @@
       "source_file": "src/datasluice/ports/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 122,
+      "community": 44,
       "community_name": "ports/__init__.py",
       "norm_label": "ports/__init__.py",
       "id": "src_datasluice_ports_init"
@@ -13382,7 +13404,7 @@
       "source_file": "src/datasluice/ports/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 122,
+      "community": 44,
       "community_name": "ports/__init__.py",
       "norm_label": "port protocol interfaces for datasluice \u2014 unstable boundary contracts.",
       "id": "src_datasluice_ports_init_rationale_1"
@@ -13393,8 +13415,8 @@
       "source_file": "src/datasluice/ports/cache.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "ports/cache.py",
       "id": "src_datasluice_ports_cache"
     },
@@ -13404,8 +13426,8 @@
       "source_file": "src/datasluice/ports/cache.py",
       "source_location": "L9",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "cacheport",
       "id": "src_datasluice_ports_cache_cacheport"
     },
@@ -13415,8 +13437,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "protocol",
       "id": "src_datasluice_ports_cache_py_protocol"
     },
@@ -13426,8 +13448,8 @@
       "source_file": "src/datasluice/ports/cache.py",
       "source_location": "L12",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": ".get()",
       "id": "src_datasluice_ports_cache_cacheport_get"
     },
@@ -13437,8 +13459,8 @@
       "source_file": "src/datasluice/ports/cache.py",
       "source_location": "L14",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": ".put()",
       "id": "src_datasluice_ports_cache_cacheport_put"
     },
@@ -13448,8 +13470,8 @@
       "source_file": "src/datasluice/ports/cache.py",
       "source_location": "L16",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": ".delete()",
       "id": "src_datasluice_ports_cache_cacheport_delete"
     },
@@ -13459,8 +13481,8 @@
       "source_file": "src/datasluice/ports/cache.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "cache port protocol for content-addressed byte caching.",
       "id": "src_datasluice_ports_cache_rationale_1"
     },
@@ -13470,8 +13492,8 @@
       "source_file": "src/datasluice/ports/cache.py",
       "source_location": "L10",
       "_origin": "ast",
-      "community": 38,
-      "community_name": "CachePort",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "boundary protocol for a simple key/byte cache.",
       "id": "src_datasluice_ports_cache_rationale_10"
     },
@@ -13481,8 +13503,8 @@
       "source_file": "src/datasluice/ports/catalog.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 122,
-      "community_name": "ports/__init__.py",
+      "community": 59,
+      "community_name": "domain/__init__.py",
       "norm_label": "catalog.py",
       "id": "src_datasluice_ports_catalog"
     },
@@ -13493,7 +13515,7 @@
       "source_location": "L12",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": "catalogport",
       "id": "src_datasluice_ports_catalog_catalogport"
     },
@@ -13504,7 +13526,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": "protocol",
       "id": "src_datasluice_ports_catalog_py_protocol"
     },
@@ -13515,7 +13537,7 @@
       "source_location": "L23",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": "searchablecatalog",
       "id": "src_datasluice_ports_catalog_searchablecatalog"
     },
@@ -13525,8 +13547,8 @@
       "source_file": "src/datasluice/ports/catalog.py",
       "source_location": "L26",
       "_origin": "ast",
-      "community": 22,
-      "community_name": "checks.py",
+      "community": 122,
+      "community_name": "SearchableCatalog",
       "norm_label": ".search()",
       "id": "src_datasluice_ports_catalog_searchablecatalog_search"
     },
@@ -13537,7 +13559,7 @@
       "source_location": "L30",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": "organizationcatalog",
       "id": "src_datasluice_ports_catalog_organizationcatalog"
     },
@@ -13548,7 +13570,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": ".get_organization()",
       "id": "src_datasluice_ports_catalog_organizationcatalog_get_organization"
     },
@@ -13558,8 +13580,8 @@
       "source_file": "src/datasluice/ports/catalog.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 122,
-      "community_name": "ports/__init__.py",
+      "community": 59,
+      "community_name": "domain/__init__.py",
       "norm_label": "catalog port protocols for portal catalog connectors.",
       "id": "src_datasluice_ports_catalog_rationale_1"
     },
@@ -13570,7 +13592,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": "marker base protocol all catalog connectors share. attributes: portal_type:...",
       "id": "src_datasluice_ports_catalog_rationale_13"
     },
@@ -13581,7 +13603,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": "capability protocol for dataset search.",
       "id": "src_datasluice_ports_catalog_rationale_24"
     },
@@ -13592,7 +13614,7 @@
       "source_location": "L31",
       "_origin": "ast",
       "community": 122,
-      "community_name": "ports/__init__.py",
+      "community_name": "SearchableCatalog",
       "norm_label": "capability protocol for organization lookup.",
       "id": "src_datasluice_ports_catalog_rationale_31"
     },
@@ -13613,8 +13635,8 @@
       "source_file": "src/datasluice/ports/credentials.py",
       "source_location": "L12",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "credentialprovider",
       "id": "src_datasluice_ports_credentials_credentialprovider"
     },
@@ -13624,8 +13646,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "protocol",
       "id": "src_datasluice_ports_credentials_py_protocol"
     },
@@ -13635,8 +13657,8 @@
       "source_file": "src/datasluice/ports/credentials.py",
       "source_location": "L15",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": ".resolve()",
       "id": "src_datasluice_ports_credentials_credentialprovider_resolve"
     },
@@ -13657,8 +13679,8 @@
       "source_file": "src/datasluice/ports/credentials.py",
       "source_location": "L13",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "boundary protocol resolving authentication strategies per host.",
       "id": "src_datasluice_ports_credentials_rationale_13"
     },
@@ -13668,8 +13690,8 @@
       "source_file": "src/datasluice/ports/detector.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 70,
-      "community_name": "ports/detector.py",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "ports/detector.py",
       "id": "src_datasluice_ports_detector"
     },
@@ -13679,8 +13701,8 @@
       "source_file": "src/datasluice/ports/detector.py",
       "source_location": "L11",
       "_origin": "ast",
-      "community": 70,
-      "community_name": "ports/detector.py",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "portaldetector",
       "id": "src_datasluice_ports_detector_portaldetector"
     },
@@ -13690,8 +13712,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 70,
-      "community_name": "ports/detector.py",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "protocol",
       "id": "src_datasluice_ports_detector_py_protocol"
     },
@@ -13701,8 +13723,8 @@
       "source_file": "src/datasluice/ports/detector.py",
       "source_location": "L14",
       "_origin": "ast",
-      "community": 70,
-      "community_name": "ports/detector.py",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": ".detect()",
       "id": "src_datasluice_ports_detector_portaldetector_detect"
     },
@@ -13712,8 +13734,8 @@
       "source_file": "src/datasluice/ports/detector.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 70,
-      "community_name": "ports/detector.py",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "portal detector port protocol.",
       "id": "src_datasluice_ports_detector_rationale_1"
     },
@@ -13723,8 +13745,8 @@
       "source_file": "src/datasluice/ports/detector.py",
       "source_location": "L12",
       "_origin": "ast",
-      "community": 70,
-      "community_name": "ports/detector.py",
+      "community": 44,
+      "community_name": "ports/__init__.py",
       "norm_label": "detection seam protocol returning evidence-based portal identification.",
       "id": "src_datasluice_ports_detector_rationale_12"
     },
@@ -14131,7 +14153,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "transport.py",
       "id": "src_datasluice_ports_transport"
     },
@@ -14153,7 +14175,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "protocol",
       "id": "src_datasluice_ports_transport_py_protocol"
     },
@@ -14208,7 +14230,7 @@
       "source_location": "L38",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "streamingtransport",
       "id": "src_datasluice_ports_transport_streamingtransport"
     },
@@ -14241,7 +14263,7 @@
       "source_location": "L58",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "conditionalfetchresult",
       "id": "src_datasluice_ports_transport_conditionalfetchresult"
     },
@@ -14252,7 +14274,7 @@
       "source_location": "L75",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "conditionaltransport",
       "id": "src_datasluice_ports_transport_conditionaltransport"
     },
@@ -14263,7 +14285,7 @@
       "source_location": "L83",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": ".conditional_fetch()",
       "id": "src_datasluice_ports_transport_conditionaltransport_conditional_fetch"
     },
@@ -14274,7 +14296,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "transport port protocols for http-like request execution. three narrow runtime-...",
       "id": "src_datasluice_ports_transport_rationale_1"
     },
@@ -14296,7 +14318,7 @@
       "source_location": "L39",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "streaming transport boundary protocol (d-p3-06/d-p3-07). `stream(url)` returns...",
       "id": "src_datasluice_ports_transport_rationale_39"
     },
@@ -14307,7 +14329,7 @@
       "source_location": "L59",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "result of a conditional resource fetch (d-p7-15/d-p7-16). a 304 not modified...",
       "id": "src_datasluice_ports_transport_rationale_59"
     },
@@ -14318,7 +14340,7 @@
       "source_location": "L76",
       "_origin": "ast",
       "community": 44,
-      "community_name": "transport.py",
+      "community_name": "ports/__init__.py",
       "norm_label": "optional transport capability for etag/last-modified conditional gets...",
       "id": "src_datasluice_ports_transport_rationale_76"
     },
@@ -14328,8 +14350,8 @@
       "source_file": "src/datasluice/runtime/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "runtime/__init__.py",
       "id": "src_datasluice_runtime_init"
     },
@@ -14339,8 +14361,8 @@
       "source_file": "src/datasluice/runtime/__init__.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "composition root and plugin machinery for datasluice.",
       "id": "src_datasluice_runtime_init_rationale_1"
     },
@@ -14350,8 +14372,8 @@
       "source_file": "src/datasluice/runtime/context.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "context.py",
       "id": "src_datasluice_runtime_context"
     },
@@ -14361,8 +14383,8 @@
       "source_file": "src/datasluice/runtime/context.py",
       "source_location": "L14",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "connectorcontext",
       "id": "src_datasluice_runtime_context_connectorcontext"
     },
@@ -14372,8 +14394,8 @@
       "source_file": "src/datasluice/runtime/context.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 23,
+      "community_name": "BaseAuth",
       "norm_label": "connector construction context carrying injected infra ports.",
       "id": "src_datasluice_runtime_context_rationale_1"
     },
@@ -14383,8 +14405,8 @@
       "source_file": "src/datasluice/runtime/context.py",
       "source_location": "L15",
       "_origin": "ast",
-      "community": 46,
-      "community_name": "context.py",
+      "community": 15,
+      "community_name": "SocrataAdapter",
       "norm_label": "context passed to ``create_*_connector(ctx)`` factory functions. carries the...",
       "id": "src_datasluice_runtime_context_rationale_15"
     },
@@ -14394,8 +14416,8 @@
       "source_file": "src/datasluice/runtime/defaults.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "runtime/defaults.py",
       "id": "src_datasluice_runtime_defaults"
     },
@@ -14405,8 +14427,8 @@
       "source_file": "src/datasluice/runtime/defaults.py",
       "source_location": "L28",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "create_default_transport()",
       "id": "src_datasluice_runtime_defaults_create_default_transport"
     },
@@ -14416,8 +14438,8 @@
       "source_file": "src/datasluice/runtime/defaults.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "default transport factory for the datasluicesession composition root. replaces...",
       "id": "src_datasluice_runtime_defaults_rationale_1"
     },
@@ -14427,8 +14449,8 @@
       "source_file": "src/datasluice/runtime/defaults.py",
       "source_location": "L36",
       "_origin": "ast",
-      "community": 13,
-      "community_name": "runtime/defaults.py",
+      "community": 47,
+      "community_name": "http_client.py",
       "norm_label": "construct a default transport from ``default_*`` constants. picks...",
       "id": "src_datasluice_runtime_defaults_rationale_36"
     },
@@ -14438,8 +14460,8 @@
       "source_file": "src/datasluice/runtime/plugin_manager.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 32,
-      "community_name": "PluginManager",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "plugin_manager.py",
       "id": "src_datasluice_runtime_plugin_manager"
     },
@@ -14526,8 +14548,8 @@
       "source_file": "src/datasluice/runtime/plugin_manager.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 32,
-      "community_name": "PluginManager",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "plugin manager for entry-point-based connector discovery. the...",
       "id": "src_datasluice_runtime_plugin_manager_rationale_1"
     },
@@ -15517,7 +15539,7 @@
       "source_location": "L54",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": "_truncate_body()",
       "id": "src_datasluice_transport_http_client_truncate_body"
     },
@@ -15528,7 +15550,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": "any",
       "id": "src_datasluice_transport_http_client_py_any"
     },
@@ -15561,7 +15583,7 @@
       "source_location": "L97",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": ".request()",
       "id": "src_datasluice_transport_http_client_httpclient_request"
     },
@@ -15572,7 +15594,7 @@
       "source_location": "L152",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": ".get_text()",
       "id": "src_datasluice_transport_http_client_httpclient_get_text"
     },
@@ -15583,7 +15605,7 @@
       "source_location": "L156",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": ".get_json()",
       "id": "src_datasluice_transport_http_client_httpclient_get_json"
     },
@@ -15594,7 +15616,7 @@
       "source_location": "L162",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": ".download()",
       "id": "src_datasluice_transport_http_client_httpclient_download"
     },
@@ -15627,7 +15649,7 @@
       "source_location": "L55",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": "render *body* as text, truncating to *limit* characters.",
       "id": "src_datasluice_transport_http_client_rationale_55"
     },
@@ -15649,7 +15671,7 @@
       "source_location": "L106",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": "perform an http request and return the raw response body. raises: portalerror:...",
       "id": "src_datasluice_transport_http_client_rationale_106"
     },
@@ -15660,7 +15682,7 @@
       "source_location": "L153",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": "get *url* and return the response as text.",
       "id": "src_datasluice_transport_http_client_rationale_153"
     },
@@ -15671,7 +15693,7 @@
       "source_location": "L157",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": "get *url* and return the response as parsed json.",
       "id": "src_datasluice_transport_http_client_rationale_157"
     },
@@ -15682,7 +15704,7 @@
       "source_location": "L163",
       "_origin": "ast",
       "community": 28,
-      "community_name": ".request",
+      "community_name": "with_retry",
       "norm_label": "get *url* and return the raw bytes (for file downloads).",
       "id": "src_datasluice_transport_http_client_rationale_163"
     },
@@ -15846,8 +15868,8 @@
       "source_file": "src/datasluice/transport/redirect.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "redirect.py",
       "id": "src_datasluice_transport_redirect"
     },
@@ -15857,8 +15879,8 @@
       "source_file": "src/datasluice/transport/redirect.py",
       "source_location": "L19",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "credentialawareredirecthandler",
       "id": "src_datasluice_transport_redirect_credentialawareredirecthandler"
     },
@@ -15868,8 +15890,8 @@
       "source_file": "src/datasluice/transport/redirect.py",
       "source_location": "L27",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": ".__init__()",
       "id": "src_datasluice_transport_redirect_credentialawareredirecthandler_init"
     },
@@ -15880,7 +15902,7 @@
       "source_location": "L30",
       "_origin": "ast",
       "community": 82,
-      "community_name": "_byte_source.py",
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": ".redirect_request()",
       "id": "src_datasluice_transport_redirect_credentialawareredirecthandler_redirect_request"
     },
@@ -15891,7 +15913,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 82,
-      "community_name": "_byte_source.py",
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "request",
       "id": "request"
     },
@@ -15901,8 +15923,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 82,
-      "community_name": "_byte_source.py",
+      "community": 51,
+      "community_name": "data/__init__.py",
       "norm_label": "io",
       "id": "io"
     },
@@ -15913,7 +15935,7 @@
       "source_location": "",
       "_origin": "ast",
       "community": 82,
-      "community_name": "_byte_source.py",
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "httpmessage",
       "id": "httpmessage"
     },
@@ -15923,8 +15945,8 @@
       "source_file": "src/datasluice/transport/redirect.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "redirect handling that strips credentials on cross-origin or scheme-downgrade...",
       "id": "src_datasluice_transport_redirect_rationale_1"
     },
@@ -15934,8 +15956,8 @@
       "source_file": "src/datasluice/transport/redirect.py",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 82,
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "strip sensitive headers when a redirect crosses origins or downgrades to plain...",
       "id": "src_datasluice_transport_redirect_rationale_20"
     },
@@ -15946,7 +15968,7 @@
       "source_location": "L39",
       "_origin": "ast",
       "community": 82,
-      "community_name": "_byte_source.py",
+      "community_name": "CredentialAwareRedirectHandler",
       "norm_label": "return the follow-up request, stripping sensitive headers when required.",
       "id": "src_datasluice_transport_redirect_rationale_39"
     },
@@ -15956,8 +15978,8 @@
       "source_file": "src/datasluice/transport/retry.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "retry.py",
       "id": "src_datasluice_transport_retry"
     },
@@ -15967,8 +15989,8 @@
       "source_file": "src/datasluice/transport/retry.py",
       "source_location": "L16",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 28,
+      "community_name": "with_retry",
       "norm_label": "_full_jitter_delay()",
       "id": "src_datasluice_transport_retry_full_jitter_delay"
     },
@@ -15989,8 +16011,8 @@
       "source_file": "src/datasluice/transport/retry.py",
       "source_location": "L40",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 28,
+      "community_name": "with_retry",
       "norm_label": "with_retry()",
       "id": "src_datasluice_transport_retry_with_retry"
     },
@@ -16000,8 +16022,8 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 28,
+      "community_name": "with_retry",
       "norm_label": "t",
       "id": "src_datasluice_transport_retry_py_t"
     },
@@ -16011,8 +16033,8 @@
       "source_file": "src/datasluice/transport/retry.py",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 33,
+      "community_name": "logging.py",
       "norm_label": "retry logic with exponential backoff for http requests.",
       "id": "src_datasluice_transport_retry_rationale_1"
     },
@@ -16022,8 +16044,8 @@
       "source_file": "src/datasluice/transport/retry.py",
       "source_location": "L17",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 28,
+      "community_name": "with_retry",
       "norm_label": "return a full-jitter sleep in ``[0, min(cap, base * 2**attempt)]``.",
       "id": "src_datasluice_transport_retry_rationale_17"
     },
@@ -16044,8 +16066,8 @@
       "source_file": "src/datasluice/transport/retry.py",
       "source_location": "L44",
       "_origin": "ast",
-      "community": 47,
-      "community_name": "http_client.py",
+      "community": 28,
+      "community_name": "with_retry",
       "norm_label": "execute *func*, retrying on transient failures per *policy*. args: func: zero-...",
       "id": "src_datasluice_transport_retry_rationale_44"
     },
@@ -17716,6 +17738,17 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/datasluice/integrations/dlt.py",
+      "source_location": "L147",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_datasluice_integrations_dlt",
+      "target": "src_datasluice_integrations_dlt_mirror_dlt_state",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/datasluice/integrations/dlt.py",
       "source_location": "L17",
       "weight": 1.0,
       "_origin": "ast",
@@ -17803,6 +17836,18 @@
       "confidence_score": 1.0,
       "source": "src_datasluice_cli_open_render_human",
       "target": "any"
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/datasluice/integrations/dlt.py",
+      "source_location": "L147",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_datasluice_integrations_dlt_mirror_dlt_state",
+      "target": "any",
+      "confidence_score": 1.0
     },
     {
       "relation": "references",
@@ -17983,6 +18028,17 @@
       "confidence_score": 1.0,
       "source": "src_datasluice_sync_state_store_validate_last_synced_at",
       "target": "any"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/datasluice/integrations/dlt.py",
+      "source_location": "L148",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_datasluice_integrations_dlt_rationale_148",
+      "target": "src_datasluice_integrations_dlt_mirror_dlt_state",
+      "confidence_score": 1.0
     },
     {
       "relation": "re_exports",
@@ -52706,5 +52762,5 @@
       "source_file": ".pre-commit-config.yaml"
     }
   ],
-  "built_at_commit": "435c96f4b69011cee637051bdba64a5946d39e06"
+  "built_at_commit": "9a185492c341094f0cc52d48b5ea1e64ac9d8a0e"
 }
