@@ -27,6 +27,7 @@ PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
 RELEASE_PLEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-please.yml"
 RELEASE_CONFIG = REPO_ROOT / "release-please-config.json"
 RELEASE_MANIFEST = REPO_ROOT / ".release-please-manifest.json"
+REGISTRY_PATH = REPO_ROOT / "providers" / "registry.json"
 
 _TDD_RED = os.environ.get("DATASLUICE_TDD_RED") == "1"
 
@@ -91,6 +92,31 @@ def _publish_interface_ready() -> bool:
         isinstance(inputs[name], dict) and inputs[name].get("required") is True and inputs[name].get("type") == "string"
         for name in REQUIRED_PUBLISH_INPUTS
     )
+
+
+def _convention_smoke_ready() -> bool:
+    if not _publish_interface_ready():
+        return False
+    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
+    jobs = publish.get("jobs") or {}
+    smoke = jobs.get("smoke")
+    if not isinstance(smoke, dict):
+        return False
+    env = smoke.get("env") or {}
+    if env.get("SMOKE_VENV") != "/tmp/smoke-${{ inputs.component }}":
+        return False
+    steps = smoke.get("steps") or []
+    provider_steps = [s for s in steps if isinstance(s, dict) and s.get("if") == "inputs.package_name != 'datasluice'"]
+    if not provider_steps:
+        return False
+    ps = provider_steps[0]
+    if ps.get("working-directory") != "${{ inputs.package_path }}":
+        return False
+    return "tests/smoke.py" in str(ps.get("run", ""))
+
+
+def _provider_registry_ready() -> bool:
+    return REGISTRY_PATH.exists()
 
 
 def _manifest_ready() -> bool:
@@ -244,7 +270,7 @@ def test_exact_artifact_reused() -> None:
 
 def test_candidate_smoke_precedes_production() -> None:
     """TestPyPI candidate install/smoke runs before the caller-selected PyPI environment promotion."""
-    _require(_publish_interface_ready(), "publish.yml is not yet a typed reusable workflow")
+    _require(_convention_smoke_ready(), "convention-based publish smoke not yet implemented")
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     jobs = publish["jobs"]
     assert jobs["smoke"]["needs"] == ["build", "publish-testpypi"]
@@ -252,18 +278,24 @@ def test_candidate_smoke_precedes_production() -> None:
     assert jobs["publish-testpypi"]["environment"]["name"] == "${{ inputs.testpypi_environment }}"
     assert jobs["publish-pypi"]["environment"]["name"] == "${{ inputs.pypi_environment }}"
     assert jobs["publish-testpypi"]["environment"]["name"] != jobs["publish-pypi"]["environment"]["name"]
+    assert jobs["smoke"]["env"]["SMOKE_VENV"] == "/tmp/smoke-${{ inputs.component }}"
     smoke_steps = jobs["smoke"]["steps"]
     install = next(s for s in smoke_steps if "uv pip install" in s.get("run", ""))
     assert "--index-url https://test.pypi.org/simple/" in install["run"]
     assert "--extra-index-url https://pypi.org/simple/" in install["run"]
     assert '"${{ inputs.package_name }}==${{ inputs.version }}"' in install["run"]
+    assert "$SMOKE_VENV" in install["run"]
     core_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name == 'datasluice'")
+    assert "$SMOKE_VENV" in core_smoke["run"]
     assert "import datasluice" in core_smoke["run"]
     assert "datasluice --help" in core_smoke["run"]
     provider_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name != 'datasluice'")
-    assert "get_provider_info" in provider_smoke["run"]
-    assert "DataSluiceHook" in provider_smoke["run"]
-    assert "example_datasluice.py" in provider_smoke["run"]
+    assert provider_smoke["working-directory"] == "${{ inputs.package_path }}"
+    assert '"$SMOKE_VENV/bin/python" tests/smoke.py' in provider_smoke["run"]
+    provider_run = provider_smoke["run"]
+    assert "get_provider_info" not in provider_run
+    assert "DataSluiceHook" not in provider_run
+    assert "example_datasluice.py" not in provider_run
 
 
 def test_manifest_components() -> None:
@@ -409,3 +441,41 @@ def test_distinct_production_environments() -> None:
     }
     assert environments == expected
     assert len(set(environments.values())) == 4
+
+
+def test_provider_registry_schema() -> None:
+    """The provider registry has a providers array where each entry has exactly six fields."""
+    _require(_provider_registry_ready(), "provider registry not yet created")
+    registry = _load_json(REGISTRY_PATH)
+    assert isinstance(registry.get("providers"), list)
+    assert len(registry["providers"]) >= 1
+    required_fields = {"slug", "path", "package_name", "initial_version", "testpypi_env", "pypi_env"}
+    slugs: list[str] = []
+    paths: list[str] = []
+    for entry in registry["providers"]:
+        assert set(entry) == required_fields, f"registry entry has wrong fields: {set(entry)}"
+        slugs.append(entry["slug"])
+        paths.append(entry["path"])
+        assert re.match(r"^[a-z][a-z0-9-]*$", entry["slug"]), f"slug not lowercase identifier: {entry['slug']}"
+        assert (REPO_ROOT / entry["path"]).is_dir(), f"path does not exist: {entry['path']}"
+    assert len(slugs) == len(set(slugs)), "duplicate slugs in registry"
+    assert len(paths) == len(set(paths)), "duplicate paths in registry"
+
+
+def test_env_naming_convention() -> None:
+    """Every registry provider follows the <slug>-test-pypi / <slug>-pypi env naming convention."""
+    _require(_provider_registry_ready(), "provider registry not yet created")
+    registry = _load_json(REGISTRY_PATH)
+    for entry in registry["providers"]:
+        assert entry["testpypi_env"] == f"{entry['slug']}-test-pypi", entry
+        assert entry["pypi_env"] == f"{entry['slug']}-pypi", entry
+
+
+def test_provider_smoke_module_exists() -> None:
+    """Every registry provider ships a non-empty tests/smoke.py convention module."""
+    _require(_provider_registry_ready(), "provider registry not yet created")
+    registry = _load_json(REGISTRY_PATH)
+    for entry in registry["providers"]:
+        smoke_path = REPO_ROOT / entry["path"] / "tests" / "smoke.py"
+        assert smoke_path.exists(), f"smoke module missing: {smoke_path}"
+        assert smoke_path.stat().st_size > 0, f"smoke module empty: {smoke_path}"
