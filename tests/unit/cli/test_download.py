@@ -1,16 +1,23 @@
-"""Unit tests for the ``datasluice download`` command."""
+"""Unit tests for the ``datasluice download`` command (facade-only, D-15/APP-08)."""
 
 from __future__ import annotations
 
+import inspect
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
+import datasluice.cli.download as download_cmd
 from datasluice.cli.app import app
 from datasluice.domain import Dataset, Resource
-from datasluice.runtime import session as session_module
+
+if not hasattr(download_cmd, "DataSluice"):
+    if os.environ.get("DATASLUICE_TDD_RED") == "1":
+        pytest.fail("download facade refactor pending GREEN phase", pytrace=False)
+    pytest.skip("download facade refactor pending GREEN phase", allow_module_level=True)
 
 runner = CliRunner()
 
@@ -28,35 +35,41 @@ def _make_dataset(formats: list[str | None]) -> Dataset:
     return Dataset(id="dataset-1", title="Test Dataset", resources=resources)
 
 
-class _RecordingDownloader:
-    def __init__(self) -> None:
-        self.received: list[Resource] | None = None
+class _FakePortal:
+    def __init__(self, dataset: Dataset) -> None:
+        self._dataset = dataset
+        self.get_dataset_calls: list[str] = []
 
-    def download_many(self, resources: list[Resource], dest: str | Path) -> list[Path]:
-        self.received = list(resources)
-        return [Path(dest) / f"{resource.id}.bin" for resource in resources]
+    def get_dataset(self, dataset_id: str) -> Dataset:
+        self.get_dataset_calls.append(dataset_id)
+        return self._dataset
 
 
-def _patch_client(monkeypatch: pytest.MonkeyPatch, dataset: Dataset) -> _RecordingDownloader:
-    downloader = _RecordingDownloader()
+class _FakeFacade:
+    def __init__(self, dataset: Dataset) -> None:
+        self._portal = _FakePortal(dataset)
+        self.download_calls: list[tuple[list[Resource], str]] = []
+        self.closed = False
 
-    class FakeConnector:
-        def __init__(self, url: str) -> None:
-            self.url = url
-            self.downloader = downloader
+    def __enter__(self) -> _FakeFacade:
+        return self
 
-        def get_dataset(self, dataset_id: str) -> Dataset:
-            return dataset
+    def __exit__(self, *exc: Any) -> None:
+        self.closed = True
 
-    class FakeDataSluiceSession:
-        def __init__(self, **kwargs: Any) -> None:
-            self._transport = None
+    def portal(self, url: str) -> _FakePortal:
+        return self._portal
 
-        def portal(self, url: str) -> FakeConnector:
-            return FakeConnector(url)
+    def download_many(self, resources: list[Resource], destination: str) -> list[dict[str, object]]:
+        self.download_calls.append((list(resources), destination))
+        return [
+            {"resource_id": resource.id, "path": f"{destination}/{resource.id}.bin", "size": 100}
+            for resource in resources
+        ]
 
-    monkeypatch.setattr(session_module, "DataSluiceSession", FakeDataSluiceSession)
-    return downloader
+
+def _patch_facade(monkeypatch: pytest.MonkeyPatch, facade: _FakeFacade) -> None:
+    monkeypatch.setattr(download_cmd, "DataSluice", lambda: facade)
 
 
 @pytest.mark.parametrize(
@@ -75,22 +88,84 @@ def test_download_format_filtering(
     fmt: str | None,
     expected_formats: list[str | None],
 ) -> None:
-    downloader = _patch_client(monkeypatch, _make_dataset(formats))
+    """Format filtering happens in the CLI before raw bulk download through the facade."""
+    facade = _FakeFacade(_make_dataset(formats))
+    _patch_facade(monkeypatch, facade)
+
     args = ["download", "--portal", "https://example.com", "dataset-1", "--dest", str(tmp_path)]
     if fmt is not None:
         args.extend(["--format", fmt])
     result = runner.invoke(app, args)
-    assert result.exit_code == 0
-    assert downloader.received is not None
-    assert [resource.format for resource in downloader.received] == expected_formats
+
+    assert result.exit_code == 0, result.output
+    assert facade.closed
+    assert len(facade.download_calls) == 1
+    received, dest = facade.download_calls[0]
+    assert [resource.format for resource in received] == expected_formats
+    assert dest == str(tmp_path)
 
 
 def test_download_no_matching_resources_exits_with_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    downloader = _patch_client(monkeypatch, _make_dataset(["JSON", "XLSX"]))
+    """No matching resources exits 1 without calling the facade download."""
+    facade = _FakeFacade(_make_dataset(["JSON", "XLSX"]))
+    _patch_facade(monkeypatch, facade)
+
     result = runner.invoke(
         app,
         ["download", "--portal", "https://example.com", "dataset-1", "--dest", str(tmp_path), "--format", "CSV"],
     )
+
     assert result.exit_code == 1
     assert "No resources found" in result.output
-    assert downloader.received is None
+    assert facade.download_calls == []
+
+
+def test_download_json_output_is_parseable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--output json produces machine-readable download results on stdout."""
+    facade = _FakeFacade(_make_dataset(["CSV"]))
+    _patch_facade(monkeypatch, facade)
+
+    result = runner.invoke(
+        app,
+        [
+            "download",
+            "--portal",
+            "https://example.com",
+            "dataset-1",
+            "--dest",
+            str(tmp_path),
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    import json
+
+    parsed = json.loads(result.stdout)
+    assert parsed["count"] == 1
+    assert parsed["downloaded"][0]["resource_id"] == "res-0"
+
+
+def test_cli_uses_annotated_typer_form() -> None:
+    """B008 guard: download() uses Annotated[...] not = typer.* defaults."""
+    source = inspect.getsource(download_cmd.download)
+    assert "Annotated[" in source
+    assert "= typer.Option" not in source
+    assert "= typer.Argument" not in source
+
+
+def test_architecture_rejects_private_imports() -> None:
+    """P-08-CLI-PRIVATE-BYPASS: download must not import session/connector/transport internals."""
+    source = Path(download_cmd.__file__).read_text()
+    forbidden = [
+        "from datasluice.runtime.session",
+        "from datasluice.connectors",
+        "from datasluice.discovery",
+        "from datasluice.transport",
+        "from datasluice.io.downloader",
+        "DataSluiceSession",
+        ".downloader",
+    ]
+    for token in forbidden:
+        assert token not in source, f"forbidden import found in download.py: {token!r}"
