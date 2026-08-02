@@ -1,7 +1,7 @@
 {
   "src/datasluice/__init__.py": {
-    "mtime": 1785539626.8294702,
-    "ast_hash": "317309c70850d79bf8f14c06834a5377",
+    "mtime": 1785616104.3922353,
+    "ast_hash": "150bce558f0a7350cf85e3f6e114d35a",
     "semantic_hash": ""
   },
   "src/datasluice/_version.py": {
@@ -50,29 +50,29 @@
     "semantic_hash": "aa706b5f77d99ffe1840bcfc4cba2649"
   },
   "src/datasluice/cli/app.py": {
-    "mtime": 1782061945.0489817,
-    "ast_hash": "db67f853fd4de31440a9f52dd90f0168",
-    "semantic_hash": "db67f853fd4de31440a9f52dd90f0168"
+    "mtime": 1785618943.3347738,
+    "ast_hash": "8c011dacb1a854aac29d6db54b05b942",
+    "semantic_hash": ""
   },
   "src/datasluice/cli/detect.py": {
-    "mtime": 1785539626.8398623,
-    "ast_hash": "40dc3006562182d4aaf4a3aa7e8fbfec",
+    "mtime": 1785661418.4841847,
+    "ast_hash": "8cb6e53a8e1ef576a9715c9dbf23b4e6",
     "semantic_hash": ""
   },
   "src/datasluice/cli/download.py": {
-    "mtime": 1785539626.8398623,
-    "ast_hash": "95428b56572c83c61c4c66e46e34ffe0",
-    "semantic_hash": "95428b56572c83c61c4c66e46e34ffe0"
+    "mtime": 1785661325.6095781,
+    "ast_hash": "cd75380cf13ce3d62d1a1aea8aa31b26",
+    "semantic_hash": ""
   },
   "src/datasluice/cli/inspect.py": {
-    "mtime": 1785539626.8398623,
-    "ast_hash": "af7bcd46cc27c1b25de0440a799bc36f",
-    "semantic_hash": "af7bcd46cc27c1b25de0440a799bc36f"
+    "mtime": 1785660965.9504101,
+    "ast_hash": "a9fd9ce1aeb693fe002f258a11c9d6c8",
+    "semantic_hash": ""
   },
   "src/datasluice/cli/search.py": {
-    "mtime": 1785539626.8398623,
-    "ast_hash": "b4e17a25645dab08382bbb71a53cd65c",
-    "semantic_hash": "b4e17a25645dab08382bbb71a53cd65c"
+    "mtime": 1785660899.8855076,
+    "ast_hash": "812ed0d2b80b8e03618bf6956005e6f4",
+    "semantic_hash": ""
   },
   "src/datasluice/config/__init__.py": {
     "mtime": 1785539626.8398623,
@@ -215,9 +215,9 @@
     "semantic_hash": "82d46a425ed4e56da86dc74513dbb3ed"
   },
   "src/datasluice/domain/__init__.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "4c9b6b0fd669f621e75d39126ccdb156",
-    "semantic_hash": "4c9b6b0fd669f621e75d39126ccdb156"
+    "mtime": 1785611668.1240835,
+    "ast_hash": "4826dd2dd011c11b3fdf7035d982e46d",
+    "semantic_hash": ""
   },
   "src/datasluice/domain/access.py": {
     "mtime": 1785539626.8502548,
@@ -225,9 +225,9 @@
     "semantic_hash": "737e9eb4935553d5a226e5003f6c6141"
   },
   "src/datasluice/domain/artifact.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "b27b58c345f816f8ebdc247cb98cd56a",
-    "semantic_hash": "b27b58c345f816f8ebdc247cb98cd56a"
+    "mtime": 1785614767.2086985,
+    "ast_hash": "ab620004530989bb68068d338062f8b3",
+    "semantic_hash": ""
   },
   "src/datasluice/domain/capabilities.py": {
     "mtime": 1785539626.8502548,
@@ -285,23 +285,18 @@
     "semantic_hash": "15853a239e99aa834575c430a77223eb"
   },
   "src/datasluice/exceptions.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "c3355118d3dd3494e207c17d47cfeda7",
+    "mtime": 1785616104.3110566,
+    "ast_hash": "b82df07c2a36451cf548c40dc6f9d31a",
     "semantic_hash": ""
   },
   "src/datasluice/integrations/__init__.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "79d34bf12a4da233754144268b65ba85",
+    "mtime": 1785659658.670434,
+    "ast_hash": "397773a87183bc40f12a477879915d74",
     "semantic_hash": ""
   },
-  "src/datasluice/integrations/airflow.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "18ad4b6913429579d08b9ef6514d3537",
-    "semantic_hash": "18ad4b6913429579d08b9ef6514d3537"
-  },
   "src/datasluice/integrations/dlt.py": {
-    "mtime": 1785580271.5612893,
-    "ast_hash": "7352856ff868d96ee104598f2bbc4e26",
+    "mtime": 1785612294.3103936,
+    "ast_hash": "9d1102087de085623f82795e060f64a0",
     "semantic_hash": ""
   },
   "src/datasluice/integrations/duckdb.py": {
@@ -430,8 +425,8 @@
     "semantic_hash": "9b51ef7d8bbaae415e28b352ee8cd770"
   },
   "src/datasluice/runtime/session.py": {
-    "mtime": 1785539626.8502548,
-    "ast_hash": "140d657e6ee0d25f4d6aead4b2091d29",
+    "mtime": 1785616104.473414,
+    "ast_hash": "9bbd736ceec36f47623fdbd7f8fde1b7",
     "semantic_hash": ""
   },
   "src/datasluice/transport/__init__.py": {
@@ -445,8 +440,8 @@
     "semantic_hash": ""
   },
   "src/datasluice/transport/httpx_transport.py": {
-    "mtime": 1785580271.5612893,
-    "ast_hash": "539a83ee4456f413cea7c2eb1186fd06",
+    "mtime": 1785616683.5783608,
+    "ast_hash": "cb21a0505910b14cd56d6e555bc14cd0",
     "semantic_hash": ""
   },
   "src/datasluice/transport/pagination.py": {
@@ -590,8 +585,8 @@
     "semantic_hash": ""
   },
   "src/datasluice/_uri.py": {
-    "mtime": 1785580271.5612893,
-    "ast_hash": "aaa21221166cfb2d84e9c7e4342abd41",
+    "mtime": 1785611778.195556,
+    "ast_hash": "6fca33c1bbbd44da7164cbeb19062314",
     "semantic_hash": ""
   },
   "src/datasluice/sync/__init__.py": {
@@ -610,18 +605,48 @@
     "semantic_hash": ""
   },
   "src/datasluice/sync/materialize.py": {
-    "mtime": 1785580271.5612893,
-    "ast_hash": "8e04a35a1028f349e957c63b32b6e0f2",
+    "mtime": 1785614806.1401854,
+    "ast_hash": "00b50a2a08db8e4817b68ccd98d79d7c",
     "semantic_hash": ""
   },
   "src/datasluice/sync/state_store.py": {
-    "mtime": 1785580271.5612893,
-    "ast_hash": "af61086dae7415e4b30ef46a706e00c6",
+    "mtime": 1785613730.0843205,
+    "ast_hash": "c4b983bcf596ef6ca8b48499564ea80a",
     "semantic_hash": ""
   },
   "src/datasluice/sync/sync.py": {
-    "mtime": 1785580271.5612893,
-    "ast_hash": "461034c99a631402d4b055fe39cd0f6b",
+    "mtime": 1785614828.055124,
+    "ast_hash": "b5ead4580222421a4b777daaf44a930b",
+    "semantic_hash": ""
+  },
+  "src/datasluice/application.py": {
+    "mtime": 1785661315.2638078,
+    "ast_hash": "c98604c86cb9c4a65158c9c62521da07",
+    "semantic_hash": ""
+  },
+  "src/datasluice/cli/_output.py": {
+    "mtime": 1785617758.3339543,
+    "ast_hash": "6c44e3323537bb40e075e15b9b9be153",
+    "semantic_hash": ""
+  },
+  "src/datasluice/cli/_resolver.py": {
+    "mtime": 1785617767.8600152,
+    "ast_hash": "ebeb190799976c02accf437e7147399c",
+    "semantic_hash": ""
+  },
+  "src/datasluice/cli/open.py": {
+    "mtime": 1785618493.9307325,
+    "ast_hash": "847e1e9115aa0b29c7de80c2fc7ff559",
+    "semantic_hash": ""
+  },
+  "src/datasluice/cli/scan.py": {
+    "mtime": 1785617767.9415398,
+    "ast_hash": "e96114c22f5d0091280a810167db57a5",
+    "semantic_hash": ""
+  },
+  "src/datasluice/cli/materialize.py": {
+    "mtime": 1785618885.012087,
+    "ast_hash": "9621f18de5eb3386896b45749f60093f",
     "semantic_hash": ""
   }
 }

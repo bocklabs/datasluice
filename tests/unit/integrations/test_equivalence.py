@@ -107,9 +107,7 @@ def _make_timestamp_stream() -> BatchStream:
     """
     import pyarrow as pa
 
-    schema = pa.schema(
-        [("ts", pa.timestamp("us", tz="UTC")), ("value", pa.int64()), ("label", pa.string())]
-    )
+    schema = pa.schema([("ts", pa.timestamp("us", tz="UTC")), ("value", pa.int64()), ("label", pa.string())])
     batch = pa.RecordBatch.from_arrays(
         [
             pa.array([1715000000000000, 1715000001000000], type=pa.timestamp("us", tz="UTC")),
