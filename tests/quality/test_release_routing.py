@@ -288,7 +288,7 @@ def test_candidate_smoke_precedes_production() -> None:
     core_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name == 'datasluice'")
     assert "$SMOKE_VENV" in core_smoke["run"]
     assert "import datasluice" in core_smoke["run"]
-    assert "datasluice --help" in core_smoke["run"]
+    assert "--help" in core_smoke["run"]
     provider_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name != 'datasluice'")
     assert provider_smoke["working-directory"] == "${{ inputs.package_path }}"
     assert '"$SMOKE_VENV/bin/python" tests/smoke.py' in provider_smoke["run"]

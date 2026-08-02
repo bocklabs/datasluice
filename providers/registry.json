@@ -1,0 +1,12 @@
+{
+  "providers": [
+    {
+      "slug": "airflow",
+      "path": "providers/apache-airflow",
+      "package_name": "apache-airflow-providers-datasluice",
+      "initial_version": "0.1.0",
+      "testpypi_env": "airflow-test-pypi",
+      "pypi_env": "airflow-pypi"
+    }
+  ]
+}

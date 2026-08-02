@@ -92,6 +92,8 @@ jobs:
     needs: [build, publish-testpypi]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      SMOKE_VENV: /tmp/smoke-${{ inputs.component }}
     steps:
       - name: Checkout exact release ref
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -106,8 +108,8 @@ jobs:
 
       - name: Install exact candidate from TestPyPI
         run: |
-          uv venv --python 3.12 /tmp/smoke-${{ inputs.component }}
-          uv pip install --python /tmp/smoke-${{ inputs.component }}/bin/python \
+          uv venv --python 3.12 "$SMOKE_VENV"
+          uv pip install --python "$SMOKE_VENV/bin/python" \
             --index-url https://test.pypi.org/simple/ \
             --extra-index-url https://pypi.org/simple/ \
             "${{ inputs.package_name }}==${{ inputs.version }}"
@@ -115,15 +117,14 @@ jobs:
       - name: Smoke core public facade and CLI
         if: inputs.package_name == 'datasluice'
         run: |
-          /tmp/smoke-${{ inputs.component }}/bin/python -c "import datasluice; from datasluice import DataSluice; print(datasluice.__version__)"
-          /tmp/smoke-${{ inputs.component }}/bin/datasluice --help
+          "$SMOKE_VENV/bin/python" -c "import datasluice; from datasluice import DataSluice; print(datasluice.__version__)"
+          "$SMOKE_VENV/bin/datasluice" --help
 
-      - name: Smoke provider metadata, Hook, operators, and sample DAG
+      - name: Smoke provider via convention tests/smoke.py
         if: inputs.package_name != 'datasluice'
-        working-directory: providers/apache-airflow
+        working-directory: ${{ inputs.package_path }}
         run: |
-          /tmp/smoke-${{ inputs.component }}/bin/python -c "from airflow.providers.datasluice.get_provider_info import get_provider_info; from airflow.providers.datasluice.hooks.datasluice import DataSluiceHook; from airflow.providers.datasluice.operators.search import DataSluiceSearchOperator; from airflow.providers.datasluice.operators.materialize import DataSluiceMaterializeOperator; info = get_provider_info(); assert info['package-name'] == 'apache-airflow-providers-datasluice', info"
-          /tmp/smoke-${{ inputs.component }}/bin/python tests/dags/example_datasluice.py
+          "$SMOKE_VENV/bin/python" tests/smoke.py
 
   publish-pypi:
     name: Publish ${{ inputs.component }} to PyPI
