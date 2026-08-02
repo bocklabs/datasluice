@@ -42,6 +42,9 @@ def installed_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     venv_python = venv / "bin" / "python"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
 
+    extras = os.environ.get("DATASLUICE_E2E_EXTRAS", "http,parquet,storage")
+    wheel_spec = str(wheel) if extras == "none" else f"{wheel}[{extras}]"
+
     install = subprocess.run(
         [
             "uv",
@@ -49,7 +52,7 @@ def installed_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
             "install",
             "--python",
             str(venv_python),
-            f"{wheel}[http,parquet,storage]",
+            wheel_spec,
         ],
         capture_output=True,
         text=True,
@@ -70,7 +73,7 @@ def installed_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     assert check.returncode == 0, f"import check failed: {check.stderr}"
     assert str(venv) in check.stdout, f"datasluice imported from {check.stdout.strip()}, expected venv {venv}"
 
-    return {"console": console, "python": str(venv_python), "venv": str(venv)}
+    return {"console": console, "python": str(venv_python), "venv": str(venv), "extras": extras}
 
 
 def _run_cli(env_info: dict[str, str], args: list[str]) -> subprocess.CompletedProcess[str]:
