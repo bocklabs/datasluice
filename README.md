@@ -32,6 +32,15 @@ pip install "datasluice[pandas,polars,parquet,xlsx]"
 pip install "datasluice[all]"          # everything
 ```
 
+### Apache Airflow
+
+Airflow integration is a separate distribution that imports from the
+`airflow.providers.datasluice` namespace:
+
+```bash
+pip install apache-airflow-providers-datasluice
+```
+
 ## Quick Start
 
 ```python
@@ -69,7 +78,7 @@ datasluice download -p https://www.data.gouv.fr <dataset-id> --format csv
 * **Unified API** — one interface for CKAN, data.gouv.fr, Socrata, and custom portals
 * **Auto-detection** — point at a URL and DataSluice figures out the portal type
 * **Format normalization** — CSV, JSON, XLSX, Parquet, and GeoJSON readers
-* **Integrations** — pandas, Polars, dlt, DuckDB, and Apache Airflow
+* **Integrations** — pandas, Polars, dlt, DuckDB, and Apache Airflow (separate provider)
 * **CLI** — search, inspect, download, and detect from the command line
 * **Pipeline-ready** — retry, rate-limiting, caching, and checksum verification built in
 

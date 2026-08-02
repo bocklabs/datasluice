@@ -26,7 +26,29 @@ jobs:
 
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Build docs
+      - name: Guard current docs against obsolete Airflow references
+        run: |
+          set -e
+          if grep -rEn -e 'datasluice\[airflow\]' -e 'datasluice\.integrations\.airflow' -e 'DataSluiceOperator' -e 'DataSluiceSession' \
+              README.md docs --include '*.md' --exclude-dir='.planning' --exclude='CHANGELOG.md'; then
+            echo "Obsolete Airflow/core reference found in current docs" >&2
+            exit 1
+          fi
+          grep -q 'apache-airflow-providers-datasluice' docs/install.md
+
+      - name: Run executable public documentation examples
+        run: uv run --group docs pytest tests/e2e/test_docs_examples.py tests/e2e/test_cli_bare.py -x
+
+      - name: Import provider sample DAG from installed wheels
+        run: |
+          uv run python providers/apache-airflow/tests/run_candidate.py \
+            --core-version 1.0.0 \
+            --airflow-version 3.2.2 \
+            -- python providers/apache-airflow/tests/dags/example_datasluice.py
+
+      - name: Build docs (warnings fatal)
+        env:
+          ZENSICAL_WARNINGS_AS_ERRORS: "1"
         run: uv run --group docs zensical build --clean
 
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
