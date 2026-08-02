@@ -89,6 +89,13 @@ socrata = "datasluice.connectors.socrata.factory:create_socrata_connector"
 # Example override: relax a rule for the entire project (uncomment if needed).
 # rules.TY015 = "warn"  # For invalid-argument-type, warn instead of error.
 
+[tool.ty.src]
+# The Airflow provider is an isolated build root (D-21/D-52) whose host-framework
+# dependency (apache-airflow) is deliberately not installed in the core dev venv
+# (D-23). Core type-checking excludes it; the provider is type-checked inside the
+# wheel-only candidate venv built by providers/apache-airflow/tests/run_candidate.py.
+exclude = ["providers"]
+
 [tool.ruff]
 line-length = 120
 
