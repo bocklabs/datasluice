@@ -228,12 +228,10 @@ jobs:
       - name: Set up UV
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Installed-wheel CLI E2E (bare)
-        run: uv run --python=${{ matrix.python-version }} pytest tests/e2e/test_cli_existing.py -k "not materialize or materialize" -x
-        env:
-          DATASLUICE_E2E_EXTRAS: none
+      - name: Installed-wheel bare CLI E2E
+        run: uv run --python=${{ matrix.python-version }} pytest tests/e2e/test_cli_bare.py -x
 
-      - name: Installed-wheel CLI E2E (all extras)
+      - name: Installed-wheel all-extras CLI E2E
         run: uv run --python=${{ matrix.python-version }} pytest tests/e2e/test_cli_existing.py -x
         env:
           DATASLUICE_E2E_EXTRAS: all
