@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import os
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +12,6 @@ from typer.testing import CliRunner
 import datasluice.cli.download as download_cmd
 from datasluice.cli.app import app
 from datasluice.domain import Dataset, Resource
-
-if not hasattr(download_cmd, "DataSluice"):
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.fail("download facade refactor pending GREEN phase", pytrace=False)
-    pytest.skip("download facade refactor pending GREEN phase", allow_module_level=True)
 
 runner = CliRunner()
 

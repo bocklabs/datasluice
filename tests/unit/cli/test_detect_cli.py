@@ -14,7 +14,6 @@ Covers:
 from __future__ import annotations
 
 import inspect
-import os
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +23,6 @@ from typer.testing import CliRunner
 import datasluice.cli.detect as detect_cmd
 from datasluice.cli.app import app
 from datasluice.domain.detection import DetectionEvidence, DetectionResult
-
-if not hasattr(detect_cmd, "DataSluice"):
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.fail("detect facade refactor pending GREEN phase", pytrace=False)
-    pytest.skip("detect facade refactor pending GREEN phase", allow_module_level=True)
 
 runner = CliRunner()
 
@@ -84,7 +78,7 @@ def test_undetected_exit_code_one(monkeypatch: pytest.MonkeyPatch) -> None:
     outcome = runner.invoke(app, ["detect", "https://example.gov"])
 
     assert outcome.exit_code == 1
-    assert "No portal detected" in outcome.stdout
+    assert "No portal detected" in outcome.stderr
 
 
 def test_type_override_skips_detection(monkeypatch: pytest.MonkeyPatch) -> None:

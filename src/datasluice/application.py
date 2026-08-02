@@ -330,6 +330,21 @@ class _ApplicationServices:
         opened = self.open(resource)
         return opened.materialize(destination_uri, mode=mode)
 
+    def download_many(self, resources: list[Resource], destination: str) -> list[dict[str, object]]:
+        """Raw bulk-copy multiple resources into a destination directory (D-15)."""
+        from datasluice.io.downloader import Downloader
+
+        downloader = Downloader(self._session._transport)
+        paths = downloader.download_many(resources, destination)
+        results: list[dict[str, object]] = []
+        for resource, path in zip(resources, paths, strict=False):
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = None
+            results.append({"resource_id": resource.id, "path": str(path), "size": size})
+        return results
+
 
 class Portal:
     """Stable application wrapper for a portal URL."""
@@ -402,6 +417,11 @@ class DataSluice:
     ) -> Any:
         """Materialize one Resource or ResourceLocator into an Artifact."""
         return self._services.materialize(resource, destination_uri, mode=mode)
+
+    def download_many(self, resources: list[Resource], destination: str) -> list[dict[str, object]]:
+        """Raw bulk-copy resources into a destination directory (D-15)."""
+        self._ensure_open()
+        return self._services.download_many(resources, destination)
 
     def close(self) -> None:
         """Close this facade and any resource wrappers it owns."""
