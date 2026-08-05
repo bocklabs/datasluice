@@ -36,7 +36,7 @@ def _parse_retry_after(raw: str | None) -> float | None:
         return None
     text = raw.strip()
     try:
-        return float(text)
+        return max(float(text), 0.0)
     except ValueError:
         pass
     try:

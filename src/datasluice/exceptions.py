@@ -60,9 +60,13 @@ class RateLimitError(PortalError):
 
 
 class RetryableHTTPError(PortalError):
-    """Raised on HTTP 5xx responses that should be retried."""
+    """Raised on HTTP 5xx responses, or transport-level failures, that should be retried.
 
-    def __init__(self, message: str, status_code: int) -> None:
+    ``status_code`` defaults to ``0`` for transport-level errors (timeouts, connection
+    failures) that have no HTTP response status.
+    """
+
+    def __init__(self, message: str, status_code: int = 0) -> None:
         super().__init__(message)
         self.status_code = status_code
 

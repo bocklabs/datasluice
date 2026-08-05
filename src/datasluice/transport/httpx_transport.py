@@ -174,7 +174,6 @@ class HttpxTransport:
         self._client = httpx.Client(
             timeout=httpx.Timeout(timeout),
             follow_redirects=False,
-            max_redirects=max_redirects,
         )
 
     def close(self) -> None:
@@ -183,6 +182,12 @@ class HttpxTransport:
             return
         self._closed = True
         self._client.close()
+
+    def __enter__(self) -> HttpxTransport:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
     def _should_strip_authorization(self, old_url: str, new_url: str) -> bool:
         """Return whether sensitive headers must be stripped on this redirect hop.
@@ -224,7 +229,7 @@ class HttpxTransport:
 
         current_url = url
         req = self._client.build_request(method, current_url, headers=headers, content=body)
-        response = self._client.send(req, follow_redirects=False, stream=stream)
+        response = self._send_translating(req, stream=stream)
         for _ in range(self._max_redirects):
             if not response.has_redirect_location:
                 break
@@ -236,14 +241,30 @@ class HttpxTransport:
                 for header_name in list(next_request.headers.keys()):
                     if header_name.lower() in SENSITIVE_HEADERS:
                         del next_request.headers[header_name]
-                logger.debug("Stripped sensitive headers on redirect to %s", next_url)
+                logger.debug("Stripped sensitive headers on redirect to %s", sanitize_uri(next_url))
             current_url = next_url
             response.close()
-            response = self._client.send(next_request, follow_redirects=False, stream=stream)
+            response = self._send_translating(next_request, stream=stream)
         if response.has_redirect_location:
             response.close()
             raise PortalError(f"Redirect limit {self._max_redirects} exceeded for {url}")
         return response
+
+    def _send_translating(self, request: httpx.Request, *, stream: bool) -> httpx.Response:
+        """Send a request, translating httpx network errors into DataSluice exceptions.
+
+        httpx ``TransportError``/``TimeoutException`` are not ``OSError`` subclasses, so without
+        this wrapper they would neither be retried by ``RetryPolicy`` nor surface as a
+        ``PortalError`` across the port boundary.
+        """
+        import httpx  # lazy (D-P3-01)
+
+        try:
+            return self._client.send(request, follow_redirects=False, stream=stream)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise RetryableHTTPError(f"Transient httpx failure: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise PortalError(f"httpx request failed: {exc}") from exc
 
     def _try_credential_refresh(
         self,
@@ -345,7 +366,7 @@ class HttpxTransport:
                     refreshed=refreshed[0],
                     params_box=params_box,
                 )
-                refreshed[0] = True
+                refreshed[0] = refreshed[0] or did_refresh
                 response = refreshed_response
                 current_url = _url_with_params(base_url, params_box[0])
                 display_url = sanitize_uri(current_url)
@@ -478,7 +499,7 @@ class HttpxTransport:
         resp = response
         try:
             if resp.status_code in (401, 403):
-                refreshed_response, status, _did_refresh = self._try_credential_refresh(
+                refreshed_response, status, did_refresh = self._try_credential_refresh(
                     response=resp,
                     base_url=base_url,
                     method="GET",
@@ -492,6 +513,12 @@ class HttpxTransport:
                 resp = refreshed_response
                 current_url = _url_with_params(base_url, params_box[0])
                 display_url = sanitize_uri(current_url)
+                if did_refresh and resp.status_code in (401, 403):
+                    resp.read()
+                    raise PortalError(
+                        f"HTTP {resp.status_code} from {display_url} after credential refresh: "
+                        f"{_truncate_body(resp.content)}"
+                    )
             if resp.status_code >= 400:
                 resp.read()
                 if resp.status_code == 429:

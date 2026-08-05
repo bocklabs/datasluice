@@ -13,9 +13,9 @@ from datasluice.logging import get_logger
 logger = get_logger("transport.retry")
 
 
-def _full_jitter_delay(base: float, cap: float, attempt: int) -> float:
-    """Return a full-jitter sleep in ``[0, min(cap, base * 2**attempt)]``."""
-    return random.uniform(0, min(cap, base * (2**attempt)))
+def _full_jitter_delay(base: float, cap: float, attempt: int, backoff_factor: float = 2.0) -> float:
+    """Return a full-jitter sleep in ``[0, min(cap, base * backoff_factor**attempt)]``."""
+    return random.uniform(0, min(cap, base * (backoff_factor**attempt)))
 
 
 @dataclass(frozen=True)
@@ -62,9 +62,11 @@ def with_retry[T](
         except policy.retry_on as exc:
             last_exc = exc
             if isinstance(exc, RateLimitError) and exc.retry_after is not None:
+                if attempt >= policy.max_attempts:
+                    break
                 sleep = min(exc.retry_after, policy.max_delay)
             elif attempt < policy.max_attempts:
-                sleep = _full_jitter_delay(policy.base_delay, policy.max_delay, attempt - 1)
+                sleep = _full_jitter_delay(policy.base_delay, policy.max_delay, attempt - 1, policy.backoff_factor)
             else:
                 break
             logger.warning("Attempt %d/%d failed: %s — retrying in %.1fs", attempt, policy.max_attempts, exc, sleep)
