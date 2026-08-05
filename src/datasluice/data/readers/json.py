@@ -75,7 +75,7 @@ class JSONReader(BaseFormatReader):
         read_options = paj.ReadOptions(block_size=1 << 20)
         try:
             return paj.read_json(io.BytesIO(data), read_options=read_options)
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid JSONL: {exc}") from exc
 
     @staticmethod
@@ -93,7 +93,7 @@ class JSONReader(BaseFormatReader):
             return pa.table({})
         try:
             return pa.Table.from_pylist(records)
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Could not coerce JSON array to Arrow: {exc}") from exc
 
 

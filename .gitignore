@@ -58,7 +58,7 @@ site/
 .planning/
 
 # Data
-*/data/
+/data/
 
 # Notebooks
 notebook/

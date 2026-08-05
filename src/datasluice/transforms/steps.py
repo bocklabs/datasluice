@@ -126,7 +126,7 @@ class CastSchema:
             table = pa.Table.from_batches([batch])
             try:
                 casted = table.cast(self.target_schema, safe=True)
-            except pa.ArrowInvalid as exc:
+            except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
                 from datasluice.exceptions import TransformError
 
                 raise TransformError(f"Unsafe cast to target schema: {exc}") from exc
@@ -172,12 +172,19 @@ class NormalizeTimestamps:
             for field in batch.schema:
                 col = batch.column(field.name)
                 if pt.is_timestamp(field.type):
-                    if field.type.tz is None:
-                        col = pc.cast(assume_timezone(col, self.assume_naive_tz), target_type, safe=True)
-                    elif field.type.tz != self.target_tz:
-                        col = pc.cast(col, target_type, safe=True)
-                    elif field.type.unit != self.target_unit:
-                        col = pc.cast(col, target_type, safe=True)
+                    try:
+                        if field.type.tz is None:
+                            col = pc.cast(assume_timezone(col, self.assume_naive_tz), target_type, safe=True)
+                        elif field.type.tz != self.target_tz:
+                            col = pc.cast(col, target_type, safe=True)
+                        elif field.type.unit != self.target_unit:
+                            col = pc.cast(col, target_type, safe=True)
+                    except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
+                        from datasluice.exceptions import TransformError
+
+                        raise TransformError(
+                            f"Timestamp normalization failed for {field.name!r} (possible DST fold/gap): {exc}"
+                        ) from exc
                     new_fields.append(field.with_type(col.type))
                 else:
                     new_fields.append(field)

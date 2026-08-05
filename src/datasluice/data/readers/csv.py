@@ -55,7 +55,7 @@ class CSVReader(BaseFormatReader):
         parse_options = pacsv.ParseOptions(delimiter=self.delimiter)
         try:
             reader = pacsv.open_csv(source, read_options=read_options, parse_options=parse_options)
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid CSV: {exc}") from exc
 
         try:

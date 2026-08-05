@@ -71,7 +71,7 @@ class XLSXReader(BaseFormatReader):
                     buffer = []
             if buffer:
                 yield _batch_from_rows(buffer, pa)
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Could not coerce XLSX rows to Arrow: {exc}") from exc
         finally:
             wb.close()

@@ -19,6 +19,7 @@ from datasluice.domain import (
     Resource,
     SearchResult,
 )
+from datasluice.exceptions import PortalError
 
 _CKAN_SUPPORTED_QUERY_FIELDS: frozenset[str] = frozenset(
     {"text", "tags", "organizations", "groups", "res_format", "license_id", "sort"}
@@ -45,9 +46,17 @@ class CKANAdapter(BaseAdapter):
     )
 
     def _action(self, action: str, **params: object) -> dict:
-        """Call a CKAN Action API endpoint and return the ``result`` dict."""
+        """Call a CKAN Action API endpoint and return the ``result`` dict.
+
+        CKAN returns HTTP 200 with ``{"success": false, ...}`` for action
+        failures; raise :class:`PortalError` so the error is not silently
+        swallowed as an empty ``result``.
+        """
         url = f"{self.base_url}/api/3/action/{action}"
         response = self.transport.get_json(url, params=params)
+        if response.get("success") is False:
+            error = response.get("error")
+            raise PortalError(f"CKAN action {action!r} failed: {error or response}")
         return response.get("result", {})
 
     def search(self, query: Query | None = None) -> SearchResult:

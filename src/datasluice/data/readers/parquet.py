@@ -58,13 +58,13 @@ class ParquetReader(BaseFormatReader):
 
         try:
             parquet_file = pq.ParquetFile(source)
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid Parquet: {exc}") from exc
         try:
             for batch in parquet_file.iter_batches(batch_size=batch_size):
                 if batch.num_rows > 0:
                     yield batch
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid Parquet: {exc}") from exc
 
     def read_batches_from_row_group(self, source: Any, *, start_row_group_index: int) -> Iterator[tuple[int, Any]]:
@@ -101,7 +101,7 @@ class ParquetReader(BaseFormatReader):
             raise FormatError("Streaming reads require 'pyarrow'. Install with: uv sync --all-extras") from exc
         try:
             parquet_file = pq.ParquetFile(source)
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid Parquet: {exc}") from exc
         if start_row_group_index > parquet_file.num_row_groups:
             raise FormatError(
@@ -113,7 +113,7 @@ class ParquetReader(BaseFormatReader):
                 batch = self._read_row_group(parquet_file, row_group_index)
                 if batch.num_rows > 0:
                     yield row_group_index, batch
-        except pa.ArrowInvalid as exc:
+        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid Parquet row group: {exc}") from exc
 
     def _read_row_group(self, parquet_file: Any, row_group_index: int) -> Any:
