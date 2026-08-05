@@ -17,12 +17,15 @@ from typing import TYPE_CHECKING
 
 from datasluice.auth import NoAuth
 from datasluice.config.defaults import DEFAULT_RATE_LIMIT, DEFAULT_RETRIES, DEFAULT_TIMEOUT
+from datasluice.logging import get_logger
 from datasluice.transport import HttpClient, RateLimiter, RetryPolicy
 from datasluice.transport.user_agent import build_user_agent
 
 if TYPE_CHECKING:
     from datasluice.auth import BaseAuth
     from datasluice.ports import CredentialProvider, Transport
+
+logger = get_logger("runtime.defaults")
 
 
 def create_default_transport(
@@ -55,6 +58,11 @@ def create_default_transport(
     retry_policy = RetryPolicy(max_attempts=retries)
     rate_limiter = RateLimiter(requests_per_second=rate_limit) if rate_limit else None
     if importlib.util.find_spec("httpx") is None:
+        if credential_provider is not None:
+            logger.debug(
+                "httpx unavailable: falling back to urllib HttpClient, which does not support "
+                "credential_provider eviction (D-P3-15 ignored on this path)"
+            )
         return HttpClient(
             auth=auth or NoAuth(),
             timeout=timeout,

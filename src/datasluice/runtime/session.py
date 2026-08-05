@@ -119,7 +119,7 @@ class DataSluiceSession:
         credential_provider: CredentialProvider | None = None,
         state_store: StateStore | None = None,
     ) -> None:
-        self.auth = auth or NoAuth()
+        self.auth = auth if auth is not None else NoAuth()
         self.page_size = page_size
         self.storage = storage
         if state_store is None:
@@ -173,7 +173,13 @@ class DataSluiceSession:
         except ImportError:
             logger.debug("ContentCache (plan 03-03) not importable; cache_dir=%s unused", cache_dir)
             return None
-        return cache_module.ContentCache(cache_dir, ttl=cache_ttl)
+        try:
+            return cache_module.ContentCache(cache_dir, ttl=cache_ttl)
+        except Exception:
+            logger.warning(
+                "ContentCache construction failed for cache_dir=%s; disabling cache", cache_dir, exc_info=True
+            )
+            return None
 
     def portal(self, url: str, portal_type: str | None = None) -> BaseAdapter:
         """Resolve and construct a connector for *url*.

@@ -8,8 +8,10 @@ and never crashes session creation (ARCH-05, Pitfall 4).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
+from typing import Any
 
 from datasluice.exceptions import AdapterNotFoundError
 from datasluice.logging import get_logger
@@ -40,9 +42,14 @@ class PluginManager:
     """
 
     def __init__(self, group: str = "datasluice.connectors") -> None:
-        self._factories: dict[str, object] = {}
+        self._factories: dict[str, Callable[..., Any]] = {}
         self._failures: list[PluginFailure] = []
-        for ep in entry_points(group=group):
+        try:
+            discovered = entry_points(group=group)
+        except Exception as exc:
+            logger.warning("Entry-point discovery failed for group %r; no connectors loaded: %s", group, exc)
+            return
+        for ep in discovered:
             try:
                 factory = ep.load()
             except Exception as exc:
@@ -58,8 +65,10 @@ class PluginManager:
                 continue
             self._factories[ep.name] = factory
 
-    def register(self, name: str, factory: object) -> None:
+    def register(self, name: str, factory: Callable[..., Any]) -> None:
         """Register *factory* programmatically (used by tests, D-06)."""
+        if name in self._factories and self._factories[name] is not factory:
+            logger.warning("Overwriting existing connector factory %r", name)
         self._factories[name] = factory
 
     def get(self, name: str) -> object:

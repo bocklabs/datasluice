@@ -85,10 +85,10 @@ def configure_logging(
             :class:`logging.Handler`.
     """
     logger = logging.getLogger(_logger_name)
+    if logger.handlers:
+        return
     logger.setLevel(level)
-
-    if not logger.handlers:
-        handler = logging.StreamHandler(**kwargs)
-        handler.setFormatter(logging.Formatter(format_string or "%(asctime)s [%(name)s] %(levelname)s: %(message)s"))
-        handler.addFilter(RedactingFilter())
-        logger.addHandler(handler)
+    handler = logging.StreamHandler(**kwargs)
+    handler.setFormatter(logging.Formatter(format_string or "%(asctime)s [%(name)s] %(levelname)s: %(message)s"))
+    handler.addFilter(RedactingFilter())
+    logger.addHandler(handler)
