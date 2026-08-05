@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 
@@ -18,6 +20,12 @@ class Schema:
     """
 
     name: str
-    columns: list[dict[str, Any]] = field(default_factory=list)
+    columns: Sequence[dict[str, Any]] = field(default_factory=tuple)
     version: str = "1"
-    extra: dict[str, Any] = field(default_factory=dict)
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.columns, tuple):
+            object.__setattr__(self, "columns", tuple(self.columns))
+        if not isinstance(self.extra, MappingProxyType):
+            object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))

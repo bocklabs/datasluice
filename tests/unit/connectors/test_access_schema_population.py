@@ -40,13 +40,13 @@ def test_schema_from_datastore_fields() -> None:
         {"id": "r1", "url": None, "datastore_active": True, "datastore_fields": [{"id": "col1"}]}
     )
     assert resource.schema is not None
-    assert resource.schema.columns == [{"id": "col1"}]
+    assert list(resource.schema.columns) == [{"id": "col1"}]
 
 
 def test_schema_from_schema_fields_fallback() -> None:
     resource = ckan_map_resource({"id": "r1", "url": "https://x", "schema": {"fields": [{"id": "colA"}]}})
     assert resource.schema is not None
-    assert resource.schema.columns == [{"id": "colA"}]
+    assert list(resource.schema.columns) == [{"id": "colA"}]
 
 
 def test_schema_none_when_portal_silent() -> None:
@@ -79,7 +79,7 @@ def test_datagouv_schema_from_schema_fields() -> None:
         {"id": "r1", "url": "https://x", "schema": {"fields": [{"name": "col1", "type": "text"}]}}
     )
     assert resource.schema is not None
-    assert resource.schema.columns == [{"name": "col1", "type": "text"}]
+    assert list(resource.schema.columns) == [{"name": "col1", "type": "text"}]
 
 
 def test_datagouv_schema_none_when_portal_silent() -> None:
@@ -118,7 +118,7 @@ def test_socrata_schema_from_parallel_column_arrays() -> None:
     )
     assert resource.schema is not None
     assert resource.schema.name == "abcd-1234"
-    assert resource.schema.columns == [
+    assert list(resource.schema.columns) == [
         {"id": "inspection_id", "type": "Number"},
         {"id": "score", "type": "Number"},
     ]
@@ -134,7 +134,7 @@ def test_socrata_schema_falls_back_to_columns_name_when_no_field_name() -> None:
         }
     )
     assert resource.schema is not None
-    assert resource.schema.columns == [
+    assert list(resource.schema.columns) == [
         {"id": "Inspection ID", "type": "Number"},
         {"id": "Score", "type": "Number"},
     ]

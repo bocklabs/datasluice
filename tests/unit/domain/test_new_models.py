@@ -29,7 +29,7 @@ from datasluice.domain.detection import DetectionEvidence
 def test_schema_defaults() -> None:
     schema = Schema(name="resources")
     assert schema.name == "resources"
-    assert schema.columns == []
+    assert list(schema.columns) == []
     assert schema.version == "1"
     assert schema.extra == {}
 
@@ -76,7 +76,7 @@ def test_detection_result_defaults() -> None:
     result = DetectionResult(portal_type="ckan")
     assert result.portal_type == "ckan"
     assert result.confidence == 0.0
-    assert result.evidence == []
+    assert list(result.evidence) == []
     assert result.extra == {}
 
 

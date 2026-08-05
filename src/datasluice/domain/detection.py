@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 
@@ -34,5 +36,13 @@ class DetectionResult:
 
     portal_type: str | None
     confidence: float = 0.0
-    evidence: list[DetectionEvidence] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)
+    evidence: Sequence[DetectionEvidence] = field(default_factory=tuple)
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"confidence must be in [0.0, 1.0], got {self.confidence}")
+        if not isinstance(self.evidence, tuple):
+            object.__setattr__(self, "evidence", tuple(self.evidence))
+        if not isinstance(self.extra, MappingProxyType):
+            object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))

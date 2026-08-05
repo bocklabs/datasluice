@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 
 @dataclass(frozen=True)
@@ -26,4 +28,8 @@ class CatalogCapabilities:
     supports_faceted_search: bool = False
     supported_query_fields: frozenset[str] = field(default_factory=frozenset)
     unsupported_query_fields: frozenset[str] = field(default_factory=frozenset)
-    notes: dict[str, str] = field(default_factory=dict)
+    notes: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.notes, MappingProxyType):
+            object.__setattr__(self, "notes", MappingProxyType(dict(self.notes)))
