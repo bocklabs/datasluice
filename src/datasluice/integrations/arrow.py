@@ -27,6 +27,9 @@ def to_arrow(stream: BatchStream) -> Any:
         A ``pyarrow.Table`` built from the stream's batches with the stream's
         schema.
     """
-    import pyarrow as pa
+    try:
+        import pyarrow as pa
+    except ImportError as exc:
+        raise ImportError("to_arrow requires 'pyarrow'. Install with: pip install datasluice[streaming]") from exc
 
     return pa.Table.from_batches(stream.iter_batches(), schema=stream.schema)

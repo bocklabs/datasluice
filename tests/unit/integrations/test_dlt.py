@@ -43,6 +43,12 @@ class _Session:
     def search(self, portal: str, query: Any) -> SearchResult:
         return self._result
 
+    def __enter__(self) -> _Session:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
 
 def _install_portal(monkeypatch: pytest.MonkeyPatch, resources: list[Resource]) -> None:
     import datasluice
@@ -293,10 +299,18 @@ import types
 import datasluice
 from datasluice.domain import SearchResult
 
+class _MockDataSluice:
+    def search(self, *args, **kwargs):
+        return SearchResult()
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return None
+
 assert "dlt" not in sys.modules
 module = __import__("datasluice.integrations.dlt", fromlist=["datasluice_source"])
 assert "dlt" not in sys.modules
-datasluice.DataSluice = lambda: types.SimpleNamespace(search=lambda *args, **kwargs: SearchResult())
+datasluice.DataSluice = _MockDataSluice
 module.datasluice_source("https://portal.test")
 assert "dlt" in sys.modules
 """

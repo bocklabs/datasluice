@@ -57,10 +57,13 @@ def datasluice_source(
     from datasluice.domain import Query
     from datasluice.transport.httpx_transport import HttpxTransport
 
+    allowed_query_fields = {field.name for field in Query.__dataclass_fields__.values()} - {"text", "limit"}
+    query_kwargs = {key: value for key, value in kwargs.items() if key in allowed_query_fields}
+
     @dlt.source(name="datasluice")
     def _source() -> Any:
-        data_sluice = DataSluice()
-        result = data_sluice.search(portal, Query(text=query, limit=limit, **kwargs))
+        with DataSluice() as data_sluice:
+            result = data_sluice.search(portal, Query(text=query, limit=limit, **query_kwargs))
         datasets = result.datasets
         from datasluice.sync._identity import canonical_identity
 
@@ -165,6 +168,7 @@ def mirror_dlt_state(pipeline: Any, state_store: Any, *, source_name: str = "dat
         source_name: The dlt source name to read committed state from.
     """
     from datasluice.domain import SyncState
+    from datasluice.exceptions import SyncStateConflictError
     from datasluice.ports import AtomicStateStore
 
     resources = pipeline.state.get("sources", {}).get(source_name, {}).get("resources", {})
@@ -179,6 +183,12 @@ def mirror_dlt_state(pipeline: Any, state_store: Any, *, source_name: str = "dat
             continue
         state = SyncState(cursor={identity: watermark}, last_synced_at=datetime.now(UTC).isoformat())
         if is_atomic:
-            state_store.conditional_put(identity, state, state_store.read_version(identity))
+            try:
+                state_store.conditional_put(identity, state, state_store.read_version(identity))
+            except SyncStateConflictError:
+                logger.warning(
+                    "Sync-state conflict mirroring dlt watermark for identity %s; skipping (another writer won)",
+                    identity,
+                )
         else:
             state_store.put(identity, state)
