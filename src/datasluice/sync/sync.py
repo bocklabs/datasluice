@@ -285,12 +285,6 @@ def sync_resources(
             yield SyncOutcome(resource, action=action, record=record, state_key=key)
 
 
-def _sync_state(state_key: str, watermark: str) -> SyncState:
-    from datasluice.domain import SyncState
-
-    return SyncState(cursor={state_key: watermark}, last_synced_at=_utcnow_iso())
-
-
 def _completed_sync_state(
     state_key: str,
     watermark: str,
