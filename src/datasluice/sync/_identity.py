@@ -122,7 +122,8 @@ def _url_origin(resource: Resource) -> str:
     if url:
         parts = urlsplit(url)
         if parts.scheme and parts.netloc:
-            return f"{parts.scheme}://{parts.netloc}"
+            authority = parts.netloc.rsplit("@", 1)[-1].lower()
+            return f"{parts.scheme.lower()}://{authority}"
         if loc:
             return f"local:{loc}"
         if parts.scheme and parts.path:

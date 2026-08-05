@@ -60,7 +60,10 @@ def sanitize_uri(uri: str) -> str:
             port = parts.port
         except ValueError:
             port = None
-        netloc = parts.hostname if port is None else f"{parts.hostname}:{port}"
+        hostname = parts.hostname
+        if ":" in hostname:
+            hostname = f"[{hostname}]"
+        netloc = hostname if port is None else f"{hostname}:{port}"
     redacted: list[tuple[str, str]] = []
     if parts.query:
         try:
@@ -71,4 +74,4 @@ def sanitize_uri(uri: str) -> str:
         except ValueError:
             redacted = []
     query = urlencode(redacted, doseq=True, safe="*")
-    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))

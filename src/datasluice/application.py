@@ -11,7 +11,15 @@ from urllib.parse import unquote, urlsplit
 
 from datasluice._uri import sanitize_uri
 from datasluice.data.access import DataPlaneResourceReader
-from datasluice.domain import DetectionResult, HttpDownload, LocalFile, Query, Resource, SearchResult
+from datasluice.domain import (
+    DetectionResult,
+    HttpDownload,
+    LocalFile,
+    ObjectStorage,
+    Query,
+    Resource,
+    SearchResult,
+)
 from datasluice.domain.artifact import _freeze_extensions
 from datasluice.exceptions import (
     DataSluiceError,
@@ -257,12 +265,19 @@ def _resolve_catalog_resource(session: Any, locator: CatalogResourceLocator) -> 
     )
 
 
+_OBJECT_STORAGE_SCHEMES = frozenset({"s3", "gs", "gcs", "az", "azure", "abfs"})
+
+
 def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
     parts = urlsplit(locator.uri)
     identity_source = str(locator.to_dict()["uri"])
     resource_id = hashlib.sha256(identity_source.encode()).hexdigest()
     if parts.scheme == "file":
         access = LocalFile(path=unquote(parts.path))
+    elif parts.scheme in _OBJECT_STORAGE_SCHEMES:
+        access = ObjectStorage(uri=locator.uri)
+    elif parts.scheme in ("http", "https"):
+        access = HttpDownload(url=locator.uri)
     elif parts.scheme:
         access = HttpDownload(url=locator.uri)
     else:
