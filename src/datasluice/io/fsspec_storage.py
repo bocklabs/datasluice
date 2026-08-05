@@ -65,10 +65,15 @@ class FsspecStorage:
         """Return the backend-native path for *path*.
 
         Absolute URIs pass through unchanged; bare paths are joined to
-        *base_uri* when set, otherwise returned as-is.
+        *base_uri* when set, otherwise returned as-is. Parent-directory
+        (``..``) segments are rejected to prevent path traversal on
+        ``file://``/local backends (cloud object keys are flat, so ``..`` is a
+        no-op there but rejected uniformly for safety).
         """
         if path.startswith(_ABSOLUTE_URI_PREFIXES):
             return path
+        if _has_parent_segments(path):
+            raise DownloadError(f"Path traversal detected: {path!r} contains '..' segments")
         if self._base_uri:
             return f"{self._base_uri}/{path.lstrip('/')}"
         return path
@@ -80,4 +85,10 @@ class FsspecStorage:
         protocol = getattr(self._fs, "protocol", "file")
         if isinstance(protocol, (list, tuple)):
             protocol = protocol[0]
-        return f"{protocol}://{path.lstrip('/')}"
+        leading_slash = "/" if path.startswith("/") else ""
+        return f"{protocol}://{leading_slash}{path.lstrip('/')}"
+
+
+def _has_parent_segments(path: str) -> bool:
+    """Return True if *path* contains a ``..`` path segment."""
+    return any(seg == ".." for seg in path.replace("\\", "/").split("/"))

@@ -40,18 +40,25 @@ class LocalStorage(Storage):
     def __init__(self, base_dir: str | Path) -> None:
         self.base_dir = ensure_dir(base_dir)
 
-    def write(self, data: bytes, key: str) -> str:
+    def _resolve(self, key: str) -> Path:
+        """Resolve *key* against the base directory, rejecting path traversal.
+
+        A ``key`` containing ``..`` segments that escapes ``base_dir`` raises
+        ``DownloadError``. Applied uniformly to write/read/exists.
+        """
         base_resolved = self.base_dir.resolve()
         path = (self.base_dir / key).resolve()
         try:
             path.relative_to(base_resolved)
         except ValueError:
             raise DownloadError(f"Path traversal detected: {key!r} escapes base directory") from None
-        return str(save_bytes(data, path))
+        return path
+
+    def write(self, data: bytes, key: str) -> str:
+        return str(save_bytes(data, self._resolve(key)))
 
     def read(self, key: str) -> bytes:
-        path = self.base_dir / key
-        return path.read_bytes()
+        return self._resolve(key).read_bytes()
 
     def exists(self, key: str) -> bool:
-        return (self.base_dir / key).exists()
+        return self._resolve(key).exists()
