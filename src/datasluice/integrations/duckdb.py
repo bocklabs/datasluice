@@ -74,7 +74,13 @@ def to_duckdb(
     from datasluice.integrations.arrow import to_arrow
 
     _validate_table_name(table_name)
+    owns_connection = conn is None
     connection = conn if conn is not None else duckdb.connect()
-    table = to_arrow(stream)
-    connection.register(table_name, table)
-    return connection.table(table_name)
+    try:
+        table = to_arrow(stream)
+        connection.register(table_name, table)
+        return connection.table(table_name)
+    except BaseException:
+        if owns_connection:
+            connection.close()
+        raise

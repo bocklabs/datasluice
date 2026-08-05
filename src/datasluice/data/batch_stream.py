@@ -195,13 +195,14 @@ class BatchStream:
         """Return a PyCapsule for zero-copy Arrow interop (Phase 6 terminals).
 
         Delegates to the wrapped reader's ``__arrow_c_stream__`` when present
-        (``pa.RecordBatchReader`` implements it). For bare iterators,
-        materializes batches via ``pa.RecordBatchReader.from_batches``.
+        (``pa.RecordBatchReader`` implements it). For bare iterators, builds the
+        ``RecordBatchReader`` on top of this stream's batch generator so batches
+        are still pulled lazily (avoiding an eager full materialization).
         """
         import pyarrow as pa
 
+        if self._closed:
+            raise StreamClosedError("BatchStream is closed; cannot build an Arrow C stream")
         if hasattr(self._source, "__arrow_c_stream__"):
             return self._source.__arrow_c_stream__(requested_schema)
-        return pa.RecordBatchReader.from_batches(self._schema, list(self.iter_batches())).__arrow_c_stream__(
-            requested_schema
-        )
+        return pa.RecordBatchReader.from_batches(self._schema, self.iter_batches()).__arrow_c_stream__(requested_schema)

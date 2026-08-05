@@ -20,6 +20,7 @@ import bz2
 import gzip
 import io
 import zipfile
+import zlib
 from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import DecompressionError
@@ -87,6 +88,12 @@ _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 _ZIP_MAGIC = b"PK\x03\x04"
 
 _PEEK_SIZE = 6
+
+# Bound on the spooled ZIP body (RESEARCH Pitfall 2: the central directory lives
+# at EOF, so ZIP must be fully buffered before zipfile can read it). Rejecting
+# oversized bodies keeps the bounded-memory contract instead of spooling an
+# unbounded blob into RAM.
+_MAX_ZIP_BODY_BYTES = 512 * 1024 * 1024
 
 
 class PeekableReader(io.RawIOBase):
@@ -245,7 +252,11 @@ def _wrap_zstd(source: Any) -> Any | None:
 def _zip_largest_member(source: Any) -> Any:
     """Spool ZIP body to BytesIO, extract the largest member (RESEARCH Pitfall 2 + OQ5)."""
 
-    body = source.read()
+    body = source.read(_MAX_ZIP_BODY_BYTES + 1)
+    if len(body) > _MAX_ZIP_BODY_BYTES:
+        raise DecompressionError(
+            f"ZIP body exceeds {_MAX_ZIP_BODY_BYTES} byte spool cap; refusing to buffer it into memory"
+        )
     spooled = io.BytesIO(body)
     try:
         zf = zipfile.ZipFile(spooled)
@@ -267,7 +278,7 @@ def _zip_largest_member(source: Any) -> Any:
         )
     try:
         member_bytes = zf.read(largest)
-    except (zipfile.BadZipFile, RuntimeError, OSError) as exc:
+    except (zipfile.BadZipFile, RuntimeError, OSError, zlib.error) as exc:
         zf.close()
         raise DecompressionError(f"ZIP member {largest.filename!r} could not be extracted: {exc}") from exc
     zf.close()

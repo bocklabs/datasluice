@@ -165,7 +165,11 @@ class DataPlaneResourceReader:
                 source.close()
                 raise UnsupportedAccessError(f"Checkpointable Parquet resource {resource.id!r} must not be compressed")
             return self._build_parquet_cursor_stream(source, start_row_group_index=0, start_batch_index=0)
-        decompressed = apply_compression(source, content_encoding)
+        try:
+            decompressed = apply_compression(source, content_encoding)
+        except BaseException:
+            source.close()
+            raise
         return self._build_batch_stream(resource, decompressed, effective_batch_size)
 
     def open_response(
