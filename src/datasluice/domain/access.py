@@ -40,7 +40,7 @@ class HttpDownload(ResourceAccess):
 
     url: str
     method: str = "GET"
-    kind: str = "http_download"
+    kind: str = field(init=False, default="http_download")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,7 +53,7 @@ class ObjectStorage(ResourceAccess):
     """
 
     uri: str
-    kind: str = "object_storage"
+    kind: str = field(init=False, default="object_storage")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -68,7 +68,7 @@ class QueryAccess(ResourceAccess):
 
     endpoint: str
     query_language: str = ""
-    kind: str = "query"
+    kind: str = field(init=False, default="query")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -81,7 +81,7 @@ class StreamAccess(ResourceAccess):
     """
 
     url: str
-    kind: str = "stream"
+    kind: str = field(init=False, default="stream")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -94,4 +94,4 @@ class LocalFile(ResourceAccess):
     """
 
     path: str
-    kind: str = "local_file"
+    kind: str = field(init=False, default="local_file")

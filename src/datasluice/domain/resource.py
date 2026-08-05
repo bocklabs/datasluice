@@ -23,7 +23,7 @@ _FORMAT_ALIASES: dict[str, str] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Resource:
     """A single downloadable resource (file) within a dataset.
 

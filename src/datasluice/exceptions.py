@@ -168,8 +168,7 @@ class UnsupportedQueryFieldError(DataSluiceError):
 
     A direct child of :class:`DataSluiceError` (sibling to :class:`AdapterError`),
     NOT under :class:`PortalError`: the reject policy fires pre-flight, before
-    any portal contact, so the portal never returned an error. Mirrors the
-    ``ChecksumMismatchError`` kw-only ``__init__`` precedent (D-P4-21).
+    any portal contact, so the portal never returned an error.
 
     Attributes:
         field: The unsupported filter field name (e.g. ``"groups"``).

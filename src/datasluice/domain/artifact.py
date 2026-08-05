@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from datasluice._uri import sanitize_uri
@@ -198,15 +198,12 @@ class ArtifactProvenance:
             raise _contract_error("provenance.created_at")
         from datasluice.application import resource_locator_from_dict
 
-        parsed_transforms = tuple(transform for transform in transforms if isinstance(transform, str))
-        if len(parsed_transforms) != len(transforms):
-            raise _contract_error("provenance.transforms")
         return cls(
             source_locator=resource_locator_from_dict(_object_dict(source_locator, "provenance.source_locator")),
             resource_identity=resource_identity,
             created_at=parsed_created_at,
             materialization_mode=materialization_mode,
-            transforms=parsed_transforms,
+            transforms=cast(tuple[str, ...], tuple(transforms)),
         )
 
 
@@ -236,7 +233,6 @@ class Artifact:
         metadata = _freeze_json(self.metadata, "metadata")
         if not isinstance(metadata, Mapping):
             raise _contract_error("metadata")
-        object.__setattr__(self, "uri", self.uri)
         object.__setattr__(self, "metadata", metadata)
         object.__setattr__(self, "extensions", _freeze_extensions(self.extensions))
 
