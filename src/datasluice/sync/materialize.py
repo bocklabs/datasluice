@@ -354,6 +354,9 @@ def destination_health(resource: Any, record: Artifact | LegacyArtifactRecord, *
             blob_digest is None or _blob_digest_from_fs(fs, final_uri) == blob_digest
         )
     except Exception:
+        logger.debug(
+            "Destination health check failed for %r (treating as unhealthy)", sanitize_uri(final_uri), exc_info=True
+        )
         return False
 
 
@@ -396,6 +399,9 @@ def _existing_record(
         if _destination_checksum(fs, final_uri, media_type) != checksum:
             return None
     except Exception:
+        logger.debug(
+            "Existing-materialization probe failed for %r (treating as stale)", sanitize_uri(final_uri), exc_info=True
+        )
         return None
     return final_uri, media_type, size, checksum
 
@@ -509,7 +515,7 @@ def _read_raw(resource: Any, reader: Any) -> bytes:
         fs = open_filesystem(access.uri)
         return bytes(fs.cat_file(access.uri))
     transport = getattr(reader, "transport", None)
-    url = getattr(access, "url", None) or resource.url
+    url = getattr(access, "url", None) or getattr(resource, "url", None)
     if transport is not None and url is not None:
         return bytes(transport.download(url))
     raise ValueError(f"Resource {resource.id!r} cannot be read in raw mode")

@@ -554,13 +554,16 @@ def _compute_source_version(resource: Any) -> str | None:
     if access.kind == "object_storage":
         from datasluice.io.filesystem import open_filesystem
 
-        fs = open_filesystem(access.uri)
-        digest = hashlib.sha256()
-        path = _strip_uri_scheme(access.uri, fs)
-        with fs.open(path, "rb") as source:
-            for chunk in iter(lambda: source.read(65536), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        try:
+            fs = open_filesystem(access.uri)
+            digest = hashlib.sha256()
+            path = _strip_uri_scheme(access.uri, fs)
+            with fs.open(path, "rb") as source:
+                for chunk in iter(lambda: source.read(65536), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+        except (FileNotFoundError, OSError):
+            return None
     return None
 
 

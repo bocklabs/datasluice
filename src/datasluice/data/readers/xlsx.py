@@ -56,12 +56,23 @@ class XLSXReader(BaseFormatReader):
 
         try:
             ws = wb.active
+            if ws is None:
+                raise FormatError("Invalid XLSX: workbook has no active worksheet")
             rows = ws.iter_rows(values_only=True)
             try:
                 header_row = next(rows)
             except StopIteration:
                 return
-            headers = [str(h) if h is not None else "" for h in header_row]
+            raw_headers = [str(h) if h is not None else "" for h in header_row]
+            # De-duplicate identical/blank header names so later cells do not
+            # overwrite earlier ones inside the zipped row dicts (openpyxl can
+            # emit duplicate column headers in messy real-world workbooks).
+            seen: dict[str, int] = {}
+            headers: list[str] = []
+            for header in raw_headers:
+                count = seen.get(header, 0)
+                seen[header] = count + 1
+                headers.append(header if count == 0 else f"{header}_{count + 1}")
 
             buffer: list[dict[str, Any]] = []
             for row in rows:
