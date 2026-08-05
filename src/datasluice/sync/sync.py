@@ -213,6 +213,8 @@ def sync_resources(
                         ParquetRowGroupPosition(checkpoint.row_group_index),
                     )
                     stream = reader.open_from_cursor(resource, cursor)
+                    if isinstance(materialize_reader, _SingleStreamReader):
+                        materialize_reader.close()
                     start_batch_index = checkpoint.next_batch_index
                     action = "resumed"
                 else:
@@ -491,6 +493,19 @@ class _SingleStreamReader:
             raise RuntimeError(f"Pre-opened stream for resource {resource.id!r} was already consumed")
         self._stream = None
         return stream
+
+    def close(self) -> None:
+        """Close the wrapped stream if it has not been handed off via :meth:`open`."""
+        stream = self._stream
+        self._stream = None
+        if stream is not None and hasattr(stream, "close"):
+            stream.close()
+
+    def __enter__(self) -> _SingleStreamReader:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
 
 def _conditional_validators(watermark: str | None) -> tuple[str | None, str | None]:

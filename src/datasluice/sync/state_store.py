@@ -266,7 +266,7 @@ class FileStateStore:
             return self._fs.cat_file(path)
         except FileNotFoundError:
             return None
-        except OSError as exc:
+        except Exception as exc:
             raise StateStoreError(f"Failed to read state for key at {sanitize_uri(path)}") from exc
 
     def read_version(self, key: str) -> bytes | None:
@@ -385,7 +385,7 @@ class FileStateStore:
             self._fs.rm(path)
         except FileNotFoundError:
             logger.debug("delete: state file absent (tolerated): %s", sanitize_uri(path))
-        except OSError as exc:
+        except Exception as exc:
             raise StateStoreError(f"Failed to delete state for key at {sanitize_uri(path)}") from exc
 
     def _publish(self, key: str, payload: bytes) -> None:
@@ -395,7 +395,7 @@ class FileStateStore:
         try:
             self._fs.pipe_file(tmp_path, payload)
             self._fs.mv(tmp_path, path)
-        except OSError as exc:
+        except Exception as exc:
             safe_remove(self._fs, tmp_path)
             raise StateStoreError("Failed to publish durable state envelope") from exc
 

@@ -316,7 +316,7 @@ def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
     try:
         fs = open_filesystem(base_uri)
         fs.rm(partial_uri, recursive=True)
-    except OSError as exc:
+    except Exception as exc:
         logger.warning(
             "Failed to remove partial shards for resource %r at %r: %s",
             resource.id,
@@ -377,7 +377,7 @@ def _atomic_pipe(fs: Any, final_uri: str, payload: bytes) -> None:
     try:
         fs.pipe_file(tmp_uri, payload)
         fs.mv(tmp_uri, final_uri)
-    except OSError as exc:
+    except Exception as exc:
         safe_remove(fs, tmp_uri)
         raise DownloadError(f"Failed to atomically publish {sanitize_uri(final_uri)!r}: {exc}") from exc
 

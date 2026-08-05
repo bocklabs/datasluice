@@ -193,7 +193,7 @@ class ContentCache:
         try:
             self._fs.pipe_file(tmp_path, data)
             self._fs.mv(tmp_path, content_path)
-        except OSError as exc:
+        except Exception as exc:
             rollback = self._connect()
             try:
                 rollback.execute("BEGIN IMMEDIATE")

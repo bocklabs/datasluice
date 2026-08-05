@@ -49,7 +49,7 @@ class FsspecStorage:
         resolved = self._resolve(path)
         try:
             self._fs.pipe_file(resolved, data)
-        except OSError as exc:
+        except Exception as exc:
             raise DownloadError(f"Failed to write {path}: {exc}") from exc
         return self._as_uri(resolved)
 
