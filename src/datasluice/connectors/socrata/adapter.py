@@ -118,7 +118,7 @@ class SocrataAdapter(BaseAdapter):
             total=total,
             page=(query.offset // query.limit) + 1 if query.limit else 1,
             page_size=query.limit,
-            has_next=(query.offset + query.limit) < total,
+            has_next=bool(query.limit) and (query.offset + query.limit) < total,
         )
 
     def get_dataset(self, dataset_id: str) -> Dataset:

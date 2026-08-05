@@ -46,10 +46,11 @@ def _resolve_schema(raw: dict[str, Any]) -> Schema | None:
     Reads the Frictionless-style ``schema.fields`` list when udata exposes it;
     returns ``None`` when the portal is silent so readers can infer from bytes.
     """
-    fields = (raw.get("schema") or {}).get("fields")
+    schema = raw.get("schema")
+    fields = schema.get("fields") if isinstance(schema, dict) else None
     if not fields:
         return None
-    return Schema(name=str(raw.get("id", "udata-resource")), columns=list(fields))
+    return Schema(name=str(raw.get("id") or "udata-resource"), columns=list(fields))
 
 
 def map_resource(raw: dict[str, Any], *, base_url: str | None = None) -> Resource:

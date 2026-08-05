@@ -86,7 +86,7 @@ class DataGouvAdapter(BaseAdapter):
             total=total,
             page=page.page,
             page_size=page.page_size,
-            has_next=page.page * page.page_size < total,
+            has_next=bool(page.page_size) and page.page * page.page_size < total,
         )
 
     def get_dataset(self, dataset_id: str) -> Dataset:

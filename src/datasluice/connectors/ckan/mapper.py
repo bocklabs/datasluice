@@ -16,12 +16,22 @@ from datasluice.domain import (
 )
 
 
+def _coerce_int(value: Any) -> int | None:
+    """Best-effort coerce *value* to ``int``; return ``None`` on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def map_license(raw: dict[str, Any] | None) -> License | None:
     """Convert a CKAN license dict into a :class:`License`."""
     if not raw:
         return None
     return License(
-        id=raw.get("id", ""),
+        id=raw.get("id") or "",
         title=raw.get("title"),
         url=raw.get("url"),
     )
@@ -79,7 +89,7 @@ def map_resource(raw: dict[str, Any], *, base_url: str | None = None) -> Resourc
         format=Resource.normalize_format(raw.get("format")),
         media_type=raw.get("mimetype") or raw.get("mimetype_inner"),
         description=raw.get("description"),
-        size=raw.get("size"),
+        size=_coerce_int(raw.get("size")),
         created=raw.get("created"),
         modified=raw.get("last_modified"),
         access=_resolve_access(raw, base_url),
@@ -93,7 +103,7 @@ def map_organization(raw: dict[str, Any] | None) -> Organization | None:
     if not raw:
         return None
     return Organization(
-        id=str(raw.get("id", raw.get("name", ""))),
+        id=str(raw.get("id") or raw.get("name") or ""),
         name=raw.get("name"),
         title=raw.get("title"),
         description=raw.get("description"),
@@ -115,13 +125,13 @@ def map_dataset(raw: dict[str, Any], *, base_url: str | None = None) -> Dataset:
         title=raw.get("title"),
         name=raw.get("name"),
         description=raw.get("notes"),
-        resources=[map_resource(r, base_url=base_url) for r in raw.get("resources", [])],
+        resources=[map_resource(r, base_url=base_url) for r in raw.get("resources") or []],
         organization=map_organization(raw.get("organization")),
         license=map_license(
             {"id": raw.get("license_id"), "title": raw.get("license_title"), "url": raw.get("license_url")}
         ),
-        tags=[t.get("name", "") for t in raw.get("tags", []) if t.get("name")],
-        themes=[g.get("name", "") for g in raw.get("groups", []) if g.get("name")],
+        tags=[t.get("name") for t in raw.get("tags") or [] if t.get("name")],
+        themes=[g.get("name") for g in raw.get("groups") or [] if g.get("name")],
         created=raw.get("metadata_created"),
         modified=raw.get("metadata_modified"),
         url=raw.get("url"),

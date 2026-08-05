@@ -86,7 +86,7 @@ class CKANAdapter(BaseAdapter):
             total=count,
             page=(query.offset // query.limit) + 1 if query.limit else 1,
             page_size=query.limit,
-            has_next=(query.offset + query.limit) < count,
+            has_next=bool(query.limit) and (query.offset + query.limit) < count,
         )
 
     def get_dataset(self, dataset_id: str) -> Dataset:
