@@ -214,6 +214,10 @@ class Flatten:
     max_depth: int = 1
     separator: str = "."
 
+    def __post_init__(self) -> None:
+        if self.max_depth < 1:
+            raise ValueError(f"max_depth must be >= 1, got {self.max_depth}")
+
     def apply(self, batches: Iterable[Any], context: TransformContext) -> Iterator[Any]:
         """Yield batches whose struct fields are flattened up to ``self.max_depth``."""
         import pyarrow as pa

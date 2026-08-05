@@ -62,7 +62,9 @@ def resolve_one_resource(data_sluice: Any, locator: ParsedLocator) -> tuple[Reso
     dataset = data_sluice.portal(locator.portal_url).get_dataset(locator.dataset_id)
     resources = list(dataset.resources)
     selectors = ", ".join(sorted(sanitize_uri(resource.id) for resource in resources)) or "(none)"
-    if len(resources) != 1:
+    if not resources:
+        raise ResourceResolutionError(f"Dataset {sanitize_uri(locator.dataset_id)!r} has no resources to select")
+    if len(resources) > 1:
         raise ResourceResolutionError(
             f"Dataset {sanitize_uri(locator.dataset_id)!r} requires --resource. Valid selectors: {selectors}"
         )

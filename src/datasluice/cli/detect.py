@@ -39,6 +39,13 @@ def _render_human(result: Any) -> None:
     result_console.print(table)
 
 
+def _supported_portal_types() -> list[str]:
+    """Return the registered connector names via entry-points metadata (no internals import)."""
+    from importlib.metadata import entry_points
+
+    return sorted(ep.name for ep in entry_points(group="datasluice.connectors"))
+
+
 def detect(
     portal: Annotated[str, typer.Argument(help="Portal base URL to inspect")],
     portal_type: Annotated[str | None, typer.Option("--type", "-t", help="Explicit portal type override")] = None,
@@ -54,6 +61,10 @@ def detect(
         diagnostic_console.print("[red]Error:[/red] --output must be human or json")
         raise typer.Exit(1)
     if portal_type is not None:
+        supported = _supported_portal_types()
+        if portal_type not in supported:
+            diagnostic_console.print(f"[red]Error:[/red] unknown portal type {portal_type!r}. Supported: {supported}")
+            raise typer.Exit(1)
         result_console.print(f"[green]Using explicit portal_type:[/green] [bold]{portal_type}[/bold]")
         return
     try:
