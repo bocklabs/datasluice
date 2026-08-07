@@ -18,6 +18,7 @@ from datasluice.domain import (
     LocalFile,
     ObjectStorage,
     QueryAccess,
+    Resource,
     ResourceAccess,
     Schema,
     StreamAccess,
@@ -97,6 +98,53 @@ def test_detection_evidence_is_frozen() -> None:
     evidence = DetectionEvidence(check="api", matched=True)
     with pytest.raises(dataclasses.FrozenInstanceError):
         evidence.matched = False  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+
+
+def test_detection_result_confidence_range_enforced() -> None:
+    with pytest.raises(ValueError):
+        DetectionResult(portal_type="ckan", confidence=-0.1)
+    with pytest.raises(ValueError):
+        DetectionResult(portal_type="ckan", confidence=1.5)
+    DetectionResult(portal_type="ckan", confidence=0.0)
+    DetectionResult(portal_type="ckan", confidence=1.0)
+
+
+def test_detection_result_evidence_is_immutable() -> None:
+    result = DetectionResult(portal_type="ckan", evidence=[DetectionEvidence(check="api", matched=True)])
+    with pytest.raises((AttributeError, TypeError)):
+        result.evidence.append(DetectionEvidence(check="other", matched=False))  # type: ignore
+
+
+def test_detection_result_extra_is_immutable() -> None:
+    result = DetectionResult(portal_type="ckan", extra={"k": "v"})
+    with pytest.raises((TypeError, AttributeError)):
+        result.extra["k"] = "other"  # type: ignore
+
+
+def test_schema_extra_and_columns_are_immutable() -> None:
+    schema = Schema(name="s", columns=[{"id": "c"}], extra={"k": "v"})
+    with pytest.raises((AttributeError, TypeError)):
+        schema.columns.append({"id": "other"})  # type: ignore
+    with pytest.raises((TypeError, AttributeError)):
+        schema.extra["k"] = "other"  # type: ignore
+
+
+def test_capabilities_notes_is_immutable() -> None:
+    caps = CatalogCapabilities(notes={"search": "full-text"})
+    with pytest.raises((TypeError, AttributeError)):
+        caps.notes["search"] = "none"  # type: ignore
+
+
+def test_resource_access_kind_not_overridable() -> None:
+    http = HttpDownload(url="https://x")
+    assert http.kind == "http_download"
+    with pytest.raises(TypeError):
+        HttpDownload(url="https://x", kind="object_storage")  # type: ignore
+
+
+def test_resource_is_kw_only() -> None:
+    with pytest.raises(TypeError):
+        Resource("id")  # type: ignore
 
 
 def test_artifact_defaults() -> None:

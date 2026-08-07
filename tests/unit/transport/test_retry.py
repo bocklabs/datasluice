@@ -92,3 +92,34 @@ def test_parse_retry_after_http_date() -> None:
 def test_parse_retry_after_none_and_garbage() -> None:
     assert _parse_retry_after(None) is None
     assert _parse_retry_after("not-a-date-or-number") is None
+
+
+def test_parse_retry_after_clamps_negative_delta() -> None:
+    assert _parse_retry_after("-5") == 0.0
+
+
+def test_rate_limit_final_attempt_skips_sleep_before_reraise() -> None:
+    calls = [0]
+
+    def func() -> str:
+        calls[0] += 1
+        raise RateLimitError("slow down", retry_after=9999.0)
+
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    with (
+        patch("datasluice.transport.retry.time.sleep", side_effect=fake_sleep),
+        pytest.raises(RateLimitError),
+    ):
+        with_retry(func, RetryPolicy(max_attempts=1, base_delay=0.01, max_delay=5.0))
+    assert sleeps == []
+
+
+def test_backoff_factor_threads_into_delay() -> None:
+    delay = _full_jitter_delay(1.0, 100.0, 0, backoff_factor=4.0)
+    assert 0.0 <= delay <= 1.0
+    delay2 = _full_jitter_delay(1.0, 100.0, 2, backoff_factor=4.0)
+    assert delay2 <= min(100.0, 1.0 * (4.0**2))

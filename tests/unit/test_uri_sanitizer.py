@@ -40,3 +40,15 @@ def test_returns_non_uri_strings_unchanged() -> None:
 
 def test_handles_uri_without_query() -> None:
     assert sanitize_uri("https://api.example.test/x") == "https://api.example.test/x"
+
+
+def test_preserves_ipv6_brackets_with_port() -> None:
+    assert sanitize_uri("https://[::1]:8443/path") == "https://[::1]:8443/path"
+
+
+def test_preserves_ipv6_brackets_without_port() -> None:
+    assert sanitize_uri("https://[::1]/path") == "https://[::1]/path"
+
+
+def test_preserves_fragment() -> None:
+    assert sanitize_uri("https://api.example.test/x#section") == "https://api.example.test/x#section"
