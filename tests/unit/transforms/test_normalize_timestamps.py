@@ -69,3 +69,22 @@ def test_non_timestamp_columns_untouched() -> None:
     assert out[0].schema.field("id").type == pa.int64()
     assert out[0].column("id").to_pylist() == [5, 6]
     assert out[0].schema.field("ts").type == pa.timestamp("us", tz="UTC")
+
+
+def test_dst_fold_raises_transform_error() -> None:
+    """A timestamp that falls in a DST fold/gap raises TransformError, not a raw Arrow exception."""
+    import pyarrow as pa
+
+    from datasluice.exceptions import TransformError
+
+    schema = pa.schema([("ts", pa.timestamp("us"))])
+    batch = pa.RecordBatch.from_arrays(
+        [pa.array([1604194200000000], type=pa.timestamp("us"))],
+        schema=schema,
+    )
+    with pytest.raises(TransformError):
+        list(
+            NormalizeTimestamps(target_tz="America/New_York", assume_naive_tz="America/New_York").apply(
+                iter([batch]), _ctx(schema)
+            )
+        )

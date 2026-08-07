@@ -55,3 +55,36 @@ def test_rename_missing_source_raises() -> None:
     msg = str(exc_info.value)
     assert "nonexistent" in msg
     assert "id" in msg and "name" in msg
+
+
+def test_rename_preserves_values() -> None:
+    """Renamed columns retain their original data values."""
+    import pyarrow as pa
+
+    schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    batch = pa.RecordBatch.from_arrays([pa.array([10, 20]), pa.array(["x", "y"])], schema=schema)
+    out = list(RenameColumns({"id": "identifier"}).apply(iter([batch]), _ctx(schema)))
+    assert out[0].column("identifier").to_pylist() == [10, 20]
+    assert out[0].column("name").to_pylist() == ["x", "y"]
+
+
+def test_rename_multiple_batches() -> None:
+    """Values are preserved across multiple input batches."""
+    import pyarrow as pa
+
+    schema = pa.schema([("id", pa.int64())])
+    b1 = pa.RecordBatch.from_arrays([pa.array([1, 2])], schema=schema)
+    b2 = pa.RecordBatch.from_arrays([pa.array([3, 4])], schema=schema)
+    out = list(RenameColumns({"id": "row"}).apply(iter([b1, b2]), _ctx(schema)))
+    assert len(out) == 2
+    assert out[0].column("row").to_pylist() == [1, 2]
+    assert out[1].column("row").to_pylist() == [3, 4]
+
+
+def test_rename_empty_input() -> None:
+    """An empty input yields no batches without error."""
+    import pyarrow as pa
+
+    schema = pa.schema([("id", pa.int64())])
+    out = list(RenameColumns({"id": "row"}).apply(iter([]), _ctx(schema)))
+    assert out == []

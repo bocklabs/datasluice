@@ -71,3 +71,9 @@ def test_flatten_no_struct_is_noop() -> None:
     batch = pa.RecordBatch.from_arrays([pa.array([1, 2]), pa.array(["a", "b"])], schema=schema)
     out = list(Flatten(max_depth=1).apply(iter([batch]), _ctx(schema)))
     assert out[0].schema.names == ["id", "name"]
+
+
+def test_flatten_max_depth_zero_raises() -> None:
+    """Flatten rejects max_depth < 1 at construction."""
+    with pytest.raises(ValueError):
+        Flatten(max_depth=0)
