@@ -68,3 +68,32 @@ def test_nullability_matters() -> None:
     )
 
     assert logical_sha256(nullable) != logical_sha256(required)
+
+
+def test_empty_table_is_stable() -> None:
+    empty = pa.table({"id": pa.array([], pa.int64())})
+    assert isinstance(logical_sha256(empty), str)
+    assert logical_sha256(empty) == logical_sha256(pa.table({"id": pa.array([], pa.int64())}))
+
+
+def test_null_values_differ_from_zero() -> None:
+    with_nulls = pa.table({"id": [1, None]})
+    with_zero = pa.table({"id": [1, 0]})
+    assert logical_sha256(with_nulls) != logical_sha256(with_zero)
+
+
+def test_row_order_matters() -> None:
+    forward = pa.table({"id": [1, 2], "name": ["a", "b"]})
+    reverse = pa.table({"id": [2, 1], "name": ["b", "a"]})
+    assert logical_sha256(forward) != logical_sha256(reverse)
+
+
+def test_chunk_split_is_equal() -> None:
+    single_chunk = pa.table({"id": [1, 2, 3, 4]})
+    multi_chunk = pa.Table.from_batches(
+        [
+            pa.RecordBatch.from_pydict({"id": [1, 2]}),
+            pa.RecordBatch.from_pydict({"id": [3, 4]}),
+        ]
+    )
+    assert logical_sha256(single_chunk) == logical_sha256(multi_chunk)

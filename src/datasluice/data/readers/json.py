@@ -49,6 +49,8 @@ class JSONReader(BaseFormatReader):
             ) from exc
 
         data = source.read()
+        if data.startswith(b"\xef\xbb\xbf"):
+            data = data[3:]
         first = _first_non_whitespace_byte(data)
         if first is None:
             return

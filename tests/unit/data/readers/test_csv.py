@@ -58,6 +58,8 @@ def test_read_batches_accepts_batch_size_kwarg() -> None:
     batches = list(reader.read_batches(src, batch_size=16))
     table = pa.Table.from_batches(batches)
     assert table.num_rows == 50
+    assert len(batches) > 1
+    assert all(b.num_rows <= 16 for b in batches)
 
 
 def test_read_batches_works_on_non_seekable_source() -> None:
@@ -80,3 +82,20 @@ def test_csv_reader_in_registry_and_factory() -> None:
 def test_get_reader_unknown_raises_key_error() -> None:
     with pytest.raises(KeyError):
         get_reader("UNKNOWN_FMT")
+
+
+def test_csv_empty_input_yields_no_batches() -> None:
+    src = io.BytesIO(b"id\n")
+    reader = CSVReader()
+    batches = list(reader.read_batches(src))
+    table = pa.Table.from_batches(batches) if batches else pa.table({})
+    assert table.num_rows == 0
+
+
+def test_csv_malformed_raises_format_error() -> None:
+    from datasluice.exceptions import FormatError
+
+    src = io.BytesIO(b"\x00\x01\x02 not valid csv \xff\xfe")
+    reader = CSVReader()
+    with pytest.raises((FormatError, pa.ArrowException)):
+        list(reader.read_batches(src))

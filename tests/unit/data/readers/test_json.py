@@ -75,3 +75,29 @@ def test_read_batches_accepts_batch_size_kwarg() -> None:
     batches = list(reader.read_batches(src, batch_size=8))
     table = pa.Table.from_batches(batches)
     assert table.num_rows == 20
+    assert len(batches) > 1
+
+
+def test_json_skips_utf8_bom() -> None:
+    payload = b"\xef\xbb\xbf" + b'[{"id": 1}, {"id": 2}]'
+    src = io.BytesIO(payload)
+    reader = JSONReader()
+    batches = list(reader.read_batches(src))
+    table = pa.Table.from_batches(batches)
+    assert table.num_rows == 2
+
+
+def test_json_array_with_non_dict_elements_does_not_crash() -> None:
+    payload = b'[{"id": 1}, "not-a-dict", {"id": 2}]'
+    src = io.BytesIO(payload)
+    reader = JSONReader()
+    batches = list(reader.read_batches(src))
+    table = pa.Table.from_batches(batches)
+    assert table.num_rows <= 2
+
+
+def test_jsonl_empty_input_yields_no_batches() -> None:
+    src = io.BytesIO(b"")
+    reader = JSONReader()
+    batches = list(reader.read_batches(src))
+    assert batches == []
