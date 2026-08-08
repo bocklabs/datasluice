@@ -25,6 +25,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           config.model: ${{ secrets.OCR_LLM_MODEL }}
+          config.custom_model_max_tokens: "262000"
           OPENAI_KEY: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           OPENAI.API_BASE: ${{ secrets.OCR_LLM_URL }}
           config.fallback_models: '${{ vars.PR_AGENT_FALLBACK_MODEL }}'
