@@ -25,12 +25,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           config.model: ${{ secrets.OCR_LLM_MODEL }}
-          config.custom_model_max_tokens: "262000"
           OPENAI_KEY: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           OPENAI.API_BASE: ${{ secrets.OCR_LLM_URL }}
           config.fallback_models: '${{ vars.PR_AGENT_FALLBACK_MODEL }}'
-          config.propagate_tool_errors: "true"
-          github_action_config.auto_describe: "true"
-          github_action_config.auto_review: "false"
-          github_action_config.auto_improve: "false"
-          github_action_config.pr_actions: '["opened", "reopened", "synchronize", "ready_for_review"]'
