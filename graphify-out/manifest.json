@@ -505,8 +505,8 @@
     "semantic_hash": ""
   },
   "src/datasluice/data/readers/json.py": {
-    "mtime": 1785946704.7619393,
-    "ast_hash": "4e82a8a88e6be714a13bbe7b8a513603",
+    "mtime": 1786122743.3315704,
+    "ast_hash": "f924f591f4d70b2727b9ce0d4bc3ecec",
     "semantic_hash": ""
   },
   "src/datasluice/data/readers/geojson.py": {
