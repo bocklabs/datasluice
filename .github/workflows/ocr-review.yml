@@ -23,14 +23,14 @@ jobs:
     if: github.event_name == 'pull_request_target' && github.actor != 'renovate[bot]' && github.actor != 'dependabot[bot]'
     steps:
       - name: Run OpenCodeReview
-        uses: alibaba/open-code-review@802af6b461d17408856fac0d07a18f9b17d6d38c # v1.7.7
+        uses: alibaba/open-code-review@4bcc95acecd629e64ea984c962cfd08dd892a38e # v1.8.10
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
           
-          llm_extra_body: '{"thinking":{"type":"enabled"},"reasoning_effort": "high"}'
+          llm_extra_body: '{"reasoning_effort": "max"}'
           
           review_concurrency: '4'
           language: 'English'
