@@ -7,6 +7,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,6 +26,13 @@ app = cast(Any, importlib.import_module("datasluice.cli.app")).app
 Artifact = cast(Any, importlib.import_module("datasluice.domain")).Artifact
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI escape codes so substring checks survive Rich styling."""
+    return _ANSI_RE.sub("", text)
 
 
 class _Portal:
@@ -202,13 +210,15 @@ def test_help_registers_new_commands_and_uses_annotated_parameters() -> None:
     materialize_help = runner.invoke(app, ["materialize", "--help"])
 
     assert root_help.exit_code == 0
-    assert "scan" in root_help.stdout
-    assert "open" in root_help.stdout
-    assert "materialize" in root_help.stdout
+    root_text = _plain(root_help.stdout)
+    assert "scan" in root_text
+    assert "open" in root_text
+    assert "materialize" in root_text
     assert materialize_help.exit_code == 0
-    assert "--destination" in materialize_help.stdout
-    assert "--mode" in materialize_help.stdout
-    assert "--output" in materialize_help.stdout
+    materialize_text = _plain(materialize_help.stdout)
+    assert "--destination" in materialize_text
+    assert "--mode" in materialize_text
+    assert "--output" in materialize_text
     for command in (materialize_command.materialize,):
         source = inspect.getsource(command)
         assert "Annotated[" in source
