@@ -4,9 +4,10 @@
     "config:recommended",
     "schedule:weekly"
   ],
+  "dependencyDashboard": true,
   "enabledManagers": [
     "github-actions",
-    "uv"
+    "pep621"
   ],
   "minimumReleaseAge": "7 days",
   "prConcurrentLimit": 5,
@@ -17,7 +18,7 @@
       "groupName": "GitHub Actions minor and patch updates"
     },
     {
-      "matchManagers": ["uv"],
+      "matchManagers": ["pep621"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "Python minor and patch updates"
     }
