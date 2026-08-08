@@ -47,6 +47,19 @@ def test_get_missing_returns_none(tmp_path: Path) -> None:
     assert cache.get("never-seen") is None
 
 
+def test_put_overwrite_returns_latest(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("k1", b"first")
+    cache.put("k1", b"second")
+    assert cache.get("k1") == b"second"
+
+
+def test_put_empty_payload_round_trips(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("empty", b"")
+    assert cache.get("empty") == b""
+
+
 def test_delete_removes_entry(tmp_path: Path) -> None:
     cache = ContentCache(str(tmp_path / "cache"))
     cache.put("k1", b"x")

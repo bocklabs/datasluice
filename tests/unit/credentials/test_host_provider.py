@@ -18,6 +18,7 @@ import concurrent.futures
 import importlib
 import threading
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -257,3 +258,25 @@ def test_resolve_default_host_when_none() -> None:
 
     assert first is second
     assert refresher.call_count == 1
+
+
+def test_refresher_failure_propagates_and_allows_retry() -> None:
+    """When the refresher raises, the error propagates and a later resolve retries."""
+
+    calls = [0]
+
+    def flaky_refresher(host: str):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise RuntimeError("credential service down")
+        return (BearerAuth("recovered"), None)
+
+    refresher = MagicMock(side_effect=flaky_refresher)
+    provider = HostCredentialProvider(refresher=refresher)
+
+    with pytest.raises(RuntimeError, match="credential service down"):
+        provider.resolve("failing-host")
+
+    auth = provider.resolve("failing-host")
+    assert cast(Any, auth).token == "recovered"
+    assert refresher.call_count == 2

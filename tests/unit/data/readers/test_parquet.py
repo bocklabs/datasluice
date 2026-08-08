@@ -70,3 +70,6 @@ def test_read_batches_accepts_batch_size_kwarg() -> None:
     batches = list(reader.read_batches(buf, batch_size=16))
     result = pa.Table.from_batches(batches)
     assert result.num_rows == 50
+    assert len(batches) > 1
+    assert all(b.num_rows <= 16 for b in batches)
+    assert result.column("id").to_pylist() == list(range(50))

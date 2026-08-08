@@ -76,6 +76,16 @@ def test_httpx_transport_close_is_idempotent() -> None:
     client.close.assert_called_once_with()
 
 
+def test_httpx_transport_context_manager_closes_on_exit() -> None:
+    """Using HttpxTransport as a context manager closes the client on exit."""
+    transport = HttpxTransport()
+    client = MagicMock()
+    transport._client = client
+    with cast(Any, transport):
+        pass
+    client.close.assert_called_once_with()
+
+
 # --------------------------------------------------------------------------- #
 # Error mapping (SEC-05 carry-forward)
 # --------------------------------------------------------------------------- #
