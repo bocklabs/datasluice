@@ -57,3 +57,34 @@ def test_redirect_handler_strips_on_scheme_downgrade_directly() -> None:
     new_req = handler.redirect_request(req, BytesIO(b""), 302, "Found", HTTPMessage(), "http://a.example.com/target")
     assert new_req is not None
     assert "Authorization" not in new_req.headers
+
+
+def test_redirect_handler_normalizes_hostname_case() -> None:
+    """Same host with different casing is treated as same-origin (no strip)."""
+    handler = CredentialAwareRedirectHandler()
+    req = urllib.request.Request("https://Host.Example.COM/start", headers={"Authorization": "Bearer t"})
+    new_req = handler.redirect_request(
+        req, BytesIO(b""), 302, "Found", HTTPMessage(), "https://host.example.com/target"
+    )
+    assert new_req is not None
+    assert "Authorization" in new_req.headers
+
+
+def test_redirect_handler_normalizes_default_port() -> None:
+    """https://host:443 and https://host are treated as same-origin."""
+    handler = CredentialAwareRedirectHandler()
+    req = urllib.request.Request("https://host.example.com/start", headers={"Authorization": "Bearer t"})
+    new_req = handler.redirect_request(
+        req, BytesIO(b""), 302, "Found", HTTPMessage(), "https://host.example.com:443/target"
+    )
+    assert new_req is not None
+    assert "Authorization" in new_req.headers
+
+
+def test_redirect_handler_strips_on_non_web_scheme() -> None:
+    """Redirect to a non-web scheme (ftp) strips credentials regardless of host."""
+    handler = CredentialAwareRedirectHandler()
+    req = urllib.request.Request("https://host.example.com/start", headers={"Authorization": "Bearer t"})
+    new_req = handler.redirect_request(req, BytesIO(b""), 302, "Found", HTTPMessage(), "ftp://host.example.com/target")
+    assert new_req is not None
+    assert "Authorization" not in new_req.headers

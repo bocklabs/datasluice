@@ -105,3 +105,27 @@ def test_init_signature_storage_port_compat() -> None:
     params = list(sig.parameters.keys())
     assert params == ["self", "data", "path"]
     assert sig.return_annotation is str
+
+
+def test_fsspec_rejects_dotdot_on_write() -> None:
+    """A path with '..' segments is rejected to prevent traversal."""
+    storage = _memory_storage()
+    with pytest.raises(DownloadError):
+        storage.write(b"x", "../escape.txt")
+
+
+def test_fsspec_rejects_dotdot_on_read() -> None:
+    """Reading a path with '..' is also rejected."""
+    storage = _memory_storage()
+    with pytest.raises(DownloadError):
+        storage.read("../escape.txt")
+
+
+def test_fsspec_write_failure_wraps_in_download_error() -> None:
+    """A write to a read-only backend surfaces as DownloadError."""
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    storage = FsspecStorage(fs, base_uri="/base")
+    storage.write(b"data", "file.txt")
+    assert storage.read("file.txt") == b"data"
