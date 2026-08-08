@@ -175,3 +175,25 @@ def test_equivalence_with_timestamp_column() -> None:
     assert arrow_table.equals(pandas_table), "arrow != pandas (timestamp)"
     assert arrow_table.equals(polars_table), "arrow != polars (timestamp)"
     assert arrow_table.equals(duckdb_table), "arrow != duckdb (local-tz divergence — Pitfall 2)"
+
+
+def test_to_arrow_preserves_specific_values() -> None:
+    """to_arrow preserves exact cell values, not just shape."""
+    table = to_arrow(_make_stream())
+    assert table.column("id").to_pylist() == [1, 2]
+    assert table.column("name").to_pylist() == ["a", None]
+
+
+def test_to_arrow_multi_batch_stream() -> None:
+    """A stream that yields multiple batches is flattened correctly by to_arrow."""
+    import pyarrow as pa
+
+    from datasluice.data.batch_stream import BatchStream
+
+    schema = pa.schema([("id", pa.int64())])
+    b1 = pa.RecordBatch.from_arrays([pa.array([1, 2])], schema=schema)
+    b2 = pa.RecordBatch.from_arrays([pa.array([3, 4])], schema=schema)
+    stream = BatchStream(iter([b1, b2]), schema)
+    table = to_arrow(stream)
+    assert table.num_rows == 4
+    assert table.column("id").to_pylist() == [1, 2, 3, 4]

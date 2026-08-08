@@ -108,8 +108,17 @@ def test_zero_matches_yields_portal_none_and_confidence_zero() -> None:
     result = detect("https://example.gov", stub, _pm_with_all())  # ty: ignore[invalid-argument-type]
     assert result.portal_type is None
     assert result.confidence == 0.0
+    assert 0.0 <= result.confidence <= 1.0
     assert len(result.evidence) == 6
     assert all(not ev.matched for ev in result.evidence)
+
+
+def test_matched_result_confidence_in_valid_range() -> None:
+    """A matched detection produces confidence exactly 1.0 (in [0,1])."""
+    stub = _StubTransport(hit_substring="/api/3/action/package_search")
+    result = detect("https://example.gov", stub, _pm_with_all())  # ty: ignore[invalid-argument-type]
+    assert result.confidence == 1.0
+    assert 0.0 <= result.confidence <= 1.0
 
 
 def test_plugin_manager_filters_which_portals_are_probed() -> None:
