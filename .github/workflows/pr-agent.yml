@@ -21,12 +21,14 @@ jobs:
     if: ${{ github.actor != 'renovate[bot]' && github.actor != 'dependabot[bot]' }}
     steps:
       - name: PR Agent /describe
-        uses: the-pr-agent/pr-agent@6ad7cf75d95cb3bbb54cf2ad92050eb03804964a # v0.40.0
+        uses: the-pr-agent/pr-agent@743f52d80f3513193dfc7626f778c73478df6d0a # v0.41.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           config.model: ${{ secrets.OCR_LLM_MODEL }}
           OPENAI_KEY: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           OPENAI.API_BASE: ${{ secrets.OCR_LLM_URL }}
+          config.fallback_models: '${{ vars.PR_AGENT_FALLBACK_MODEL }}'
+          config.propagate_tool_errors: "true"
           github_action_config.auto_describe: "true"
           github_action_config.auto_review: "false"
           github_action_config.auto_improve: "false"
