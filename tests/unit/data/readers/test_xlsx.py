@@ -63,3 +63,35 @@ def test_read_batches_respects_batch_size() -> None:
     batches = list(reader.read_batches(src, batch_size=16))
     table = pa.Table.from_batches(batches)
     assert table.num_rows == 40
+    assert len(batches) > 1
+
+
+def test_read_batches_dedupes_duplicate_headers() -> None:
+    """Duplicate column names get suffixed so no cell data is silently lost."""
+    openpyxl = pytest.importorskip("openpyxl")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["col", "col"])
+    ws.append(["a", "b"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    src = io.BytesIO(buf.getvalue())
+    reader = XLSXReader()
+    batches = list(reader.read_batches(src))
+    names = batches[0].schema.names
+    assert len(names) == 2
+    assert names[0] != names[1]
+
+
+def test_read_batches_empty_sheet_yields_nothing() -> None:
+    """A workbook with only a header row and no data yields no batches."""
+    openpyxl = pytest.importorskip("openpyxl")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["id", "name"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    src = io.BytesIO(buf.getvalue())
+    reader = XLSXReader()
+    batches = list(reader.read_batches(src))
+    assert batches == []

@@ -139,3 +139,23 @@ def test_configure_logging_attaches_filter_to_handler() -> None:
     ds_logger = logging.getLogger("datasluice")
     attached = any(isinstance(f, RedactingFilter) for handler in ds_logger.handlers for f in handler.filters)
     assert attached, "configure_logging must attach a RedactingFilter to the datasluice handler"
+
+
+def test_configure_logging_does_not_clobber_existing_level() -> None:
+    """A second call to configure_logging must not reset a user-configured level."""
+    import datasluice.logging as ds_logging
+
+    ds_logger = logging.getLogger("datasluice")
+    ds_logger.setLevel(logging.DEBUG)
+    ds_logging.configure_logging("WARNING")
+    assert ds_logger.level == logging.DEBUG
+
+
+def test_configure_logging_does_not_clobber_existing_handlers() -> None:
+    """A second call must not add a second handler."""
+    import datasluice.logging as ds_logging
+
+    ds_logger = logging.getLogger("datasluice")
+    initial_handler_count = len(ds_logger.handlers)
+    ds_logging.configure_logging("WARNING")
+    assert len(ds_logger.handlers) == initial_handler_count
