@@ -1,0 +1,9 @@
+[config]
+custom_model_max_tokens = 262000
+propagate_tool_errors = true
+
+[github_action_config]
+auto_describe = true
+auto_review = false
+auto_improve = false
+pr_actions = ["opened", "reopened", "synchronize", "ready_for_review"]

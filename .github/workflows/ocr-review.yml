@@ -29,12 +29,12 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
-          
+
           llm_extra_body: '{"reasoning_effort": "max"}'
-          
+
           review_concurrency: '4'
           language: 'English'
-          
+
           github_token: ${{ secrets.GITHUB_TOKEN }}
           sticky_summary: 'true'
           incremental: 'true'

@@ -28,8 +28,3 @@ jobs:
           OPENAI_KEY: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           OPENAI.API_BASE: ${{ secrets.OCR_LLM_URL }}
           config.fallback_models: '${{ vars.PR_AGENT_FALLBACK_MODEL }}'
-          config.propagate_tool_errors: "true"
-          github_action_config.auto_describe: "true"
-          github_action_config.auto_review: "false"
-          github_action_config.auto_improve: "false"
-          github_action_config.pr_actions: '["opened", "reopened", "synchronize", "ready_for_review"]'

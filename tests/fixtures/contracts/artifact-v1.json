@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "kind": "artifact",
+  "uri": "memory://contract-output/7c345c2777d49ab77d5286b0dc1be23c8737537405444c1dd7af9f4691e21a61.parquet",
+  "media_type": "application/x-parquet",
+  "size": 1024,
+  "content_digest": {
+    "algorithm": "sha256",
+    "value": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "blob_digest": {
+    "algorithm": "sha256",
+    "value": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+  },
+  "provenance": {
+    "source_locator": {
+      "schema_version": 1,
+      "kind": "direct",
+      "uri": "https://data.example.test/files/observations.csv?api_key=***&page=1",
+      "format": null,
+      "media_type": null,
+      "extensions": {
+        "org.datasluice.contract": {
+          "fixture": "direct"
+        }
+      }
+    },
+    "resource_identity": "7c345c2777d49ab77d5286b0dc1be23c8737537405444c1dd7af9f4691e21a61",
+    "created_at": "2026-08-01T00:00:00Z",
+    "materialization_mode": "parquet",
+    "transforms": [
+      "normalize"
+    ]
+  },
+  "metadata": {
+    "record_count": 2
+  },
+  "extensions": {
+    "org.datasluice.contract": {
+      "fixture": "artifact"
+    }
+  }
+}

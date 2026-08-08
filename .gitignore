@@ -29,6 +29,7 @@ coverage.xml
 .env
 .envrc
 .venv
+.opencode
 
 # uv
 #   Generally recommended to include uv.lock in version control for
@@ -52,3 +53,20 @@ site/
 # IDE files
 # .idea/
 # .vscode/
+
+# GSD planning
+.planning/
+
+# Data
+/data/
+
+# Notebooks
+notebook/
+
+# Graphify
+graphify-out/
+!.graphify_labels.json
+!GRAPH_REPORT.md
+!graph.html
+!graph.json
+!manifest.json

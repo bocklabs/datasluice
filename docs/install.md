@@ -27,10 +27,15 @@ optional packages:
 | Polars support   | `pip install datasluice[polars]`   |
 | dlt integration  | `pip install datasluice[dlt]`      |
 | DuckDB support   | `pip install datasluice[duckdb]`   |
-| Airflow operator | `pip install datasluice[airflow]`  |
+| Apache Airflow provider | `pip install apache-airflow-providers-datasluice` |
 | Parquet reading  | `pip install datasluice[parquet]`  |
 | XLSX reading     | `pip install datasluice[xlsx]`     |
 | All extras       | `pip install datasluice[all]`      |
+
+Airflow integration ships as a **separate distribution** called
+`apache-airflow-providers-datasluice` and imports from the
+`airflow.providers.datasluice` namespace. It is released and versioned
+independently of the core `datasluice` package.
 
 ## Verify installation
 

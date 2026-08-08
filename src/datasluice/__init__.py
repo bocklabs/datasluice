@@ -3,8 +3,37 @@ format normalization, and pipeline integration.
 """
 
 from datasluice._version import __version__
-from datasluice.client import DataSluice
-from datasluice.domain import Dataset, License, Organization, Query, Resource, SearchResult
+from datasluice.application import (
+    CatalogResourceLocator,
+    DataSluice,
+    DirectResourceLocator,
+    OpenedResource,
+    Portal,
+    ResourceLocator,
+    resource_locator_from_dict,
+)
+from datasluice.domain import (
+    Artifact,
+    ArtifactProvenance,
+    CatalogCapabilities,
+    CredentialScope,
+    Dataset,
+    DetectionResult,
+    Digest,
+    HttpDownload,
+    License,
+    LocalFile,
+    ObjectStorage,
+    Organization,
+    Query,
+    QueryAccess,
+    Resource,
+    ResourceAccess,
+    Schema,
+    SearchResult,
+    StreamAccess,
+    SyncState,
+)
 from datasluice.exceptions import (
     AdapterError,
     AdapterNotFoundError,
@@ -15,14 +44,24 @@ from datasluice.exceptions import (
     DownloadError,
     FormatError,
     NotFoundError,
+    OpenedResourceConsumedError,
     PortalDetectionError,
     PortalError,
     RateLimitError,
+    ResourceResolutionError,
+    StateStoreError,
+    SyncStateConflictError,
 )
 
 __all__ = [
     "__version__",
     "DataSluice",
+    "Portal",
+    "OpenedResource",
+    "DirectResourceLocator",
+    "CatalogResourceLocator",
+    "ResourceLocator",
+    "resource_locator_from_dict",
     # Domain models
     "Dataset",
     "Resource",
@@ -30,6 +69,20 @@ __all__ = [
     "License",
     "Query",
     "SearchResult",
+    "Artifact",
+    "ArtifactProvenance",
+    "CatalogCapabilities",
+    "CredentialScope",
+    "DetectionResult",
+    "Digest",
+    "HttpDownload",
+    "LocalFile",
+    "ObjectStorage",
+    "QueryAccess",
+    "ResourceAccess",
+    "Schema",
+    "StreamAccess",
+    "SyncState",
     # Exceptions
     "DataSluiceError",
     "PortalError",
@@ -38,9 +91,13 @@ __all__ = [
     "PortalDetectionError",
     "AuthenticationError",
     "RateLimitError",
+    "StateStoreError",
+    "SyncStateConflictError",
     "NotFoundError",
     "DownloadError",
     "ChecksumMismatchError",
     "FormatError",
     "ConfigError",
+    "ResourceResolutionError",
+    "OpenedResourceConsumedError",
 ]

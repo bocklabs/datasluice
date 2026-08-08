@@ -1,0 +1,16 @@
+{
+  "success": true,
+  "result": {
+    "id": "0f8e7d6c-5b4a-3928-1706-f5e4d3c2b1a0",
+    "name": "city-environment-office",
+    "title": "City Environment Office",
+    "description": "Publishes environmental monitoring data for the municipality.",
+    "image_url": "https://example.com/logos/env-office.png",
+    "url": "https://example.com/organization/city-environment-office",
+    "created": "2020-03-15T10:00:00.000000",
+    "state": "active",
+    "is_organization": true,
+    "package_count": 42,
+    "users": []
+  }
+}

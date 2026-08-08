@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import typer
 from rich.console import Console
 
@@ -9,6 +11,9 @@ from datasluice import __version__
 from datasluice.cli.detect import detect
 from datasluice.cli.download import download
 from datasluice.cli.inspect import inspect
+from datasluice.cli.materialize import materialize
+from datasluice.cli.open import open
+from datasluice.cli.scan import scan
 from datasluice.cli.search import search
 
 console = Console()
@@ -22,13 +27,15 @@ app = typer.Typer(
 
 @app.callback()
 def main(
-    version: bool = typer.Option(
-        False,
-        "--version",
-        "-V",
-        help="Show the version and exit.",
-        is_eager=True,
-    ),
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            help="Show the version and exit.",
+            is_eager=True,
+        ),
+    ] = False,
 ) -> None:
     """DataSluice — unified open-data toolkit."""
     if version:
@@ -40,6 +47,9 @@ app.command(name="search")(search)
 app.command(name="inspect")(inspect)
 app.command(name="download")(download)
 app.command(name="detect")(detect)
+app.command(name="scan")(scan)
+app.command(name="open")(open)
+app.command(name="materialize")(materialize)
 
 
 if __name__ == "__main__":

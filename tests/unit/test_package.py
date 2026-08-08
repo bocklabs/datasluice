@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 import datasluice
 
 
@@ -21,8 +23,20 @@ def test_public_api_exports() -> None:
     assert hasattr(datasluice, "DataSluiceError")
 
 
+def test_legacy_session_is_not_a_top_level_import() -> None:
+    with pytest.raises(ImportError):
+        exec("from datasluice import DataSluiceSession", {})
+
+
 def test_exceptions_hierarchy() -> None:
     from datasluice.exceptions import NotFoundError, PortalError
 
     assert issubclass(PortalError, datasluice.DataSluiceError)
     assert issubclass(NotFoundError, PortalError)
+
+
+def test_unsupportedqueryfielderror_hierarchy() -> None:
+    from datasluice.exceptions import PortalError, UnsupportedQueryFieldError
+
+    assert issubclass(UnsupportedQueryFieldError, datasluice.DataSluiceError)
+    assert not issubclass(UnsupportedQueryFieldError, PortalError)

@@ -40,3 +40,31 @@ def test_headers_auth() -> None:
     headers, _ = auth.apply({"Accept": "*/*"})
     assert headers["X-Custom"] == "value"
     assert headers["Accept"] == "*/*"
+
+
+def test_bearer_auth_repr_redacts_token() -> None:
+    auth = BearerAuth("a-very-secret-token")
+    assert "a-very-secret-token" not in repr(auth)
+    assert "***" in repr(auth)
+    assert "Bearer" in repr(auth)
+
+
+def test_api_key_auth_repr_redacts_key() -> None:
+    auth = APIKeyAuth("my-secret-key")
+    assert "my-secret-key" not in repr(auth)
+    assert "***" in repr(auth)
+    assert "X-Api-Key" in repr(auth)
+
+
+def test_basic_auth_repr_redacts_password() -> None:
+    auth = BasicAuth("user", "p4ssw0rd")
+    assert "p4ssw0rd" not in repr(auth)
+    assert "***" in repr(auth)
+    assert "user" in repr(auth)
+
+
+def test_headers_auth_repr_redacts_values() -> None:
+    auth = HeadersAuth({"X-Secret": "leaked-value"})
+    assert "leaked-value" not in repr(auth)
+    assert "X-Secret" not in repr(auth)
+    assert "***" in repr(auth)

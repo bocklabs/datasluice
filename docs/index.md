@@ -19,4 +19,5 @@ One Python interface for open-data discovery, extraction, format normalization, 
 - [Socrata](examples/socrata.md)
 - [pandas](examples/pandas.md)
 - [dlt](examples/dlt.md)
+- [Application & CLI](examples/application.md)
 - [Apache Airflow](examples/airflow.md)

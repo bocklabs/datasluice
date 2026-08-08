@@ -1,6 +1,10 @@
-"""Pandas integration: load resources into DataFrames.
+"""to_pandas terminal: convert a BatchStream to a pandas DataFrame (INTG-02, D-P6-01).
 
-Requires ``pandas``: install with ``pip install datasluice[pandas]``.
+Lazy-imports pandas; zero-copy Arrow interop via the :func:`to_arrow` substrate
+(single-substrate consistency, QUAL-10). The v0.1.0
+``resource_to_dataframe`` / ``dataset_to_dataframes`` helpers were removed per
+D-P4-18 (they relied on the deleted ``datasluice.formats`` read path); Phase 6
+rebuilds the terminal over the shared :class:`datasluice.data.BatchStream`.
 """
 
 from __future__ import annotations
@@ -8,40 +12,31 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import pandas as pd
-
-    from datasluice.domain.resource import Resource
+    from datasluice.data.batch_stream import BatchStream
 
 
-def resource_to_dataframe(resource: Resource, **kwargs: Any) -> pd.DataFrame:
-    """Read a :class:`Resource` into a pandas :class:`~pandas.DataFrame`.
+def to_pandas(stream: BatchStream) -> Any:
+    """Convert *stream* to a pandas ``DataFrame`` (INTG-02).
+
+    Delegates through :func:`~datasluice.integrations.arrow.to_arrow` for
+    single-substrate consistency (QUAL-10), then zero-copy converts the Arrow
+    Table to a DataFrame.
 
     Args:
-        resource: The resource to read.
-        **kwargs: Extra keyword arguments passed to the format reader or
-            ``pandas`` reader.
+        stream: The :class:`~datasluice.data.BatchStream` to convert.
+
+    Returns:
+        A ``pandas.DataFrame`` built via Arrow zero-copy interop.
+
+    Raises:
+        ImportError: If ``pandas`` is not installed. Install with
+            ``pip install datasluice[pandas]``.
     """
-    import pandas as pd
+    try:
+        import pandas as pd  # noqa: F401 — lazy import gate
+    except ImportError as exc:
+        raise ImportError("to_pandas requires 'pandas'. Install with: pip install datasluice[pandas]") from exc
 
-    from datasluice.formats import get_reader
+    from datasluice.integrations.arrow import to_arrow
 
-    fmt = (resource.format or "CSV").upper()
-    if fmt in ("CSV", "JSON", "JSONL", "PARQUET", "XLSX", "GEOJSON"):
-        reader = get_reader(fmt)
-        records = reader.read(resource.url or "")
-        return pd.DataFrame(records, **kwargs)
-
-    return pd.read_csv(resource.url or "", **kwargs)  # type: ignore[no-any-return]
-
-
-def dataset_to_dataframes(
-    dataset_id: str,
-    portal_url: str,
-    **kwargs: Any,
-) -> dict[str, pd.DataFrame]:
-    """Return a ``{resource_name: DataFrame}`` mapping for a dataset."""
-    from datasluice import DataSluice
-
-    ds = DataSluice(portal_url)
-    dataset = ds.get_dataset(dataset_id)
-    return {(r.name or r.id): resource_to_dataframe(r, **kwargs) for r in dataset.resources if r.url}
+    return to_arrow(stream).to_pandas()

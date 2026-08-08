@@ -52,17 +52,22 @@ pandas = ["pandas"]
 polars = ["polars"]
 dlt = ["dlt"]
 duckdb = ["duckdb"]
-airflow = ["apache-airflow"]
 parquet = ["pyarrow"]
+streaming = ["pyarrow"]
+compression = ["zstandard>=0.23"]
 xlsx = ["openpyxl"]
+http = ["httpx>=0.27"]
+storage = ["fsspec>=2025.1"]
 all = [
     "pandas",
     "polars",
     "dlt",
     "duckdb",
-    "apache-airflow",
     "pyarrow",
     "openpyxl",
+    "httpx>=0.27",
+    "fsspec>=2025.1",
+    "zstandard>=0.23",
 ]
 
 [project.urls]
@@ -74,10 +79,22 @@ homepage = "https://github.com/nitish-raj/datasluice"
 [project.scripts]
 datasluice = "datasluice.cli.app:app"
 
+[project.entry-points."datasluice.connectors"]
+ckan = "datasluice.connectors.ckan.factory:create_ckan_connector"
+datagouv = "datasluice.connectors.datagouv.factory:create_datagouv_connector"
+socrata = "datasluice.connectors.socrata.factory:create_socrata_connector"
+
 [tool.ty]
 # All rules are enabled as "error" by default; no need to specify unless overriding.
 # Example override: relax a rule for the entire project (uncomment if needed).
 # rules.TY015 = "warn"  # For invalid-argument-type, warn instead of error.
+
+[tool.ty.src]
+# The Airflow provider is an isolated build root (D-21/D-52) whose host-framework
+# dependency (apache-airflow) is deliberately not installed in the core dev venv
+# (D-23). Core type-checking excludes it; the provider is type-checked inside the
+# wheel-only candidate venv built by providers/apache-airflow/tests/run_candidate.py.
+exclude = ["providers"]
 
 [tool.ruff]
 line-length = 120
@@ -95,12 +112,14 @@ select = [
 [tool.coverage.run]
 branch = true
 parallel = true
-source = ["src/", "tests/"]
+source = ["src/datasluice"]
+data_file = ".coverage.core"
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 50
+precision = 2
+fail_under = 80.00
 exclude_also = [
     "if TYPE_CHECKING:",
     "if typing.TYPE_CHECKING:",
@@ -114,7 +133,7 @@ exclude_also = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.uv]
 package = true

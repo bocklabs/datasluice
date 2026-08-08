@@ -6,7 +6,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from datasluice.domain.access import ResourceAccess
     from datasluice.domain.license import License
+    from datasluice.domain.schema import Schema
 
 # Known format aliases normalised to canonical uppercase form.
 _FORMAT_ALIASES: dict[str, str] = {
@@ -21,7 +23,7 @@ _FORMAT_ALIASES: dict[str, str] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Resource:
     """A single downloadable resource (file) within a dataset.
 
@@ -36,6 +38,10 @@ class Resource:
         license: License under which this resource is published.
         created: ISO-8601 creation timestamp, if available.
         modified: ISO-8601 last-modified timestamp, if available.
+        access: How the resource is reached (HTTP, object storage, local file, query).
+            Defaults to ``HttpDownload(url=resource.url)`` when unset (D-P4-06).
+        schema: Advisory portal-native column descriptors (D-P4-04). Readers infer
+            the Arrow schema from actual data; this field is display-only.
         extra: Portal-native fields not captured above.
     """
 
@@ -49,6 +55,8 @@ class Resource:
     license: License | None = None
     created: str | None = None
     modified: str | None = None
+    access: ResourceAccess | None = None
+    schema: Schema | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod

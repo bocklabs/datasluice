@@ -1,0 +1,26 @@
+{
+  "direct": {
+    "schema_version": 1,
+    "kind": "direct",
+    "uri": "https://data.example.test/files/observations.csv?api_key=***&page=1",
+    "format": null,
+    "media_type": null,
+    "extensions": {
+      "org.datasluice.contract": {
+        "fixture": "direct"
+      }
+    }
+  },
+  "catalog": {
+    "schema_version": 1,
+    "kind": "catalog",
+    "portal_url": "https://catalog.example.test/api",
+    "dataset_id": "dataset-42",
+    "resource_id": "resource-7",
+    "extensions": {
+      "org.datasluice.contract": {
+        "fixture": "catalog"
+      }
+    }
+  }
+}

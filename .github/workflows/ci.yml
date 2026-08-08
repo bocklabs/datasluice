@@ -52,6 +52,37 @@ jobs:
       - name: Type check with ty
         run: uv run --all-extras ty check .
 
+  provider-matrix:
+    name: Resolve provider compatibility matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.emit.outputs.matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Emit matrix from compatibility manifest
+        id: emit
+        run: |
+          python - <<'PY'
+          import json
+          import itertools
+          with open("providers/apache-airflow/compatibility.json", encoding="utf-8") as fh:
+              manifest = json.load(fh)
+          include = [
+              {"core_version": core, "airflow": airflow, "python": minor}
+              for core, airflow, minor in itertools.product(
+                  manifest["core"], manifest["airflow"], manifest["python"]
+              )
+          ]
+          with open("/tmp/provider-matrix.json", "w", encoding="utf-8") as fh:
+              json.dump({"include": include}, fh)
+          print(json.dumps({"include": include}))
+          PY
+          echo "matrix=$(cat /tmp/provider-matrix.json)" >> "$GITHUB_OUTPUT"
+
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -68,18 +99,19 @@ jobs:
       - name: Set up UV
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Run tests with coverage
-        run: uv run --python=${{ matrix.python-version }} coverage run -m pytest
+      - name: Run core tests
+        run: uv run --all-extras --python=${{ matrix.python-version }} coverage run --source=src/datasluice --branch -m pytest tests
 
-      - name: Upload coverage data
+      - name: Upload core coverage data
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-${{ matrix.python-version }}
-          path: .coverage.*
+          name: core-coverage-${{ matrix.python-version }}
+          path: .coverage.core.*
           include-hidden-files: true
+          if-no-files-found: error
 
-  coverage:
-    name: Coverage
+  coverage-core:
+    name: Core branch coverage (>= 80%)
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -91,21 +123,67 @@ jobs:
       - name: Set up UV
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Download coverage data
+      - name: Download core coverage data
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: coverage-*
+          pattern: core-coverage-*
           merge-multiple: true
+          path: .coverage/
+          include-hidden-files: true
 
-      - name: Combine coverage
-        run: uv run coverage combine
+      - name: Combine core coverage
+        run: uv run coverage combine --data-file=.coverage.core .coverage/
+        env:
+          COVERAGE_FILE: .coverage.core
 
-      - name: Coverage report
+      - name: Core coverage report
         run: |
-          echo '## Coverage Report' >> $GITHUB_STEP_SUMMARY
+          echo '## Core Branch Coverage Report' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          uv run coverage report | tee -a $GITHUB_STEP_SUMMARY
+          uv run coverage report --data-file=.coverage.core | tee -a $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+  provider-test:
+    name: Provider ${{ matrix.airflow }} / py${{ matrix.python }}
+    needs: provider-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.provider-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Run provider tests (local candidate wheels)
+        run: |
+          uv run --python=${{ matrix.python }} python providers/apache-airflow/tests/run_candidate.py \
+            --core-version ${{ matrix.core_version }} \
+            --airflow-version ${{ matrix.airflow }} \
+            -- pytest providers/apache-airflow/tests -x
+
+  coverage-provider:
+    name: Provider branch coverage (>= 80%)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Run provider suite under coverage
+        run: |
+          uv run python providers/apache-airflow/tests/run_candidate.py \
+            --core-version 1.0.0 \
+            --airflow-version 3.2.2 \
+            -- --cover-provider providers/apache-airflow/tests -q
 
   build:
     name: Build & validate package
@@ -133,6 +211,55 @@ jobs:
           name: dist
           path: dist/
 
+  installed-wheel-e2e:
+    name: Installed-wheel CLI E2E (py${{ matrix.python-version }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Installed-wheel bare CLI E2E
+        run: uv run --python=${{ matrix.python-version }} pytest tests/e2e/test_cli_bare.py -x
+
+      - name: Installed-wheel all-extras CLI E2E
+        run: uv run --python=${{ matrix.python-version }} pytest tests/e2e/test_cli_existing.py -x
+        env:
+          DATASLUICE_E2E_EXTRAS: all
+
+  provider-e2e:
+    name: Provider DAG import E2E (py${{ matrix.python-version }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Import sample DAG from installed wheels
+        run: |
+          uv run --python=${{ matrix.python-version }} python providers/apache-airflow/tests/run_candidate.py \
+            --core-version 1.0.0 \
+            --airflow-version 3.2.2 \
+            -- python providers/apache-airflow/tests/dags/example_datasluice.py
+
   smoke-test:
     name: Smoke test (install wheel)
     needs: build
@@ -146,6 +273,8 @@ jobs:
 
       - name: Set up UV
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
 
       - name: Install built wheel & smoke import
         run: |
@@ -156,7 +285,17 @@ jobs:
   all-checks-pass:
     name: All checks pass
     if: always()
-    needs: [lint, type-check, test, coverage, build, smoke-test]
+    needs:
+      - lint
+      - type-check
+      - test
+      - coverage-core
+      - provider-test
+      - coverage-provider
+      - build
+      - installed-wheel-e2e
+      - provider-e2e
+      - smoke-test
     runs-on: ubuntu-latest
     steps:
       - name: Check job results

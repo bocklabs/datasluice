@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -25,8 +26,7 @@ class FileCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _key_path(self, key: str) -> Path:
-        safe = key.replace("/", "_").replace(":", "_")
-        return self.cache_dir / safe
+        return self.cache_dir / hashlib.sha256(key.encode()).hexdigest()
 
     def get(self, key: str) -> bytes | None:
         """Return cached bytes for *key*, or ``None`` if missing/expired."""

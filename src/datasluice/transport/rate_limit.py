@@ -29,6 +29,6 @@ class RateLimiter:
         with self._lock:
             now = time.monotonic()
             wait = self._last_request + self._min_interval - now
-            if wait > 0:
-                time.sleep(wait)
-            self._last_request = time.monotonic()
+            self._last_request = max(now, self._last_request + self._min_interval)
+        if wait > 0:
+            time.sleep(wait)

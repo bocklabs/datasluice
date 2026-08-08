@@ -21,6 +21,7 @@ nav = [
       { "Socrata" = "examples/socrata.md" },
       { "pandas" = "examples/pandas.md" },
       { "dlt" = "examples/dlt.md" },
+      { "Application & CLI" = "examples/application.md" },
       { "Airflow" = "examples/airflow.md" },
     ] },
 ]
