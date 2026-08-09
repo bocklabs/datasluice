@@ -1,4 +1,4 @@
-"""Unit tests for the streaming XLSX reader (DATA-03, 04-02 Task 2)."""
+"""Unit tests for the streaming XLSX reader."""
 
 from __future__ import annotations
 

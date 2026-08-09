@@ -1,4 +1,4 @@
-"""CatalogCapabilities model — query-field-level capability contract (D-07)."""
+"""CatalogCapabilities model — query-field-level capability contract."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from types import MappingProxyType
 class CatalogCapabilities:
     """Capabilities a catalog connector advertises to the runtime.
 
-    Phase 5's reject policy (ARCH-08) reads this dataclass to produce
+    reject policy reads this dataclass to produce
     actionable error messages for unsupported query filters.
 
     Attributes:

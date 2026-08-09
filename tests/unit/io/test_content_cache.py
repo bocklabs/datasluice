@@ -1,13 +1,13 @@
-"""ContentCache behavior tests (INFRA-03 + QUAL-06 concurrency matrix).
+"""ContentCache behavior tests.
 
 Covers:
 - CachePort Protocol conformance
 - put/get/delete round-trip + missing-key semantics
-- SHA-256 hexdigest keying (SEC-06 carry-forward from FileCache)
-- ETag/Last-Modified sidecar round-trip (D-P3-12, SYNC-06 enabler)
-- Readers skip status='writing' rows (D-P3-11)
-- Lazy sweep removes stale 'writing' rows + orphaned content files (D-P3-13)
-- QUAL-06 concurrency matrix:
+- SHA-256 hexdigest keying
+- ETag/Last-Modified sidecar round-trip
+- Readers skip status='writing' rows
+- Lazy sweep removes stale 'writing' rows + orphaned content files
+- concurrency matrix:
     * N=10 threads, distinct keys -> all puts succeed, all gets correct
     * N=10 threads, SAME key -> exactly one payload wins, no corruption
     * N=5 writers + N=5 readers -> never observe torn reads
@@ -83,7 +83,7 @@ def test_key_is_deterministic(tmp_path: Path) -> None:
 
 
 def test_key_has_no_path_separators(tmp_path: Path) -> None:
-    """SEC-06 / T-3-12: SHA-256 destroys path structure (regression from FileCache)."""
+    """SHA-256 destroys path structure (regression from FileCache)."""
     cache = ContentCache(str(tmp_path / "cache"))
     for key in ["https://x.io/a/b/c.csv", "http://h:8080/p?q=1", "../../etc/passwd"]:
         sha = cache._sha(key)
@@ -108,7 +108,7 @@ def test_etag_sidecar_stored_and_retrieved(tmp_path: Path) -> None:
 
 
 def test_get_returns_none_for_writing_status(tmp_path: Path) -> None:
-    """D-P3-11: readers skip rows with status='writing'."""
+    """Readers skip rows with status='writing'."""
     cache = ContentCache(str(tmp_path / "cache"))
     sha = cache._sha("k")
     conn = sqlite3.connect(cache._db_path)
@@ -125,7 +125,7 @@ def test_get_returns_none_for_writing_status(tmp_path: Path) -> None:
 
 
 def test_lazy_sweep_removes_stale_writing(tmp_path: Path) -> None:
-    """D-P3-13: stale 'writing' rows are swept on access."""
+    """Stale 'writing' rows are swept on access."""
     cache = ContentCache(str(tmp_path / "cache"))
     conn = sqlite3.connect(cache._db_path)
     try:
@@ -169,7 +169,7 @@ def test_lazy_sweep_skips_fresh_writing(tmp_path: Path) -> None:
 
 
 def test_lazy_sweep_removes_orphaned_content_files(tmp_path: Path) -> None:
-    """D-P3-13: content files with no metadata row are swept."""
+    """Content files with no metadata row are swept."""
     cache = ContentCache(str(tmp_path / "cache"))
     orphan_sha = "a" * 64
     orphan_path = f"{cache.cache_dir}/{orphan_sha}"
@@ -180,7 +180,7 @@ def test_lazy_sweep_removes_orphaned_content_files(tmp_path: Path) -> None:
 
 
 def test_concurrent_puts_distinct_keys_no_corruption(tmp_path: Path) -> None:
-    """QUAL-06: N=10 threads writing distinct keys -> all succeed, no OperationalError."""
+    """N=10 threads writing distinct keys -> all succeed, no OperationalError."""
     cache = ContentCache(str(tmp_path / "cache"))
     payloads = {f"key{i}": f"data-{i}".encode() for i in range(10)}
 
@@ -196,7 +196,7 @@ def test_concurrent_puts_distinct_keys_no_corruption(tmp_path: Path) -> None:
 
 
 def test_concurrent_puts_same_key_one_wins(tmp_path: Path) -> None:
-    """QUAL-06: N=10 threads writing the SAME key -> exactly one payload wins, no corruption."""
+    """N=10 threads writing the SAME key -> exactly one payload wins, no corruption."""
     cache = ContentCache(str(tmp_path / "cache"))
     payloads = [f"data-{i}".encode() for i in range(10)]
 
@@ -212,7 +212,7 @@ def test_concurrent_puts_same_key_one_wins(tmp_path: Path) -> None:
 
 
 def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
-    """QUAL-06: N=5 writers + N=5 readers -> readers never observe partial bytes."""
+    """N=5 writers + N=5 readers -> readers never observe partial bytes."""
     cache = ContentCache(str(tmp_path / "cache"))
     keys = [f"mix-key-{i}" for i in range(20)]
     expected = {key: (b"x" * (i + 1) * 100) for i, key in enumerate(keys)}
@@ -252,7 +252,7 @@ def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
 
 
 def test_writer_crash_mid_two_phase_rolls_back_metadata(tmp_path: Path) -> None:
-    """Crash during Phase 2a (content write) rolls back the 'writing' metadata row."""
+    """Crash during a (content write) rolls back the 'writing' metadata row."""
     cache = ContentCache(str(tmp_path / "cache"))
 
     with patch.object(cache._fs, "pipe_file", side_effect=OSError("disk full")):
@@ -316,7 +316,7 @@ def test_put_with_metadata_round_trips_through_get(tmp_path: Path) -> None:
 
 
 def test_ttl_expired_returns_none(tmp_path: Path) -> None:
-    """Carry-forward of FileCache TTL semantics (bare expires_at; retention policy is Phase 7)."""
+    """Carry-forward of FileCache TTL semantics."""
     cache = ContentCache(str(tmp_path / "cache"), ttl=1)
     cache.put("k", b"v")
     sha = cache._sha("k")

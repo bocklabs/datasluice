@@ -27,7 +27,7 @@ def map_license(raw: dict[str, Any] | None) -> License | None:
 
 
 def _resolve_access(raw: dict[str, Any]) -> ResourceAccess | None:
-    """Resolve the resource access descriptor per D-P5-02 for udata resources.
+    """Resolve the resource access descriptor for udata resources.
 
     udata resources carry a direct ``url`` for HTTP download; udata does not
     expose a queryable-resource signal the way CKAN exposes
@@ -41,7 +41,7 @@ def _resolve_access(raw: dict[str, Any]) -> ResourceAccess | None:
 
 
 def _resolve_schema(raw: dict[str, Any]) -> Schema | None:
-    """Best-effort schema extraction per D-P5-03 for udata resources.
+    """Best-effort schema extraction for udata resources.
 
     Reads the Frictionless-style ``schema.fields`` list when udata exposes it;
     returns ``None`` when the portal is silent so readers can infer from bytes.
@@ -56,7 +56,7 @@ def _resolve_schema(raw: dict[str, Any]) -> Schema | None:
 def map_resource(raw: dict[str, Any], *, base_url: str | None = None) -> Resource:
     """Convert a udata resource dict into a :class:`Resource`.
 
-    Populates advisory ``access`` and ``schema`` descriptors per D-P5-02/03/04
+    Populates advisory ``access`` and ``schema`` descriptors
     so downstream readers can pick the right transport without re-probing the
     portal. ``base_url`` is accepted for parity with the CKAN mapper; udata
     resources do not require it for access-descriptor resolution.

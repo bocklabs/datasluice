@@ -1,4 +1,4 @@
-"""Dependency-injection tests — detect() consumes caller-injected infra (D-P5-16).
+"""Dependency-injection tests — detect consumes caller-injected infra.
 
 The detector must NOT construct its own ``HttpClient`` or ``PluginManager``;
 both are passed as arguments. The legacy ``detect_portal_type`` anti-pattern
@@ -47,27 +47,27 @@ class _StubPM:
 
 
 def test_detect_does_not_instantiate_httpclient(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``HttpClient()`` must NOT be constructed inside detect() (D-P5-16)."""
+    """``HttpClient`` must NOT be constructed inside detect."""
 
     def _explode(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("detect() constructed an HttpClient — D-P5-16 violation")
+        raise AssertionError("detect() constructed an HttpClient")
 
     monkeypatch.setattr(transport_mod, "HttpClient", _explode)
     detect("https://example.gov", _StubTransport(), _StubPM(["ckan"]))  # ty: ignore[invalid-argument-type]
 
 
 def test_detect_does_not_instantiate_pluginmanager(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``PluginManager()`` must NOT be constructed inside detect() (D-P5-16)."""
+    """``PluginManager`` must NOT be constructed inside detect."""
 
     def _explode(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("detect() constructed a PluginManager — D-P5-16 violation")
+        raise AssertionError("detect() constructed a PluginManager")
 
     monkeypatch.setattr(pm_mod, "PluginManager", _explode)
     detect("https://example.gov", _StubTransport(), _StubPM(["ckan"]))  # ty: ignore[invalid-argument-type]
 
 
 def test_detect_uses_caller_transport() -> None:
-    """The caller's transport receives every probe request (D-P5-16)."""
+    """The caller's transport receives every probe request."""
 
     class _Recording:
         def __init__(self) -> None:

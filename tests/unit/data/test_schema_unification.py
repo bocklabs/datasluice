@@ -1,12 +1,12 @@
-"""Unit tests for :func:`unify_batches` — schema unification via ``pa.concat_tables`` (DATA-08).
+"""Unit tests for :func:`unify_batches` — schema unification via ``pa.concat_tables``.
 
 Covers the documented promotion lattice: int→float widening, missing-column
-null-fill, string+binary→binary (the lossy direction per RESEARCH Pitfall 6),
-and the tz-aware vs tz-naive timestamp hard-fail case (RESEARCH Pitfall 4).
+null-fill, string+binary→binary,
+and the tz-aware vs tz-naive timestamp hard-fail case.
 
-Follows the established Phase 03/04 RED→GREEN TDD pattern: the module skips
+Follows the established RED→GREEN TDD pattern: the module skips
 cleanly at collection time while ``unify_batches`` is not yet exported from
-``datasluice.data.schema`` (RED), then runs and passes once Task 1 GREEN lands
+``datasluice.data.schema`` (RED), then runs and passes once GREEN lands
 the implementation.
 """
 
@@ -64,7 +64,7 @@ def test_missing_column_null_fills() -> None:
 
 
 def test_string_plus_binary_unifies_to_binary() -> None:
-    """string + binary columns unify to binary (the lossy direction per RESEARCH Pitfall 6)."""
+    """string + binary columns unify to binary."""
     import pyarrow as pa
 
     b1 = pa.RecordBatch.from_arrays([pa.array(["hello"], type=pa.string())], names=["s"])

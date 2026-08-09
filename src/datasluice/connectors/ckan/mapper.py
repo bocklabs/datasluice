@@ -38,11 +38,11 @@ def map_license(raw: dict[str, Any] | None) -> License | None:
 
 
 def _resolve_access(raw: dict[str, Any], base_url: str | None) -> ResourceAccess | None:
-    """Resolve the resource access descriptor per D-P5-02.
+    """Resolve the resource access descriptor.
 
     HttpDownload wins when ``url`` is truthy; otherwise a CKAN datastore-backed
     QueryAccess is emitted when ``datastore_active`` is truthy; else ``None``.
-    The endpoint URL is advisory per D-P5-01 — when ``base_url`` is supplied by
+    The endpoint URL is advisory — when ``base_url`` is supplied by
     the adapter it points at the standard CKAN ``datastore_search`` action,
     otherwise a stable placeholder is emitted.
     """
@@ -63,7 +63,7 @@ def _resolve_access(raw: dict[str, Any], base_url: str | None) -> ResourceAccess
 
 
 def _resolve_schema(raw: dict[str, Any]) -> Schema | None:
-    """Best-effort schema extraction per D-P5-03.
+    """Best-effort schema extraction.
 
     Reads ``datastore_fields`` first (CKAN DataPusher output), then falls back
     to ``schema.fields`` (Frictionless Tabular Data Package). Returns ``None``
@@ -78,7 +78,7 @@ def _resolve_schema(raw: dict[str, Any]) -> Schema | None:
 def map_resource(raw: dict[str, Any], *, base_url: str | None = None) -> Resource:
     """Convert a CKAN resource dict into a :class:`Resource`.
 
-    Populates advisory ``access`` and ``schema`` descriptors per D-P5-02/03/04
+    Populates advisory ``access`` and ``schema`` descriptors
     so downstream readers can pick the right transport without re-probing the
     portal. ``base_url`` is forwarded by the adapter for QueryAccess endpoints.
     """

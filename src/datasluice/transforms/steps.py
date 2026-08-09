@@ -1,10 +1,10 @@
-"""Closed-set normalization transforms (TRANS-02..07, D-P6-09..13).
+"""Closed-set normalization transforms.
 
 Each transform is a frozen-dataclass-configured class implementing
 :meth:`~datasluice.transforms.protocol.TransformStep.apply` as a generator
 yielding transformed ``RecordBatch`` objects lazily (O(1 batch memory),
-D-P6-06). Every hard operation delegates to pyarrow compute — never hand-rolled
-(RESEARCH "Don't Hand-Roll" / D-P4-03). The set is CLOSED for normalization
+). Every hard operation delegates to pyarrow compute — never hand-rolled
+. The set is CLOSED for normalization
 only (PROJECT.md Out of Scope — not a plugin extension point).
 """
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Filter:
-    """Filter rows using a pyarrow compute ``Expression`` (TRANS-06, D-P6-09).
+    """Filter rows using a pyarrow compute ``Expression``.
 
     Delegates per-batch to ``RecordBatch.filter`` (native Arrow, zero-copy,
     vectorized). Users build expressions with ``pyarrow.compute.field`` /
@@ -44,12 +44,12 @@ class Filter:
 
 @dataclass(frozen=True)
 class SelectColumns:
-    """Project a subset (or re-ordering) of columns (TRANS-02, D-P6-11).
+    """Project a subset (or re-ordering) of columns.
 
     Raises ``TransformError`` naming the missing column(s) AND the available
     ones when a requested column is absent (actionable auto-generated message,
     mirrors :class:`~datasluice.exceptions.UnsupportedQueryFieldError`). Empty
-    selection is rejected at construction (fail-fast, D-P6-07).
+    selection is rejected at construction.
 
     Attributes:
         columns: Column names to keep, in output order.
@@ -77,7 +77,7 @@ class SelectColumns:
 
 @dataclass(frozen=True)
 class RenameColumns:
-    """Rename columns via an old→new mapping (TRANS-03, D-P6-11).
+    """Rename columns via an old→new mapping.
 
     Raises ``TransformError`` naming the missing source column(s) AND the
     available ones when a mapped source is absent. Names not in the mapping
@@ -105,15 +105,15 @@ class RenameColumns:
 
 @dataclass(frozen=True)
 class CastSchema:
-    """Cast each batch to a target Arrow schema, strictly (TRANS-04, D-P6-10).
+    """Cast each batch to a target Arrow schema, strictly.
 
-    Uses ``Table.cast(target_schema, safe=True)``: an unsafe cast (overflow /
-    truncation) raises :class:`pyarrow.ArrowInvalid`, wrapped as
-    :class:`~datasluice.exceptions.TransformError`. No silent data loss
-    (mitigates threat T-06-03).
+        Uses ``Table.cast(target_schema, safe=True)``: an unsafe cast (overflow /
+        truncation) raises :class:`pyarrow.ArrowInvalid`, wrapped as
+        :class:`~datasluice.exceptions.TransformError`. No silent data loss
+    .
 
-    Attributes:
-        target_schema: The ``pa.Schema`` every batch is cast to.
+        Attributes:
+            target_schema: The ``pa.Schema`` every batch is cast to.
     """
 
     target_schema: Any
@@ -135,12 +135,12 @@ class CastSchema:
 
 @dataclass(frozen=True)
 class NormalizeTimestamps:
-    """Normalize every timestamp column to a canonical type (TRANS-05, D-P6-12).
+    """Normalize every timestamp column to a canonical type.
 
     Handles three branches per timestamp column:
 
     1. tz-naive → ``assume_timezone`` then cast (NEVER a direct naive→aware
-       cast, which raises ``ArrowInvalid`` — RESEARCH Pitfall 3).
+       cast, which raises ``ArrowInvalid`` — ).
     2. tz-aware, different zone → cast to the target tz.
     3. same tz, different unit → cast to the target unit.
 
@@ -194,7 +194,7 @@ class NormalizeTimestamps:
 
 @dataclass(frozen=True)
 class Flatten:
-    """Flatten struct columns into dotted-name columns (TRANS-07, D-P6-13).
+    """Flatten struct columns into dotted-name columns.
 
     Each struct field ``address{city, zip}`` becomes ``address.city``,
     ``address.zip``. ``max_depth`` controls recursion depth (default one level;
@@ -202,7 +202,7 @@ class Flatten:
     UNTOUCHED (documented policy — exploding lists is out of scope for the
     closed normalization set).
 
-    ``RecordBatch`` has no ``.flatten()`` (RESEARCH Pitfall 4), so each batch is
+    ``RecordBatch`` has no ``.flatten``, so each batch is
     rebuilt via ``pa.Table`` + :func:`pyarrow.compute.struct_field`. A no-struct
     batch is yielded unchanged.
 

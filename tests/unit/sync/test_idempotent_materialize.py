@@ -179,7 +179,7 @@ def test_destination_uri_is_uri_not_path(tmp_path, csv_server, make_resource) ->
 
 
 def test_empty_parquet_resource_syncs_with_schema(tmp_path) -> None:
-    """A schema-bearing zero-row Parquet resource still syncs under checkpointed materialization (CR-08)."""
+    """A schema-bearing zero-row Parquet resource still syncs under checkpointed materialization."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 

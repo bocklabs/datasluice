@@ -1,4 +1,4 @@
-"""BatchStream — context-managed Arrow RecordBatch stream (DATA-01, DATA-02, D-P4-17).
+"""BatchStream — context-managed Arrow RecordBatch stream.
 
 A concrete wrapper around ``pa.RecordBatchReader`` or a bare
 ``Iterator[RecordBatch]``. Exposes ``.schema`` and ``.iter_batches()`` with
@@ -36,7 +36,7 @@ class BatchCursor:
     ``next_batch_index`` tracks the shard count (for shard naming) and
     ``position.row_group_index`` tracks the physical Parquet row-group
     position. These MAY diverge when empty row groups exist between non-empty
-    ones (CR-06): the physical index advances past empty groups while the
+    ones: the physical index advances past empty groups while the
     shard count only increments for yielded batches.
     """
 
@@ -124,12 +124,12 @@ class BatchStream:
         In ``indexed`` mode (Parquet row-group path), the physical row-group
         index comes from the source tuples, not from ``enumerate`` — so empty
         row groups that are skipped internally do not corrupt the cursor
-        position (CR-06). ``next_batch_index`` (shard count) and
+        position. ``next_batch_index`` (shard count) and
         ``position.row_group_index`` (physical position) may diverge.
 
         Raises:
             StreamClosedError: If called after :meth:`close` or ``__exit__``
-                (WR-01: previously the indexed path bypassed the closed-stream
+                (: previously the indexed path bypassed the closed-stream
                 guard that :meth:`iter_batches` enforces).
         """
         if self._closed:
@@ -158,12 +158,12 @@ class BatchStream:
                 previous = next_batch
 
     def close(self) -> None:
-        """Release the underlying reader and any owned closeables; idempotent (WR-02).
+        """Release the underlying reader and any owned closeables; idempotent.
 
-        Every owned resource is attempted even when an earlier close raises,
-        so one failing closeable cannot prevent later ones from releasing
-        (WR-02). The first close exception is re-raised after all closeables
-        have been attempted so the caller still sees the original failure.
+                Every owned resource is attempted even when an earlier close raises,
+                so one failing closeable cannot prevent later ones from releasing
+        . The first close exception is re-raised after all closeables
+                have been attempted so the caller still sees the original failure.
         """
         if self._closed:
             return
@@ -192,7 +192,7 @@ class BatchStream:
         self.close()
 
     def __arrow_c_stream__(self, requested_schema: Any = None) -> Any:
-        """Return a PyCapsule for zero-copy Arrow interop (Phase 6 terminals).
+        """Return a PyCapsule for zero-copy Arrow interop (terminals).
 
         Delegates to the wrapped reader's ``__arrow_c_stream__`` when present
         (``pa.RecordBatchReader`` implements it). For bare iterators, builds the

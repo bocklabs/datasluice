@@ -1,8 +1,8 @@
-"""Unit tests for the streaming Parquet reader (DATA-03, 04-02 Task 2).
+"""Unit tests for the streaming Parquet reader.
 
 Covers both seekable (BytesIO) and non-seekable (IterableBytesIO) paths —
 the latter exercises the spool-to-BytesIO landmine mitigation (RESEARCH
-Pitfall 1: Parquet footers live at EOF and require a seek).
+: Parquet footers live at EOF and require a seek).
 """
 
 from __future__ import annotations

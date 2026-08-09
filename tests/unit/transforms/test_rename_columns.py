@@ -1,4 +1,4 @@
-"""Unit tests for the RenameColumns transform (TRANS-03, D-P6-11).
+"""Unit tests for the RenameColumns transform.
 
 Covers renaming, the idempotent self-rename, and the actionable missing-source
 error (naming the missing source AND the available columns).

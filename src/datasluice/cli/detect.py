@@ -1,4 +1,4 @@
-"""``datasluice detect`` command — evidence-based portal detection (D-P5-21, D-07)."""
+"""``datasluice detect`` command — evidence-based portal detection."""
 
 from __future__ import annotations
 
@@ -53,9 +53,9 @@ def detect(
 ) -> None:
     """Auto-detect the platform type of an open-data portal.
 
-    Probes well-known API endpoints and renders a rich table of every
-    detection-probe outcome. Exits with code 1 when no portal is detected
-    (D-P5-21).
+        Probes well-known API endpoints and renders a rich table of every
+        detection-probe outcome. Exits with code 1 when no portal is detected
+    .
     """
     if output not in {"human", "json"}:
         diagnostic_console.print("[red]Error:[/red] --output must be human or json")

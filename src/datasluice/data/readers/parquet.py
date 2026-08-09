@@ -1,13 +1,13 @@
-"""Streaming Parquet reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).
+"""Streaming Parquet reader yielding Arrow ``RecordBatch``.
 
 Migrated from ``datasluice.formats.parquet``. Streams row groups via
 ``pq.ParquetFile.iter_batches`` on seekable sources. The Parquet footer
 lives at end-of-file and is read via ``seek()``, so a non-seekable source
 (``HttpDownload`` over ``IterableBytesIO``) MUST be spooled to
 ``io.BytesIO`` before reading. This is the unavoidable compromise
-documented in RESEARCH Pitfall 1: the spool is bounded by total file
+documented: the spool is bounded by total file
 size, not ``batch_size``. The proper fix (HTTP Range requests) is out of
-Phase 4 scope.
+scope.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class ParquetReader(BaseFormatReader):
     non-seekable source (``HttpDownload`` over ``IterableBytesIO``) the
     entire body is spooled into ``io.BytesIO`` first — this is required
     because Parquet footers live at end-of-file and ``ParquetFile``
-    issues a ``seek()`` to read them. See RESEARCH Pitfall 1.
+    issues a ``seek`` to read them. See.
     """
 
     format_name = "PARQUET"
@@ -72,13 +72,13 @@ class ParquetReader(BaseFormatReader):
 
         Each tuple carries the physical row-group index alongside its batch so
         the caller tracks the physical position even when empty groups are
-        skipped (CR-06). Empty row groups advance the ``range`` cursor without
+        skipped. Empty row groups advance the ``range`` cursor without
         yielding a tuple, keeping the physical index accurate for the next
         non-empty group.
 
         The caller owns *source* lifetime: this method does NOT close *source*
         so the caller can still read the Parquet footer (e.g. for an empty
-        file's schema, CR-08) after iteration completes. Pass *source* to a
+        file's schema, ) after iteration completes. Pass *source* to a
         ``BatchStream`` ``closeables`` tuple (or otherwise close it) to release
         the underlying file handle.
 

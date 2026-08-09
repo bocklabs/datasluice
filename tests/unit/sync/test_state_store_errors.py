@@ -1,6 +1,6 @@
-"""Backend-error discrimination for FileStateStore (CR-03).
+"""Backend-error discrimination for FileStateStore.
 
-Closes the CR-03 blocker: only FileNotFoundError maps to None (absent state);
+Closes the blocker: only FileNotFoundError maps to None (absent state);
 backend PermissionError, TimeoutError, and other OSError subclasses surface as
 StateStoreError and are never swallowed as missing state.
 """

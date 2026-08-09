@@ -1,4 +1,4 @@
-"""Streaming XLSX reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).
+"""Streaming XLSX reader yielding Arrow ``RecordBatch``.
 
 Migrated from ``datasluice.formats.xlsx``. Uses openpyxl's
 ``load_workbook(..., read_only=True, data_only=True)`` streaming read mode
@@ -9,7 +9,7 @@ XLSX is itself a ZIP archive so openpyxl decodes it in one pass; this
 reader is "streaming" in the sense that it yields batches as rows arrive
 from ``iter_rows``, not that it avoids buffering the workbook. For
 very wide rows the per-batch memory is not strictly bounded by byte
-count (D-P4-14 acknowledges this), but open-data XLSX rows are modest
+count, but open-data XLSX rows are modest
 width in practice.
 """
 

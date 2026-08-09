@@ -4,7 +4,7 @@ These complement ``test_transport_conformance.py`` (which checks the existing
 buffered ``HttpClient`` against ``Transport``) by asserting the Protocol
 *shapes* themselves are ``@runtime_checkable`` and that the new
 ``HttpxTransport`` structurally satisfies **both** the buffered and streaming
-Protocols (closes INFRA-07).
+Protocols.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def test_transport_protocol_is_runtime_checkable() -> None:
 
 
 def test_streaming_transport_protocol_is_runtime_checkable() -> None:
-    """StreamingTransport must be a @runtime_checkable Protocol (INFRA-07)."""
+    """StreamingTransport must be a @runtime_checkable Protocol."""
 
     assert getattr(StreamingTransport, "_is_runtime_protocol", False) is True
 
@@ -35,14 +35,14 @@ def test_streaming_transport_protocol_declares_stream() -> None:
 
 
 def test_httpx_transport_satisfies_both_protocols() -> None:
-    """HttpxTransport must satisfy Transport AND StreamingTransport (INFRA-01).
+    """HttpxTransport must satisfy Transport AND StreamingTransport.
 
-    The HttpxTransport module lands in Task 2; until then this test skips
+    The HttpxTransport module lands; until then this test skips
     cleanly so pre-commit's full suite and ``ty check`` stay green. Resolved
     via ``importlib.import_module`` (rather than a static ``import``) because
-    the target module genuinely does not exist until Task 2 — a static import
-    would be flagged as ``unresolved-import`` by ``ty`` during the Task 1
-    commit. Once Task 2 ships the real module, the runtime resolution succeeds
+    the target module genuinely does not exist until — a static import
+    would be flagged as ``unresolved-import`` by ``ty`` during the
+    commit. Once ships the real module, the runtime resolution succeeds
     and the isinstance assertions execute.
     """
 

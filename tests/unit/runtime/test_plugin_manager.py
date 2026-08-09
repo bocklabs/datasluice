@@ -1,7 +1,7 @@
 """Unit tests for the plugin manager and plugin failure record.
 
-Covers ARCH-04 (entry-point discovery), ARCH-05 (per-entry error isolation),
-D-06 (programmatic registration), and QUAL-09 (the connector registry is an
+Covers (entry-point discovery), (per-entry error isolation),
+ (programmatic registration), and (the connector registry is an
 injected PluginManager instance, never a module-level singleton).
 """
 

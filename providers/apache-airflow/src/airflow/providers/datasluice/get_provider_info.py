@@ -2,7 +2,7 @@
 
 Returns declarative metadata consumed by Airflow's ``ProviderManager`` via the
 ``apache_airflow_provider`` entry point. The callable is metadata-only: it performs
-no Connection lookup, network I/O, or private-core import (D-50).
+no Connection lookup, network I/O, or private-core import.
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
-"""Unit tests for :func:`to_arrow_schema` — domain Schema to pa.Schema mapper (DATA-07).
+"""Unit tests for :func:`to_arrow_schema` — domain Schema to pa.Schema mapper.
 
 Covers portal type-string → Arrow type mapping, unknown-type defaulting,
-nullable propagation, and empty-schema handling. Follows the Phase 03
+nullable propagation, and empty-schema handling. Follows the
 RED→GREEN TDD pattern: the module skips cleanly at collection time while
-``datasluice.data.schema`` does not exist, then runs and passes once Task 2
+``datasluice.data.schema`` does not exist, then runs and passes once
 GREEN lands the mapper.
 """
 

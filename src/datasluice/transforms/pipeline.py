@@ -1,10 +1,10 @@
-"""Pipeline runner + compose() factory (TRANS-08, D-P6-04/05).
+"""Pipeline runner + compose factory.
 
 The :class:`Pipeline` threads a list of :class:`~datasluice.transforms.protocol.TransformStep`
 over a :class:`~datasluice.data.batch_stream.BatchStream`, building the
 :class:`~datasluice.transforms.protocol.TransformContext` once at entry and
 wrapping the final transformed iterator back into a NEW ``BatchStream`` whose
-schema reflects the transformed batches (Pitfall 7).
+schema reflects the transformed batches.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class Pipeline:
-    """Reusable transform pipeline (TRANS-08, D-P6-04).
+    """Reusable transform pipeline.
 
     A :class:`Pipeline` is a first-class, reusable value: ``compose([steps])``
     returns one, and ``.run(stream)`` returns a NEW
@@ -40,19 +40,19 @@ class Pipeline:
     def run(self, stream: BatchStream) -> BatchStream:
         """Build the context once, thread every step, wrap output in a NEW BatchStream.
 
-        The :class:`TransformContext` is constructed from ``stream.schema`` at
-        entry and threaded read-only through every step (D-P6-05). Steps compose
-        left-to-right: each step's ``apply`` receives the previous step's output
-        iterator — no intermediate materialization (D-P6-06). The output
-        ``BatchStream.schema`` is derived by peeking the first transformed batch
-        so it matches the post-transform schema, not the stale input schema
-        (Pitfall 7).
+                The :class:`TransformContext` is constructed from ``stream.schema`` at
+                entry and threaded read-only through every step. Steps compose
+                left-to-right: each step's ``apply`` receives the previous step's output
+                iterator — no intermediate materialization. The output
+                ``BatchStream.schema`` is derived by peeking the first transformed batch
+                so it matches the post-transform schema, not the stale input schema
+        .
 
-        Args:
-            stream: The input :class:`BatchStream`.
+                Args:
+                    stream: The input :class:`BatchStream`.
 
-        Returns:
-            A NEW :class:`BatchStream` over the transformed batches.
+                Returns:
+                    A NEW :class:`BatchStream` over the transformed batches.
         """
         context = TransformContext(arrow_schema=stream.schema)
         batches: Iterable[Any] = stream.iter_batches()
@@ -80,7 +80,7 @@ def _build_batch_stream(batches: Iterator[Any]) -> BatchStream:
     """Peek the first transformed batch to derive the post-transform schema, then wrap.
 
     Mirrors :func:`datasluice.data.access._build_batch_stream` (lines 149–159)
-    verbatim in shape. This is the Pitfall 7 fix: the output ``BatchStream.schema``
+    verbatim in shape. This is the fix: the output ``BatchStream.schema``
     MUST equal the first transformed batch's schema, not the input stream's
     schema, because transforms like ``SelectColumns``/``CastSchema`` change it.
 

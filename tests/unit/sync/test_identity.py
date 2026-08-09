@@ -1,4 +1,4 @@
-"""Canonical resource identity proofs (CR-01 blocker fix, SYNC-05/07).
+"""Canonical resource identity proofs.
 
 The portal-controlled ``resource.id`` is no longer interpolated verbatim into
 fsspec paths or used as the entire StateStore key. Every artifact path and

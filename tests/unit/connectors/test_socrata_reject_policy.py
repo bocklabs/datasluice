@@ -1,11 +1,11 @@
-"""Unit tests for Socrata unsupported-query-field reject policy (D-P5-06/07/09, ARCH-08).
+"""Unit tests for Socrata unsupported-query-field reject policy.
 
 Covers the lean capabilities ClassVar (Test 1: only ``{text, tags, sort}``;
 ``supports_organizations=False``), the pre-flight reject on every unsupported
 field (Tests 2-5: organizations/groups/res_format/license_id), the
 all-supported-fields-no-raise case (Test 6), the honest ``sort``→``order``
-translation (BL-02: ``order`` token mapping, ascending-only, unmappable or
-descending specs rejected pre-flight), and the ARCH-08 gate-fires-before-
+translation (: ``order`` token mapping, ascending-only, unmappable or
+descending specs rejected pre-flight), and the gate-fires-before-
 transport property.
 """
 

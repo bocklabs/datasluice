@@ -1,8 +1,8 @@
-"""Optimistic CAS coverage for concurrent FileStateStore writers (D-P7-27/34).
+"""Optimistic CAS coverage for concurrent FileStateStore writers.
 
-Closes the CR-02 TOCTOU blocker: the per-key threading lock makes the
+Closes the TOCTOU blocker: the per-key threading lock makes the
 compare-read and atomic-move indivisible within a process, so two barrier-
-synchronized expected-absent writers cannot both succeed. Closes CR-11 by
+synchronized expected-absent writers cannot both succeed. Closes by
 declaring which fsspec backends provide an atomic rename.
 """
 
@@ -92,7 +92,7 @@ def test_conditional_put_with_correct_prior_succeeds(tmp_path: Path) -> None:
 
 
 def test_get_with_version_returns_one_read_pair(tmp_path: Path) -> None:
-    """get_with_version decodes state and version from a single backend read (CR-01)."""
+    """get_with_version decodes state and version from a single backend read."""
     store = FileStateStore(f"file://{tmp_path}/state")
     key = "resource-1"
     state = SyncState(cursor={"resource-1": '"etag-1"'})
@@ -110,7 +110,7 @@ def test_get_with_version_absent_returns_none_pair(tmp_path: Path) -> None:
 
 
 def test_conditional_put_chain_uses_returned_version(tmp_path: Path) -> None:
-    """Chained conditional_put calls pass the returned version as the next expected_prior (CR-01)."""
+    """Chained conditional_put calls pass the returned version as the next expected_prior."""
     store = FileStateStore(f"file://{tmp_path}/state")
     key = "resource-1"
 
@@ -142,7 +142,7 @@ def test_conditional_put_with_stale_prior_raises_conflict(tmp_path: Path) -> Non
 
 
 def test_barrier_synchronized_dual_writer_loser_raises(tmp_path: Path) -> None:
-    """Two threads past the version check before either commits: exactly one wins (CR-02)."""
+    """Two threads past the version check before either commits: exactly one wins."""
     store = FileStateStore(f"file://{tmp_path}/state")
     key = "resource-1"
 
@@ -243,7 +243,7 @@ class _ConditionalPutSpy:
 
 
 def test_sync_uses_cas_for_checkpoint_write(tmp_path) -> None:
-    """Checkpointed local Parquet writes use conditional_put for both in-progress and completed state (WR-05).
+    """Checkpointed local Parquet writes use conditional_put for both in-progress and completed state.
 
     The previous version served an HTTP Parquet body, which the production
     guard deliberately excludes from checkpointed materialization — so its
@@ -291,7 +291,7 @@ def test_sync_uses_cas_for_checkpoint_write(tmp_path) -> None:
         "checkpoint conditional_put must carry an expected_prior"
     )
     # Multiple row groups mean at least one in-progress checkpoint write
-    # precedes the final completed-state write (WR-05: the previous test
+    # precedes the final completed-state write (: the previous test
     # observed only the completed write because HTTP Parquet is not
     # checkpointed).
     assert len(checkpoint_writes) >= 2, "expected at least one in-progress checkpoint write plus one completed write"
@@ -366,7 +366,7 @@ def test_per_key_lock_released_after_conditional_put(tmp_path) -> None:
 
 
 def test_cross_instance_per_key_lock_serializes_writers(tmp_path) -> None:
-    """Two FileStateStore instances on the same base URI share one per-key lock (CR-02)."""
+    """Two FileStateStore instances on the same base URI share one per-key lock."""
     base_uri = f"file://{tmp_path}/state"
     store_a = FileStateStore(base_uri)
     store_b = FileStateStore(base_uri)
@@ -402,7 +402,7 @@ def test_cross_instance_per_key_lock_serializes_writers(tmp_path) -> None:
 
 
 def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, make_resource) -> None:
-    """Two concurrent sync_resources calls for the same resource leave a consistent state+artifact (CR-03)."""
+    """Two concurrent sync_resources calls for the same resource leave a consistent state+artifact."""
     import threading
 
     import pyarrow as pa
@@ -464,5 +464,5 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
     from datasluice.sync.materialize import destination_health
 
     assert destination_health(resource, Artifact.from_dict(artifact), destination_uri=dest), (
-        "state checksum must match the artifact currently published at final_uri (CR-03)"
+        "state checksum must match the artifact currently published at final_uri"
     )

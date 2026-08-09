@@ -1,4 +1,4 @@
-"""Content-addressed cache backed by a SQLite WAL index + content files (INFRA-03).
+"""Content-addressed cache backed by a SQLite WAL index + content files.
 
 The :class:`ContentCache` keeps downloaded resource bytes in content files under
 *cache_dir* (one file per SHA-256 key), and a small metadata index in
@@ -12,9 +12,9 @@ reads under concurrency:
 3. ``UPDATE`` the row to ``status='ready'`` (under ``BEGIN IMMEDIATE``).
 
 Readers ``SELECT WHERE status='ready'`` and skip any in-flight ``writing`` rows
-(D-P3-11). A lazy sweep on every ``get``/``put`` removes ``writing`` rows older
+. A lazy sweep on every ``get``/``put`` removes ``writing`` rows older
 than :data:`STALE_WRITING_THRESHOLD_SECONDS` and orphaned content files with no
-metadata row (D-P3-13), so crashed writers self-heal on the next access.
+metadata row, so crashed writers self-heal on the next access.
 
 SQLite connections are short-lived: each method opens a fresh connection via
 :meth:`ContentCache._connect`, uses it for one transaction, and lets the
@@ -45,12 +45,12 @@ STALE_WRITING_THRESHOLD_SECONDS: float = 300.0
 
 
 class ContentCache:
-    """Content-addressed cache with a SQLite WAL metadata index (INFRA-03).
+    """Content-addressed cache with a SQLite WAL metadata index.
 
     Satisfies :class:`datasluice.ports.cache.CachePort` (get/put/delete) plus
     the sidecar :meth:`put_with_metadata` / :meth:`get_metadata` pair that the
-    Phase 4 download-to-cache path uses to capture ETag/Last-Modified for
-    Phase 7 conditional GETs (D-P3-12, SYNC-06 enabler).
+    download-to-cache path uses to capture ETag/Last-Modified for
+    conditional GETs.
 
     Args:
         cache_dir: Directory holding ``cache.db`` and the SHA-256-named content
@@ -60,8 +60,7 @@ class ContentCache:
             :data:`DEFAULT_CACHE_TTL`.
         fs: Optional fsspec ``AbstractFileSystem`` for *cache_dir*. When
             omitted, one is constructed lazily via
-            :func:`datasluice.io.filesystem.open_filesystem` (local default,
-            D-P3-10).
+            :func:`datasluice.io.filesystem.open_filesystem`.
     """
 
     def __init__(self, cache_dir: str, ttl: int = DEFAULT_CACHE_TTL, fs: Any | None = None) -> None:
@@ -106,7 +105,7 @@ class ContentCache:
             conn.close()
 
     def _sha(self, key: str) -> str:
-        """Return the SHA-256 hexdigest of *key* (SEC-06 carry-forward, D-P3-09)."""
+        """Return the SHA-256 hexdigest of *key*."""
         return hashlib.sha256(key.encode()).hexdigest()
 
     def _content_path(self, sha: str) -> str:
@@ -145,7 +144,7 @@ class ContentCache:
             conn.close()
 
     def put(self, key: str, data: bytes) -> None:
-        """Store *data* under *key* (CachePort signature UNCHANGED, D-P3-12)."""
+        """Store *data* under *key*."""
         self._put_internal(key, data, etag=None, last_modified=None)
 
     def put_with_metadata(
@@ -156,10 +155,10 @@ class ContentCache:
         etag: str | None = None,
         last_modified: str | None = None,
     ) -> None:
-        """Store *data* under *key* with ETag/Last-Modified sidecar (D-P3-12).
+        """Store *data* under *key* with ETag/Last-Modified sidecar.
 
-        Phase 4's download-to-cache path calls this after capturing headers via
-        :meth:`StreamingTransport.stream`. Phase 7 (SYNC-06) reads the sidecar
+        download-to-cache path calls this after capturing headers via
+        :meth:`StreamingTransport.stream`. reads the sidecar
         for conditional GETs.
         """
         self._put_internal(key, data, etag=etag, last_modified=last_modified)
@@ -171,7 +170,7 @@ class ContentCache:
         etag: str | None,
         last_modified: str | None,
     ) -> None:
-        """Two-phase atomic write (RESEARCH Pattern 3, D-P3-11)."""
+        """Two-phase atomic write."""
         sha = self._sha(key)
         content_path = self._content_path(sha)
         tmp_path = f"{self.cache_dir}/.{sha}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
@@ -234,7 +233,7 @@ class ContentCache:
     def get_metadata(self, key: str) -> dict[str, Any] | None:
         """Return the sidecar metadata for *key*, or ``None`` if missing/writing.
 
-        Phase 7 (SYNC-06) reads this for conditional GETs.
+        reads this for conditional GETs.
         """
         sha = self._sha(key)
         conn = self._connect()
@@ -258,7 +257,7 @@ class ContentCache:
             conn.close()
 
     def _maybe_sweep(self) -> None:
-        """Lazily sweep stale ``writing`` rows and orphaned content files (D-P3-13).
+        """Lazily sweep stale ``writing`` rows and orphaned content files.
 
         Sweep failures are logged at DEBUG and never propagate — a sweep bug
         must never break ``get``/``put``.

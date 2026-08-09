@@ -1,4 +1,4 @@
-"""Built-in connector conformance tests (QUAL-01/02/03, D-P5-13).
+"""Built-in connector conformance tests.
 
 Runs the public :mod:`datasluice.contracts` suite parametrized over
 ``(connector_factory, fixture_set)`` pairs against hand-authored fixtures

@@ -1,4 +1,4 @@
-"""Concrete ``ResourceReader`` implementation with access-kind dispatch (DATA-04, DATA-05, D-P4-06/07/09/15).
+"""Concrete ``ResourceReader`` implementation with access-kind dispatch.
 
 The :class:`DataPlaneResourceReader` resolves how a resource is reached, acquires
 a byte source, transparently decompresses it, dispatches to the right format
@@ -9,14 +9,14 @@ Dispatch by ``resource.access.kind``:
 
 * ``http_download`` (default when ``resource.access`` is None — every resource has
   a URL today): probe ``isinstance(transport, StreamingTransport)`` per the
-  Phase 3 capability-check pattern (D-P3-06). Streaming path wraps
+  capability-check pattern. Streaming path wraps
   ``StreamResponse`` in :class:`IterableBytesIO` (non-seekable). Buffered path
   (urllib ``HttpClient``) reads the full body into :class:`io.BytesIO` and logs
-  a WARNING recommending ``pip install datasluice[http]`` (D-P4-15).
+  a WARNING recommending ``pip install datasluice[http]``.
 * ``object_storage``: ``open_filesystem(uri).open(path)`` returning a seekable
   BinaryIO.
 * ``local_file``: ``open(path, 'rb')``.
-* ``query``: raises :class:`UnsupportedAccessError` (Phase 5 adds query readers
+* ``query``: raises :class:`UnsupportedAccessError` (adds query readers
   for CKAN datastore and Socrata SoQL).
 * ``stream``: raises :class:`UnsupportedAccessError` (out of scope).
 """
@@ -78,15 +78,15 @@ class _StreamClosingBytesIO(IterableBytesIO):
 
 
 class DataPlaneResourceReader:
-    """Concrete ``ResourceReader`` implementing access-kind dispatch (DATA-04).
+    """Concrete ``ResourceReader`` implementing access-kind dispatch.
 
-    Args:
-        transport: A transport satisfying the :class:`~datasluice.ports.Transport`
-            Protocol (typically :class:`HttpxTransport`). ``None`` is permitted
-            for callers that only read local files / object storage (no HTTP
-            access kind will be exercised).
-        batch_size: Default row-count hint for the underlying format reader
-            (default 65536 per D-P4-14).
+        Args:
+            transport: A transport satisfying the :class:`~datasluice.ports.Transport`
+                Protocol (typically :class:`HttpxTransport`). ``None`` is permitted
+                for callers that only read local files / object storage (no HTTP
+                access kind will be exercised).
+            batch_size: Default row-count hint for the underlying format reader
+    .
     """
 
     def __init__(self, transport: Any | None = None, *, batch_size: int = _DEFAULT_BATCH_SIZE) -> None:
@@ -94,7 +94,7 @@ class DataPlaneResourceReader:
         self.default_batch_size = batch_size
 
     def _resolve_access(self, resource: Resource) -> Any:
-        """Return the resource's access descriptor, defaulting to HttpDownload (D-P4-06)."""
+        """Return the resource's access descriptor, defaulting to HttpDownload."""
 
         from datasluice.domain import HttpDownload
 
@@ -141,8 +141,9 @@ class DataPlaneResourceReader:
             source, content_encoding = self._open_local_file(access)
         elif kind == "query":
             raise UnsupportedAccessError(
-                "Access kind 'query' is not implemented in Phase 4; Phase 5 adds query readers "
-                f"(CKAN datastore, Socrata SoQL) for endpoint {getattr(access, 'endpoint', '<unknown>')!r}"
+                "Access kind 'query' is not implemented; query readers "
+                f"(CKAN datastore, Socrata SoQL) are not yet available for endpoint "
+                f"{getattr(access, 'endpoint', '<unknown>')!r}"
             )
         elif kind == "stream":
             raise UnsupportedAccessError(
@@ -255,7 +256,7 @@ class DataPlaneResourceReader:
         if first_pair is None:
             # No non-empty row groups were yielded. Read the Parquet footer so
             # the published zero-row table retains the file's actual column
-            # schema instead of pa.schema([]) (CR-08); a valid empty Parquet
+            # schema instead of pa.schema([]); a valid empty Parquet
             # with a real schema must still be synchronizable.
             try:
                 import pyarrow.parquet as pq
@@ -309,7 +310,7 @@ class DataPlaneResourceReader:
             raise
 
     def _open_http_download(self, access: Any) -> tuple[Any, str | None]:
-        """HttpDownload: stream via StreamingTransport or buffer via urllib fallback (D-P4-15)."""
+        """HttpDownload: stream via StreamingTransport or buffer via urllib fallback."""
 
         if self.transport is None:
             raise UnsupportedAccessError(
@@ -344,7 +345,7 @@ class DataPlaneResourceReader:
         return io.BytesIO(body), None
 
     def _open_object_storage(self, access: Any) -> tuple[Any, str | None]:
-        """ObjectStorage: open via open_filesystem().open() (D-P4-07)."""
+        """ObjectStorage: open via open_filesystem.open."""
 
         from datasluice.io.filesystem import open_filesystem
 

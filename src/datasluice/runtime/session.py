@@ -1,17 +1,17 @@
-"""DataSluiceSession — internal composition substrate (ARCH-03).
+"""DataSluiceSession — internal composition substrate.
 
-The session wires :class:`PluginManager` (Plan 02-03), the transport factory
+The session wires :class:`PluginManager`, the transport factory
 (:func:`create_default_transport`), and explicit auth into a zero-config
-facade. It replaces the legacy ``DataSluice`` class (D-01) and removes the
-``Settings`` env-var system (D-14, CORR-04).
+facade. It replaces the legacy ``DataSluice`` class and removes the
+``Settings`` env-var system.
 
-Phase 3 (D-P3-02): the session gains explicit kwargs (``timeout``/``retries``/
+: the session gains explicit kwargs (``timeout``/``retries``/
 ``rate_limit``/``cache_dir``/``cache_ttl``) and injectables
 (``transport=``/``storage=``/``cache=``/``credential_provider=``). Scalar knobs
 configure only the default-constructed transport; when ``transport=`` is
-injected the scalars are ignored (D-P3-05). The session surface stays
-``portal()``/``search()``-only until Phase 7 adds sync composition, while
-``ConnectorContext`` remains unchanged (D-P3-21).
+injected the scalars are ignored. The session surface stays
+``portal``/``search``-only until adds sync composition, while
+``ConnectorContext`` remains unchanged.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ _SESSION_SYNC_READY = True
 
 
 class _StaticCredentialProvider:
-    """Wraps a fixed ``BaseAuth`` into the :class:`CredentialProvider` port (D-P3-14).
+    """Wraps a fixed ``BaseAuth`` into the :class:`CredentialProvider` port.
 
     Returns the same auth for every host and never expires — used when the
     session is given an explicit ``auth=`` but no dynamic provider. Keeps the
@@ -67,39 +67,39 @@ class _StaticCredentialProvider:
 class DataSluiceSession:
     """Internal composition substrate for the public DataSluice facade.
 
-    Wires the :class:`PluginManager`, transport, auth, state store, and
-    optional storage / cache / credential provider into a zero-config session.
-    Every override is explicit — no env-var-driven settings (D-14).
+        Wires the :class:`PluginManager`, transport, auth, state store, and
+        optional storage / cache / credential provider into a zero-config session.
+        Every override is explicit — no env-var-driven settings.
 
-    Args:
-        auth: Authentication strategy; defaults to :class:`NoAuth` (D-11). When
-            set, it is wrapped in a :class:`_StaticCredentialProvider` unless
-            ``credential_provider=`` is also given (D-P3-14).
-        transport: Optional pre-configured transport satisfying the
-            :class:`Transport` port (D-02). A default transport is constructed
-            when omitted; scalar knobs below are IGNORED when this is injected
-            (D-P3-05).
-        page_size: Default page size hint for paginated catalog calls (D-12).
-        plugins: Optional :class:`PluginManager` for dependency injection (D-06).
-            A fresh instance is constructed when omitted.
-        timeout: Request timeout in seconds (default transport only).
-        retries: Max retry attempts (default transport only).
-        rate_limit: Optional requests-per-second cap (default transport only).
-        cache_dir: Directory for the default content cache; ``None`` (default)
-            means no cache is wired (D-P3-02).
-        cache_ttl: Cache entry TTL in seconds.
-        storage: Optional :class:`StoragePort` instance (Phase 4 download path).
-        cache: Optional :class:`CachePort` instance; wins over ``cache_dir``.
-        credential_provider: Optional :class:`CredentialProvider`; wins over
-            ``auth=`` wrapping (D-P3-14).
-        state_store: Optional :class:`StateStore`; defaults to a fresh
-            :class:`InMemoryStateStore` owned by this session.
+        Args:
+            auth: Authentication strategy; defaults to :class:`NoAuth`. When
+                set, it is wrapped in a :class:`_StaticCredentialProvider` unless
+                ``credential_provider=`` is also given.
+            transport: Optional pre-configured transport satisfying the
+                :class:`Transport` port. A default transport is constructed
+                when omitted; scalar knobs below are IGNORED when this is injected
+    .
+            page_size: Default page size hint for paginated catalog calls.
+            plugins: Optional :class:`PluginManager` for dependency injection.
+                A fresh instance is constructed when omitted.
+            timeout: Request timeout in seconds (default transport only).
+            retries: Max retry attempts (default transport only).
+            rate_limit: Optional requests-per-second cap (default transport only).
+            cache_dir: Directory for the default content cache; ``None`` (default)
+                means no cache is wired.
+            cache_ttl: Cache entry TTL in seconds.
+            storage: Optional :class:`StoragePort` instance (download path).
+            cache: Optional :class:`CachePort` instance; wins over ``cache_dir``.
+            credential_provider: Optional :class:`CredentialProvider`; wins over
+                ``auth=`` wrapping.
+            state_store: Optional :class:`StateStore`; defaults to a fresh
+                :class:`InMemoryStateStore` owned by this session.
 
-    Example:
-        >>> from datasluice.runtime.session import DataSluiceSession
-        >>> session = DataSluiceSession()
-        >>> connector = session.portal("https://catalog.data.gov")
-        >>> results = connector.search()
+        Example:
+            >>> from datasluice.runtime.session import DataSluiceSession
+            >>> session = DataSluiceSession()
+            >>> connector = session.portal("https://catalog.data.gov")
+            >>> results = connector.search()
     """
 
     def __init__(
@@ -137,7 +137,7 @@ class DataSluiceSession:
             self._credential_provider = None
 
         if transport is not None:
-            logger.debug("transport= injected; timeout/retries/rate_limit scalars ignored (D-P3-05)")
+            logger.debug("transport= injected; timeout/retries/rate_limit scalars ignored")
             self._transport = transport
         else:
             self._transport = create_default_transport(
@@ -186,13 +186,13 @@ class DataSluiceSession:
 
         Auto-detects the portal type via :func:`detect` and resolves the factory
         through :class:`PluginManager`, unless *portal_type* is supplied in which
-        case detection is bypassed entirely (D-P5-20). The returned connector
+        case detection is bypassed entirely. The returned connector
         structurally conforms to :class:`CatalogPort`.
 
         Args:
             url: Base URL of the open-data portal.
             portal_type: Explicit portal type override; when set, detection is
-                skipped (D-P5-20 bypass).
+                skipped.
 
         Returns:
             A connector instance conforming to :class:`CatalogPort`.
@@ -200,7 +200,7 @@ class DataSluiceSession:
         Raises:
             PortalDetectionError: If detection yields ``portal_type=None`` or
                 ``confidence < 1.0``. The exception carries the
-                :class:`DetectionResult` as ``.detection_result`` (D-P5-20).
+                :class:`DetectionResult` as ``.detection_result``.
             AdapterNotFoundError: If no connector is registered for the resolved type.
         """
         from datasluice.discovery import detect

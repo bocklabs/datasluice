@@ -1,9 +1,9 @@
-"""IterableBytesIO — adapt an ``Iterable[bytes]`` into a non-seekable BinaryIO (D-P4-08).
+"""IterableBytesIO — adapt an ``Iterable[bytes]`` into a non-seekable BinaryIO.
 
 Subclasses ``io.RawIOBase`` so pyarrow's probes (``.closed``, ``.readable()``,
 ``.seekable()``, ``.readinto()``) succeed. Verified against pyarrow 24.0.0:
 ``pa.csv.open_csv`` and ``pa.json.read_json`` accept this adapter on chunked
-input (RESEARCH Pattern 1).
+input.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 class IterableBytesIO(RawIOBase):
     """Wrap an ``Iterable[bytes]`` into a non-seekable ``BinaryIO``.
 
-    The canonical use case is adapting ``StreamResponse`` (the Phase 3
+    The canonical use case is adapting ``StreamResponse`` (the
     ``httpx.iter_raw()`` iterable) into a file-like that pyarrow readers can
     consume without buffering the entire stream.
 

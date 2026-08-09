@@ -1,8 +1,8 @@
-"""Unit tests for the TransformStep Protocol (TRANS-01, D-P6-07).
+"""Unit tests for the TransformStep Protocol.
 
 Verifies the protocol is ``@runtime_checkable`` (``isinstance`` works against any
 apply-bearing object and rejects plain objects) and that ``apply`` carries a
-positional ``context`` parameter (RESEARCH OQ-1).
+positional ``context`` parameter.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def test_transform_step_runtime_checkable_rejected() -> None:
 
 
 def test_apply_signature_is_positional_context() -> None:
-    """apply takes (self, batches, context) — positional context (RESEARCH OQ-1)."""
+    """apply takes (self, batches, context) — positional context."""
     import inspect
 
     params = list(inspect.signature(TransformStep.apply).parameters)

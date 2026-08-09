@@ -1,4 +1,4 @@
-"""Unit tests for TransformContext (TRANS-09, D-P6-08).
+"""Unit tests for TransformContext.
 
 Verifies the context is frozen (``FrozenInstanceError`` on mutation), defaults
 are ``None`` for the optional provenance fields, the field set is exactly the
@@ -36,7 +36,7 @@ def test_context_defaults_are_none() -> None:
 
 
 def test_context_field_set() -> None:
-    """The field set is exactly the locked four (D-P6-08)."""
+    """The field set is exactly the locked four."""
     names = {f.name for f in dataclasses.fields(TransformContext)}
     assert names == {"arrow_schema", "source_resource_id", "source_url", "domain_schema"}
 

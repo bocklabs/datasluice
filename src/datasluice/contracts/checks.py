@@ -1,29 +1,29 @@
-"""Connector conformance checks (D-P5-14).
+"""Connector conformance checks.
 
 :func:`run_contract_suite` executes the 8-check matrix against a connector
 instance built from *connector_factory* and pointed at a fixture-serving HTTP
 server at *base_url* over *transport*:
 
 1. The connector publishes a :class:`~datasluice.domain.CatalogCapabilities`
-   ClassVar (D-P5-23).
-2. ``isinstance(connector, SearchableCatalog)`` holds (D-08).
+   ClassVar.
+2. ``isinstance(connector, SearchableCatalog)`` holds.
 3. ``get_dataset`` returns a :class:`~datasluice.domain.Dataset` whose
-   ``resources`` is a list (QUAL-02).
+   ``resources`` is a list.
 4. ``search`` returns a :class:`~datasluice.domain.SearchResult` page with
-   ``datasets`` non-empty and ``total`` at least the page length (QUAL-02).
-5. Dataset IDs are stable across repeated ``get_dataset`` calls (QUAL-02).
-6. Pagination yields no duplicate dataset IDs across pages (QUAL-02).
+   ``datasets`` non-empty and ``total`` at least the page length.
+5. Dataset IDs are stable across repeated ``get_dataset`` calls.
+6. Pagination yields no duplicate dataset IDs across pages.
 7. An unsupported filter field raises
    :class:`~datasluice.exceptions.UnsupportedQueryFieldError` pre-flight
-   (QUAL-02, ARCH-08). When the connector supports every ``Query`` filter
+. When the connector supports every ``Query`` filter
    field (e.g. CKAN), the check instead asserts the capabilities enumerate
    the full filter-field set.
 8. Resources carry access descriptors — ``Resource.access is not None`` for
-   at least one resource per searched dataset (QUAL-02, D-P5-02).
+   at least one resource per searched dataset.
 
-Checks 3-6 and 8 cover the QUAL-02 catalog-data half; checks 1, 2, and 7 cover
+Checks 3-6 and 8 cover the catalog-data half; checks 1, 2, and 7 cover
 the capability-Protocol half. All checks run against hand-authored fixtures
-served over real localhost sockets (D-P5-12) — no transport mocking.
+served over real localhost sockets — no transport mocking.
 
 Fixture-serving contract (third-party authors): the suite issues transport
 calls in a FIXED order — ``get_dataset(dataset_id)`` once (check 3), then
@@ -56,7 +56,7 @@ def run_contract_suite(
     base_url: str,
     transport: Transport,
 ) -> None:
-    """Run all 8 conformance checks (D-P5-14) against a fixture-served connector.
+    """Run all 8 conformance checks against a fixture-served connector.
 
     Args:
         connector_factory: A ``create_*_connector(ctx)`` callable, the same
@@ -75,7 +75,7 @@ def run_contract_suite(
             names the failing check and connector so parametrized pytest runs
             surface the exact invariant that broke.
 
-    Third-party on-ramp (D-P5-11): satisfy the capability Protocols, register a
+    Third-party on-ramp: satisfy the capability Protocols, register a
     ``datasluice.connectors`` entry-point, drop fixtures under
     ``tests/fixtures/<yourportal>/``, serve them over localhost sockets per
     the call-order contract in the module docstring, and call this function.
@@ -94,7 +94,7 @@ def run_contract_suite(
 
 
 def _check_publishes_catalog_capabilities(connector: BaseAdapter) -> None:
-    """Check 1: the connector publishes a ``CatalogCapabilities`` ClassVar (D-P5-23)."""
+    """Check 1: the connector publishes a ``CatalogCapabilities`` ClassVar."""
     capabilities = getattr(type(connector), "capabilities", None)
     assert isinstance(capabilities, CatalogCapabilities), (
         f"{type(connector).__name__} must publish a `capabilities: ClassVar[CatalogCapabilities]`; "
@@ -103,9 +103,9 @@ def _check_publishes_catalog_capabilities(connector: BaseAdapter) -> None:
 
 
 def _check_isinstance_searchable_catalog(connector: BaseAdapter) -> None:
-    """Check 2: the connector satisfies the ``SearchableCatalog`` Protocol (D-08)."""
+    """Check 2: the connector satisfies the ``SearchableCatalog`` Protocol."""
     assert isinstance(connector, SearchableCatalog), (
-        f"{type(connector).__name__} must satisfy the SearchableCatalog Protocol (D-08 structural subtyping)"
+        f"{type(connector).__name__} must satisfy the SearchableCatalog Protocol"
     )
 
 
@@ -132,7 +132,7 @@ def _check_get_dataset_returns_dataset_with_resources(connector: BaseAdapter, fi
 
 
 def _check_search_returns_page(connector: BaseAdapter) -> None:
-    """Check 4 (QUAL-02): ``search`` returns a populated ``SearchResult`` page."""
+    """Check 4: ``search`` returns a populated ``SearchResult`` page."""
     result = connector.search(Query(limit=10))
     assert isinstance(result, SearchResult), (
         f"search must return a SearchResult; {type(connector).__name__} returned {type(result).__name__}"
@@ -147,7 +147,7 @@ def _check_search_returns_page(connector: BaseAdapter) -> None:
 
 
 def _check_dataset_ids_stable(connector: BaseAdapter, fixture_set: Mapping[str, Any]) -> None:
-    """Check 5 (QUAL-02): repeated ``get_dataset`` calls return the requested ID."""
+    """Check 5: repeated ``get_dataset`` calls return the requested ID."""
     dataset_id = _known_dataset_id(fixture_set)
     first = connector.get_dataset(dataset_id)
     second = connector.get_dataset(dataset_id)
@@ -162,7 +162,7 @@ def _check_dataset_ids_stable(connector: BaseAdapter, fixture_set: Mapping[str, 
 
 
 def _check_pagination_no_duplicates(connector: BaseAdapter) -> None:
-    """Check 6 (QUAL-02): two consecutive pages share no dataset IDs."""
+    """Check 6: two consecutive pages share no dataset IDs."""
     page_one = connector.search(Query(limit=2, offset=0))
     page_two = connector.search(Query(limit=2, offset=2))
     ids_one = {dataset.id for dataset in page_one.datasets}
@@ -196,7 +196,7 @@ def _probe_query(field: str) -> Query:
 
 
 def _check_unsupported_filter_reported(connector: BaseAdapter, fixture_set: Mapping[str, Any] | None = None) -> None:
-    """Check 7 (QUAL-02, ARCH-08): unsupported filter fields raise pre-flight.
+    """Check 7: unsupported filter fields raise pre-flight.
 
     The unsupported field is derived from the connector's own
     ``CatalogCapabilities`` — the first ``Query`` filter field absent from
@@ -232,11 +232,11 @@ def _check_unsupported_filter_reported(connector: BaseAdapter, fixture_set: Mapp
 
 
 def _check_resources_have_access_descriptors(connector: BaseAdapter) -> None:
-    """Check 8 (QUAL-02, D-P5-02): searched resources carry access descriptors."""
+    """Check 8: searched resources carry access descriptors."""
     result = connector.search(Query(limit=10))
     assert result.datasets, f"search returned no datasets for {type(connector).__name__}"
     for dataset in result.datasets:
         assert any(resource.access is not None for resource in dataset.resources), (
             f"dataset {dataset.id!r} from {type(connector).__name__} has no resource with an access descriptor — "
-            f"mappers must populate Resource.access (HttpDownload / QueryAccess) per D-P5-02"
+            f"mappers must populate Resource.access (HttpDownload / QueryAccess)"
         )

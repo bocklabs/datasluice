@@ -1,7 +1,7 @@
-"""to_arrow terminal: materialize a BatchStream into a pa.Table (INTG-01, D-P6-02).
+"""to_arrow terminal: materialize a BatchStream into a pa.Table.
 
 The shared substrate the other terminals (to_pandas/to_polars/to_duckdb)
-delegate through for single-substrate consistency (QUAL-10). pyarrow is
+delegate through for single-substrate consistency. pyarrow is
 lazy-imported inside the function body to keep ``import datasluice.integrations``
 light on bare installs (AGENTS.md lazy-dep discipline).
 """
@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
 
 def to_arrow(stream: BatchStream) -> Any:
-    """Materialize *stream* into a ``pa.Table`` (INTG-01, D-P6-02).
+    """Materialize *stream* into a ``pa.Table``.
 
     The shared substrate the other terminals (to_pandas/to_polars/to_duckdb)
-    delegate through for single-substrate consistency (QUAL-10).
+    delegate through for single-substrate consistency.
 
     Args:
         stream: The :class:`~datasluice.data.BatchStream` to materialize.

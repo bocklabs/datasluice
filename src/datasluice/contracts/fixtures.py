@@ -1,7 +1,7 @@
 """Fixture loading helpers for the conformance suite.
 
 Hand-authored portal-response fixtures live under ``tests/fixtures/<portal>/``
-as small JSON documents (D-P5-10): no VCR cassettes, no recorded-live captures,
+as small JSON documents: no VCR cassettes, no recorded-live captures,
 no credentials. These helpers load them into parsed dicts for
 :func:`datasluice.contracts.run_contract_suite` callers.
 """

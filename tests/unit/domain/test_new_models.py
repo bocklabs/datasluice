@@ -1,4 +1,4 @@
-"""Unit tests for the six new frozen domain models added in Phase 2."""
+"""Unit tests for the six new frozen domain models added."""
 
 from __future__ import annotations
 

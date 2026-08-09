@@ -1,8 +1,8 @@
-"""Host-scoped credential resolver with single-flight refresh (INFRA-04).
+"""Host-scoped credential resolver with single-flight refresh.
 
 ``HostCredentialProvider`` implements the existing
 :class:`datasluice.ports.credentials.CredentialProvider` Protocol with an
-UNCHANGED ``resolve(host) -> BaseAuth`` signature (D-P3-14). Expiry, refresh,
+UNCHANGED ``resolve(host) -> BaseAuth`` signature. Expiry, refresh,
 and eviction are internal concerns the caller never sees.
 
 Design notes
@@ -11,23 +11,23 @@ Design notes
 1. **Protocol unchanged.** Only ``resolve(host)`` is on the port; the
    off-port ``evict(host)`` and the injected ``refresher`` are implementation
    detail (capability-checked via ``isinstance`` by ``HttpxTransport`` on
-   401/403, D-P3-15).
+   401/403, ).
 
-2. **Single-flight refresh (D-P3-16).** A per-host ``threading.Lock`` plus
+2. **Single-flight refresh.** A per-host ``threading.Lock`` plus
    double-checked expiry guarantees that when N threads hit an expired
    credential simultaneously, exactly ONE ``refresher`` invocation runs and
-   every caller receives the fresh result (QUAL-06-style discipline).
+   every caller receives the fresh result.
 
 3. **AUTH2-01 pluggability seam.** The ``refresher`` callable
    ``Callable[[str], tuple[BaseAuth, datetime | None]]`` is the v2 OAuth
    plug-in point. v1 passes ``refresher=None`` for the three target portals
    (static / APIKey / ``auth=`` wrap) so ``expires_at`` is ``None`` and the
-   credential never refreshes (D-P3-17 zero-config default).
+   credential never refreshes.
 
 4. **HTTP-transport-only.** ``HostCredentialProvider`` resolves
    Bearer/Basic/APIKey auth for portal HTTP requests. Object-store credentials
    (S3/GCS/Azure) flow through ``open_filesystem(uri, credentials=)`` and
-   fsspec's own resolver separately (RESEARCH Pitfall 5) — never through here.
+   fsspec's own resolver separately — never through here.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class HostCredentialProvider:
     def _is_expired(expires_at: datetime | None) -> bool:
         """Return whether *expires_at* has passed.
 
-        ``None`` means the credential never expires (D-P3-17 zero-config
+        ``None`` means the credential never expires ( zero-config
         default for static APIKey / ``auth=`` wrap). Naive datetimes are
         assumed to be UTC.
         """
@@ -125,7 +125,7 @@ class HostCredentialProvider:
             return auth
 
     def evict(self, host: str | None = None) -> None:
-        """Drop the cached credential for *host* (off-port; D-P3-15).
+        """Drop the cached credential for *host*.
 
         Called by :class:`HttpxTransport` on a 401/403 response to force the
         next ``resolve`` to call the refresher. Acquires the same per-host lock

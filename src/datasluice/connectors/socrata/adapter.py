@@ -61,8 +61,8 @@ class SocrataAdapter(BaseAdapter):
     Uses the Socrata Discovery API at ``{base_url}/api/catalog/v1``.
 
     Attributes:
-        capabilities: Published catalog capability contract (D-P5-23). Socrata's
-            Discovery API supports only ``q``, ``tags``, and ``order`` (BL-02):
+        capabilities: Published catalog capability contract. Socrata's
+            Discovery API supports only ``q``, ``tags``, and ``order``:
             ``Query.sort`` is translated to the ascending-only ``order`` token
             set via :func:`_translate_sort`, and unmappable field/direction
             specs are rejected honestly rather than sent as Socrata's
@@ -72,7 +72,7 @@ class SocrataAdapter(BaseAdapter):
 
     Note:
         This adapter does NOT implement
-        :class:`~datasluice.ports.catalog.OrganizationCatalog` (D-P5-19):
+        :class:`~datasluice.ports.catalog.OrganizationCatalog`:
         ``get_organization`` is intentionally absent so
         ``isinstance(adapter, OrganizationCatalog)`` is structurally ``False``.
         Socrata has no dedicated organizations endpoint; advertising one via a

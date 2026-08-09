@@ -1,13 +1,13 @@
-"""Transparent decompression decorator pipeline (DATA-06, D-P4-12).
+"""Transparent decompression decorator pipeline.
 
 Sits BETWEEN access acquisition (``access.py``) and the format reader
 (``data/readers/``). The pipeline peeks the first few bytes of the byte source,
 detects compression by magic bytes (or an HTTP ``Content-Encoding`` hint), wraps
 the source in the appropriate decompressor, and returns a new ``BinaryIO``.
 
-GZIP / BZIP2 / ZSTD stream on non-seekable input (RESEARCH Pattern 3) — they
+GZIP / BZIP2 / ZSTD stream on non-seekable input — they
 need no seek and honour the bounded-memory contract. ZIP requires seekable
-input (the central directory lives at EOF — RESEARCH Pitfall 2); the pipeline
+input; the pipeline
 spools the full body to :class:`io.BytesIO` before ``zipfile.ZipFile`` and
 extracts the LARGEST member (RESEARCH Open Question 5 — open-data ZIPs often
 bundle a small README alongside the data file; largest avoids picking the
@@ -38,7 +38,7 @@ class _ErrorTranslatingReader(io.RawIOBase):
     GZIP/BZIP2/ZSTD/ZIP all surface truncated-frame errors only on ``read`` (the
     decompressor is constructed lazily and decodes incrementally). Wrapping the
     stdlib decompressor here keeps that translation in one place so callers see
-    only :class:`DecompressionError` (D-P4-21).
+    only :class:`DecompressionError`.
     """
 
     def __init__(self, inner: Any, exc_types: tuple[type[BaseException], ...], label: str) -> None:
@@ -89,7 +89,7 @@ _ZIP_MAGIC = b"PK\x03\x04"
 
 _PEEK_SIZE = 6
 
-# Bound on the spooled ZIP body (RESEARCH Pitfall 2: the central directory lives
+# Bound on the spooled ZIP body (: the central directory lives
 # at EOF, so ZIP must be fully buffered before zipfile can read it). Rejecting
 # oversized bodies keeps the bounded-memory contract instead of spooling an
 # unbounded blob into RAM.
@@ -250,7 +250,7 @@ def _wrap_zstd(source: Any) -> Any | None:
 
 
 def _zip_largest_member(source: Any) -> Any:
-    """Spool ZIP body to BytesIO, extract the largest member (RESEARCH Pitfall 2 + OQ5)."""
+    """Spool ZIP body to BytesIO, extract the largest member."""
 
     body = source.read(_MAX_ZIP_BODY_BYTES + 1)
     if len(body) > _MAX_ZIP_BODY_BYTES:
@@ -286,7 +286,7 @@ def _zip_largest_member(source: Any) -> Any:
 
 
 def apply_compression(source: Any, content_encoding: str | None = None) -> Any:
-    """Wrap *source* so compressed bytes are transparently decompressed (DATA-06).
+    """Wrap *source* so compressed bytes are transparently decompressed.
 
     Probes the leading magic bytes (with an optional HTTP ``Content-Encoding``
     hint) and returns a new byte source yielding the decompressed stream.

@@ -1,4 +1,4 @@
-"""Quality gate contract for independent 80.00% branch coverage (D-25/QUAL-11).
+"""Quality gate contract for independent 80.00% branch coverage.
 
 Core and provider must each measure only their own package source at
 ``branch=true``, ``precision=2``, and ``fail_under=80.00`` with separate data

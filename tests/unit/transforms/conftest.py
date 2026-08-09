@@ -1,9 +1,9 @@
 """Shared fixtures for transform unit tests.
 
 Provides a synthetic :class:`~datasluice.data.batch_stream.BatchStream` fixture
-(no fixture files — D-P4-16). Mirrors ``tests/unit/data/conftest.py``. The
+. Mirrors ``tests/unit/data/conftest.py``. The
 deliberate ``None`` in the ``name`` column surfaces null-handling divergence
-for the later QUAL-10 work (RESEARCH Pitfall 1).
+for the later work.
 """
 
 from __future__ import annotations

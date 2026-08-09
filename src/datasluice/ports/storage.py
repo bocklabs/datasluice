@@ -1,4 +1,4 @@
-"""Storage port Protocol returning URI references (CORR-05)."""
+"""Storage port Protocol returning URI references."""
 
 from __future__ import annotations
 

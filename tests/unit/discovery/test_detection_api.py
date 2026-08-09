@@ -1,6 +1,6 @@
-"""API-shape tests — ``detect_portal_type`` / ``detect_portal`` removed (D-P5-17).
+"""API-shape tests — ``detect_portal_type`` / ``detect_portal`` removed.
 
-D-P5-17 is a one-way, USER-LOCKED decision: the legacy first-match functions
+ is a one-way, USER-LOCKED decision: the legacy first-match functions
 are gone and importing them raises ``ImportError``. Per PATTERNS Finding 2
 (import-cycle lockstep), ``discovery/__init__.py`` no longer re-exports them.
 """

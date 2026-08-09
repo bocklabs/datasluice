@@ -73,11 +73,13 @@ jobs:
           from pathlib import Path
           with open("providers/apache-airflow/compatibility.json", encoding="utf-8") as fh:
               manifest = json.load(fh)
-          core_version = re.search(
+          _core_match = re.search(
               r'^version\s*=\s*"([^"]+)"',
               Path("pyproject.toml").read_text(encoding="utf-8"),
               re.MULTILINE,
-          ).group(1)
+          )
+          assert _core_match, "could not read version from pyproject.toml"
+          core_version = _core_match.group(1)
           include = [
               {"core_version": core_version, "airflow": airflow, "python": minor}
               for airflow, minor in itertools.product(manifest["airflow"], manifest["python"])

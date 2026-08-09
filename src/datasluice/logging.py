@@ -2,7 +2,7 @@
 
 Owns the canonical ``SENSITIVE_HEADERS`` frozenset (lifted here from
 ``transport/redirect`` so the :class:`RedactingFilter` and the redirect handler
-share one source of truth, D-P3-18, without a circular import —
+share one source of truth,, without a circular import —
 ``redirect.py`` imports it from here).
 """
 
@@ -43,13 +43,13 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 
 class RedactingFilter(logging.Filter):
-    """Redact known sensitive keys from log records (INFRA-06, D-P3-18).
+    """Redact known sensitive keys from log records.
 
     Walks ``record.__dict__`` and ``record.args`` dicts replacing string values
     whose (lower-cased) key is in ``_SENSITIVE_KEYS`` with ``"***"``. Targeted:
     only known sensitive keys are touched — never value-pattern heuristics — so
     legitimate base64 / open-data payloads pass through unchanged (RESEARCH
-    Pitfall 6). Set ``DATASLUICE_NO_REDACT=1`` to disable redaction entirely
+    ). Set ``DATASLUICE_NO_REDACT=1`` to disable redaction entirely
     (escape hatch for test fixtures and debugging).
     """
 

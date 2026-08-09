@@ -1,4 +1,4 @@
-"""Tests for the URI display sanitizer (CR-07)."""
+"""Tests for the URI display sanitizer."""
 
 from __future__ import annotations
 

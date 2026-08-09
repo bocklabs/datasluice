@@ -1,4 +1,4 @@
-"""Architectural guard: ``CustomAdapter`` is permanently removed (D-P5-22, ARCH-10).
+"""Architectural guard: ``CustomAdapter`` is permanently removed.
 
 Two complementary scans:
 
@@ -51,5 +51,5 @@ def test_no_customadapter_importable_from_connectors() -> None:
 
 
 def test_custom_subpackage_directory_does_not_exist() -> None:
-    """The ``connectors/custom/`` directory is gone (D-P5-22, one-way)."""
+    """The ``connectors/custom/`` directory is gone."""
     assert not (_CONNECTORS_ROOT / "custom").exists(), "src/datasluice/connectors/custom/ was reintroduced"

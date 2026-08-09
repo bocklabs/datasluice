@@ -1,11 +1,11 @@
-"""QUAL-10 result-equivalence: one BatchStream -> 4 terminals -> same data.
+"""result-equivalence: one BatchStream -> 4 terminals -> same data.
 
 Feeds ONE synthetic BatchStream definition (typed columns + a null) through all
 four terminals (:func:`to_arrow`, :func:`to_pandas`, :func:`to_polars`,
 :func:`to_duckdb`), normalizes each output to a ``pa.Table``, and asserts
 ``pa.Table.equals`` across all pairs. Null-representation divergences (pandas
-``NaN`` vs Arrow ``None``, RESEARCH Pitfall 1) and DuckDB local-tz divergence
-(RESEARCH Pitfall 2) are normalized at the Arrow level — never via
+``NaN`` vs Arrow ``None``, ) and DuckDB local-tz divergence
+ are normalized at the Arrow level — never via
 ``.fetchall()`` object comparison.
 
 A :class:`~datasluice.data.BatchStream` is a one-shot iterator, so a FRESH
@@ -36,19 +36,19 @@ def _normalize_string_types(table: Any) -> Any:
     The four terminals produce equivalent DATA but different Arrow type
     metadata. Two divergences are normalized here:
 
-    1. **String type** (RESEARCH Pitfall 1-adjacent): ``to_arrow``/``to_duckdb``
+    1. **String type**: ``to_arrow``/``to_duckdb``
        yield ``large_string`` (pyarrow default inference + DuckDB interop),
        while the pandas/polars round-trips yield ``string``. All string columns
        are cast to ``large_string``.
 
-    2. **Timestamp tz** (RESEARCH Pitfall 2): DuckDB's Arrow export stamps
+    2. **Timestamp tz**: DuckDB's Arrow export stamps
        tz-aware timestamps with the local system timezone (e.g.
        ``Europe/Luxembourg``) instead of preserving the source ``UTC``. The
        epoch values are identical; only the tz metadata diverges. All timestamp
        columns are cast to ``tz=UTC`` (preserving their unit).
 
-    This is the QUAL-10 "same data" contract, not a byte-identical schema
-    contract — analogous to the Pitfall 1 NaN->None value normalization.
+    This is the "same data" contract, not a byte-identical schema
+    contract — analogous to the NaN->None value normalization.
     """
     import pyarrow as pa
 
@@ -87,9 +87,9 @@ def _skip_if_pandas_index_broken() -> None:
 def _make_stream() -> BatchStream:
     """Build a FRESH BatchStream with typed columns + a deliberate null.
 
-    The null in ``name[1]`` surfaces the null-representation divergence
-    (pandas NaN vs Arrow None, RESEARCH Pitfall 1) that the equivalence
-    assertion must normalize.
+       The null in ``name[1]`` surfaces the null-representation divergence
+    that the equivalence
+       assertion must normalize.
     """
     import pyarrow as pa
 
@@ -101,7 +101,7 @@ def _make_stream() -> BatchStream:
 def _make_timestamp_stream() -> BatchStream:
     """Build a FRESH BatchStream with a tz-aware timestamp + int + null.
 
-    Catches the DuckDB local-tz pitfall (RESEARCH Pitfall 2): DuckDB
+    Catches the DuckDB local-tz pitfall: DuckDB
     ``.fetchall()`` applies the local system timezone, but the Arrow-level
     comparison via ``rel.to_arrow_table()`` preserves the correct tz metadata.
     """
@@ -123,8 +123,8 @@ def test_all_terminals_equivalent() -> None:
     """All four terminals produce data-equivalent output from one stream definition.
 
     Each output is normalized to a ``pa.Table`` (pandas NaN -> Arrow None via
-    ``pa.Table.from_pandas``, RESEARCH Pitfall 1; DuckDB via
-    ``rel.to_arrow_table()`` NOT ``.fetchall()``, RESEARCH Pitfall 2), then
+    ``pa.Table.from_pandas``,; DuckDB via
+    ``rel.to_arrow_table`` NOT ``.fetchall``, ), then
     compared with ``pa.Table.equals`` (Arrow ``__eq__`` handles nulls
     correctly).
     """
@@ -144,7 +144,7 @@ def test_equivalence_preserves_null_count() -> None:
     """The null count in the 'name' column is identical (1) across all 4 terminals.
 
     Confirms the null is neither dropped nor doubled by any terminal
-    (RESEARCH Pitfall 1 — pandas NaN must round-trip to exactly one Arrow
+    ( — pandas NaN must round-trip to exactly one Arrow
     null, not zero or two).
     """
     import pyarrow as pa
@@ -160,7 +160,7 @@ def test_equivalence_preserves_null_count() -> None:
 def test_equivalence_with_timestamp_column() -> None:
     """A tz-aware timestamp column round-trips equivalently across all 4 terminals.
 
-    This catches the DuckDB local-tz pitfall (RESEARCH Pitfall 2): if the
+    This catches the DuckDB local-tz pitfall: if the
     comparison used ``.fetchall()`` datetime objects, the local-tz shift
     would break equality. Comparing at the Arrow level (``rel.to_arrow_table()``)
     normalizes it. The null in ``label[1]`` is also preserved.
@@ -174,7 +174,7 @@ def test_equivalence_with_timestamp_column() -> None:
 
     assert arrow_table.equals(pandas_table), "arrow != pandas (timestamp)"
     assert arrow_table.equals(polars_table), "arrow != polars (timestamp)"
-    assert arrow_table.equals(duckdb_table), "arrow != duckdb (local-tz divergence — Pitfall 2)"
+    assert arrow_table.equals(duckdb_table), "arrow != duckdb (local-tz divergence)"
 
 
 def test_to_arrow_preserves_specific_values() -> None:

@@ -1,8 +1,8 @@
-"""Unit tests for the DataSluiceSession composition root (ARCH-03).
+"""Unit tests for the DataSluiceSession composition root.
 
-Covers zero-config construction (D-01), explicit auth (D-11), page_size
-wiring (D-12), transport Protocol conformance (D-02), PluginManager
-injection (D-06), and repr safety (threat T-02-06).
+Covers zero-config construction, explicit auth, page_size
+wiring, transport Protocol conformance, PluginManager
+injection, and repr safety.
 """
 
 from __future__ import annotations

@@ -227,7 +227,7 @@ def test_reserved_metadata_table_name_rejected(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_reserved_metadata_table_name_allowed_when_metadata_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A resource named 'datasets' is usable when include_metadata=False (WR-03)."""
+    """A resource named 'datasets' is usable when include_metadata=False."""
     _install_portal(monkeypatch, [Resource(id="datasets", url="https://portal.test/data.csv", format="CSV")])
 
     # No raise — the metadata resource that would conflict is never emitted.

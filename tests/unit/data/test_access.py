@@ -1,4 +1,4 @@
-"""Unit tests for :class:`DataPlaneResourceReader` access dispatch (DATA-04, DATA-05 fallback).
+"""Unit tests for :class:`DataPlaneResourceReader` access dispatch.
 
 Covers the dispatch by ``resource.access.kind``: HttpDownload (streaming via
 ``StreamingTransport`` and the urllib buffered fallback with WARNING),
@@ -7,7 +7,7 @@ QueryAccess raising :class:`UnsupportedAccessError`. Also covers the zero-config
 default (``access=None`` → ``HttpDownload(url=resource.url)``) and the full
 end-to-end pipeline (access → compression → format reader → BatchStream).
 
-Follows the Phase 03 / 04-01 RED→GREEN pattern: the module skips cleanly at
+Follows the / 04-01 RED→GREEN pattern: the module skips cleanly at
 collection time while ``access.py`` is missing, then runs and passes once the
 GREEN step ships :class:`DataPlaneResourceReader`.
 """
@@ -62,7 +62,7 @@ def test_local_file_dispatch_yields_batch_stream(tmp_path) -> None:
 
 
 def test_default_http_download_when_access_is_none() -> None:
-    """resource.access=None defaults to HttpDownload(url=resource.url) (D-P4-06)."""
+    """resource.access=None defaults to HttpDownload(url=resource.url)."""
 
     from datasluice.domain import HttpDownload, Resource
 
@@ -75,7 +75,7 @@ def test_default_http_download_when_access_is_none() -> None:
 
 
 def test_query_access_raises_unsupported() -> None:
-    """QueryAccess raises UnsupportedAccessError with Phase 5 message (D-P4-09)."""
+    """QueryAccess raises UnsupportedAccessError with message."""
 
     from datasluice.domain import QueryAccess, Resource
     from datasluice.exceptions import UnsupportedAccessError
@@ -91,7 +91,7 @@ def test_query_access_raises_unsupported() -> None:
         reader.open(resource)
     msg = str(exc_info.value).lower()
     assert "query" in msg
-    assert "phase 5" in msg or "phase-5" in msg
+    assert "not implemented" in msg
 
 
 def test_stream_access_raises_unsupported() -> None:
@@ -139,7 +139,7 @@ def test_object_storage_dispatch_via_memory_fs() -> None:
 
 
 def test_http_download_with_streaming_transport() -> None:
-    """HttpDownload uses StreamingTransport.stream yielding IterableBytesIO (DATA-05)."""
+    """HttpDownload uses StreamingTransport.stream yielding IterableBytesIO."""
 
     import pyarrow as pa
 

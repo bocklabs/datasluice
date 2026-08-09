@@ -1,6 +1,6 @@
-"""fsspec-backed storage adapter satisfying :class:`StoragePort` (INFRA-02, CORR-05).
+"""fsspec-backed storage adapter satisfying :class:`StoragePort`.
 
-Closes CORR-05 by returning URI strings (never ``pathlib.Path``) from every
+Closes by returning URI strings (never ``pathlib.Path``) from every
 write. Wraps an :class:`fsspec.AbstractFileSystem` instance so local, S3, GCS,
 Azure and HTTP backends share one adapter. All paths are URI strings.
 """
@@ -16,7 +16,7 @@ _ABSOLUTE_URI_PREFIXES = ("s3://", "gs://", "az://", "abfs://", "file://", "http
 
 
 class FsspecStorage:
-    """Adapter wrapping an fsspec ``AbstractFileSystem`` to satisfy ``StoragePort`` (CORR-05).
+    """Adapter wrapping an fsspec ``AbstractFileSystem`` to satisfy ``StoragePort``.
 
     All paths are URI strings (never ``pathlib.Path``). Absolute URIs
     (``s3://bucket/key``, ``gs://bucket/obj``) pass through ``_resolve``
@@ -79,7 +79,7 @@ class FsspecStorage:
         return path
 
     def _as_uri(self, path: str) -> str:
-        """Reconstruct a URI string for *path* (CORR-05)."""
+        """Reconstruct a URI string for *path*."""
         if "://" in path:
             return path
         protocol = getattr(self._fs, "protocol", "file")

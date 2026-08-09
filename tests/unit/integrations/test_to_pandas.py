@@ -1,7 +1,7 @@
-"""Unit tests for :func:`to_pandas` (INTG-02, D-P6-01).
+"""Unit tests for :func:`to_pandas`.
 
-Follows the Phase 04/06 importorskip + inline-import test pattern. Verifies
-delegation through the shared :func:`to_arrow` substrate (QUAL-10).
+Follows the importorskip + inline-import test pattern. Verifies
+delegation through the shared :func:`to_arrow` substrate.
 
 Note: pandas 3.0.3 has a known bug where ``pd.Index`` / ``pd.DataFrame``
 construction from string-valued data fails after cumulative in-process state

@@ -271,7 +271,7 @@ def materialize_checkpointed(
     if next_batch_index == 0:
         # Valid empty Parquet: the cursor reader yielded no batches because
         # the file has no non-empty row groups. Publish a zero-row table that
-        # retains the source schema (CR-08) — the previous code raised, so a
+        # retains the source schema — the previous code raised, so a
         # schema-bearing empty Parquet could not be synchronized.
         table = pa.Table.from_batches([], schema=stream.schema)
     else:

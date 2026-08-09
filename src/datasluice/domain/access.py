@@ -12,7 +12,7 @@ from typing import Any
 class ResourceAccess:
     """Base descriptor for how a resource is accessed.
 
-    Subclasses discriminate on ``kind`` so Phase 4 match-dispatch (DATA-04)
+    Subclasses discriminate on ``kind`` so match-dispatch
     can route to the correct reader without complex isinstance chains.
 
     Attributes:

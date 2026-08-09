@@ -1,4 +1,4 @@
-"""Streaming CSV reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).
+"""Streaming CSV reader yielding Arrow ``RecordBatch``.
 
 Migrated from ``datasluice.formats.csv`` (v0.1.0 ``list[dict]`` contract) to
 the streaming RecordBatch contract. Delegates decoding to
@@ -7,7 +7,7 @@ batches without buffering the whole file. The reader honours the
 ``batch_size`` row-count hint by re-chunking the upstream batches (pyarrow's
 CSV reader only exposes a byte-level ``block_size`` knob). Verified against
 pyarrow 24.0.0 on both seekable (``io.BytesIO``) and non-seekable
-(``IterableBytesIO``) sources (RESEARCH Pattern 1).
+(``IterableBytesIO``) sources.
 """
 
 from __future__ import annotations

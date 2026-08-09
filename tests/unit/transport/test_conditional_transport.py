@@ -1,4 +1,4 @@
-"""ConditionalTransport + HttpxTransport.conditional_fetch real-socket tests (SYNC-06)."""
+"""ConditionalTransport + HttpxTransport.conditional_fetch real-socket tests."""
 
 from __future__ import annotations
 

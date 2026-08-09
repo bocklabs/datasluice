@@ -1,20 +1,20 @@
 """httpx-backed HTTP transport satisfying the Transport + StreamingTransport Protocols.
 
 Replaces urllib as the default transport (when the ``http`` extra is installed)
-while preserving the Phase 1 security semantics verbatim:
+while preserving the security semantics verbatim:
 
 * ``follow_redirects=False`` plus a manual redirect loop applies the
-  ``CredentialScope`` policy per hop (SEC-01/SEC-02) — httpx ``event_hooks``
+  ``CredentialScope`` policy per hop — httpx ``event_hooks``
   cannot express the same-host-but-not-in-scope stripping case (Pattern 1).
 * Each per-attempt call is wrapped in the existing ``with_retry`` /
-  ``RetryPolicy`` (SEC-05). httpx native transport-level retries are
-  intentionally NOT used (D-P3-08).
+  ``RetryPolicy``. httpx native transport-level retries are
+  intentionally NOT used.
 * 401/403 against a ``HostCredentialProvider`` evicts and refreshes exactly
-  once (D-P3-15); a ``_refreshed`` flag survives ``with_retry`` attempts to
+  once; a ``_refreshed`` flag survives ``with_retry`` attempts to
   prevent an eviction loop.
 
 All httpx imports are lazy (inside ``__init__`` / methods) so bare installs
-without the ``http`` extra never import httpx at module load (D-P3-01).
+without the ``http`` extra never import httpx at module load.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ logger = get_logger("transport.httpx")
 
 
 def _default_port(scheme: str | None) -> int | None:
-    """Return the IANA default port for *scheme*, or ``None`` when unknown (CR-06)."""
+    """Return the IANA default port for *scheme*, or ``None`` when unknown."""
     if scheme == "https":
         return 443
     if scheme == "http":
@@ -58,7 +58,7 @@ def _default_port(scheme: str | None) -> int | None:
 
 
 def _effective_origin(parsed: Any) -> tuple[str, str, int | None]:
-    """Return ``(scheme, hostname, effective_port)`` for a parsed URL (CR-06).
+    """Return ``(scheme, hostname, effective_port)`` for a parsed URL.
 
     ``effective_port`` falls back to the IANA default for the scheme so a
     redirect from ``https://host:443`` to ``https://host`` is treated as the
@@ -78,7 +78,7 @@ def _url_with_params(url: str, params: dict[str, Any]) -> str:
     """Return *url* with *params* appended (preserving any existing query).
 
     Used to rebuild auth-applied URLs from a base URL plus refreshed auth
-    params (CR-05).
+    params.
     """
     if not params:
         return url
@@ -108,12 +108,12 @@ def _host_credential_provider_type() -> type[Any] | None:
 
 
 class StreamResponse:
-    """Backend-agnostic streaming response wrapper (D-P3-07).
+    """Backend-agnostic streaming response wrapper.
 
     Iterable for byte chunks (via httpx ``iter_raw`` so gzip pass-through
-    decoding surprises are avoided — Phase 4 compression decorators own
+    decoding surprises are avoided — compression decorators own
     decompression), and exposes a ``headers`` dict so callers can capture
-    ``ETag`` / ``Last-Modified`` for cache revalidation (D-P3-12).
+    ``ETag`` / ``Last-Modified`` for cache revalidation.
     """
 
     def __init__(self, httpx_response: httpx.Response) -> None:
@@ -141,7 +141,7 @@ def _stream_response(response: httpx.Response) -> Iterator[StreamResponse]:
 class HttpxTransport:
     """HTTP transport backed by httpx, satisfying Transport + StreamingTransport.
 
-    Drives redirects manually so the Phase 1 ``CredentialScope`` policy is
+    Drives redirects manually so the ``CredentialScope`` policy is
     applied per hop, and wraps each per-attempt call in the existing
     ``with_retry`` / ``RetryPolicy``. Construct one instance and reuse it
     across many requests (the underlying ``httpx.Client`` is thread-safe and
@@ -160,7 +160,7 @@ class HttpxTransport:
         credential_scope: CredentialScope | None = None,
         max_redirects: int = 20,
     ) -> None:
-        import httpx  # lazy (D-P3-01)
+        import httpx  # lazy
 
         self.auth = auth or NoAuth()
         self._credential_provider = credential_provider
@@ -192,11 +192,11 @@ class HttpxTransport:
     def _should_strip_authorization(self, old_url: str, new_url: str) -> bool:
         """Return whether sensitive headers must be stripped on this redirect hop.
 
-        Mirrors Phase 1 ``CredentialAwareRedirectHandler``: under an explicit
+        Mirrors ``CredentialAwareRedirectHandler``: under an explicit
         ``CredentialScope`` the new host/scheme must both be allowed (and
         ``send_on_redirect`` true); under zero-config, any cross-host hop or
         ``https`` → ``http`` downgrade strips. ``https`` → ``http`` always
-        strips regardless of scope (SEC-01/SEC-02).
+        strips regardless of scope.
         """
 
         old_parsed = urlparse(old_url)
@@ -213,7 +213,7 @@ class HttpxTransport:
         # Compare scheme + hostname + effective port so a redirect from
         # https://host:443 to https://host:8443 (same hostname, different port)
         # strips Authorization — the original hostname-only check leaked
-        # credentials to a different service on the same host (CR-06).
+        # credentials to a different service on the same host.
         return scheme_downgrade or _effective_origin(old_parsed) != _effective_origin(new_parsed)
 
     def _send_with_redirects(
@@ -257,7 +257,7 @@ class HttpxTransport:
         this wrapper they would neither be retried by ``RetryPolicy`` nor surface as a
         ``PortalError`` across the port boundary.
         """
-        import httpx  # lazy (D-P3-01)
+        import httpx  # lazy
 
         try:
             return self._client.send(request, follow_redirects=False, stream=stream)
@@ -279,19 +279,19 @@ class HttpxTransport:
         params_box: list[dict[str, Any]],
         stream: bool = False,
     ) -> tuple[httpx.Response, int, bool]:
-        """Evict and re-apply credentials for a 401/403 exactly once (D-P3-15, CR-04/CR-05).
+        """Evict and re-apply credentials for a 401/403 exactly once.
 
-        Re-issues the request against the refreshed credential when the
-        transport is bound to a :class:`HostCredentialProvider` and a refresh
-        has not already occurred. The rejected *response* is closed BEFORE the
-        retry so the connection it occupies is released back to the pool
-        (CR-04). *headers* and *params_box* are mutated in place: the refreshed
-        auth's header credentials overwrite *headers* and its query credentials
-        overwrite the entries in ``params_box[0]``, then the request URL is
-        rebuilt from *base_url* with the refreshed params so stale query
-        credentials cannot survive into the retry (CR-05). Returns
-        ``(response, status, refreshed)``. When no refresh is applicable the
-        original *response* and *status* are returned unchanged.
+                Re-issues the request against the refreshed credential when the
+                transport is bound to a :class:`HostCredentialProvider` and a refresh
+                has not already occurred. The rejected *response* is closed BEFORE the
+                retry so the connection it occupies is released back to the pool
+        . *headers* and *params_box* are mutated in place: the refreshed
+                auth's header credentials overwrite *headers* and its query credentials
+                overwrite the entries in ``params_box[0]``, then the request URL is
+                rebuilt from *base_url* with the refreshed params so stale query
+                credentials cannot survive into the retry. Returns
+                ``(response, status, refreshed)``. When no refresh is applicable the
+                original *response* and *status* are returned unchanged.
         """
         if status not in (401, 403) or refreshed:
             return response, status, False
@@ -310,7 +310,7 @@ class HttpxTransport:
         # Close the rejected response before issuing the retry so the original
         # connection is released; otherwise a single-connection client pool
         # raises PoolTimeout when the retry tries to acquire a second slot
-        # while the streamed 401/403 body remains unread (CR-04).
+        # while the streamed 401/403 body remains unread.
         try:
             response.close()
         except Exception:
@@ -338,7 +338,7 @@ class HttpxTransport:
         base_url = url
         request_headers = dict(headers or {})
         request_headers.setdefault("User-Agent", self.user_agent)
-        # Always preserve the auth-applied params (CR-05): the previous code
+        # Always preserve the auth-applied params: the previous code
         # discarded query credentials when the caller supplied no params of
         # its own, so APIKeyAuth(in_query=True) sent /x instead of /x?api_key=...
         request_headers, auth_params = self.auth.apply(request_headers, params or {})
@@ -412,7 +412,7 @@ class HttpxTransport:
         if_none_match: str | None = None,
         if_modified_since: str | None = None,
     ) -> ConditionalFetchResult:
-        """Fetch *url* conditionally, surfacing 304 as a normal result (D-P7-15/16/17).
+        """Fetch *url* conditionally, surfacing 304 as a normal result.
 
         Conditional validators are opaque server-provided strings and are sent
         verbatim. Redirects use the existing manual security loop: auth headers
@@ -476,10 +476,10 @@ class HttpxTransport:
 
     @contextmanager
     def stream(self, url: str, **kwargs: Any) -> Iterator[StreamResponse]:
-        """Yield a :class:`StreamResponse` for streaming the response body (D-P3-06/D-P3-07).
+        """Yield a :class:`StreamResponse` for streaming the response body.
 
-        Does NOT wrap in ``with_retry`` — resumable streaming reads are Phase 4's
-        concern (via checkpoint state). Maps >=400 status codes to the existing
+        Does NOT wrap in ``with_retry`` — resumable streaming reads are the
+        caller's concern (via checkpoint state). Maps >=400 status codes to the existing
         exception hierarchy before yielding so callers never see an error
         response as a successful stream.
         """
@@ -495,7 +495,7 @@ class HttpxTransport:
         # Track the actual final response (which may change after a refresh) so
         # the finally block closes the response the caller actually consumed —
         # the original code closed the rejected 401/403 response instead of the
-        # refreshed one, leaking the refreshed connection (CR-04).
+        # refreshed one, leaking the refreshed connection.
         resp = response
         try:
             if resp.status_code in (401, 403):

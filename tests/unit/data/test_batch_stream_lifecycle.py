@@ -102,7 +102,7 @@ def test_batch_size_negative_rejected_before_source_acquisition(monkeypatch) -> 
 
 
 def test_indexed_iter_batches_with_cursors_respects_closed_stream() -> None:
-    """iter_batches_with_cursors on an indexed stream raises StreamClosedError after close (WR-01)."""
+    """iter_batches_with_cursors on an indexed stream raises StreamClosedError after close."""
     from datasluice.exceptions import StreamClosedError
 
     indexed_source = iter([(0, "batch-a"), (1, "batch-b")])
@@ -113,7 +113,7 @@ def test_indexed_iter_batches_with_cursors_respects_closed_stream() -> None:
 
 
 def test_close_attempts_every_owned_closeable_even_on_failure() -> None:
-    """A failing closeable does not prevent later closeables from being closed (WR-02)."""
+    """A failing closeable does not prevent later closeables from being closed."""
 
     class _FailingCloseable:
         def close(self) -> None:

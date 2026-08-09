@@ -1,4 +1,4 @@
-"""Executable documentation examples gate (D-30).
+"""Executable documentation examples gate.
 
 Release validation must prove that the published facade and CLI examples run
 against built artifacts, so this test executes the Python blocks extracted from

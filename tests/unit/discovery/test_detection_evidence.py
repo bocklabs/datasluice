@@ -1,6 +1,6 @@
-"""Evidence-based detection tests — every probe recorded, any-match confidence (D-P5-15).
+"""Evidence-based detection tests — every probe recorded, any-match confidence.
 
-Covers the four evidence semantics required by Plan 05-03 Task 1:
+Covers the four evidence semantics required by -03 :
 * every probe (hit OR miss) appends a ``DetectionEvidence`` row;
 * any single hit → ``portal_type`` set and ``confidence == 1.0``;
 * zero hits → ``portal_type is None`` and ``confidence == 0.0``;
@@ -21,7 +21,7 @@ class _StubTransport:
     """Transport stub that scripts hits/misses by URL substring.
 
     Records every probe in ``self.requested`` so DI tests can assert the
-    caller's transport was used (D-P5-16). Implements the full
+    caller's transport was used. Implements the full
     :class:`~datasluice.ports.Transport` Protocol so ty recognises it as
     assignable (matches the pattern in ``test_session_injection.py``).
     """
@@ -90,7 +90,7 @@ def test_evidence_recorded_for_every_probe() -> None:
 
 
 def test_any_match_yields_confidence_one() -> None:
-    """A single hit pins portal_type at confidence 1.0 (D-P5-15 any-match)."""
+    """A single hit pins portal_type at confidence 1.0."""
 
     stub = _StubTransport(hit_substring="/api/3/action/package_search")
     result = detect("https://example.gov", stub, _pm_with_all())  # ty: ignore[invalid-argument-type]

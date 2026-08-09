@@ -1,11 +1,11 @@
-"""Unit tests for :class:`BatchStream` and :class:`IterableBytesIO` (DATA-01, DATA-02).
+"""Unit tests for :class:`BatchStream` and :class:`IterableBytesIO`.
 
 Covers the streaming data-plane contracts: RecordBatchReader wrapping,
 context-manager discipline, idempotent close, StreamClosedError on
 use-after-close, ``__arrow_c_stream__`` delegation, and the byte-source
-adapter. Follows the Phase 03 RED→GREEN TDD pattern: the module skips
-cleanly at collection time while the implementation is still the Task 1
-stub, then runs and passes once Task 2 GREEN lands the real classes.
+adapter. Follows the RED→GREEN TDD pattern: the module skips
+cleanly at collection time while the implementation is still the
+stub, then runs and passes once GREEN lands the real classes.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ BatchStream = _batch_module.BatchStream
 
 
 def _is_stub() -> bool:
-    """Detect whether BatchStream is still the Task 1 placeholder."""
+    """Detect whether BatchStream is still the placeholder."""
     try:
         bs = BatchStream(iter(()), None)
         bs.close()
@@ -162,7 +162,7 @@ def test_iterable_bytes_io_chunks() -> None:
     reason="/proc/self/fd fd-accounting check is Linux-only",
 )
 def test_no_fd_leak_under_repeated_reads(tmp_path) -> None:
-    """DATA-02 stability: repeated open/consume/close cycles do not leak file descriptors.
+    """stability: repeated open/consume/close cycles do not leak file descriptors.
 
     Uses a real OS file handle so ``/proc/self/fd`` reflects true fd
     accounting. An unclosed handle per iteration would grow the count by ~50;

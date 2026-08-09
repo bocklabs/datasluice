@@ -1,4 +1,4 @@
-"""Unit tests for the SelectColumns transform (TRANS-02, D-P6-11).
+"""Unit tests for the SelectColumns transform.
 
 Covers subset projection, re-ordering, the actionable missing-column error
 (naming the missing column AND the available ones), and the fail-fast empty
@@ -42,7 +42,7 @@ def test_select_reorder() -> None:
 
 
 def test_select_missing_raises() -> None:
-    """A missing column raises TransformError naming it and the available ones (D-P6-11)."""
+    """A missing column raises TransformError naming it and the available ones."""
     import pyarrow as pa
 
     from datasluice.exceptions import TransformError
@@ -56,7 +56,7 @@ def test_select_missing_raises() -> None:
 
 
 def test_select_empty_tuple_raises() -> None:
-    """An empty column tuple is rejected at construction (fail-fast, D-P6-07)."""
+    """An empty column tuple is rejected at construction."""
     with pytest.raises(ValueError):
         SelectColumns(())
 

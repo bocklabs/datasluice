@@ -1,4 +1,4 @@
-"""StateStore round-trip tracer: durability across restart + Protocol conformance (TRACER, D-P7-01/03/25)."""
+"""StateStore round-trip tracer: durability across restart + Protocol conformance."""
 
 from __future__ import annotations
 

@@ -1,10 +1,10 @@
-"""SQL injection regression tests for the DuckDB integration (SEC-03/QUAL-07).
+"""SQL injection regression tests for the DuckDB integration.
 
-Phase 4 plan 04-02 removed the ``resource_to_relation`` and ``query_resource``
-read paths per D-P4-18 (Phase 6 rebuilds them over the shared BatchStream).
-The SEC-03 regression boundary — :func:`_validate_table_name` — is preserved
+plan 04-02 removed the ``resource_to_relation`` and ``query_resource``
+read paths (rebuilds them over the shared BatchStream).
+The regression boundary — :func:`_validate_table_name` — is preserved
 as the standalone SQL-identifier guard that will protect whatever
-relation-registering API Phase 6 ships. The tests below exercise only that
+relation-registering API ships. The tests below exercise only that
 guard; the URL-injection tests for the removed read path are deleted.
 """
 

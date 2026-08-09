@@ -1,4 +1,4 @@
-"""Unit tests for the ``open_filesystem`` factory (INFRA-05, D-P3-19/D-P3-20).
+"""Unit tests for the ``open_filesystem`` factory.
 
 The implementation module is resolved via ``importlib.import_module`` (rather
 than a static ``import``) so the RED commit can land under this repo's
@@ -43,7 +43,7 @@ def test_open_filesystem_dispatches_memory() -> None:
 
 
 def test_open_filesystem_passes_credentials_as_storage_options() -> None:
-    """credentials= dict is forwarded to url_to_fs as **storage_options (D-P3-19)."""
+    """credentials= dict is forwarded to url_to_fs as **storage_options."""
     with patch("fsspec.core.url_to_fs") as mocked:
         mocked.return_value = (MagicMock(), "path")
         open_filesystem("s3://bucket/key", credentials={"key": "AKIA", "secret": "shh"})
@@ -52,7 +52,7 @@ def test_open_filesystem_passes_credentials_as_storage_options() -> None:
 
 
 def test_open_filesystem_passes_empty_credentials_when_none() -> None:
-    """credentials=None forwards an empty dict so fsspec uses backend defaults (D-P3-19)."""
+    """credentials=None forwards an empty dict so fsspec uses backend defaults."""
     with patch("fsspec.core.url_to_fs") as mocked:
         mocked.return_value = (MagicMock(), "path")
         open_filesystem("file:///tmp/x", credentials=None)
@@ -61,7 +61,7 @@ def test_open_filesystem_passes_empty_credentials_when_none() -> None:
 
 
 def test_open_filesystem_raises_importerror_with_install_hint_when_fsspec_missing() -> None:
-    """When fsspec is unimportable, ImportError carries the datasluice[storage] hint (D-P3-01)."""
+    """When fsspec is unimportable, ImportError carries the datasluice[storage] hint."""
     import sys
 
     with patch.dict(sys.modules, {"fsspec": None}):
@@ -71,7 +71,7 @@ def test_open_filesystem_raises_importerror_with_install_hint_when_fsspec_missin
 
 
 def test_open_filesystem_does_not_import_fsspec_at_module_top() -> None:
-    """No top-level ``import fsspec`` / ``from fsspec`` in the implementation (D-P3-01 lazy discipline)."""
+    """No top-level ``import fsspec`` / ``from fsspec`` in the implementation."""
     module = importlib.import_module("datasluice.io.filesystem")
     source = inspect.getsource(module)
     top_level = [

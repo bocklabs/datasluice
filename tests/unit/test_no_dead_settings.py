@@ -1,11 +1,11 @@
-"""Tests proving the dead Settings system is fully removed (CORR-04, D-10, D-14).
+"""Tests proving the dead Settings system is fully removed.
 
 Scans every ``.py`` file under ``src/datasluice/`` for the string
 ``DATASLUICE_`` (environment variable references) and verifies that
 ``Settings`` and ``load_settings`` are no longer importable.
 
 The single legitimate ``DATASLUICE_``-prefixed env var in v1 is
-``DATASLUICE_NO_REDACT`` (the RedactingFilter escape hatch, INFRA-06 / D-P3-18);
+``DATASLUICE_NO_REDACT``;
 it is allowlisted here so the scan still flags any other ``DATASLUICE_``
 substring while permitting this one.
 """

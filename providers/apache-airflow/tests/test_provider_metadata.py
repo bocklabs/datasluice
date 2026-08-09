@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.metadata as importlib_metadata
 import sys
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -37,7 +38,7 @@ def _provider_yaml() -> dict[str, object]:
 
 
 def test_get_provider_info_returns_locked_identity() -> None:
-    """get_provider_info returns the locked D-21 package name and stable metadata."""
+    """get_provider_info returns the locked package name and stable metadata."""
     info = _provider_info()
     assert info["package-name"] == _PROVIDER_PACKAGE
     assert isinstance(info["name"], str) and info["name"]
@@ -112,7 +113,7 @@ def test_provider_discovered_by_provider_manager() -> None:
 
 
 def test_discovery_import_is_metadata_only() -> None:
-    """Loading provider metadata performs no private-core or Connection side effect (D-50)."""
+    """Loading provider metadata performs no private-core or Connection side effect."""
     import airflow.providers.datasluice.get_provider_info as info_module
 
     source = Path(info_module.__file__).read_text(encoding="utf-8")
@@ -137,14 +138,17 @@ def test_import_namespace_resolves() -> None:
 
 
 def test_provider_distribution_metadata_matches_contract() -> None:
-    """Installed distribution metadata preserves the exact D-21/D-29 identity and version."""
+    """Installed distribution metadata preserves the exact identity and version."""
     distribution = importlib_metadata.distribution(_PROVIDER_PACKAGE)
     assert distribution.version == "0.1.0"
     requires = {
         requirement.name.lower(): frozenset(str(specifier) for specifier in requirement.specifier)
         for requirement in (Requirement(line) for line in (distribution.requires or []))
     }
-    assert requires == {
-        "datasluice": frozenset({">=1.0", "<2"}),
-        "apache-airflow": frozenset({">=3.2", "<4"}),
+    provider_pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    declared = tomllib.load(provider_pyproject.open("rb"))["project"]["dependencies"]
+    expected = {
+        req.name.lower(): frozenset(str(spec) for spec in req.specifier)
+        for req in (Requirement(line) for line in declared)
     }
+    assert requires == expected

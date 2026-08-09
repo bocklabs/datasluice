@@ -1,8 +1,8 @@
-"""Unit tests for :func:`to_duckdb` (INTG-04, D-P6-14).
+"""Unit tests for :func:`to_duckdb`.
 
-Follows the Phase 06 importorskip + inline-import test pattern. Verifies the
+Follows the importorskip + inline-import test pattern. Verifies the
 relation-API registration path (``conn.register`` + ``conn.table`` — no SQL
-string interpolation, SEC-03) and the preserved
+string interpolation, ) and the preserved
 :func:`_validate_table_name` injection guard at the to_duckdb boundary.
 """
 
@@ -73,7 +73,7 @@ def test_to_duckdb_injected_conn_reused() -> None:
 
 @pytest.mark.parametrize("bad_name", ["x; DROP", "bad name", "1lead", "", "'); DROP TABLE x;--"])
 def test_to_duckdb_rejects_bad_table_name(bad_name: str) -> None:
-    """to_duckdb rejects injection payloads via _validate_table_name (SEC-03 boundary)."""
+    """to_duckdb rejects injection payloads via _validate_table_name."""
     import pyarrow as pa
 
     schema = pa.schema([("id", pa.int64())])
@@ -85,7 +85,7 @@ def test_to_duckdb_rejects_bad_table_name(bad_name: str) -> None:
 
 
 def test_to_duckdb_preserves_nulls() -> None:
-    """to_duckdb preserves nulls (compared at the Arrow level — RESEARCH Pitfall 2)."""
+    """to_duckdb preserves nulls."""
     import pyarrow as pa
 
     schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
@@ -99,7 +99,7 @@ def test_to_duckdb_preserves_nulls() -> None:
 
 
 def test_validate_table_name_still_present() -> None:
-    """The SEC-03 guard _validate_table_name is preserved alongside to_duckdb."""
+    """The guard _validate_table_name is preserved alongside to_duckdb."""
     assert _validate_table_name("good_name") == "good_name"
     with pytest.raises(ValueError):
         _validate_table_name("bad name")

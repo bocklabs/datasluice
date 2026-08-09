@@ -20,7 +20,7 @@ def __getattr__(name: str):  # PEP 562
 
     Importing any of these eagerly would pull pyarrow at package import
     time and break bare installs. Each symbol is resolved on first
-    attribute access (D-P4-01 lazy discipline).
+    attribute access.
     """
     if name == "BatchStream":
         from datasluice.data.batch_stream import BatchStream

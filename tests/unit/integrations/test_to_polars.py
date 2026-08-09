@@ -1,7 +1,7 @@
-"""Unit tests for :func:`to_polars` (INTG-03, D-P6-01).
+"""Unit tests for :func:`to_polars`.
 
-Follows the Phase 04/06 importorskip + inline-import test pattern. Verifies
-delegation through the shared :func:`to_arrow` substrate (QUAL-10).
+Follows the importorskip + inline-import test pattern. Verifies
+delegation through the shared :func:`to_arrow` substrate.
 """
 
 from __future__ import annotations

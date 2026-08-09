@@ -1,11 +1,11 @@
-"""Release-routing contracts for the dual-distribution manifest and publication gates (D-27/D-32/D-33/D-34/D-36).
+"""Release-routing contracts for the dual-distribution manifest and publication gates.
 
-Task 1 establishes the typed reusable publication interface in
+establishes the typed reusable publication interface in
 ``.github/workflows/publish.yml``: build/attest the exact Release Please ref,
 publish the candidate to the selected TestPyPI environment, install the exact
 ``name==version`` candidate from TestPyPI with PyPI resolving dependencies,
 smoke the package, and only then promote the SAME attested artifact through the
-caller-selected PyPI environment. Task 2 configures the two-component Release
+caller-selected PyPI environment. configures the two-component Release
 Please manifest and routes its path-prefixed outputs into that interface with
 core-before-provider ordering. Nothing is published here; these are structural
 YAML/JSON contract tests plus a local release-proposal model.

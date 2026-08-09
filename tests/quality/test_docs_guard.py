@@ -1,4 +1,4 @@
-"""Current-documentation guard for removed Airflow surfaces (D-23/D-30).
+"""Current-documentation guard for removed Airflow surfaces.
 
 The published docs must describe only the separate
 ``apache-airflow-providers-datasluice`` distribution and the

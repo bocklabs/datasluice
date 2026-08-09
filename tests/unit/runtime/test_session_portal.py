@@ -1,13 +1,13 @@
-"""Tests for ``DataSluiceSession.portal(url, portal_type=)`` (D-P5-20).
+"""Tests for ``DataSluiceSession.portal(url, portal_type=)``.
 
-Covers the four behaviours required by Plan 05-03 Task 2:
+Covers the four behaviours required by -03 :
 
 * ``portal_type=`` bypass does NOT invoke ``detect()``;
 * detection failure raises enriched ``PortalDetectionError`` carrying
   ``.detection_result`` (the ``DetectionResult`` with evidence);
 * detection success returns a connector without raising;
 * ``detect()`` receives the session's own transport and plugin_manager
-  (D-P5-16 — no internal ``HttpClient`` construction inside detection).
+.
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def test_detection_success_returns_connector_without_raising() -> None:
 
 
 def test_session_passes_own_transport_and_plugin_manager_to_detect(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``detect()`` must receive ``session._transport`` and ``session.plugins`` (D-P5-16)."""
+    """``detect`` must receive ``session._transport`` and ``session.plugins``."""
     transport = _StubTransport(hit_path="/api/3/action/package_search")
     session = _session_with(transport)
 

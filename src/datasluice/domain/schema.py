@@ -15,7 +15,7 @@ class Schema:
     Attributes:
         name: Logical name for the schema.
         columns: Column descriptors (name, type, nullable, and portal-native fields).
-        version: Schema evolution version (forward-compatible per DATA-07).
+        version: Schema evolution version.
         extra: Portal-native schema fields not captured above.
     """
 

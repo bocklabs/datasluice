@@ -1,6 +1,6 @@
 """Purity test: datasluice.domain imports zero optional dependencies.
 
-Guards ARCH-01 criterion #1 — the domain package must remain a zero-dependency
+Guards criterion #1 — the domain package must remain a zero-dependency
 vocabulary layer so subsequent layers (ports, runtime, connectors) can depend
 on it without pulling heavy optional deps into the import graph.
 """

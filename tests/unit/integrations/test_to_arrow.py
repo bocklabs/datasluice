@@ -1,6 +1,6 @@
-"""Unit tests for :func:`to_arrow` (INTG-01, D-P6-02).
+"""Unit tests for :func:`to_arrow`.
 
-Follows the Phase 04 importorskip + inline-import test pattern (matches
+Follows the importorskip + inline-import test pattern (matches
 ``tests/unit/data/test_batch_stream.py``).
 """
 

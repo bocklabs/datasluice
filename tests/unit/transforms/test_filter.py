@@ -1,4 +1,4 @@
-"""Unit tests for the Filter transform (TRANS-06, D-P6-09).
+"""Unit tests for the Filter transform.
 
 Verifies ``Filter`` delegates row filtering to ``RecordBatch.filter`` via a
 pyarrow compute ``Expression``: single-expression, compound (``&``), and the

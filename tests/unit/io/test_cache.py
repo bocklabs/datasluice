@@ -1,4 +1,4 @@
-"""SHA-256 cache key regression tests for FileCache (SEC-06)."""
+"""SHA-256 cache key regression tests for FileCache."""
 
 from __future__ import annotations
 

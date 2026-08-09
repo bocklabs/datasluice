@@ -1,8 +1,8 @@
-"""to_polars terminal: convert a BatchStream to a polars DataFrame (INTG-03, D-P6-01).
+"""to_polars terminal: convert a BatchStream to a polars DataFrame.
 
 Lazy-imports polars; zero-copy Arrow interop via the :func:`to_arrow` substrate
-(single-substrate consistency, QUAL-10). The v0.1.0 polars read path was fully
-removed per D-P4-18; Phase 6 rebuilds it over the shared
+. The v0.1.0 polars read path was fully
+removed; rebuilds it over the shared
 :class:`datasluice.data.BatchStream`.
 """
 
@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
 
 def to_polars(stream: BatchStream) -> Any:
-    """Convert *stream* to a polars ``DataFrame`` (INTG-03).
+    """Convert *stream* to a polars ``DataFrame``.
 
     Delegates through :func:`~datasluice.integrations.arrow.to_arrow` for
-    single-substrate consistency (QUAL-10), then zero-copy converts the Arrow
+    single-substrate consistency, then zero-copy converts the Arrow
     Table to a DataFrame via ``polars.from_arrow``.
 
     Args:
