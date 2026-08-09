@@ -18,11 +18,6 @@ jobs:
   release-please:
     name: Maintain release PR / cut release
     runs-on: ubuntu-latest
-    outputs:
-      core--release_created: ${{ steps.release.outputs.release_created }}
-      core--tag_name: ${{ steps.release.outputs.tag_name }}
-      core--version: ${{ steps.release.outputs.version }}
-      provider-releases: ${{ steps.collect.outputs.releases }}
     steps:
       - name: Mint release-bot app token
         id: app-token
@@ -44,22 +39,31 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - id: collect
+      - name: Collect created releases
         if: always()
         env:
           RELEASE_OUTPUTS: ${{ toJSON(steps.release.outputs) }}
         run: |
-          releases=$(python3 -c '
+          python3 -c '
           import json, os
           with open("providers/registry.json") as f:
               registry = json.load(f)
           outputs_raw = os.environ.get("RELEASE_OUTPUTS", "{}")
           release_outputs = json.loads(outputs_raw) if outputs_raw.strip() else {}
-          releases = []
+          core = None
+          if release_outputs.get("release_created") == "true":
+              core = {
+                  "component": "core",
+                  "path": ".",
+                  "package_name": "datasluice",
+                  "version": release_outputs["version"],
+                  "tag_name": release_outputs["tag_name"],
+              }
+          providers = []
           for provider in registry.get("providers", []):
               path = provider["path"]
               if release_outputs.get(f"{path}--release_created") == "true":
-                  releases.append({
+                  providers.append({
                       "slug": provider["slug"],
                       "path": path,
                       "package_name": provider["package_name"],
@@ -68,48 +72,14 @@ jobs:
                       "testpypi_env": provider["testpypi_env"],
                       "pypi_env": provider["pypi_env"],
                   })
-          print(json.dumps(releases))
-          ')
-          echo "releases=$releases" >> "$GITHUB_OUTPUT"
+          with open("release-manifest.json", "w", encoding="utf-8") as f:
+              json.dump({"core": core, "providers": providers}, f, separators=(",", ":"))
+          '
 
-  publish-core:
-    name: Publish core
-    needs: release-please
-    if: needs.release-please.outputs.core--release_created == 'true'
-    uses: ./.github/workflows/publish.yml
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    with:
-      component: core
-      package_path: .
-      package_name: datasluice
-      version: ${{ needs.release-please.outputs.core--version }}
-      ref: ${{ needs.release-please.outputs.core--tag_name }}
-      testpypi_environment: test-pypi
-      pypi_environment: pypi
-    secrets: inherit
-
-  publish-providers:
-    name: Publish provider ${{ matrix.provider.slug }}
-    needs: [release-please, publish-core]
-    if: always() && needs.release-please.outputs.provider-releases != '[]' && (needs.release-please.outputs.core--release_created != 'true' || needs.publish-core.result == 'success')
-    strategy:
-      fail-fast: false
-      matrix:
-        provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
-    uses: ./.github/workflows/publish.yml
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    with:
-      component: ${{ matrix.provider.slug }}
-      package_path: ${{ matrix.provider.path }}
-      package_name: ${{ matrix.provider.package_name }}
-      version: ${{ matrix.provider.version }}
-      ref: ${{ matrix.provider.tag_name }}
-      testpypi_environment: ${{ matrix.provider.testpypi_env }}
-      pypi_environment: ${{ matrix.provider.pypi_env }}
-    secrets: inherit
+      - name: Upload release manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-manifest
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 1
