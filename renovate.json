@@ -9,6 +9,10 @@
   "labels": [
     "dependencies"
   ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
   "timezone": "Europe/Luxembourg",
   "prConcurrentLimit": 5,
   "dependencyDashboard": true,
