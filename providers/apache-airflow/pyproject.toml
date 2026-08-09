@@ -22,7 +22,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "datasluice>=1.0,<2",
+    "datasluice>=0.2,<1",
     "apache-airflow>=3.2,<4",
 ]
 
