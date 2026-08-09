@@ -2,25 +2,36 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":configMigration",
     "schedule:weekly"
   ],
+  "labels": [
+    "dependencies"
+  ],
+  "timezone": "Europe/Luxembourg",
+  "prConcurrentLimit": 5,
   "dependencyDashboard": true,
   "enabledManagers": [
     "github-actions",
     "pep621"
   ],
   "minimumReleaseAge": "7 days",
-  "prConcurrentLimit": 5,
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "GitHub Actions minor and patch updates"
+      "matchUpdateTypes": ["pin",
+        "digest",
+        "minor",
+        "patch"],
+      "groupName": "GitHub Actions minor and patch updates",
+      "automerge": true
     },
     {
       "matchManagers": ["pep621"],
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "Python minor and patch updates"
+      "groupName": "Python minor and patch updates",
+      "automerge": true
     },
     {
       "description": "The Airflow provider is tested against a locally built core wheel; the core package is not published yet.",
