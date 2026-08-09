@@ -21,6 +21,13 @@
       "matchManagers": ["pep621"],
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "Python minor and patch updates"
+    },
+    {
+      "description": "The Airflow provider is tested against a locally built core wheel; the core package is not published yet.",
+      "matchManagers": ["pep621"],
+      "matchFileNames": ["providers/apache-airflow/pyproject.toml"],
+      "matchPackageNames": ["datasluice"],
+      "enabled": false
     }
   ]
 }
