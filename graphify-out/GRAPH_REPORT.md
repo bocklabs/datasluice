@@ -1,7 +1,7 @@
 # Graph Report - datasluice  (2026-08-09)
 
 ## Corpus Check
-- 130 files · ~43,775 words
+- 130 files · ~43,202 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `9e774e69`
+- Built from commit: `1c86fbc1`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -152,7 +152,7 @@
 
 ### Community 0 - "FileStateStore"
 Cohesion: 0.11
-Nodes (14): RLock, FileStateStore, Whether this backend's ``mv`` is a true atomic rename (CR-11)., Return the process-global lock scope for *key* on this store (CR-02). Two…, Hold the per-key lock for *key* so callers serialize a multi-step transaction…, Acquire (lazily creating) the process-global per-key lock, tracking users…, Return the SHA-256-hexdigest (.json) path for *key* (T-07-03 mitigation)., Load the :class:`SyncState` for *key*, or ``None`` if absent. Raises:… (+6 more)
+Nodes (14): RLock, FileStateStore, Whether this backend's ``mv`` is a true atomic rename., Return the process-global lock scope for *key* on this store. Two…, Hold the per-key lock for *key* so callers serialize a multi-step transaction.…, Acquire (lazily creating) the process-global per-key lock, tracking users., Return the SHA-256-hexdigest (.json) path for *key*., Load the :class:`SyncState` for *key*, or ``None`` if absent. Raises:… (+6 more)
 
 ### Community 1 - "sync.py"
 Cohesion: 0.14
@@ -160,19 +160,19 @@ Nodes (30): ParquetRowGroupPosition, Logical position at the next unread Parquet
 
 ### Community 2 - "sync/materialize.py"
 Cohesion: 0.15
-Nodes (35): AbstractFileSystem, Artifact, A strict, immutable schema-v1 materialization envelope., open_filesystem(), Any, Instantiate the correct fsspec backend for *uri* (INFRA-05, D-P3-20). Delegates…, canonical_identity(), Return the SHA-256 canonical identity for *resource*. The identity is… (+27 more)
+Nodes (35): AbstractFileSystem, Artifact, A strict, immutable schema-v1 materialization envelope., open_filesystem(), Any, Instantiate the correct fsspec backend for *uri*. Delegates to…, canonical_identity(), Return the SHA-256 canonical identity for *resource*. The identity is… (+27 more)
 
 ### Community 3 - "ContentCache"
 Cohesion: 0.13
-Nodes (15): Connection, ContentCache, Any, Return the SHA-256 hexdigest of *key* (SEC-06 carry-forward, D-P3-09)., Return the absolute content-file path for a SHA-256 digest., Return cached bytes for *key*, or ``None`` on miss / expiry / writing., Store *data* under *key* (CachePort signature UNCHANGED, D-P3-12)., Store *data* under *key* with ETag/Last-Modified sidecar (D-P3-12). Phase 4's… (+7 more)
+Nodes (15): Connection, ContentCache, Any, Return the SHA-256 hexdigest of *key*., Return the absolute content-file path for a SHA-256 digest., Return cached bytes for *key*, or ``None`` on miss / expiry / writing., Store *data* under *key*., Store *data* under *key* with ETag/Last-Modified sidecar. download-to-cache… (+7 more)
 
 ### Community 4 - "host_provider.py"
 Cohesion: 0.15
-Nodes (11): Lock, Refresher, HostCredentialProvider, datetime, Host-scoped credential resolver with single-flight refresh (INFRA-04).…, Drop the cached credential for *host* (off-port; D-P3-15). Called by…, Resolve a :class:`BaseAuth` per host with cached expiry and single-flight…, Return the per-host lock, creating it if necessary. The dict-level lock is held… (+3 more)
+Nodes (11): Lock, Refresher, HostCredentialProvider, datetime, Host-scoped credential resolver with single-flight refresh.…, Drop the cached credential for *host*. Called by :class:`HttpxTransport` on a…, Resolve a :class:`BaseAuth` per host with cached expiry and single-flight…, Return the per-host lock, creating it if necessary. The dict-level lock is held… (+3 more)
 
 ### Community 5 - "data/access.py"
 Cohesion: 0.12
-Nodes (20): _chain(), _close_source(), _content_encoding_from_headers(), Any, Concrete ``ResourceReader`` implementation with access-kind dispatch (DATA-04,…, Open an already-fetched streaming response through the data plane., Open a seekable Parquet resource from an exact row-group cursor., Dispatch to the format reader and wrap output in BatchStream. (+12 more)
+Nodes (20): _chain(), _close_source(), _content_encoding_from_headers(), Any, Concrete ``ResourceReader`` implementation with access-kind dispatch. The…, Open an already-fetched streaming response through the data plane., Open a seekable Parquet resource from an exact row-group cursor., Dispatch to the format reader and wrap output in BatchStream. (+12 more)
 
 ### Community 6 - "DataSluice (Public API class)"
 Cohesion: 0.05
@@ -184,11 +184,11 @@ Nodes (35): _ApplicationServices, _locator_from_resource(), materialize(), open_
 
 ### Community 8 - "AtomicStateStore"
 Cohesion: 0.13
-Nodes (9): AtomicStateStore, Protocol, State store port Protocols for incremental sync state (SYNC-01). The base…, Boundary protocol for persisting incremental sync state., Additive capability Protocol for compare-and-swap (CAS) state writes…, Return the raw envelope bytes for *key*, or ``None`` if absent. The returned…, Atomically load ``(state, version)`` from one backend read (CR-01). Returns…, Persist *state* under *key* only if the current version matches… (+1 more)
+Nodes (9): AtomicStateStore, Protocol, State store port Protocols for incremental sync state. The base…, Boundary protocol for persisting incremental sync state., Additive capability Protocol for compare-and-swap (CAS) state writes. A…, Return the raw envelope bytes for *key*, or ``None`` if absent. The returned…, Atomically load ``(state, version)`` from one backend read. Returns ``(state,…, Persist *state* under *key* only if the current version matches… (+1 more)
 
 ### Community 9 - "FormatError"
 Cohesion: 0.11
-Nodes (26): BaseFormatReader, ABC, Abstract base class for streaming format readers (D-P4-10). Each reader…, Protocol for decoding a single file format into Arrow ``RecordBatch`` objects.…, CSVReader, Any, Streaming CSV reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).…, Stream a CSV ``BinaryIO`` source into Arrow ``RecordBatch`` objects. Args:… (+18 more)
+Nodes (26): BaseFormatReader, ABC, Abstract base class for streaming format readers. Each reader receives a…, Protocol for decoding a single file format into Arrow ``RecordBatch`` objects.…, CSVReader, Any, Streaming CSV reader yielding Arrow ``RecordBatch``. Migrated from…, Stream a CSV ``BinaryIO`` source into Arrow ``RecordBatch`` objects. Args:… (+18 more)
 
 ### Community 10 - "resolve_one_resource"
 Cohesion: 0.15
@@ -196,15 +196,15 @@ Nodes (16): ParsedLocator, Any, ResourceLocator, Resolve exactly one Resource an
 
 ### Community 11 - "sync/state_store.py"
 Cohesion: 0.33
-Nodes (17): Raised when a state store cannot read or write durable sync state (D-P7-26). A…, StateStoreError, _contains_secret_material(), _is_completed_watermark(), _is_safe_destination_uri(), _is_sha256(), _is_source_version(), Any (+9 more)
+Nodes (17): Raised when a state store cannot read or write durable sync state. A direct…, StateStoreError, _contains_secret_material(), _is_completed_watermark(), _is_safe_destination_uri(), _is_sha256(), _is_source_version(), Any (+9 more)
 
 ### Community 12 - "_identity.py"
 Cohesion: 0.33
-Nodes (5): Canonical resource identity (CR-01 blocker fix, SYNC-05/07). Portal-controlled…, Extract the origin scope for canonical identity hashing. HTTP(S) resources…, Reject duplicate canonical identities before any artifact or state write.…, _url_origin(), validate_unique_identities()
+Nodes (5): Canonical resource identity. Portal-controlled ``resource.id`` was previously…, Extract the origin scope for canonical identity hashing. HTTP(S) resources…, Reject duplicate canonical identities before any artifact or state write.…, _url_origin(), validate_unique_identities()
 
 ### Community 13 - "TransformContext"
 Cohesion: 0.06
-Nodes (43): Raised when a transform step cannot be applied (D-P6-15). Transform failures…, TransformError, __getattr__(), Composable transform pipeline package (TRANS-01..09). Re-exports are resolved…, Lazily export transform symbols (mirrors datasluice.data.__getattr__).…, _build_batch_stream(), _chain(), compose() (+35 more)
+Nodes (43): Raised when a transform step cannot be applied. Transform failures are data-…, TransformError, __getattr__(), Composable transform pipeline package. Re-exports are resolved lazily via PEP…, Lazily export transform symbols (mirrors datasluice.data.__getattr__).…, _build_batch_stream(), _chain(), compose() (+35 more)
 
 ### Community 14 - "artifact.py"
 Cohesion: 0.16
@@ -212,7 +212,7 @@ Nodes (15): ArtifactProvenance, _contract_error(), Digest, _freeze_extensions(),
 
 ### Community 15 - "socrata/adapter.py"
 Cohesion: 0.09
-Nodes (22): _is_set(), Pre-flight reject policy for unsupported ``Query`` filter fields (D-P5-06). The…, Raise ``UnsupportedQueryFieldError`` if *query* uses a field not in…, Return ``True`` when *value* counts as a set filter field. ``None``, empty…, _reject_unsupported_fields(), Socrata adapter implementation. Communicates with the Socrata Discovery API and…, Fetch a dataset (view) by its 4x4 identifier., Return resources for *dataset_id*. (+14 more)
+Nodes (22): _is_set(), Pre-flight reject policy for unsupported ``Query`` filter fields. The reject…, Raise ``UnsupportedQueryFieldError`` if *query* uses a field not in…, Return ``True`` when *value* counts as a set filter field. ``None``, empty…, _reject_unsupported_fields(), Socrata adapter implementation. Communicates with the Socrata Discovery API and…, Fetch a dataset (view) by its 4x4 identifier., Return resources for *dataset_id*. (+14 more)
 
 ### Community 16 - "DataSluiceError"
 Cohesion: 0.09
@@ -224,11 +224,11 @@ Nodes (21): BaseException, Open *resource* as a :class:`BatchStream` of Arrow ``
 
 ### Community 18 - "SyncState"
 Cohesion: 0.21
-Nodes (10): SyncState model for incremental sync cursors and watermarks (SYNC-03)., Incremental synchronization state for a resource or connector. Attributes:…, SyncState, Raised when a state write loses an optimistic compare-and-swap race (D-P7-27).…, SyncStateConflictError, _encode_state(), Persist *state* under *key* via an atomic, optionally CAS-protected write.…, Persist *state* under *key* only if the current version matches… (+2 more)
+Nodes (10): SyncState model for incremental sync cursors and watermarks., Incremental synchronization state for a resource or connector. Attributes:…, SyncState, Raised when a state write loses an optimistic compare-and-swap race. The…, SyncStateConflictError, _encode_state(), Persist *state* under *key* via an atomic, optionally CAS-protected write.…, Persist *state* under *key* only if the current version matches… (+2 more)
 
 ### Community 19 - "detect.py"
 Cohesion: 0.19
-Nodes (13): detect(), _detection_json(), Any, Argument, help, Option, ``datasluice detect`` command — evidence-based portal detection (D-P5-21, D-07)., Serialize one public DetectionResult into a JSON-safe envelope. (+5 more)
+Nodes (13): detect(), _detection_json(), Any, Argument, help, Option, ``datasluice detect`` command — evidence-based portal detection., Serialize one public DetectionResult into a JSON-safe envelope. (+5 more)
 
 ### Community 20 - "ParquetReader"
 Cohesion: 0.27
@@ -260,7 +260,7 @@ Nodes (7): FileCache, Path, A time-based file cache. Args: cache_dir: Directory 
 
 ### Community 27 - "BatchStream"
 Cohesion: 0.08
-Nodes (31): BatchCursor, BatchStream, BatchStream — context-managed Arrow RecordBatch stream (DATA-01, DATA-02,…, Closed continuation cursor for the next unread batch. ``next_batch_index``…, Context-managed Arrow RecordBatch stream. Wraps a ``pa.RecordBatchReader``…, Any, to_arrow terminal: materialize a BatchStream into a pa.Table (INTG-01,…, Materialize *stream* into a ``pa.Table`` (INTG-01, D-P6-02). The shared… (+23 more)
+Nodes (31): BatchCursor, BatchStream, BatchStream — context-managed Arrow RecordBatch stream. A concrete wrapper…, Closed continuation cursor for the next unread batch. ``next_batch_index``…, Context-managed Arrow RecordBatch stream. Wraps a ``pa.RecordBatchReader``…, Any, to_arrow terminal: materialize a BatchStream into a pa.Table. The shared…, Materialize *stream* into a ``pa.Table``. The shared substrate the other… (+23 more)
 
 ### Community 28 - "HttpClient"
 Cohesion: 0.29
@@ -276,7 +276,7 @@ Nodes (24): Response, _parse_retry_after(), Parse a ``Retry-After`` header into 
 
 ### Community 31 - "FsspecStorage"
 Cohesion: 0.14
-Nodes (11): FsspecStorage, _has_parent_segments(), Any, fsspec-backed storage adapter satisfying :class:`StoragePort` (INFRA-02,…, Adapter wrapping an fsspec ``AbstractFileSystem`` to satisfy ``StoragePort``…, Persist *data* under *path* and return the resulting URI string. Args: data:…, Read and return the bytes stored under *path*., Return ``True`` if *path* exists in this filesystem. (+3 more)
+Nodes (11): FsspecStorage, _has_parent_segments(), Any, fsspec-backed storage adapter satisfying :class:`StoragePort`. Closes by…, Adapter wrapping an fsspec ``AbstractFileSystem`` to satisfy ``StoragePort``.…, Persist *data* under *path* and return the resulting URI string. Args: data:…, Read and return the bytes stored under *path*., Return ``True`` if *path* exists in this filesystem. (+3 more)
 
 ### Community 32 - "PluginManager"
 Cohesion: 0.14
@@ -296,11 +296,11 @@ Nodes (30): CKANAdapter, CKAN adapter implementation. Communicates with the CKAN
 
 ### Community 36 - "StoragePort"
 Cohesion: 0.25
-Nodes (4): Protocol, Storage port Protocol returning URI references (CORR-05)., Boundary protocol for byte storage addressed by path/URI strings., StoragePort
+Nodes (4): Protocol, Storage port Protocol returning URI references., Boundary protocol for byte storage addressed by path/URI strings., StoragePort
 
 ### Community 37 - "content_cache.py"
 Cohesion: 0.29
-Nodes (6): Content-addressed cache backed by a SQLite WAL index + content files…, Centralised filesystem factory (INFRA-05). All fsspec backend instantiation…, Best-effort removal of *path* on *fs*; ignore absence and secondary OSError.…, safe_remove(), __getattr__(), Lazily export ContentCache, FsspecStorage, and open_filesystem (D-P3-01 lazy…
+Nodes (6): Content-addressed cache backed by a SQLite WAL index + content files. The…, Centralised filesystem factory. All fsspec backend instantiation flows through…, Best-effort removal of *path* on *fs*; ignore absence and secondary OSError.…, safe_remove(), __getattr__(), Lazily export ContentCache, FsspecStorage, and open_filesystem. Importing any…
 
 ### Community 38 - "render_json"
 Cohesion: 0.15
@@ -312,7 +312,7 @@ Nodes (12): ChecksumMismatchError, Raised when a downloaded file's checksum does
 
 ### Community 40 - "InMemoryStateStore"
 Cohesion: 0.29
-Nodes (4): InMemoryStateStore, Ephemeral in-process :class:`StateStore` backed by a plain dict (D-P7-02).…, Store *state* under *key* (last-writer-wins; ephemeral)., Remove *key* if present; a missing key is tolerated.
+Nodes (4): InMemoryStateStore, Ephemeral in-process :class:`StateStore` backed by a plain dict. State dies…, Store *state* under *key* (last-writer-wins; ephemeral)., Remove *key* if present; a missing key is tolerated.
 
 ### Community 41 - "load_fixture"
 Cohesion: 0.36
@@ -320,7 +320,7 @@ Nodes (7): load_fixture(), load_fixture_set(), Any, Path, Fixture loading helper
 
 ### Community 42 - "Transport"
 Cohesion: 0.24
-Nodes (7): AbstractContextManager, Any, Protocol, Transport boundary Protocol satisfied structurally by HTTP clients., Streaming transport boundary Protocol (D-P3-06/D-P3-07). `stream(url)` returns…, StreamingTransport, Transport
+Nodes (7): AbstractContextManager, Any, Protocol, Transport boundary Protocol satisfied structurally by HTTP clients., Streaming transport boundary Protocol. `stream(url)` returns a context manager…, StreamingTransport, Transport
 
 ### Community 43 - "search.py"
 Cohesion: 0.20
@@ -356,15 +356,15 @@ Nodes (4): BasicAuth, Any, HTTP Basic authentication strategy., Authenticate req
 
 ### Community 51 - "Schema"
 Cohesion: 0.21
-Nodes (9): Any, Domain Schema → Arrow Schema mapper and batch unification helper. The…, Derive a ``pa.Schema`` from a domain :class:`Schema` for display. Maps known…, Concatenate ``RecordBatch`` objects under a unified ``pa.Schema`` (DATA-08,…, to_arrow_schema(), unify_batches(), Schema model describing the column-level shape of a resource., Schema describing the columns of a tabular resource. Attributes: name: Logical… (+1 more)
+Nodes (9): Any, Domain Schema → Arrow Schema mapper and batch unification helper. The…, Derive a ``pa.Schema`` from a domain :class:`Schema` for display. Maps known…, Concatenate ``RecordBatch`` objects under a unified ``pa.Schema``. Delegates…, to_arrow_schema(), unify_batches(), Schema model describing the column-level shape of a resource., Schema describing the columns of a tabular resource. Attributes: name: Logical… (+1 more)
 
 ### Community 52 - "_effective_origin"
 Cohesion: 0.33
-Nodes (5): _default_port(), _effective_origin(), Return whether sensitive headers must be stripped on this redirect hop. Mirrors…, Return the IANA default port for *scheme*, or ``None`` when unknown (CR-06)., Return ``(scheme, hostname, effective_port)`` for a parsed URL (CR-06).…
+Nodes (5): _default_port(), _effective_origin(), Return whether sensitive headers must be stripped on this redirect hop. Mirrors…, Return the IANA default port for *scheme*, or ``None`` when unknown., Return ``(scheme, hostname, effective_port)`` for a parsed URL.…
 
 ### Community 53 - "ResourceAccess"
 Cohesion: 0.13
-Nodes (22): map_dataset(), map_organization(), map_resource(), Any, Mapping functions to convert Socrata-native JSON into domain models., Resolve the resource access descriptor per D-P5-02 for Socrata views. Socrata…, Best-effort schema extraction per D-P5-03 for Socrata views. Socrata's catalog…, Convert a Socrata view/resource dict into a :class:`Resource`. Populates… (+14 more)
+Nodes (22): map_dataset(), map_organization(), map_resource(), Any, Mapping functions to convert Socrata-native JSON into domain models., Resolve the resource access descriptor for Socrata views. Socrata catalog…, Best-effort schema extraction for Socrata views. Socrata's catalog payload…, Convert a Socrata view/resource dict into a :class:`Resource`. Populates… (+14 more)
 
 ### Community 54 - "BearerAuth"
 Cohesion: 0.25
@@ -392,7 +392,7 @@ Nodes (5): pre-commit-hooks (basic hooks), pytest testing framework, Ruff linter
 
 ### Community 61 - ".iter_batches_with_cursors"
 Cohesion: 0.18
-Nodes (6): Any, Yield batches with the closed cursor for the next unread row group. In…, Release the underlying reader and any owned closeables; idempotent (WR-02).…, Return a PyCapsule for zero-copy Arrow interop (Phase 6 terminals). Delegates…, The pa.Schema for batches yielded by this stream., Yield Arrow ``RecordBatch`` objects from the wrapped source. When ``indexed``…
+Nodes (6): Any, Yield batches with the closed cursor for the next unread row group. In…, Release the underlying reader and any owned closeables; idempotent. Every owned…, Return a PyCapsule for zero-copy Arrow interop (terminals). Delegates to the…, The pa.Schema for batches yielded by this stream., Yield Arrow ``RecordBatch`` objects from the wrapped source. When ``indexed``…
 
 ### Community 62 - "httpx_transport.py"
 Cohesion: 0.10
@@ -404,7 +404,7 @@ Nodes (9): DataGouvAdapter, Adapter for data.gouv.fr and other udata-powered por
 
 ### Community 64 - "DataSluice"
 Cohesion: 0.20
-Nodes (11): DataSluice, Canonical public facade for discovery, resource access, and materialization., download(), Argument, help, Option, Path, ``datasluice download`` command — raw bulk copy (D-15). (+3 more)
+Nodes (11): DataSluice, Canonical public facade for discovery, resource access, and materialization., download(), Argument, help, Option, Path, ``datasluice download`` command — raw bulk copy. (+3 more)
 
 ### Community 65 - "SECURITY.md"
 Cohesion: 0.67
@@ -456,11 +456,11 @@ Nodes (14): DownloadError, Raised when a resource download fails., Simple file-b
 
 ### Community 96 - "geojson.py"
 Cohesion: 0.23
-Nodes (11): _batch_from_rows(), _fmt_coord(), GeoJSONReader, Any, Streaming GeoJSON reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-11).…, Format a coordinate value: integers without trailing ``.0``; floats as-is., Stream a GeoJSON ``BinaryIO`` source into Arrow ``RecordBatch`` objects. Each…, Yield ``RecordBatch`` objects by flattening GeoJSON Features. Args: source: A… (+3 more)
+Nodes (11): _batch_from_rows(), _fmt_coord(), GeoJSONReader, Any, Streaming GeoJSON reader yielding Arrow ``RecordBatch``. Migrated from…, Format a coordinate value: integers without trailing ``.0``; floats as-is., Stream a GeoJSON ``BinaryIO`` source into Arrow ``RecordBatch`` objects. Each…, Yield ``RecordBatch`` objects by flattening GeoJSON Features. Args: source: A… (+3 more)
 
 ### Community 98 - "CatalogCapabilities"
 Cohesion: 0.40
-Nodes (3): CatalogCapabilities, CatalogCapabilities model — query-field-level capability contract (D-07)., Capabilities a catalog connector advertises to the runtime. Phase 5's reject…
+Nodes (3): CatalogCapabilities, CatalogCapabilities model — query-field-level capability contract., Capabilities a catalog connector advertises to the runtime. reject policy reads…
 
 ### Community 106 - "Downloader"
 Cohesion: 0.14
@@ -468,11 +468,11 @@ Nodes (11): Downloader, Path, Download multiple *resources* into *dest*., Downlo
 
 ### Community 115 - "IterableBytesIO"
 Cohesion: 0.10
-Nodes (12): IO, RawIOBase, IterableBytesIO, WriteableBuffer, IterableBytesIO — adapt an ``Iterable[bytes]`` into a non-seekable BinaryIO…, Mark the stream closed and exhaust the iterator., Wrap an ``Iterable[bytes]`` into a non-seekable ``BinaryIO``. The canonical use…, Read up to ``len(b)`` bytes into the provided buffer. Args: b: A writable… (+4 more)
+Nodes (12): IO, RawIOBase, IterableBytesIO, WriteableBuffer, IterableBytesIO — adapt an ``Iterable[bytes]`` into a non-seekable BinaryIO.…, Mark the stream closed and exhaust the iterator., Wrap an ``Iterable[bytes]`` into a non-seekable ``BinaryIO``. The canonical use…, Read up to ``len(b)`` bytes into the provided buffer. Args: b: A writable… (+4 more)
 
 ### Community 117 - "session.py"
 Cohesion: 0.15
-Nodes (15): DataPlaneResourceReader, Concrete ``ResourceReader`` implementing access-kind dispatch (DATA-04). Args:…, PortalDetectionError, Raised when the portal type cannot be auto-detected. Attributes:…, DataSluiceSession, Any, DataSluiceSession — internal composition substrate (ARCH-03). The session wires…, Resolve and construct a connector for *url*. Auto-detects the portal type via… (+7 more)
+Nodes (15): DataPlaneResourceReader, Concrete ``ResourceReader`` implementing access-kind dispatch. Args: transport:…, PortalDetectionError, Raised when the portal type cannot be auto-detected. Attributes:…, DataSluiceSession, Any, DataSluiceSession — internal composition substrate. The session wires…, Resolve and construct a connector for *url*. Auto-detects the portal type via… (+7 more)
 
 ### Community 119 - ".read_batches"
 Cohesion: 0.25
@@ -480,7 +480,7 @@ Nodes (6): Any, Read *source* and yield Arrow ``RecordBatch`` objects. Args: sou
 
 ### Community 125 - "StreamResponse"
 Cohesion: 0.17
-Nodes (8): ConditionalFetchResult, ConditionalTransport, Transport port Protocols for HTTP-like request execution. Three narrow runtime-…, Result of a conditional resource fetch (D-P7-15/D-P7-16). A 304 Not Modified…, Optional transport capability for ETag/Last-Modified conditional GETs…, Backend-agnostic streaming response wrapper (D-P3-07). Iterable for byte chunks…, Release the underlying httpx response., StreamResponse
+Nodes (8): ConditionalFetchResult, ConditionalTransport, Transport port Protocols for HTTP-like request execution. Three narrow runtime-…, Result of a conditional resource fetch. A 304 Not Modified response is a normal…, Optional transport capability for ETag/Last-Modified conditional GETs.…, Backend-agnostic streaming response wrapper. Iterable for byte chunks (via…, Release the underlying httpx response., StreamResponse
 
 ### Community 126 - "auth/__init__.py"
 Cohesion: 0.22
@@ -488,7 +488,7 @@ Nodes (5): APIKeyAuth, Any, API-key authentication strategy. Supports passing th
 
 ### Community 130 - "discovery/detector.py"
 Cohesion: 0.11
-Nodes (19): detect_portal(), Detect a portal through caller-supplied infrastructure., Run injected portal detection without facade-specific mapping., Detect a portal through the session's injected infrastructure., detect(), _normalize_base_url(), Evidence-based portal type detection (D-P5-15/16/17/18). The detector probes…, Ensure *url* has a scheme and no trailing slash. (+11 more)
+Nodes (19): detect_portal(), Detect a portal through caller-supplied infrastructure., Run injected portal detection without facade-specific mapping., Detect a portal through the session's injected infrastructure., detect(), _normalize_base_url(), Evidence-based portal type detection. The detector probes well-known API…, Ensure *url* has a scheme and no trailing slash. (+11 more)
 
 ## Knowledge Gaps
 - **21 isolated node(s):** `Funding Config (Buy Me a Coffee: nitishraj)`, `Bug Report Issue Template`, `Issue Template Config (blank issues enabled)`, `Feature Request Issue Template`, `CI Lint & format job (ruff)` (+16 more)
