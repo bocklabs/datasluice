@@ -20,7 +20,7 @@ jobs:
     name: AI code review
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    if: github.event_name == 'pull_request_target' && github.actor != 'renovate[bot]' && github.actor != 'dependabot[bot]'
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.user.type != 'Bot'
     steps:
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@4bcc95acecd629e64ea984c962cfd08dd892a38e # v1.8.10
