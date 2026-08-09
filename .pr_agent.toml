@@ -2,6 +2,9 @@
 custom_model_max_tokens = 262000
 propagate_tool_errors = true
 
+[pr_description]
+extra_instructions = "Ignore the graphify-out/ directory entirely. Do not describe, summarize, walk through, or reference any files under graphify-out/ — these are auto-generated knowledge-graph artifacts."
+
 [github_action_config]
 auto_describe = true
 auto_review = false
