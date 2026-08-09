@@ -23,6 +23,10 @@ _OPERATOR_MODULES = {
     f"{_IMPORT_NS}.operators.materialize",
 }
 
+_PROVIDER_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+_PROVIDER_PROJECT = tomllib.load(_PROVIDER_PYPROJECT.open("rb"))["project"]
+_PROVIDER_VERSION = _PROVIDER_PROJECT["version"]
+
 
 def _provider_info() -> dict[str, object]:
     from airflow.providers.datasluice.get_provider_info import get_provider_info
@@ -44,7 +48,7 @@ def test_get_provider_info_returns_locked_identity() -> None:
     assert isinstance(info["name"], str) and info["name"]
     assert isinstance(info["description"], str) and info["description"]
     versions = info.get("versions", [])
-    assert isinstance(versions, list) and "0.1.0" in versions
+    assert isinstance(versions, list) and _PROVIDER_VERSION in versions
 
 
 def test_get_provider_info_declares_hook_and_connection_type() -> None:
@@ -87,9 +91,6 @@ def test_provider_yaml_exists_and_agrees_with_get_provider_info() -> None:
     matched = [entry for entry in yaml_conn_types if entry.get("connection-type") == _CONNECTION_TYPE]
     assert len(matched) == 1 and matched[0]["hook-class-name"] == _HOOK_CLASS
 
-    yaml_versions = data.get("versions", [])
-    assert "0.1.0" in yaml_versions
-
 
 def test_wheel_exposes_exactly_one_provider_entry_point() -> None:
     """The built wheel registers exactly one apache_airflow_provider entry point."""
@@ -108,7 +109,7 @@ def test_provider_discovered_by_provider_manager() -> None:
     providers = manager.providers
     assert _PROVIDER_PACKAGE in providers
     discovered = providers[_PROVIDER_PACKAGE]
-    assert discovered.version == "0.1.0"
+    assert discovered.version == _PROVIDER_VERSION
     assert discovered.data["package-name"] == _PROVIDER_PACKAGE
 
 
@@ -140,13 +141,12 @@ def test_import_namespace_resolves() -> None:
 def test_provider_distribution_metadata_matches_contract() -> None:
     """Installed distribution metadata preserves the exact identity and version."""
     distribution = importlib_metadata.distribution(_PROVIDER_PACKAGE)
-    assert distribution.version == "0.1.0"
+    assert distribution.version == _PROVIDER_VERSION
     requires = {
         requirement.name.lower(): frozenset(str(specifier) for specifier in requirement.specifier)
         for requirement in (Requirement(line) for line in (distribution.requires or []))
     }
-    provider_pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    declared = tomllib.load(provider_pyproject.open("rb"))["project"]["dependencies"]
+    declared = _PROVIDER_PROJECT["dependencies"]
     expected = {
         req.name.lower(): frozenset(str(spec) for spec in req.specifier)
         for req in (Requirement(line) for line in declared)

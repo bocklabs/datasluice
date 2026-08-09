@@ -7,6 +7,7 @@ no Connection lookup, network I/O, or private-core import.
 
 from __future__ import annotations
 
+import importlib.metadata
 from typing import Any
 
 _PROVIDER_PACKAGE = "apache-airflow-providers-datasluice"
@@ -29,7 +30,7 @@ def get_provider_info() -> dict[str, Any]:
         "package-name": _PROVIDER_PACKAGE,
         "name": _PROVIDER_NAME,
         "description": _PROVIDER_DESCRIPTION,
-        "versions": ["0.1.0"],
+        "versions": [importlib.metadata.version(_PROVIDER_PACKAGE)],
         "operators": [
             {
                 "integration-name": _PROVIDER_NAME,
