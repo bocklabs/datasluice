@@ -25,7 +25,7 @@ This project ships with security hardening out of the box:
 
 This is a volunteer-maintained open source project. Security reports are taken seriously, but there are no guaranteed response times.
 
-**Enterprise support** is available, with priority response SLAs. Contact contact@rajnitish.com for details.
+**Enterprise support** is available, with priority response SLAs. Contact contact@bocklabs.com for details.
 
 ## Supported Versions
 

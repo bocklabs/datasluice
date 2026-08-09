@@ -37,6 +37,14 @@ repos:
         types: [python]
         pass_filenames: false
 
+      - id: graphify
+        name: graphify knowledge graph rebuild
+        entry: graphify update .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [post-commit, post-checkout]
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
