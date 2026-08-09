@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datasluice"
-version = "0.2.0"
+version = "0.2.1"
 description = "One Python interface for open-data discovery, extraction, format normalization, and pipeline integration"
 readme = "README.md"
 authors = [
