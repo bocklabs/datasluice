@@ -63,6 +63,10 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.core--release_created == 'true'
     uses: ./.github/workflows/publish.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     with:
       component: core
       package_path: .
@@ -82,6 +86,10 @@ jobs:
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     uses: ./.github/workflows/publish.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     with:
       component: ${{ matrix.provider.slug }}
       package_path: ${{ matrix.provider.path }}
