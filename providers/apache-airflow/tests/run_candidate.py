@@ -33,9 +33,18 @@ _CORE_NAME = "datasluice"
 _PROVIDER_NAME = "apache-airflow-providers-datasluice"
 _PROVIDER_VERSION = "0.1.0"
 _PROVIDER_REQUIRES = {
-    "datasluice": ">=1.0,<2",
+    "datasluice": ">=0.2,<1",
     "apache-airflow": ">=3.2,<4",
 }
+
+
+def _read_core_version() -> str:
+    """Read the core ``datasluice`` version from the root pyproject.toml."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if not match:
+        raise RuntimeError("could not read version from core pyproject.toml")
+    return match.group(1)
 
 
 def _normalize_requires(lines: list[str]) -> dict[str, str]:
@@ -66,10 +75,11 @@ def main(argv: list[str] | None = None) -> int:
         ``0`` on success, or the test command's exit code on failure.
     """
     args, command = _parse_args(argv)
+    core_version = args.core_version or _read_core_version()
     with tempfile.TemporaryDirectory(prefix="datasluice-candidate-") as tmp:
         tmp_dir = Path(tmp)
-        core_wheel = _build_core_candidate(tmp_dir / "core", tmp_dir / "dist-core", args.core_version)
-        _validate_core_wheel(core_wheel, args.core_version)
+        core_wheel = _build_core_candidate(tmp_dir / "core", tmp_dir / "dist-core", core_version)
+        _validate_core_wheel(core_wheel, core_version)
         provider_wheel = _build_provider_wheel()
         _validate_provider_wheel(provider_wheel)
         return _run_in_clean_venv(core_wheel, provider_wheel, args.airflow_version, command)
@@ -84,17 +94,18 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  %(prog)s --core-version 1.0.0 --airflow-version 3.2.2 "
-            "-- pytest providers/apache-airflow/tests -x\n"
             "  %(prog)s --airflow-version 3.2.2 "
+            "-- pytest providers/apache-airflow/tests -x\n"
+            "  %(prog)s --core-version 0.3.0 --airflow-version 3.2.2 "
             '-- python -c "import airflow.providers.datasluice"\n\n'
+            "The core candidate version defaults to the version in the root pyproject.toml; "
             "datasluice is never resolved from an index or checkout."
         ),
     )
     parser.add_argument(
         "--core-version",
-        default="1.0.0",
-        help="core datasluice candidate version to build and install (default: 1.0.0)",
+        default=None,
+        help="core datasluice candidate version to build and install (default: version from root pyproject.toml)",
     )
     parser.add_argument(
         "--airflow-version",

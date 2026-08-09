@@ -69,13 +69,18 @@ jobs:
           python - <<'PY'
           import json
           import itertools
+          import re
+          from pathlib import Path
           with open("providers/apache-airflow/compatibility.json", encoding="utf-8") as fh:
               manifest = json.load(fh)
+          core_version = re.search(
+              r'^version\s*=\s*"([^"]+)"',
+              Path("pyproject.toml").read_text(encoding="utf-8"),
+              re.MULTILINE,
+          ).group(1)
           include = [
-              {"core_version": core, "airflow": airflow, "python": minor}
-              for core, airflow, minor in itertools.product(
-                  manifest["core"], manifest["airflow"], manifest["python"]
-              )
+              {"core_version": core_version, "airflow": airflow, "python": minor}
+              for airflow, minor in itertools.product(manifest["airflow"], manifest["python"])
           ]
           with open("/tmp/provider-matrix.json", "w", encoding="utf-8") as fh:
               json.dump({"include": include}, fh)
@@ -181,7 +186,6 @@ jobs:
       - name: Run provider suite under coverage
         run: |
           uv run python providers/apache-airflow/tests/run_candidate.py \
-            --core-version 1.0.0 \
             --airflow-version 3.2.2 \
             -- --cover-provider providers/apache-airflow/tests -q
 
@@ -256,7 +260,6 @@ jobs:
       - name: Import sample DAG from installed wheels
         run: |
           uv run --python=${{ matrix.python-version }} python providers/apache-airflow/tests/run_candidate.py \
-            --core-version 1.0.0 \
             --airflow-version 3.2.2 \
             -- python providers/apache-airflow/tests/dags/example_datasluice.py
 

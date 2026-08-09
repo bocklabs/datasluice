@@ -21,7 +21,8 @@
   ],
   "packages": {
     ".": {
-      "component": "datasluice"
+      "component": "datasluice",
+      "extra-files": ["uv.lock"]
     },
     "providers/apache-airflow": {
       "component": "apache-airflow-providers-datasluice",
