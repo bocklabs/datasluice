@@ -8,7 +8,7 @@ the exact local core/provider wheel paths plus the requested Apache Airflow
 version, rejects any ``datasluice`` that did not come from the local core
 wheel, and then executes the supplied test command.
 
-Plan 08-07 performs the first source-bearing provider build and installed
+-07 performs the first source-bearing provider build and installed
 run after it creates the ``airflow.providers.datasluice`` source package.
 """
 
@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import zipfile
 from email.message import Message
 from email.parser import Parser
@@ -30,12 +31,26 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _CORE_NAME = "datasluice"
-_PROVIDER_NAME = "apache-airflow-providers-datasluice"
-_PROVIDER_VERSION = "0.1.0"
-_PROVIDER_REQUIRES = {
-    "datasluice": ">=1.0,<2",
-    "apache-airflow": ">=3.2,<4",
-}
+_PROVIDER_DIR = REPO_ROOT / "providers" / "apache-airflow"
+
+
+def _load_provider_pyproject() -> dict:
+    """Load the provider pyproject.toml (single source of truth for name/version/deps)."""
+    with (_PROVIDER_DIR / "pyproject.toml").open("rb") as fh:
+        return tomllib.load(fh)
+
+
+_PROVIDER_PROJECT = _load_provider_pyproject()["project"]
+_PROVIDER_NAME = _PROVIDER_PROJECT["name"]
+
+
+def _read_core_version() -> str:
+    """Read the core ``datasluice`` version from the root pyproject.toml."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if not match:
+        raise RuntimeError("could not read version from core pyproject.toml")
+    return match.group(1)
 
 
 def _normalize_requires(lines: list[str]) -> dict[str, str]:
@@ -66,10 +81,11 @@ def main(argv: list[str] | None = None) -> int:
         ``0`` on success, or the test command's exit code on failure.
     """
     args, command = _parse_args(argv)
+    core_version = args.core_version or _read_core_version()
     with tempfile.TemporaryDirectory(prefix="datasluice-candidate-") as tmp:
         tmp_dir = Path(tmp)
-        core_wheel = _build_core_candidate(tmp_dir / "core", tmp_dir / "dist-core", args.core_version)
-        _validate_core_wheel(core_wheel, args.core_version)
+        core_wheel = _build_core_candidate(tmp_dir / "core", tmp_dir / "dist-core", core_version)
+        _validate_core_wheel(core_wheel, core_version)
         provider_wheel = _build_provider_wheel()
         _validate_provider_wheel(provider_wheel)
         return _run_in_clean_venv(core_wheel, provider_wheel, args.airflow_version, command)
@@ -84,17 +100,18 @@ def _parse_args(argv: list[str] | None) -> tuple[argparse.Namespace, list[str]]:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
-            "  %(prog)s --core-version 1.0.0 --airflow-version 3.2.2 "
-            "-- pytest providers/apache-airflow/tests -x\n"
             "  %(prog)s --airflow-version 3.2.2 "
+            "-- pytest providers/apache-airflow/tests -x\n"
+            "  %(prog)s --core-version 0.3.0 --airflow-version 3.2.2 "
             '-- python -c "import airflow.providers.datasluice"\n\n'
+            "The core candidate version defaults to the version in the root pyproject.toml; "
             "datasluice is never resolved from an index or checkout."
         ),
     )
     parser.add_argument(
         "--core-version",
-        default="1.0.0",
-        help="core datasluice candidate version to build and install (default: 1.0.0)",
+        default=None,
+        help="core datasluice candidate version to build and install (default: version from root pyproject.toml)",
     )
     parser.add_argument(
         "--airflow-version",
@@ -188,12 +205,12 @@ def _validate_provider_wheel(wheel: Path) -> None:
     meta = _read_metadata(wheel)
     if meta["Name"] != _PROVIDER_NAME:
         raise RuntimeError(f"provider wheel Name={meta['Name']!r}, expected {_PROVIDER_NAME!r}")
-    if meta["Version"] != _PROVIDER_VERSION:
-        raise RuntimeError(f"provider wheel Version={meta['Version']!r}, expected {_PROVIDER_VERSION!r}")
+    if meta["Version"] != _PROVIDER_PROJECT["version"]:
+        raise RuntimeError(f"provider wheel Version={meta['Version']!r}, expected {_PROVIDER_PROJECT['version']!r}")
     actual = _normalize_requires(meta.get_all("Requires-Dist") or [])
-    expected = _normalize_requires(list(f"{name}{specifier}" for name, specifier in _PROVIDER_REQUIRES.items()))
+    expected = _normalize_requires(_PROVIDER_PROJECT["dependencies"])
     missing = {name: spec for name, spec in expected.items() if name not in actual or actual[name] != spec}
-    extra = {name: spec for name, spec in actual.items() if name not in _PROVIDER_REQUIRES}
+    extra = {name: spec for name, spec in actual.items() if name not in expected}
     if missing or extra:
         raise RuntimeError(
             f"provider Requires-Dist mismatch: missing={sorted(missing.items())}, extra={sorted(extra.items())}"

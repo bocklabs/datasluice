@@ -1,8 +1,8 @@
-"""Unit tests for the unsupported-query-field reject policy (D-P5-06/07/09, ARCH-08).
+"""Unit tests for the unsupported-query-field reject policy.
 
-Follows the Phase 03/04 RED->GREEN TDD pattern: the module skips cleanly at
+Follows the RED->GREEN TDD pattern: the module skips cleanly at
 collection time while the reject helper / exception / capabilities are not yet
-implemented, then runs and passes once Task 1 GREEN lands the real code.
+implemented, then runs and passes once GREEN lands the real code.
 """
 
 from __future__ import annotations

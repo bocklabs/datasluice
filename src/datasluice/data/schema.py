@@ -1,11 +1,11 @@
 """Domain Schema → Arrow Schema mapper and batch unification helper.
 
-The :func:`to_arrow_schema` mapper (DATA-07, D-P4-01) derives a ``pa.Schema``
+The :func:`to_arrow_schema` mapper derives a ``pa.Schema``
 from a domain :class:`~datasluice.domain.schema.Schema` for DISPLAY purposes
 — advisory only, NOT enforced. Readers infer the Arrow schema from actual
-data bytes (D-P4-02).
+data bytes.
 
-The :func:`unify_batches` helper (DATA-08, D-P4-03) concatenates a sequence
+The :func:`unify_batches` helper concatenates a sequence
 of ``RecordBatch`` objects under a unified schema by delegating entirely to
 ``pa.concat_tables`` with ``promote_options="permissive"``. datasluice does
 NOT hand-roll an Arrow type lattice — pyarrow owns promotion (RESEARCH
@@ -76,53 +76,53 @@ def to_arrow_schema(domain_schema: Schema) -> Any:
 
 
 def unify_batches(batches: Iterable[Any]) -> Any:
-    """Concatenate ``RecordBatch`` objects under a unified ``pa.Schema`` (DATA-08, D-P4-03).
+    """Concatenate ``RecordBatch`` objects under a unified ``pa.Schema``.
 
-    Delegates ENTIRELY to ``pa.concat_tables`` with
-    ``promote_options="permissive"`` — datasluice does NOT hand-roll an
-    Arrow type lattice (RESEARCH Anti-Patterns explicitly forbids it).
-    pyarrow's promotion semantics are the contract; this function wraps
-    them with a clear error message and the project's
-    :class:`SchemaUnificationError` type.
+        Delegates ENTIRELY to ``pa.concat_tables`` with
+        ``promote_options="permissive"`` — datasluice does NOT hand-roll an
+        Arrow type lattice (RESEARCH Anti-Patterns explicitly forbids it).
+        pyarrow's promotion semantics are the contract; this function wraps
+        them with a clear error message and the project's
+        :class:`SchemaUnificationError` type.
 
-    Promotion lattice (the pyarrow ``permissive`` contract, documented for
-    callers — D-P4-03):
+        Promotion lattice (the pyarrow ``permissive`` contract, documented for
+        callers — ):
 
-    - **int widens to float:** a column that is ``int64`` in one batch and
-      ``float64`` in another unifies to ``float64`` (values preserved).
-    - **missing columns null-fill:** a column absent from one batch but
-      present in another is added to the unified schema with ``null``
-      values where data was absent.
-    - **string + binary → binary:** a column that is ``string`` in one
-      batch and ``binary`` in another unifies to ``binary`` — the lossy
-      direction. ``binary`` is the safe merge because ``string`` asserts
-      UTF-8 validity and ``binary`` does not, so ``binary`` can hold
-      anything ``string`` can (RESEARCH Pitfall 6).
-    - **tz-aware vs tz-naive timestamps: HARD FAIL.** pyarrow cannot
-      reconcile a timezone-aware timestamp with a timezone-naive one even
-      under ``permissive`` promotion; this function raises
-      :class:`SchemaUnificationError` (the proper fix is the Phase 6
-      ``NormalizeTimestamps`` transform — out of scope here).
-    - **struct field mismatch: HARD FAIL.** Differing struct field sets
-      or types cannot be unified; surfaces as :class:`SchemaUnificationError`.
+        - **int widens to float:** a column that is ``int64`` in one batch and
+          ``float64`` in another unifies to ``float64`` (values preserved).
+        - **missing columns null-fill:** a column absent from one batch but
+          present in another is added to the unified schema with ``null``
+          values where data was absent.
+        - **string + binary → binary:** a column that is ``string`` in one
+          batch and ``binary`` in another unifies to ``binary`` — the lossy
+          direction. ``binary`` is the safe merge because ``string`` asserts
+          UTF-8 validity and ``binary`` does not, so ``binary`` can hold
+          anything ``string`` can.
+        - **tz-aware vs tz-naive timestamps: HARD FAIL.** pyarrow cannot
+          reconcile a timezone-aware timestamp with a timezone-naive one even
+          under ``permissive`` promotion; this function raises
+          :class:`SchemaUnificationError` (the proper fix is the
+          ``NormalizeTimestamps`` transform — out of scope here).
+        - **struct field mismatch: HARD FAIL.** Differing struct field sets
+          or types cannot be unified; surfaces as :class:`SchemaUnificationError`.
 
-    ``promote_options`` is set to the string ``"permissive"`` (the most
-    lenient valid option in pyarrow 24.0.0). The values ``"warn"`` and
-    ``"ignore"`` are INVALID in pyarrow 24.0.0 — they raise ``ValueError``
-    (RESEARCH Pitfall 3 verified). datasluice never uses them.
+        ``promote_options`` is set to the string ``"permissive"`` (the most
+        lenient valid option in pyarrow 24.0.0). The values ``"warn"`` and
+        ``"ignore"`` are INVALID in pyarrow 24.0.0 — they raise ``ValueError``
+    . datasluice never uses them.
 
-    Args:
-        batches: An iterable of ``pa.RecordBatch`` objects with potentially
-            heterogeneous schemas.
+        Args:
+            batches: An iterable of ``pa.RecordBatch`` objects with potentially
+                heterogeneous schemas.
 
-    Returns:
-        A ``pa.Table`` containing all rows from all batches under a unified
-        schema determined by pyarrow's ``permissive`` promotion rules.
+        Returns:
+            A ``pa.Table`` containing all rows from all batches under a unified
+            schema determined by pyarrow's ``permissive`` promotion rules.
 
-    Raises:
-        SchemaUnificationError: If pyarrow cannot reconcile the batch
-            schemas (tz-aware vs tz-naive timestamps, struct field
-            mismatch, or any other unreconcilable type conflict).
+        Raises:
+            SchemaUnificationError: If pyarrow cannot reconcile the batch
+                schemas (tz-aware vs tz-naive timestamps, struct field
+                mismatch, or any other unreconcilable type conflict).
     """
     import pyarrow as pa
 
@@ -135,5 +135,5 @@ def unify_batches(batches: Iterable[Any]) -> Any:
         raise SchemaUnificationError(
             f"Cannot unify batch schemas with promote_options='permissive': {exc}. "
             "Common causes: tz-aware vs tz-naive timestamp columns; struct field mismatch. "
-            "Normalize timestamps (Phase 6 NormalizeTimestamps) before unifying."
+            "Normalize timestamps (NormalizeTimestamps transform) before unifying."
         ) from exc

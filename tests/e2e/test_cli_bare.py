@@ -1,4 +1,4 @@
-"""Installed-wheel E2E for a bare (no-extras) core install (D-31).
+"""Installed-wheel E2E for a bare (no-extras) core install.
 
 A bare ``datasluice`` wheel must install, expose its console script, and run
 commands that do not require optional data-plane extras (http/parquet/storage).

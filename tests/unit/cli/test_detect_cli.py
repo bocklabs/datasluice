@@ -1,4 +1,4 @@
-"""Tests for the ``datasluice detect`` CLI command (D-P5-21, facade-only D-07/APP-08).
+"""Tests for the ``datasluice detect`` CLI command.
 
 Covers:
 
@@ -82,7 +82,7 @@ def test_undetected_exit_code_one(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_type_override_skips_detection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``--type ckan`` must NOT invoke detect() (D-P5-20 bypass)."""
+    """``--type ckan`` must NOT invoke detect."""
     facade = _FakeFacade(DetectionResult(portal_type="ckan", confidence=1.0, evidence=[]))
     _patch_facade(monkeypatch, facade)
 
@@ -120,7 +120,7 @@ def test_cli_uses_annotated_typer_form() -> None:
 
 
 def test_architecture_rejects_private_imports() -> None:
-    """P-08-CLI-PRIVATE-BYPASS: detect must not import discovery/transport/session internals."""
+    """Detect must not import discovery/transport/session internals."""
     source = Path(detect_cmd.__file__).read_text()
     forbidden = [
         "from datasluice.discovery",

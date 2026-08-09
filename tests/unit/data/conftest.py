@@ -1,6 +1,6 @@
 """Shared fixtures for data-plane unit tests.
 
-Provides synthetic row generators (no fixture files shipped — D-P4-16) and a
+Provides synthetic row generators and a
 small pa.Schema helper for test convenience. The HTTP streaming server
 fixture lands in 04-03 which extends ``tests/helpers/http_server.py``.
 """

@@ -1,7 +1,7 @@
-"""Unit tests for :class:`FsspecStorage` (INFRA-02, CORR-05).
+"""Unit tests for :class:`FsspecStorage`.
 
-Closes CORR-05 by asserting ``write`` returns a ``str`` URI (never a
-``pathlib.Path``), and INFRA-02 by asserting the adapter structurally
+Closes by asserting ``write`` returns a ``str`` URI (never a
+``pathlib.Path``), and by asserting the adapter structurally
 satisfies :class:`datasluice.ports.storage.StoragePort`.
 
 The implementation module is resolved via ``importlib.import_module`` (rather
@@ -41,13 +41,13 @@ def _memory_storage() -> FsspecStorage:
 
 
 def test_fsspec_storage_satisfies_storage_port_protocol() -> None:
-    """FsspecStorage is structurally a StoragePort (INFRA-02)."""
+    """FsspecStorage is structurally a StoragePort."""
     storage = _memory_storage()
     assert isinstance(storage, StoragePort)
 
 
 def test_write_returns_uri() -> None:
-    """write() return value starts with the backend protocol prefix (CORR-05)."""
+    """write return value starts with the backend protocol prefix."""
     storage = _memory_storage()
     uri = storage.write(b"data", "file.txt")
     assert isinstance(uri, str)
@@ -55,7 +55,7 @@ def test_write_returns_uri() -> None:
 
 
 def test_write_returns_str_not_path_instance() -> None:
-    """write() returns a bare str, never a pathlib.Path (CORR-05 regression)."""
+    """write returns a bare str, never a pathlib.Path."""
     from pathlib import Path
 
     storage = _memory_storage()
@@ -65,7 +65,7 @@ def test_write_returns_str_not_path_instance() -> None:
 
 
 def test_round_trip() -> None:
-    """write -> read round-trips the bytes; exists flips False -> True (INFRA-02)."""
+    """write -> read round-trips the bytes; exists flips False -> True."""
     storage = _memory_storage()
     assert not storage.exists("rt.txt")
     storage.write(b"content", "rt.txt")

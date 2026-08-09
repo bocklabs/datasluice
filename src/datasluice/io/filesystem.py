@@ -1,9 +1,9 @@
-"""Centralised filesystem factory (INFRA-05).
+"""Centralised filesystem factory.
 
 All fsspec backend instantiation flows through :func:`open_filesystem` so that
 S3 / GCS / Azure / HTTP / local dispatch is resolved in exactly one place via
 ``fsspec.core.url_to_fs``. fsspec is imported lazily inside the function body
-so ``datasluice`` stays importable on a bare install (D-P3-01).
+so ``datasluice`` stays importable on a bare install.
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ if TYPE_CHECKING:
 
 
 def open_filesystem(uri: str, credentials: dict[str, Any] | None = None) -> fsspec.AbstractFileSystem:
-    """Instantiate the correct fsspec backend for *uri* (INFRA-05, D-P3-20).
+    """Instantiate the correct fsspec backend for *uri*.
 
     Delegates to ``fsspec.core.url_to_fs`` so the fsspec registry handles every
     supported protocol (``file``, ``memory``, ``s3``, ``gs``, ``az``, ``abfs``,
     ``http``, ``https``, …) uniformly.
 
-    Credential precedence (D-P3-19):
+    Credential precedence:
 
         1. Explicit *credentials* dict — forwarded to fsspec as
            ``**storage_options`` (e.g. ``{"key": ..., "secret": ...}`` for S3,
@@ -42,7 +42,7 @@ def open_filesystem(uri: str, credentials: dict[str, Any] | None = None) -> fssp
 
     Raises:
         ImportError: If fsspec is not installed. Install with
-            ``pip install datasluice[storage]`` (D-P3-01 zero-config fallback).
+            ``pip install datasluice[storage]``.
     """
     try:
         import fsspec

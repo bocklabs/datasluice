@@ -42,7 +42,6 @@ jobs:
       - name: Import provider sample DAG from installed wheels
         run: |
           uv run python providers/apache-airflow/tests/run_candidate.py \
-            --core-version 1.0.0 \
             --airflow-version 3.2.2 \
             -- python providers/apache-airflow/tests/dags/example_datasluice.py
 

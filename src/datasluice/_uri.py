@@ -1,4 +1,4 @@
-"""URI display sanitizer: redact userinfo and sensitive query values (CR-07).
+"""URI display sanitizer: redact userinfo and sensitive query values.
 
 Query-position API keys, bearer tokens, signed-URL signatures, and
 ``user:password@`` userinfo routinely end up embedded inside URI strings

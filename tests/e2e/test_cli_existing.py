@@ -1,4 +1,4 @@
-"""Installed-wheel end-to-end contracts for all seven CLI commands (D-26/QUAL-08).
+"""Installed-wheel end-to-end contracts for all seven CLI commands.
 
 Builds the datasluice wheel once per session, installs it into an isolated
 venv, and runs the ``datasluice`` console script against local deterministic

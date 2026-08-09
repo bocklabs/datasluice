@@ -31,9 +31,9 @@ class DataGouvAdapter(BaseAdapter):
     Uses the udata REST API at ``{base_url}/api/1/``.
 
     Attributes:
-        capabilities: Published catalog capability contract (D-P5-23). udata's
+        capabilities: Published catalog capability contract. udata's
             ``GET /datasets/`` honors ``q``, ``tag[]``, ``organization``,
-            ``format``, ``license``, and ``sort`` (RESEARCH Pattern 2 data.gouv
+            ``format``, ``license``, and ``sort`` ( data.gouv
             row). ``groups`` is NOT supported — udata has no ``groups`` param;
             themes use ``topic`` which ``Query`` does not expose.
     """
@@ -54,7 +54,7 @@ class DataGouvAdapter(BaseAdapter):
         """Search datasets via ``/datasets/``.
 
         Translates every set supported ``Query`` filter field to its udata-native
-        param name (Pitfall 3): ``res_format`` -> ``format`` (singular!),
+        param name: ``res_format`` -> ``format`` (singular!),
         ``license_id`` -> ``license``, ``tags`` -> ``tag`` (array — supports
         multiple values), ``organizations`` -> ``organization``. The reject gate
         guarantees every set field is in ``supported_query_fields``.

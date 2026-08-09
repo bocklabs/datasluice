@@ -1,4 +1,4 @@
-"""Composable transform pipeline package (TRANS-01..09).
+"""Composable transform pipeline package.
 
 Re-exports are resolved lazily via PEP 562 ``__getattr__`` so that importing
 ``datasluice.transforms`` does not trigger a pyarrow import on bare installs.

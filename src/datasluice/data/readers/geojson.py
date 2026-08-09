@@ -1,4 +1,4 @@
-"""Streaming GeoJSON reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-11).
+"""Streaming GeoJSON reader yielding Arrow ``RecordBatch``.
 
 Migrated from ``datasluice.formats.geojson``. GeoJSON is nested (not
 tabular), so it cannot use ``pyarrow.json`` directly. Each Feature is
@@ -11,7 +11,7 @@ WKT encoding is handled by a minimal hand-rolled encoder for
 ``GeometryCollection``) are stored as the raw JSON string of the
 geometry object in the ``geometry_wkt`` column with a documented caveat
 (RESEARCH A3): open-data geometries are overwhelmingly simple, and
-shapely is not installed to avoid bloating the dep tree. Phase 6+ can
+shapely is not installed to avoid bloating the dep tree. + can
 swap in shapely if richer WKT coverage is needed.
 """
 

@@ -1,4 +1,4 @@
-"""Unit tests for the ``datasluice inspect`` command (facade-only, D-16/APP-08)."""
+"""Unit tests for the ``datasluice inspect`` command."""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ def test_cli_uses_annotated_typer_form() -> None:
 
 
 def test_architecture_rejects_private_imports() -> None:
-    """P-08-CLI-PRIVATE-BYPASS: inspect must not import session/connector/transport internals."""
+    """Inspect must not import session/connector/transport internals."""
     source = Path(inspect_cmd.__file__).read_text()
     forbidden = [
         "from datasluice.runtime.session",

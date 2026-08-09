@@ -595,7 +595,7 @@ def test_source_replacement_detected_and_restarted(tmp_path) -> None:
 
 
 def test_source_change_during_read_aborts_to_avoid_mixed_artifact(tmp_path) -> None:
-    """A source change between initial hash and post-materialize verification aborts (CR-09)."""
+    """A source change between initial hash and post-materialize verification aborts."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 

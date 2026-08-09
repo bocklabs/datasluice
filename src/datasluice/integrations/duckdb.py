@@ -1,13 +1,13 @@
-"""DuckDB integration (read paths removed per D-P4-18; SEC-03 utility preserved).
+"""DuckDB integration.
 
 The v0.1.0 ``resource_to_relation`` and ``query_resource`` helpers relied on
 DuckDB's Python relation API to bind a resource URL as a virtual table.
-Phase 6 rebuilds them over the shared :class:`datasluice.data.BatchStream`,
+rebuilds them over the shared :class:`datasluice.data.BatchStream`,
 registering batches as DuckDB tables via Arrow zero-copy interop.
 
 The standalone :func:`_validate_table_name` SQL-identifier guard is
-preserved because it is the SEC-03 regression boundary (Phase 1 QUAL-07)
-and continues to protect whatever relation-registering API Phase 6 ships.
+preserved because it is the regression boundary
+and continues to protect whatever relation-registering API ships.
 """
 
 from __future__ import annotations
@@ -44,13 +44,13 @@ def to_duckdb(
     table_name: str = "datasluice",
     conn: Any = None,
 ) -> Any:
-    """Register *stream* as a named DuckDB relation (INTG-04, D-P6-14).
+    """Register *stream* as a named DuckDB relation.
 
-    No SQL string interpolation — the SEC-03 boundary is preserved by
+    No SQL string interpolation — the boundary is preserved by
     construction: ``_validate_table_name`` rejects injection payloads before
     registration, and the relation API (``conn.register`` + ``conn.table``)
     never interpolates the name into a SQL string. DuckDB streams lazily;
-    consumption is deferred to fetch (D-P6-14a resolved).
+    consumption is deferred to fetch.
 
     Args:
         stream: The :class:`~datasluice.data.BatchStream` to register.
@@ -63,7 +63,7 @@ def to_duckdb(
         A ``duckdb.DuckDBPyRelation`` bound to *table_name* on *conn*.
 
     Raises:
-        ValueError: If *table_name* fails the SEC-03 identifier regex.
+        ValueError: If *table_name* fails the identifier regex.
         ImportError: If ``duckdb`` is not installed.
     """
     try:

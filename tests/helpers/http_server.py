@@ -18,17 +18,17 @@ from typing import Any, cast
 class MockResponse:
     """Configurable HTTP response.
 
-    Attributes:
-        status: HTTP status code.
-        headers: Response headers (e.g. ``{"Location": ...}``).
-        body: Raw response bytes.
-        chunk_size: When set, the handler emits the body using HTTP/1.1
-            ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
-            each ``chunk_size``-byte slice is written as ``<hex-size> CRLF
-            <bytes> CRLF`` followed by the terminating ``0 CRLF CRLF`` frame.
-            This simulates a real streaming HTTP server for DATA-05 tests
-            (D-P4-19). Mutually exclusive with a pre-set ``Content-Length``
-            header (the spec forbids both).
+        Attributes:
+            status: HTTP status code.
+            headers: Response headers (e.g. ``{"Location": ...}``).
+            body: Raw response bytes.
+            chunk_size: When set, the handler emits the body using HTTP/1.1
+                ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
+                each ``chunk_size``-byte slice is written as ``<hex-size> CRLF
+                <bytes> CRLF`` followed by the terminating ``0 CRLF CRLF`` frame.
+                This simulates a real streaming HTTP server for tests
+    . Mutually exclusive with a pre-set ``Content-Length``
+                header (the spec forbids both).
     """
 
     status: int = 200
@@ -83,7 +83,7 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
             self.wfile.write(resp.body)
 
     def _not_modified(self, resp: MockResponse) -> bool:
-        """Return whether request validators match *resp* (SYNC-06 / D-P7-34)."""
+        """Return whether request validators match *resp*."""
         if_none_match = self.headers.get("if-none-match")
         if_modified_since = self.headers.get("if-modified-since")
         etag = resp.headers.get("ETag")
@@ -94,7 +94,7 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
         )
 
     def _write_chunked(self, body: bytes, chunk_size: int) -> None:
-        """Emit *body* using HTTP/1.1 chunked transfer-encoding (D-P4-19)."""
+        """Emit *body* using HTTP/1.1 chunked transfer-encoding."""
 
         if chunk_size <= 0:
             chunk_size = 1

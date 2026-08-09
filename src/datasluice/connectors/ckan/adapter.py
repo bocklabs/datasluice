@@ -32,7 +32,7 @@ class CKANAdapter(BaseAdapter):
     Uses the CKAN Action API at ``{base_url}/api/3/action/``.
 
     Attributes:
-        capabilities: Published catalog capability contract (D-P5-23). CKAN's
+        capabilities: Published catalog capability contract. CKAN's
             ``package_search`` honors all six ``Query`` filter fields via Solr
             ``fq`` clauses (COVERAGE.md CKAN row).
     """
@@ -63,9 +63,9 @@ class CKANAdapter(BaseAdapter):
         """Search datasets via ``package_search``.
 
         Translates every set supported ``Query`` filter field into a CKAN Solr
-        ``fq`` clause (CONN-01). The reject gate from Task 1 already guarantees
+        ``fq`` clause. The reject gate from already guarantees
         every set field is in ``supported_query_fields``, so the translation is
-        unconditional. Value quoting is intentionally deferred (D-P5-09): only
+        unconditional. Value quoting is intentionally deferred: only
         binary field-presence is enforced in v1.
         """
         query = query or Query()

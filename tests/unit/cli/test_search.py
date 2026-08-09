@@ -1,4 +1,4 @@
-"""Unit tests for the ``datasluice search`` command (facade-only, D-09/APP-08)."""
+"""Unit tests for the ``datasluice search`` command."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def test_cli_uses_annotated_typer_form() -> None:
 
 
 def test_architecture_rejects_private_imports() -> None:
-    """P-08-CLI-PRIVATE-BYPASS: search must not import session/connector/transport internals."""
+    """Search must not import session/connector/transport internals."""
     source = Path(search_cmd.__file__).read_text()
     forbidden = [
         "from datasluice.runtime.session",

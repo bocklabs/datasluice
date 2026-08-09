@@ -3,8 +3,8 @@
 Mirrors ``test_http_client.py`` (error mapping, get_json, retry-then-succeed)
 and ``test_redirect.py`` (cross-host strip, same-host-with-scope retain) but
 exercises the new :class:`HttpxTransport` over real sockets, plus the
-:class:`StreamingTransport` ``stream()`` path and the D-P3-15 401/403
-evict-and-refetch-once behaviour. Closes INFRA-01.
+:class:`StreamingTransport` ``stream`` path and the 401/403
+evict-and-refetch-once behaviour. Closes.
 
 The module is resolved via ``importlib.import_module`` (rather than a static
 ``import``) so the RED commit can land under this repo's full-suite pre-commit
@@ -53,7 +53,7 @@ def _fast_policy() -> RetryPolicy:
 
 
 def test_httpx_transport_satisfies_both_protocols() -> None:
-    """HttpxTransport satisfies Transport AND StreamingTransport (INFRA-01/07)."""
+    """HttpxTransport satisfies Transport AND StreamingTransport."""
 
     transport = HttpxTransport()
     assert isinstance(transport, Transport)
@@ -87,7 +87,7 @@ def test_httpx_transport_context_manager_closes_on_exit() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Error mapping (SEC-05 carry-forward)
+# Error mapping
 # --------------------------------------------------------------------------- #
 
 
@@ -156,7 +156,7 @@ def test_httpx_encodes_list_params_as_repeated_keys() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# CredentialScope redirect handling (SEC-01/SEC-02 carry-forward)
+# CredentialScope redirect handling
 # --------------------------------------------------------------------------- #
 
 
@@ -216,7 +216,7 @@ def test_scheme_downgrade_strips_authorization() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Streaming (D-P3-07)
+# Streaming
 # --------------------------------------------------------------------------- #
 
 
@@ -298,7 +298,7 @@ def test_stream_preserves_query_auth_params() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 401/403 evict-and-refetch-once (D-P3-15)
+# 401/403 evict-and-refetch-once
 # --------------------------------------------------------------------------- #
 
 # HostCredentialProvider ships in wave-1 plan 03-04. Until it lands the
@@ -431,14 +431,14 @@ def test_get_json_wraps_non_dict() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# CR-04: refresh must close the rejected 401/403 response before retrying
-# CR-05: query-position credentials must be preserved and refreshed
-# CR-06: same-host different-port redirects strip Authorization
+# Refresh must close the rejected 401/403 response before retrying
+# Query-position credentials must be preserved and refreshed
+# Same-host different-port redirects strip Authorization
 # --------------------------------------------------------------------------- #
 
 
 def test_refresh_closes_rejected_response_under_single_connection_pool() -> None:
-    """Refresh succeeds even when the client pool allows only one connection (CR-04).
+    """Refresh succeeds even when the client pool allows only one connection.
 
     Without closing the rejected 401/403 response first, the streamed body
     holds the sole connection and the retry raises PoolTimeout. We assert both
@@ -474,7 +474,7 @@ def test_refresh_closes_rejected_response_under_single_connection_pool() -> None
 
 
 def test_query_auth_credentials_applied_on_request_and_download() -> None:
-    """APIKeyAuth(in_query=True) credentials reach the wire for ordinary requests (CR-05)."""
+    """APIKeyAuth(in_query=True) credentials reach the wire for ordinary requests."""
     from datasluice.auth import APIKeyAuth
 
     server, base = start_test_server({"/x": MockResponse(body=b"ok")})
@@ -488,7 +488,7 @@ def test_query_auth_credentials_applied_on_request_and_download() -> None:
 
 
 def test_query_auth_credentials_refreshed_on_401() -> None:
-    """Refresh replaces the stale query credential instead of resending it (CR-05)."""
+    """Refresh replaces the stale query credential instead of resending it."""
     from datasluice.auth import APIKeyAuth
 
     server, base = start_test_server(
@@ -511,7 +511,7 @@ def test_query_auth_credentials_refreshed_on_401() -> None:
 
 
 def test_same_hostname_different_port_strips_authorization() -> None:
-    """A redirect from https://host:443 to https://host:8443 strips Authorization (CR-06)."""
+    """A redirect from https://host:443 to https://host:8443 strips Authorization."""
     transport = HttpxTransport(auth=BearerAuth("secret"))
     assert (
         transport._should_strip_authorization("https://example.test:443/start", "https://example.test:8443/target")
@@ -520,7 +520,7 @@ def test_same_hostname_different_port_strips_authorization() -> None:
 
 
 def test_scheme_default_port_matches_same_origin() -> None:
-    """A redirect from https://host:443 to https://host (default port) is same-origin (CR-06)."""
+    """A redirect from https://host:443 to https://host (default port) is same-origin."""
     transport = HttpxTransport(auth=BearerAuth("secret"))
     assert (
         transport._should_strip_authorization("https://example.test:443/start", "https://example.test/target") is False
@@ -528,7 +528,7 @@ def test_scheme_default_port_matches_same_origin() -> None:
 
 
 def test_transport_errors_redact_query_credentials() -> None:
-    """PortalError text must not echo the raw query credential value (CR-07)."""
+    """PortalError text must not echo the raw query credential value."""
     from datasluice.auth import APIKeyAuth
 
     server, base = start_test_server({"/missing": MockResponse(status=404, body=b"nope")})

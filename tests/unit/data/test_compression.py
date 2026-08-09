@@ -1,13 +1,13 @@
-"""Unit tests for :func:`apply_compression` transparent decompression (DATA-06, D-P4-12).
+"""Unit tests for :func:`apply_compression` transparent decompression.
 
 Covers the magic-byte detection chain (GZIP, BZIP2, ZSTD, ZIP), streaming on
 non-seekable input (the ``IterableBytesIO`` from 04-01), the ZIP spool landmine
-mitigation (RESEARCH Pitfall 2), the largest-member selection for nested
+mitigation, the largest-member selection for nested
 archives (RESEARCH Open Question 5), graceful ZSTD skip when ``zstandard`` is
 not installed, and the :class:`DecompressionError` wrapper for truncated frames
-(D-P4-21).
+.
 
-Follows the Phase 03 / 04-01 RED→GREEN pattern: the module skips cleanly at
+Follows the / 04-01 RED→GREEN pattern: the module skips cleanly at
 collection time while ``compression.py`` is still missing, then runs and passes
 once the GREEN step ships ``apply_compression`` + :class:`PeekableReader`.
 """
@@ -40,7 +40,7 @@ def _csv_bytes(rows: int = 20) -> bytes:
 
 
 def test_gzip_round_trip() -> None:
-    """GZIP-compressed input decompresses through apply_compression (DATA-06)."""
+    """GZIP-compressed input decompresses through apply_compression."""
 
     raw = _csv_bytes()
     compressed = gzip.compress(raw)
@@ -50,7 +50,7 @@ def test_gzip_round_trip() -> None:
 
 
 def test_bzip2_round_trip() -> None:
-    """BZIP2-compressed input decompresses through apply_compression (DATA-06)."""
+    """BZIP2-compressed input decompresses through apply_compression."""
 
     raw = _csv_bytes()
     compressed = bz2.compress(raw)
@@ -60,7 +60,7 @@ def test_bzip2_round_trip() -> None:
 
 
 def test_zstd_round_trip() -> None:
-    """ZSTD-compressed input decompresses through apply_compression (DATA-06).
+    """ZSTD-compressed input decompresses through apply_compression.
 
     Skips gracefully when ``zstandard`` is not installed (RESEARCH L621).
     """
@@ -75,7 +75,7 @@ def test_zstd_round_trip() -> None:
 
 
 def test_zip_extracts_largest_member() -> None:
-    """ZIP spools to BytesIO then extracts the LARGEST member (RESEARCH Pitfall 2 + OQ5)."""
+    """ZIP spools to BytesIO then extracts the LARGEST member."""
 
     import zipfile
 
@@ -118,7 +118,7 @@ def test_magic_byte_detection() -> None:
 
 
 def test_truncated_gzip_raises_decompression_error() -> None:
-    """A truncated GZIP frame raises DecompressionError (D-P4-21)."""
+    """A truncated GZIP frame raises DecompressionError."""
 
     from datasluice.exceptions import DecompressionError
 

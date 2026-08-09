@@ -17,8 +17,8 @@ datasluice = importlib.import_module("datasluice")
 if not all(hasattr(datasluice, name) for name in _PUBLIC_CONTRACTS):
     if os.environ.get("DATASLUICE_TDD_RED") == "1":
         missing = sorted(name for name in _PUBLIC_CONTRACTS if not hasattr(datasluice, name))
-        raise AssertionError(f"missing public Phase 8 contracts: {missing}")
-    pytest.skip("public Phase 8 contracts pending GREEN phase", allow_module_level=True)
+        raise AssertionError(f"missing public contracts: {missing}")
+    pytest.skip("public contracts implementation pending", allow_module_level=True)
 
 
 def _public_contract(name: str) -> Any:

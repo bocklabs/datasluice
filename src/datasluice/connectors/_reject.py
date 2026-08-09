@@ -1,13 +1,13 @@
-"""Pre-flight reject policy for unsupported ``Query`` filter fields (D-P5-06).
+"""Pre-flight reject policy for unsupported ``Query`` filter fields.
 
 The reject gate runs at the top of every connector's ``search()`` BEFORE any
-transport call (ARCH-08). It validates that every set ``Query`` filter field
+transport call. It validates that every set ``Query`` filter field
 is a member of the connector's
 :class:`~datasluice.domain.capabilities.CatalogCapabilities.supported_query_fields`
 frozenset and raises :class:`~datasluice.exceptions.UnsupportedQueryFieldError`
 otherwise, so a caller cannot push an unsupported filter to the portal.
 
-Determinism contract (D-P5-09): when multiple unsupported fields are set, the
+Determinism contract: when multiple unsupported fields are set, the
 reported field is the FIRST by ``Query`` declaration order (``text`` ->
 ``tags`` -> ``organizations`` -> ``groups`` -> ``res_format`` ->
 ``license_id`` -> ``sort``), never set-iteration order. An empty list, an

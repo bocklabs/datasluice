@@ -60,12 +60,12 @@ def test_fake_with_search_satisfies_searchable_catalog() -> None:
 
 
 def test_socrata_adapter_does_NOT_satisfy_organization_catalog() -> None:
-    """D-P5-19: Socrata must NOT satisfy OrganizationCatalog.
+    """Socrata must NOT satisfy OrganizationCatalog.
 
     ``get_organization`` is intentionally absent from ``SocrataAdapter`` so
-    ``isinstance`` discrimination is genuine (Pitfall 1: PEP 544
+    ``isinstance`` discrimination is genuine (: PEP 544
     python/typing#800 explicit-subclass bypass would make this True if
-    ``BaseAdapter`` still declared ``get_organization``, but Plan 05-01 removed
+    ``BaseAdapter`` still declared ``get_organization``, but -01 removed
     that declaration).
     """
     adapter = SocrataAdapter("https://data.socrata.example.gov")

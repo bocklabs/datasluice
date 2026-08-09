@@ -1,9 +1,9 @@
-"""to_pandas terminal: convert a BatchStream to a pandas DataFrame (INTG-02, D-P6-01).
+"""to_pandas terminal: convert a BatchStream to a pandas DataFrame.
 
 Lazy-imports pandas; zero-copy Arrow interop via the :func:`to_arrow` substrate
-(single-substrate consistency, QUAL-10). The v0.1.0
+. The v0.1.0
 ``resource_to_dataframe`` / ``dataset_to_dataframes`` helpers were removed per
-D-P4-18 (they relied on the deleted ``datasluice.formats`` read path); Phase 6
+ (they relied on the deleted ``datasluice.formats`` read path);
 rebuilds the terminal over the shared :class:`datasluice.data.BatchStream`.
 """
 
@@ -16,10 +16,10 @@ if TYPE_CHECKING:
 
 
 def to_pandas(stream: BatchStream) -> Any:
-    """Convert *stream* to a pandas ``DataFrame`` (INTG-02).
+    """Convert *stream* to a pandas ``DataFrame``.
 
     Delegates through :func:`~datasluice.integrations.arrow.to_arrow` for
-    single-substrate consistency (QUAL-10), then zero-copy converts the Arrow
+    single-substrate consistency, then zero-copy converts the Arrow
     Table to a DataFrame.
 
     Args:

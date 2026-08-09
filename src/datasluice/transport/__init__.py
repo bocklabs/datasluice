@@ -2,7 +2,7 @@
 
 ``HttpxTransport`` and ``StreamResponse`` are exported lazily via PEP 562
 module-level attribute resolution so that bare installs without the ``http``
-extra never import httpx at module load (D-P3-01). Eager imports of the
+extra never import httpx at module load. Eager imports of the
 urllib ``HttpClient`` and the retry/rate-limit/pagination helpers are
 unaffected.
 """

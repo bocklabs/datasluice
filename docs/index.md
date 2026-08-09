@@ -4,6 +4,10 @@
 
 One Python interface for open-data discovery, extraction, format normalization, and pipeline integration.
 
+!!! warning "Unstable — under active development"
+    DataSluice is pre-1.0 and evolving fast. **Breaking changes may occur at any time**
+    without notice. Please use it at your own risk.
+
 ## Getting started
 
 - [Installation](install.md) — how to install DataSluice

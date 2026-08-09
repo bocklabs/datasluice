@@ -1,7 +1,7 @@
-"""QUAL-05 peak-RSS subprocess memory-bound test for the streaming data plane.
+"""peak-RSS subprocess memory-bound test for the streaming data plane.
 
 Proves that the streaming data plane keeps memory bounded on large inputs —
-the core promise of Phase 4. Two tests:
+the core promise. Two tests:
 
 - ``test_peak_rss_bounded``: streams ~5M rows of synthetic CSV through the
   production ``IterableBytesIO`` adapter into ``pyarrow.csv.open_csv``. The
@@ -17,7 +17,7 @@ the core promise of Phase 4. Two tests:
   double-buffering regressions.
 
 CRITICAL: uses ``resource.getrusage(RUSAGE_SELF).ru_maxrss`` in a subprocess
-— NOT ``tracemalloc``. RESEARCH Pitfall 5 verified that pyarrow allocates
+— NOT ``tracemalloc``. verified that pyarrow allocates
 from the mimalloc native pool which ``tracemalloc`` does NOT track; a
 tracemalloc-based test would pass trivially even when pyarrow buffers a
 multi-GB file. ``ru_maxrss`` is a process-lifetime high-water mark that
@@ -25,7 +25,7 @@ includes native allocations; the subprocess isolates the measurement from
 accumulated pytest process memory.
 
 Both tests run in the DEFAULT pytest suite (NOT marked ``slow``) per
-D-P4-16 so CI catches buffering regressions every run.
+ so CI catches buffering regressions every run.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def _run_isolated(code: str, timeout: int) -> subprocess.CompletedProcess[str]:
 
 
 def test_peak_rss_bounded() -> None:
-    """Streaming ~145MB of synthetic CSV through IterableBytesIO keeps peak RSS well below input (QUAL-05).
+    """Streaming ~145MB of synthetic CSV through IterableBytesIO keeps peak RSS well below input.
 
     The threshold of 250 MB accommodates Python 3.14 + pyarrow allocator
     pressure during the full suite while remaining below the ~290 MB+
@@ -141,7 +141,7 @@ def test_peak_rss_bounded() -> None:
 
 
 def test_json_peak_rss_bounded() -> None:
-    """Parsing ~10MB of synthetic JSONL keeps peak RSS below the bound (QUAL-05 cross-format).
+    """Parsing ~10MB of synthetic JSONL keeps peak RSS below the bound.
 
     JSON parsing is inherently non-streaming (``pa.json.read_json`` materialises
     a full ``Table``); the threshold accommodates input bytes + parsed Table

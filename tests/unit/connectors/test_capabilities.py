@@ -1,8 +1,8 @@
-"""Unit tests for connector CatalogCapabilities publication (D-P5-23).
+"""Unit tests for connector CatalogCapabilities publication.
 
-Follows the Phase 03/04 RED->GREEN TDD pattern: the module skips cleanly at
+Follows the RED->GREEN TDD pattern: the module skips cleanly at
 collection time while the capabilities ClassVar is not yet published, then
-runs and passes once Task 1 GREEN lands the real implementation.
+runs and passes once GREEN lands the real implementation.
 """
 
 from __future__ import annotations

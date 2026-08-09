@@ -1,9 +1,9 @@
-"""Unit tests for the Flatten transform (TRANS-07, D-P6-13).
+"""Unit tests for the Flatten transform.
 
 Covers one-level struct flattening (dotted names), ``max_depth=2`` recursion
-into a nested struct (RESEARCH Pitfall 6), the list-column-untouched policy,
+into a nested struct, the list-column-untouched policy,
 and the no-struct no-op. The ``RecordBatch`` path goes through ``pa.Table``
-(RESEARCH Pitfall 4 — ``RecordBatch`` has no ``.flatten()``).
+( — ``RecordBatch`` has no ``.flatten``).
 """
 
 from __future__ import annotations

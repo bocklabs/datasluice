@@ -18,8 +18,8 @@ class BaseAdapter(ABC):
     Subclasses translate portal-native API responses into DataSluice's
     portal-agnostic :mod:`datasluice.domain` models.
 
-    ``get_organization`` is intentionally NOT declared here (D-P5-19 feed,
-    Pitfall 1): it lives only on the :class:`OrganizationCatalog` Protocol.
+    ``get_organization`` is intentionally NOT declared here ( feed,
+    ): it lives only on the :class:`OrganizationCatalog` Protocol.
     Declaring it on ``BaseAdapter`` (as ``@abstractmethod`` or a default)
     would let PEP 544 ``runtime_checkable`` ``isinstance`` short-circuit on
     the base class, so every adapter would incorrectly satisfy

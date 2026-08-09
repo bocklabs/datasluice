@@ -1,4 +1,4 @@
-"""Streaming format readers yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).
+"""Streaming format readers yielding Arrow ``RecordBatch``.
 
 Registry and ``get_reader`` factory migrated verbatim from
 ``datasluice.formats`` (v0.1.0); only the reader classes change (from

@@ -1,7 +1,7 @@
-"""Exception-handling tests — specific tuple caught, unexpected propagate (D-P5-18, CONN-08).
+"""Exception-handling tests — specific tuple caught, unexpected propagate.
 
 The legacy ``except Exception: continue`` (detector.py:56) silently swallowed
-transport-layer defects (Pitfall 6 / T-05-08). The rewrite catches ONLY the
+transport-layer defects. The rewrite catches ONLY the
 ``(NotFoundError, PortalError, OSError)`` tuple and lets every other exception
 propagate so defects surface as test failures, not silent misses.
 """
@@ -65,7 +65,7 @@ def test_specific_exceptions_become_misses(exc_factory, caplog) -> None:  # type
 
 
 def test_httpx_connecterror_is_not_caught_by_default(caplog) -> None:  # type: ignore[no-untyped-def]
-    """OQ-1: ``httpx.ConnectError`` is NOT in ``_PROBE_EXCEPTIONS``.
+    """``Httpx.ConnectError`` is NOT in ``_PROBE_EXCEPTIONS``.
 
     Callers injecting ``HttpxTransport`` may see httpx-native exceptions
     propagate. This documents the limitation noted on ``_PROBE_EXCEPTIONS``;
@@ -87,7 +87,7 @@ def test_httpx_connecterror_is_not_caught_by_default(caplog) -> None:  # type: i
     ids=["TypeError", "RuntimeError", "AttributeError"],
 )
 def test_unexpected_exceptions_propagate(exc_factory) -> None:  # type: ignore[no-untyped-def]
-    """``TypeError``/``RuntimeError``/``AttributeError`` propagate, NOT silenced (CONN-08)."""
+    """``TypeError``/``RuntimeError``/``AttributeError`` propagate, NOT silenced."""
 
     transport = _RaisingTransport(exc_factory)
     with pytest.raises((TypeError, RuntimeError, AttributeError)):
@@ -95,7 +95,7 @@ def test_unexpected_exceptions_propagate(exc_factory) -> None:  # type: ignore[n
 
 
 def test_keyboard_interrupt_propagates() -> None:
-    """``KeyboardInterrupt`` is a ``BaseException`` and MUST propagate (CONN-08)."""
+    """``KeyboardInterrupt`` is a ``BaseException`` and MUST propagate."""
 
     transport = _RaisingTransport(lambda url: KeyboardInterrupt())
     with pytest.raises(KeyboardInterrupt):

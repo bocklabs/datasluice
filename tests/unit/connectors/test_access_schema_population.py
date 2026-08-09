@@ -1,4 +1,4 @@
-"""Unit tests for CKAN/data.gouv/Socrata resource.access + resource.schema population (D-P5-02/03/04).
+"""Unit tests for CKAN/data.gouv/Socrata resource.access + resource.schema population.
 
 Covers the three access paths (HttpDownload default, QueryAccess on datastore,
 None when portal silent) and the two schema paths (datastore_fields first,

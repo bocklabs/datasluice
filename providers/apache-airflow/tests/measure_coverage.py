@@ -6,7 +6,7 @@ scoped to that installed package at runtime. Running pytest under an in-process
 ``Coverage`` here avoids the module-replacement breakage that a dotted
 ``--source`` name triggers in the Airflow provider import path. The reported
 total, ``precision=2`` rounding, and the ``fail-under`` exit code are taken
-straight from coverage 7.14+ (D-25/QUAL-11).
+straight from coverage 7.14+.
 """
 
 from __future__ import annotations

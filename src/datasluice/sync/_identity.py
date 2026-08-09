@@ -1,4 +1,4 @@
-"""Canonical resource identity (CR-01 blocker fix, SYNC-05/07).
+"""Canonical resource identity.
 
 Portal-controlled ``resource.id`` was previously interpolated verbatim into
 fsspec paths and used as the entire :class:`StateStore` key. A traversal-shaped
@@ -12,7 +12,7 @@ escape, and equal ids at different URL origins, access locators (local paths,
 object URIs), or URL paths produce distinct identities.
 
 The module is dependency-free (``hashlib`` plus ``urllib.parse``) so it imports
-cleanly on bare installs (D-P7-29) and is stable across repeated calls on the
+cleanly on bare installs and is stable across repeated calls on the
 same resource.
 """
 

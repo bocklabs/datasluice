@@ -1,4 +1,4 @@
-"""Unit tests for the RedactingFilter log filter (INFRA-06).
+"""Unit tests for the RedactingFilter log filter.
 
 Exercises the targeted redaction of KNOWN sensitive keys
 (``SENSITIVE_HEADERS`` plus auth-secret field names) from ``record.__dict__``
@@ -91,7 +91,7 @@ def test_redacting_filter_walks_record_args_dicts() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# No false positives (RESEARCH Pitfall 6)
+# No false positives
 # --------------------------------------------------------------------------- #
 
 
@@ -106,7 +106,7 @@ def test_no_false_positives_on_non_sensitive_keys() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Escape hatch (D-P3-18)
+# Escape hatch
 # --------------------------------------------------------------------------- #
 
 

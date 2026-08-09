@@ -1,12 +1,12 @@
-"""DATA-05 streaming-memory integration tests for the HttpDownload dispatch path.
+"""streaming-memory integration tests for the HttpDownload dispatch path.
 
 Verifies that the streaming path through :class:`HttpxTransport.stream()` +
 :class:`IterableBytesIO` actually streams chunks through to the format reader
 without buffering the entire body, AND that the urllib fallback (non-streaming
-transport) buffers the body and logs the D-P4-15 WARNING recommending
+transport) buffers the body and logs the WARNING recommending
 ``datasluice[http]``.
 
-The subprocess peak-RSS test that closes QUAL-05 lives in 04-04
+The subprocess peak-RSS test that closes lives in 04-04
 (``test_peak_rss.py``); these tests verify the streaming behaviour at the
 integration level without the subprocess overhead.
 """
@@ -36,13 +36,13 @@ def _csv_text(rows: int) -> bytes:
 
 
 def _start_chunked_server(body: bytes, chunk_size: int) -> tuple[Any, str]:
-    """Start the D-17 server with a single chunked endpoint serving *body*."""
+    """Start the server with a single chunked endpoint serving *body*."""
 
     return start_test_server({"/stream": MockResponse(status=200, body=body, chunk_size=chunk_size)})
 
 
 def test_http_download_streams_chunks() -> None:
-    """HttpDownload via HttpxTransport streams chunks through IterableBytesIO to RecordBatch (DATA-05)."""
+    """HttpDownload via HttpxTransport streams chunks through IterableBytesIO to RecordBatch."""
 
     import pyarrow as pa
 
@@ -68,7 +68,7 @@ def test_http_download_streams_chunks() -> None:
 
 
 def test_urllib_fallback_buffers_and_warns(caplog) -> None:
-    """urllib HttpClient buffers + logs WARNING recommending datasluice[http] (D-P4-15)."""
+    """urllib HttpClient buffers + logs WARNING recommending datasluice[http]."""
 
     import pyarrow as pa
 
@@ -100,12 +100,12 @@ def test_urllib_fallback_buffers_and_warns(caplog) -> None:
 
 
 def test_streaming_does_not_buffer_full_body() -> None:
-    """Iteration is lazy — pulling only the first batch does not consume the full body (DATA-05).
+    """Iteration is lazy — pulling only the first batch does not consume the full body.
 
-    The D-P4-19 chunked endpoint simulates a real streaming server. We open a
+    The chunked endpoint simulates a real streaming server. We open a
     BatchStream, pull a single RecordBatch, and verify the underlying
     IterableBytesIO has NOT been exhausted (i.e. we did not slurp the entire
-    body before yielding the first batch). The QUAL-05 peak-RSS subprocess
+    body before yielding the first batch). The peak-RSS subprocess
     test in 04-04 catches accidental full-buffering at the memory level.
     """
 

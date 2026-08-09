@@ -1,4 +1,4 @@
-"""Bare-import guards for the dep-free datasluice.sync package core (D-P7-29)."""
+"""Bare-import guards for the dep-free datasluice.sync package core."""
 
 from __future__ import annotations
 

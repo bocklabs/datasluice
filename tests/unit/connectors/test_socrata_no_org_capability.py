@@ -1,4 +1,4 @@
-"""Unit tests for Socrata OrganizationCatalog absence (D-P5-19, Pitfall 1).
+"""Unit tests for Socrata OrganizationCatalog absence.
 
 Asserts that ``SocrataAdapter`` does NOT implement
 :class:`~datasluice.ports.catalog.OrganizationCatalog` — the method

@@ -1,8 +1,8 @@
-"""Unit tests for data.gouv unsupported-query-field reject policy (D-P5-06/07/09, ARCH-08).
+"""Unit tests for data.gouv unsupported-query-field reject policy.
 
 Covers the capabilities ClassVar gate (Test 1), the pre-flight reject on
 ``groups`` (Test 2 — udata has no ``groups`` param), the udata-native param
-translation per Pitfall 3 (Tests 3-6: ``format`` singular, ``license``,
+translation (Tests 3-6: ``format`` singular, ``license``,
 ``tag`` array, ``organization``), the all-supported-fields-no-raise case
 (Test 7), and the mapper access/schema descriptors (Tests 8-9).
 """

@@ -1,9 +1,8 @@
-"""Incremental sync state stores: file-backed and in-memory ``StateStore`` impls (SYNC-02).
+"""Incremental sync state stores: file-backed and in-memory ``StateStore`` impls.
 
-The :class:`datasluice.ports.state_store.StateStore` Protocol (Phase 2) is the
+The :class:`datasluice.ports.state_store.StateStore` Protocol is the
 contract; this module provides its two concrete implementations. Both stores
-are dep-free at import time (stdlib + fsspec, which is an installed infra dep),
-per D-P7-29's lazy data-plane discipline — pyarrow/dlt are never imported here.
+are dep-free at import time (stdlib + fsspec); pyarrow/dlt are never imported here.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ _MAX_WATERMARK_LENGTH = 256
 _MAX_DESTINATION_URI_LENGTH = 4096
 _ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 
-# fsspec backends whose ``mv`` is a true atomic rename (CR-11). On these
+# fsspec backends whose ``mv`` is a true atomic rename. On these
 # backends the per-key threading lock makes the compare-read and the rename
 # indivisible within a process, so CAS is preventive same-process. On any other
 # backend (generic copy-then-remove ``mv``) CAS is detection-only — a
@@ -57,65 +56,65 @@ _ATOMIC_MV_BACKENDS: frozenset[str] = frozenset({"file", "local", "memory"})
 
 
 class FileStateStore:
-    """Durable :class:`StateStore` persisting :class:`SyncState` as versioned JSON files (D-P7-01/03).
+    """Durable :class:`StateStore` persisting :class:`SyncState` as versioned JSON files.
 
-    State is written to one SHA-256-hexdigest-named JSON file per key. New
-    envelopes contain only ``schema_version`` and ``state``; completed
-    watermarks use a fixed keyless representation and are reconstructed from
-    the lookup key on read. New writes validate every :class:`SyncState` field
-    against the completed-watermark or ``datasluice_checkpoint`` schemas before
-    publishing bytes. Historical schema-version-1 envelopes containing a raw
-    ``key`` and unconstrained state mappings remain readable.
+        State is written to one SHA-256-hexdigest-named JSON file per key. New
+        envelopes contain only ``schema_version`` and ``state``; completed
+        watermarks use a fixed keyless representation and are reconstructed from
+        the lookup key on read. New writes validate every :class:`SyncState` field
+        against the completed-watermark or ``datasluice_checkpoint`` schemas before
+        publishing bytes. Historical schema-version-1 envelopes containing a raw
+        ``key`` and unconstrained state mappings remain readable.
 
-    Writes are atomic (temp file + ``fs.mv`` rename, mirroring the content-cache
-    discipline). Compare-and-swap (CAS) is provided through the additive
-    :class:`datasluice.ports.state_store.AtomicStateStore` capability Protocol:
-    :meth:`read_version` returns the raw envelope bytes for CAS comparison and
-    :meth:`conditional_put` writes only when the on-disk version matches a
-    caller-supplied ``expected_prior``. A per-key :class:`threading.Lock`
-    (``_locks``) serializes the compare-read and the atomic-move so they are
-    indivisible within a single process — two barrier-synchronized
-    expected-absent writers cannot both succeed; the loser raises
-    :class:`SyncStateConflictError` (D-P7-27, CR-02).
+        Writes are atomic (temp file + ``fs.mv`` rename, mirroring the content-cache
+        discipline). Compare-and-swap (CAS) is provided through the additive
+        :class:`datasluice.ports.state_store.AtomicStateStore` capability Protocol:
+        :meth:`read_version` returns the raw envelope bytes for CAS comparison and
+        :meth:`conditional_put` writes only when the on-disk version matches a
+        caller-supplied ``expected_prior``. A per-key :class:`threading.Lock`
+        (``_locks``) serializes the compare-read and the atomic-move so they are
+        indivisible within a single process — two barrier-synchronized
+        expected-absent writers cannot both succeed; the loser raises
+        :class:`SyncStateConflictError`.
 
-    Backend atomicity is declared via :data:`_ATOMIC_MV_BACKENDS`. On backends
-    whose ``mv`` is a true atomic rename (local ``file``/, ``memory``) the
-    per-key lock makes CAS *preventive* same-process. On non-atomic backends
-    (generic copy-then-remove ``mv`` on remote object stores) CAS is
-    *detection-only* — a cross-process observer may briefly see no file — and a
-    warning is logged; the per-key lock still provides same-process safety
-    (CR-11, 01-5, 06-7).
+        Backend atomicity is declared via :data:`_ATOMIC_MV_BACKENDS`. On backends
+        whose ``mv`` is a true atomic rename (local ``file``/, ``memory``) the
+        per-key lock makes CAS *preventive* same-process. On non-atomic backends
+        (generic copy-then-remove ``mv`` on remote object stores) CAS is
+        *detection-only* — a cross-process observer may briefly see no file — and a
+        warning is logged; the per-key lock still provides same-process safety
+    .
 
-    Backend errors are discriminated: only :class:`FileNotFoundError` maps to
-    absent state (``None``). :class:`PermissionError`, :class:`TimeoutError`,
-    and other :class:`OSError` subclasses surface as
-    :class:`StateStoreError` and are never swallowed as missing state (CR-03).
+        Backend errors are discriminated: only :class:`FileNotFoundError` maps to
+        absent state (``None``). :class:`PermissionError`, :class:`TimeoutError`,
+        and other :class:`OSError` subclasses surface as
+        :class:`StateStoreError` and are never swallowed as missing state.
 
-    Contract Reconciliation:
+        Contract Reconciliation:
 
-        New durable writes enforce a producer-grounded closed schema as an
-        explicit accepted override of the general :class:`SyncState` model.
-        The general model (Phase 2) permits arbitrary cursor mappings,
-        partitions, and extra fields. Durable writes restrict to: one-entry
-        cursor (keyed by the canonical identity), empty partitions, and the
-        recognized ``datasluice_checkpoint`` extra. This restriction is an
-        accepted override because it is the only shape this producer emits —
-        no producer-legal state shape is silently rejected.
+            New durable writes enforce a producer-grounded closed schema as an
+            explicit accepted override of the general :class:`SyncState` model.
+            The general model permits arbitrary cursor mappings,
+            partitions, and extra fields. Durable writes restrict to: one-entry
+            cursor (keyed by the canonical identity), empty partitions, and the
+            recognized ``datasluice_checkpoint`` extra. This restriction is an
+            accepted override because it is the only shape this producer emits —
+            no producer-legal state shape is silently rejected.
 
-        :class:`InMemoryStateStore` accepts the full :class:`SyncState` model
-        without restriction because it produces no durable bytes. Historical
-        schema-version-1 envelopes remain readable through their unconstrained
-        legacy shape. The durable write validation rejects adversarial
-        validator values (signed URLs, bearer tokens, credentials, control
-        bytes, oversized opaque strings) before serialization, naming only the
-        structural field path in error messages — never the rejected value.
+            :class:`InMemoryStateStore` accepts the full :class:`SyncState` model
+            without restriction because it produces no durable bytes. Historical
+            schema-version-1 envelopes remain readable through their unconstrained
+            legacy shape. The durable write validation rejects adversarial
+            validator values (signed URLs, bearer tokens, credentials, control
+            bytes, oversized opaque strings) before serialization, naming only the
+            structural field path in error messages — never the rejected value.
 
-    Attributes:
-        base_uri: URI (``file://``, ``s3://``, …) of the directory holding the
-            state files. A trailing ``/`` is stripped. URIs, never Paths
-            (CORR-05). This store is caller-provided (D-P7-02).
-        fs: Optional fsspec ``AbstractFileSystem``. When omitted, one is
-            constructed via :func:`datasluice.io.filesystem.open_filesystem`.
+        Attributes:
+            base_uri: URI (``file://``, ``s3://``, …) of the directory holding the
+                state files. A trailing ``/`` is stripped. URIs, never Paths
+    . This store is caller-provided.
+            fs: Optional fsspec ``AbstractFileSystem``. When omitted, one is
+                constructed via :func:`datasluice.io.filesystem.open_filesystem`.
     """
 
     def __init__(self, base_uri: str, *, fs: Any | None = None) -> None:
@@ -130,14 +129,14 @@ class FileStateStore:
 
     @property
     def _is_atomic_mv(self) -> bool:
-        """Whether this backend's ``mv`` is a true atomic rename (CR-11)."""
+        """Whether this backend's ``mv`` is a true atomic rename."""
         protocol = self._fs.protocol
         if isinstance(protocol, str):
             return protocol in _ATOMIC_MV_BACKENDS
         return any(entry in _ATOMIC_MV_BACKENDS for entry in protocol)
 
     def _lock_scope(self, key: str) -> str:
-        """Return the process-global lock scope for *key* on this store (CR-02).
+        """Return the process-global lock scope for *key* on this store.
 
         Two :class:`FileStateStore` instances that target the same backend
         protocol and the same base URI produce the same scope for the same
@@ -155,13 +154,13 @@ class FileStateStore:
 
     @contextmanager
     def key_lock(self, key: str) -> Iterator[threading.RLock]:
-        """Hold the per-key lock for *key* so callers serialize a multi-step transaction (CR-03).
+        """Hold the per-key lock for *key* so callers serialize a multi-step transaction.
 
         Returns a re-entrant lock scoped by backend+base URI+state path, so a
         caller that holds this lock around (materialize artifact + CAS state)
         serializes publication end-to-end against any other writer for the same
         key, including writers using a separate :class:`FileStateStore`
-        instance (CR-02). Re-entrancy lets the same thread call
+        instance. Re-entrancy lets the same thread call
         :meth:`conditional_put` (which acquires the same lock) inside this
         context without deadlock.
         """
@@ -170,7 +169,7 @@ class FileStateStore:
 
     @contextmanager
     def _key_lock_held(self, key: str) -> Iterator[threading.RLock]:
-        """Acquire (lazily creating) the process-global per-key lock, tracking users (CR-02)."""
+        """Acquire (lazily creating) the process-global per-key lock, tracking users."""
         scope = self._lock_scope(key)
         with _GLOBAL_LOCKS_GUARD:
             lock = _GLOBAL_LOCKS.get(scope)
@@ -191,7 +190,7 @@ class FileStateStore:
                     _GLOBAL_LOCKS.pop(scope, None)
 
     def _state_path(self, key: str) -> str:
-        """Return the SHA-256-hexdigest (.json) path for *key* (T-07-03 mitigation)."""
+        """Return the SHA-256-hexdigest (.json) path for *key*."""
         digest = hashlib.sha256(key.encode()).hexdigest()
         return f"{self._base}/{digest}.json"
 
@@ -203,7 +202,7 @@ class FileStateStore:
                 envelope ``schema_version`` is unsupported, or a backend error
                 other than :class:`FileNotFoundError` occurs (permission,
                 timeout, I/O). Never silently treats a backend failure as "no
-                state" (CR-03) — staleness is worse than a loud failure (D-P7-03).
+                state" — staleness is worse than a loud failure.
         """
         raw = self.read_raw(key)
         if raw is None:
@@ -211,7 +210,7 @@ class FileStateStore:
         return self._decode_envelope(key, raw)
 
     def get_with_version(self, key: str) -> tuple[SyncState | None, bytes | None]:
-        """Atomically load the state and its CAS version from one backend read (CR-01).
+        """Atomically load the state and its CAS version from one backend read.
 
         Returns ``(state, version)`` where ``version`` is the raw envelope
         bytes read for *key* (or ``None`` if absent) and ``state`` is the
@@ -259,7 +258,7 @@ class FileStateStore:
 
         Raises:
             StateStoreError: on a backend error other than
-                :class:`FileNotFoundError` (CR-03).
+                :class:`FileNotFoundError`.
         """
         path = self._state_path(key)
         try:
@@ -274,7 +273,7 @@ class FileStateStore:
 
         Alias for :meth:`read_raw`. Callers pass the returned bytes back into
         :meth:`conditional_put` as ``expected_prior`` so a concurrent writer's
-        intervening commit is detected instead of silently overwritten (D-P7-27).
+        intervening commit is detected instead of silently overwritten.
         """
         return self.read_raw(key)
 
@@ -282,7 +281,7 @@ class FileStateStore:
         """Persist *state* under *key* via an atomic, optionally CAS-protected write.
 
         Atomic write: ``pipe_file(tmp)`` + ``mv(tmp, final)`` — a reader never
-        observes torn JSON. Optimistic CAS (D-P7-27): when *expected_prior* is
+        observes torn JSON. Optimistic CAS: when *expected_prior* is
         provided (the raw bytes previously read from :meth:`read_raw`, or
         ``None`` for "expected absent"), the current on-disk bytes are
         hash-compared immediately before the rename; a mismatch means a
@@ -290,7 +289,7 @@ class FileStateStore:
         :class:`SyncStateConflictError` is raised rather than silently
         overwriting. Detection-only CAS (content-hash re-read) is used because
         fsspec backends expose no portable conditional-write/etag (RESEARCH
-        Pitfall 5). Omit *expected_prior* for an unconditional write.
+        ). Omit *expected_prior* for an unconditional write.
 
         Note: the compare-read and rename in this method are NOT guarded by the
         per-key lock — callers needing same-process indivisibility between two
@@ -300,7 +299,7 @@ class FileStateStore:
         Args:
             key: The sync-state key (resource-id-scoped, per Area 1).
             state: The :class:`SyncState` to persist (watermark strings, never
-                secrets/signed URLs — T-07-02).
+                secrets/signed URLs — ).
             expected_prior: Raw bytes from :meth:`read_raw` (``None`` = "expected
                 absent"). Omit for an unconditional write.
 
@@ -329,12 +328,12 @@ class FileStateStore:
         The per-key threading lock (``_locks``) is held across the version check
         and the atomic write, making them indivisible within a single process.
         Two same-process writers that both pass the version check cannot both
-        commit; the loser raises :class:`SyncStateConflictError` (CR-02).
+        commit; the loser raises :class:`SyncStateConflictError`.
 
         On non-atomic-``mv`` backends (see :data:`_ATOMIC_MV_BACKENDS`) a
         warning is logged and the write proceeds — CAS is detection-only
         cross-process, but the per-key lock still serializes same-process
-        writers (CR-11, 01-5, 06-7).
+        writers.
 
         Args:
             key: The sync-state key.
@@ -346,7 +345,7 @@ class FileStateStore:
             The committed envelope bytes (the new CAS version). Callers that
             chain another :meth:`conditional_put` MUST pass the returned bytes
             as the next ``expected_prior`` rather than re-reading the version
-            separately (CR-01: re-reading after the write opens a TOCTOU gap
+            separately (: re-reading after the write opens a TOCTOU gap
             where an interloper can commit between this return and the next
             expected_prior).
 
@@ -378,7 +377,7 @@ class FileStateStore:
 
         Raises:
             StateStoreError: on a backend error other than
-                :class:`FileNotFoundError` (CR-03).
+                :class:`FileNotFoundError`.
         """
         path = self._state_path(key)
         try:
@@ -688,7 +687,7 @@ def _validate_checkpoint_v1(checkpoint: dict[str, Any]) -> None:
 
 
 class InMemoryStateStore:
-    """Ephemeral in-process :class:`StateStore` backed by a plain dict (D-P7-02).
+    """Ephemeral in-process :class:`StateStore` backed by a plain dict.
 
     State dies with the process — the canonical default for tests and
     dry-runs. Implements the Protocol exactly (get/put/delete) with no

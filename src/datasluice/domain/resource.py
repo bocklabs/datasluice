@@ -39,8 +39,8 @@ class Resource:
         created: ISO-8601 creation timestamp, if available.
         modified: ISO-8601 last-modified timestamp, if available.
         access: How the resource is reached (HTTP, object storage, local file, query).
-            Defaults to ``HttpDownload(url=resource.url)`` when unset (D-P4-06).
-        schema: Advisory portal-native column descriptors (D-P4-04). Readers infer
+            Defaults to ``HttpDownload(url=resource.url)`` when unset.
+        schema: Advisory portal-native column descriptors. Readers infer
             the Arrow schema from actual data; this field is display-only.
         extra: Portal-native fields not captured above.
     """

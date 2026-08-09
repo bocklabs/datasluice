@@ -1,12 +1,12 @@
 """Default transport factory for the DataSluiceSession composition root.
 
 Replaces the former ``DataSluice._build_transport`` method by reading the
-``DEFAULT_*`` constants from :mod:`datasluice.config.defaults` directly (D-14)
+``DEFAULT_*`` constants from :mod:`datasluice.config.defaults` directly
 instead of the removed ``Settings`` dataclass.
 
-Phase 3 (D-P3-01): the factory now picks :class:`HttpxTransport` when httpx is
+: the factory now picks :class:`HttpxTransport` when httpx is
 importable and falls back to the urllib :class:`HttpClient` for bare installs
-(D-P3-03). The return type widens to the :class:`Transport` port so callers
+. The return type widens to the :class:`Transport` port so callers
 treat either backend uniformly.
 """
 
@@ -38,15 +38,15 @@ def create_default_transport(
 ) -> Transport:
     """Construct a default transport from ``DEFAULT_*`` constants.
 
-    Picks :class:`HttpxTransport` when httpx is importable (D-P3-01), falling
-    back to the urllib :class:`HttpClient` for bare installs (D-P3-03). The
+    Picks :class:`HttpxTransport` when httpx is importable, falling
+    back to the urllib :class:`HttpClient` for bare installs. The
     httpx availability check uses ``importlib.util.find_spec`` so the module is
     never eagerly imported at this call site (keeps bare installs clean).
 
     Args:
         auth: Optional auth strategy; defaults to :class:`NoAuth` when omitted.
         credential_provider: Optional credential provider forwarded to
-            :class:`HttpxTransport` for 401/403 eviction (D-P3-15).
+            :class:`HttpxTransport` for 401/403 eviction.
         timeout: Request timeout in seconds.
         retries: Maximum number of attempts for the retry policy.
         rate_limit: Optional requests-per-second cap (``None`` disables).
@@ -61,7 +61,7 @@ def create_default_transport(
         if credential_provider is not None:
             logger.debug(
                 "httpx unavailable: falling back to urllib HttpClient, which does not support "
-                "credential_provider eviction (D-P3-15 ignored on this path)"
+                "credential_provider eviction"
             )
         return HttpClient(
             auth=auth or NoAuth(),

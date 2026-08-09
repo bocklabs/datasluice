@@ -1,4 +1,4 @@
-"""Streaming JSON reader yielding Arrow ``RecordBatch`` (DATA-03, D-P4-10).
+"""Streaming JSON reader yielding Arrow ``RecordBatch``.
 
 Migrated from ``datasluice.formats.json``. The v0.1.0 ``list[dict]`` contract
 is replaced by the streaming RecordBatch contract.

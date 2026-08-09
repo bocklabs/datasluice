@@ -9,10 +9,10 @@ description = "Apache Airflow provider for DataSluice open-data discovery, strea
 requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
-    {name = "Nitish Raj", email = "contact@rajnitish.com"}
+    {name = "Nitish Raj", email = "contact@bocklabs.com"}
 ]
 maintainers = [
-    {name = "Nitish Raj", email = "contact@rajnitish.com"}
+    {name = "Nitish Raj", email = "contact@bocklabs.com"}
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -22,7 +22,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "datasluice>=1.0,<2",
+    "datasluice>=0.2,<1",
     "apache-airflow>=3.2,<4",
 ]
 

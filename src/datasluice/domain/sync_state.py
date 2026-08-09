@@ -1,4 +1,4 @@
-"""SyncState model for incremental sync cursors and watermarks (SYNC-03)."""
+"""SyncState model for incremental sync cursors and watermarks."""
 
 from __future__ import annotations
 

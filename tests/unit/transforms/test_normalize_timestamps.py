@@ -1,7 +1,7 @@
-"""Unit tests for the NormalizeTimestamps transform (TRANS-05, D-P6-12).
+"""Unit tests for the NormalizeTimestamps transform.
 
 Covers the three-way branch: tz-naive → assume_timezone then cast (NEVER a
-direct naive→aware cast, RESEARCH Pitfall 3), tz-aware non-UTC → target tz,
+direct naive→aware cast, ), tz-aware non-UTC → target tz,
 same-tz unit change, and the non-timestamp pass-through. Each test asserts the
 OUTPUT TYPE (not internal calls) to confirm the branch was taken correctly.
 """

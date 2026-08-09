@@ -17,7 +17,7 @@ from datasluice.domain import (
 
 
 def _resolve_access(resource: dict[str, Any], base_url: str | None) -> ResourceAccess | None:
-    """Resolve the resource access descriptor per D-P5-02 for Socrata views.
+    """Resolve the resource access descriptor for Socrata views.
 
     Socrata catalog responses nest resource metadata under the catalog result's
     ``resource`` key. File-typed views expose a direct ``url`` for HTTP download;
@@ -40,7 +40,7 @@ def _resolve_access(resource: dict[str, Any], base_url: str | None) -> ResourceA
 
 
 def _resolve_schema(resource: dict[str, Any]) -> Schema | None:
-    """Best-effort schema extraction per D-P5-03 for Socrata views.
+    """Best-effort schema extraction for Socrata views.
 
     Socrata's catalog payload exposes typed column metadata as parallel arrays
     (``columns_field_name`` / ``columns_name`` / ``columns_datatype``, zipped
@@ -60,7 +60,7 @@ def _resolve_schema(resource: dict[str, Any]) -> Schema | None:
 def map_resource(view: dict[str, Any], *, base_url: str | None = None) -> Resource:
     """Convert a Socrata view/resource dict into a :class:`Resource`.
 
-    Populates advisory ``access`` and ``schema`` descriptors per D-P5-02/03/04
+    Populates advisory ``access`` and ``schema`` descriptors
     so downstream readers can pick the right transport without re-probing the
     portal. ``base_url`` is forwarded by the adapter for the SoQL
     :class:`QueryAccess` endpoint on purely-queryable views.

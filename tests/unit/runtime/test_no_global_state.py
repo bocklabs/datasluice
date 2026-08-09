@@ -1,6 +1,6 @@
 """Regression tests enforcing the absence of global registration state.
 
-ARCH-06 / Pitfall 17: the connectors package must never reintroduce a
+: the connectors package must never reintroduce a
 module-level mutable singleton (``registry = AdapterRegistry()``) nor
 side-effect registration calls. Discovery is the PluginManager's job, performed
 on an injected instance — never at import time.

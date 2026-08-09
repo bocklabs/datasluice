@@ -1,7 +1,7 @@
 """Shared fixtures for the ``datasluice.contracts`` conformance tests.
 
 Each portal fixture loads its hand-authored fixture set, scripts the
-real-socket test HTTP server with the portal's canned response map (D-P5-12 —
+real-socket test HTTP server with the portal's canned response map ( —
 no transport mocking, no network egress), and yields
 ``(server, base_url, fixture_set)``. ``fixture_set`` includes a
 ``"dataset_id"`` entry naming the dataset ``get_dataset`` fetches.

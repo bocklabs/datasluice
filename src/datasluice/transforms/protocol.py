@@ -1,7 +1,7 @@
-"""TransformStep Protocol + TransformContext model (TRANS-01, TRANS-09, D-P6-07/08).
+"""TransformStep Protocol + TransformContext model.
 
 The protocol is the closed-set contract every normalization transform implements
-(Plan 06-02). The context is the immutable provenance + schema snapshot threaded
+. The context is the immutable provenance + schema snapshot threaded
 read-only through every step by :class:`~datasluice.transforms.pipeline.Pipeline`.
 """
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TransformContext:
-    """Immutable provenance + schema snapshot (TRANS-09, D-P6-08).
+    """Immutable provenance + schema snapshot.
 
     Built once at :meth:`Pipeline.run` entry from the input stream's schema and
     threaded read-only through every step. Steps MUST NOT mutate it — the live
@@ -42,7 +42,7 @@ class TransformContext:
 
 @runtime_checkable
 class TransformStep(Protocol):
-    """Closed-set transform protocol (TRANS-01, D-P6-07).
+    """Closed-set transform protocol.
 
     Each transform is a frozen-dataclass-configured class implementing
     :meth:`apply`. The protocol exists for internal uniformity and
@@ -54,7 +54,7 @@ class TransformStep(Protocol):
         batches: The upstream ``RecordBatch`` iterable (the previous step's
             output, or the raw stream). Steps consume it lazily as a generator.
         context: The immutable :class:`TransformContext` built once at pipeline
-            entry. Positional per RESEARCH OQ-1.
+            entry. Positional.
     """
 
     def apply(self, batches: Iterable[Any], context: TransformContext) -> Iterator[Any]: ...

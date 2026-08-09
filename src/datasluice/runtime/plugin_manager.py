@@ -3,7 +3,7 @@
 The :class:`PluginManager` replaces the former module-level ``AdapterRegistry``
 singleton. Discovery is eager (performed in ``__init__``) and per-entry
 isolated: a broken third-party plugin is recorded as a :class:`PluginFailure`
-and never crashes session creation (ARCH-05, Pitfall 4).
+and never crashes session creation.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class PluginManager:
     Built-in connectors are declared in the ``datasluice.connectors``
     entry-points group in ``pyproject.toml``; third-party connectors register
     their own entry points in the same group. The manager is an injected
-    instance — never a module-level singleton (ARCH-06, Pitfall 17).
+    instance — never a module-level singleton.
     """
 
     def __init__(self, group: str = "datasluice.connectors") -> None:
@@ -66,7 +66,7 @@ class PluginManager:
             self._factories[ep.name] = factory
 
     def register(self, name: str, factory: Callable[..., Any]) -> None:
-        """Register *factory* programmatically (used by tests, D-06)."""
+        """Register *factory* programmatically."""
         if name in self._factories and self._factories[name] is not factory:
             logger.warning("Overwriting existing connector factory %r", name)
         self._factories[name] = factory

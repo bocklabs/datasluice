@@ -1,8 +1,8 @@
-"""Unit tests for the streaming CSV reader (DATA-03, 04-02 Task 1).
+"""Unit tests for the streaming CSV reader.
 
-Follows the Phase 03/04-01 RED->GREEN TDD pattern: the module skips cleanly at
+Follows the -01 RED->GREEN TDD pattern: the module skips cleanly at
 collection time while the readers package is not yet importable, then runs and
-passes once Task 1 GREEN lands the real implementation.
+passes once GREEN lands the real implementation.
 """
 
 from __future__ import annotations

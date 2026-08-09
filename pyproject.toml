@@ -8,10 +8,10 @@ version = "0.2.0"
 description = "One Python interface for open-data discovery, extraction, format normalization, and pipeline integration"
 readme = "README.md"
 authors = [
-  {name = "Nitish Raj", email = "contact@rajnitish.com"}
+  {name = "Nitish Raj", email = "contact@bocklabs.com"}
 ]
 maintainers = [
-  {name = "Nitish Raj", email = "contact@rajnitish.com"}
+  {name = "Nitish Raj", email = "contact@bocklabs.com"}
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",

@@ -1,8 +1,8 @@
-"""Unit tests for the CastSchema transform (TRANS-04, D-P6-10).
+"""Unit tests for the CastSchema transform.
 
 Covers a safe widening cast, the strict truncating-cast failure (raises
 ``TransformError`` wrapping ``ArrowInvalid`` — no silent data loss, mitigates
-T-06-03), and an identity safe cast.
+), and an identity safe cast.
 """
 
 from __future__ import annotations

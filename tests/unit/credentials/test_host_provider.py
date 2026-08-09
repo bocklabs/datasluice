@@ -1,9 +1,9 @@
-"""Unit tests for HostCredentialProvider (INFRA-04).
+"""Unit tests for HostCredentialProvider.
 
 Exercises the per-host credential resolver: CredentialProvider Protocol
 conformance, per-host caching, single-flight refresh under N=10 concurrent
-callers (D-P3-16), expiry-triggered refresh (D-P3-17), evict(host) forcing
-re-resolution (D-P3-15), and the no-refresher AuthenticationError path.
+callers, expiry-triggered refresh, evict(host) forcing
+re-resolution, and the no-refresher AuthenticationError path.
 
 The module is resolved via ``importlib.import_module`` (rather than a static
 ``import``) so the RED commit can land under this repo's full-suite pre-commit
@@ -86,7 +86,7 @@ def test_resolve_caches_after_first_call() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Single-flight refresh (D-P3-16)
+# Single-flight refresh
 # --------------------------------------------------------------------------- #
 
 
@@ -128,7 +128,7 @@ def test_single_flight_concurrent_resolve_calls_one_refresh() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Expiry handling (D-P3-17)
+# Expiry handling
 # --------------------------------------------------------------------------- #
 
 
@@ -148,7 +148,7 @@ def test_expiry_triggers_refresh_on_next_resolve() -> None:
 
 
 def test_no_expiry_never_refreshes() -> None:
-    """expires_at=None (D-P3-17 zero-config default) never triggers refresh."""
+    """expires_at=None never triggers refresh."""
 
     refresher = MagicMock(return_value=(BearerAuth("static"), None))
     provider = HostCredentialProvider(refresher=refresher)
@@ -162,7 +162,7 @@ def test_no_expiry_never_refreshes() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Eviction (D-P3-15)
+# Eviction
 # --------------------------------------------------------------------------- #
 
 
@@ -220,7 +220,7 @@ def test_evict_during_in_flight_refresh_safe() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# No-refresher paths (D-P3-17)
+# No-refresher paths
 # --------------------------------------------------------------------------- #
 
 
@@ -231,7 +231,7 @@ def test_no_refresher_raises_authentication_error() -> None:
 
 
 def test_no_refresher_returns_cached_even_if_expired() -> None:
-    """D-P3-17 zero-config default: cache hit takes precedence over expiry when no refresher."""
+    """zero-config default: cache hit takes precedence over expiry when no refresher."""
 
     provider = HostCredentialProvider(refresher=None)
     cached_auth = BearerAuth("cached")

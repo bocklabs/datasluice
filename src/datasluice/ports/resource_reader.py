@@ -1,4 +1,4 @@
-"""Resource reader port Protocol (defined-only, no implementation yet — D-16)."""
+"""Resource reader port Protocol."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 class ResourceReader(Protocol):
     """Boundary protocol for opening a resource for streaming reads.
 
-    The ``open`` method returns a :class:`BatchStream` — a context-managed
-    Arrow ``RecordBatch`` stream (DATA-01, DATA-02, D-P4-17). The
-    ``batch_size`` keyword controls the row count per yielded batch
-    (D-P4-14, default 65,536 — pyarrow-native).
+        The ``open`` method returns a :class:`BatchStream` — a context-managed
+        Arrow ``RecordBatch`` stream. The
+        ``batch_size`` keyword controls the row count per yielded batch
+    .
     """
 
     def open(self, resource: Resource, *, batch_size: int = 65536) -> BatchStream: ...

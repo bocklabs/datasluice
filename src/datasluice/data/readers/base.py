@@ -1,12 +1,12 @@
-"""Abstract base class for streaming format readers (D-P4-10).
+"""Abstract base class for streaming format readers.
 
 Each reader receives a ``BinaryIO`` byte source and yields Arrow
 ``RecordBatch`` objects. This replaces the v0.1.0 ``read(...) -> list[dict]``
 contract with a streaming contract: callers wrap the iterator in a
-``BatchStream`` (Phase 4 plan 01) for context-managed consumption.
+``BatchStream`` (plan 01) for context-managed consumption.
 
 The reader does not own byte acquisition (transport), decompression
-(plan 04-03), or terminal conversion (Phase 6) — it only decodes bytes
+(plan 04-03), or terminal conversion — it only decodes bytes
 into ``RecordBatch`` chunks.
 """
 

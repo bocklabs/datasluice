@@ -13,6 +13,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
 </p>
 
+> ⚠️ **Unstable — under active development.**
+> DataSluice is pre-1.0 and evolving fast. Breaking changes may occur at any time without notice. Use it at your own risk.
+
 ---
 
 * [GitHub](https://github.com/nitish-raj/datasluice/) | [PyPI](https://pypi.org/project/datasluice/) | [Documentation](https://nitish-raj.github.io/datasluice/)

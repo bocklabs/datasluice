@@ -1,4 +1,4 @@
-"""``datasluice download`` command — raw bulk copy (D-15)."""
+"""``datasluice download`` command — raw bulk copy."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""State store port Protocols for incremental sync state (SYNC-01).
+"""State store port Protocols for incremental sync state.
 
 The base :class:`StateStore` Protocol is the persistence contract every store
 must satisfy. :class:`AtomicStateStore` is an *additive capability* Protocol:
@@ -29,7 +29,7 @@ class StateStore(Protocol):
 
 @runtime_checkable
 class AtomicStateStore(Protocol):
-    """Additive capability Protocol for compare-and-swap (CAS) state writes (CR-01/02/11).
+    """Additive capability Protocol for compare-and-swap (CAS) state writes.
 
     A :class:`StateStore` that *also* satisfies this Protocol can publish state
     transitions conditionally: a prior version is read via :meth:`read_version`
@@ -57,7 +57,7 @@ class AtomicStateStore(Protocol):
         ...
 
     def get_with_version(self, key: str) -> tuple[SyncState | None, bytes | None]:
-        """Atomically load ``(state, version)`` from one backend read (CR-01).
+        """Atomically load ``(state, version)`` from one backend read.
 
         Returns ``(state, version)`` derived from a single read so an
         intervening writer cannot split the state used for sync decisions
@@ -82,7 +82,7 @@ class AtomicStateStore(Protocol):
             The committed envelope bytes — the new CAS version. Callers
             chaining another :meth:`conditional_put` MUST pass the returned
             bytes as the next ``expected_prior`` rather than re-reading the
-            version separately (CR-01).
+            version separately.
 
         Raises:
             SyncStateConflictError: if the current on-disk version does not match

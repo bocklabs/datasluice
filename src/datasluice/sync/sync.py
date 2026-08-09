@@ -37,7 +37,7 @@ class SyncOutcome:
 
 
 def _resource_transaction(state_store: Any, key: str, *, is_atomic: bool) -> Any:
-    """Return a context manager that serializes a per-resource sync transaction (CR-03).
+    """Return a context manager that serializes a per-resource sync transaction.
 
     For :class:`FileStateStore` (and any AtomicStateStore that exposes
     ``key_lock``), the per-key lock is held across the entire
@@ -76,7 +76,7 @@ def sync_resources(
 
     # Probe once: stores implementing the additive AtomicStateStore capability
     # (FileStateStore) get CAS-protected transitions; others (InMemoryStateStore,
-    # external implementors) fall back to unconditional put (CR-02).
+    # external implementors) fall back to unconditional put.
     from datasluice.ports import AtomicStateStore
 
     is_atomic = isinstance(state_store, AtomicStateStore)
@@ -185,11 +185,11 @@ def sync_resources(
 
             # Capture the prior CAS version atomically with the state read above so
             # every state transition chains through the conditional-write path
-            # (CR-01/CR-02). The box is mutated by the checkpoint callback: each
+            # . The box is mutated by the checkpoint callback: each
             # batch checkpoint stores the version returned by its conditional_put,
             # and the completed write chains from the last checkpoint's returned
             # version. Never re-read the version after a write — that opens a
-            # TOCTOU gap (CR-01).
+            # TOCTOU gap.
             prior_version_box: list[bytes | None] = [prior_version]
 
             action = "materialized"
@@ -240,7 +240,7 @@ def sync_resources(
                     start_batch_index=start_batch_index,
                     on_batch_persisted=persist_batch,
                 )
-                # Verify the source did not change during the read (CR-09). A
+                # Verify the source did not change during the read. A
                 # change mid-read means the published artifact mixes pre- and
                 # post-change content while the in-progress state records claim
                 # a single source_version. Discard staging and abort so the
@@ -531,7 +531,7 @@ def _preferred_watermark(headers: Any) -> str | None:
 
 
 def _compute_source_version(resource: Any) -> str | None:
-    """Return a SHA-256 hex digest of the raw source bytes for checkpoint identity (CR-07).
+    """Return a SHA-256 hex digest of the raw source bytes for checkpoint identity.
 
     The digest is computed once per resource per pass and carried through every
     batch checkpoint so resume can detect a source replacement between passes.

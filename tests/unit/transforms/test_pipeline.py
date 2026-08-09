@@ -1,7 +1,7 @@
-"""Unit tests for the Pipeline + compose runner (TRANS-08, D-P6-04/05/06).
+"""Unit tests for the Pipeline + compose runner.
 
 Covers: identity round-trip, left-to-right step threading (no intermediate
-materialization), Pitfall 7 (output schema matches transformed batches, not
+materialization), (output schema matches transformed batches, not
 stale input), empty-stream handling, introspectable ``.steps``, and
 ``__repr__``.
 """
@@ -41,7 +41,7 @@ class _SelectAmount:
 
 
 class _DropName:
-    """Drop the ``name`` column — exercises the schema-change path (Pitfall 7)."""
+    """Drop the ``name`` column — exercises the schema-change path."""
 
     def apply(self, batches: Iterable[Any], context: TransformContext) -> Iterator[Any]:
         for batch in batches:
@@ -79,7 +79,7 @@ def test_compose_threads_steps_left_to_right() -> None:
 
 
 def test_pipeline_output_schema_matches_transformed_batches() -> None:
-    """Pitfall 7: output BatchStream.schema reflects the DROPPED schema, not input."""
+    """Output BatchStream.schema reflects the DROPPED schema, not input."""
     import pyarrow as pa
 
     schema = pa.schema([("id", pa.int64()), ("name", pa.string())])

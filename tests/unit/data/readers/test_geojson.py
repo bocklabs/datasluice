@@ -1,6 +1,6 @@
-"""Unit tests for the streaming GeoJSON reader (DATA-03, 04-02 Task 2).
+"""Unit tests for the streaming GeoJSON reader.
 
-Covers the Feature-flatten + geometry_wkt column contract (D-P4-11):
+Covers the Feature-flatten + geometry_wkt column contract:
 - FeatureCollection flattens to one row per Feature
 - properties dict becomes typed columns
 - geometry becomes a ``geometry_wkt`` string column

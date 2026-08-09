@@ -1,9 +1,9 @@
-"""Tests for DataSluiceSession Phase 3 kwargs + injectables (Success Criterion 5).
+"""Tests for DataSluiceSession kwargs + injectables (Success Criterion 5).
 
 Covers the ``timeout``/``retries``/``rate_limit``/``cache_dir``/``cache_ttl``
 kwargs and the ``transport=``/``storage=``/``cache=``/``credential_provider=``/
 ``state_store=`` injectables, plus regression guards that the
-``ConnectorContext`` signature is unchanged (D-P3-21) and the session exposes
+``ConnectorContext`` signature is unchanged and the session exposes
 no ``download()``/``materialize()`` method.
 """
 
@@ -98,7 +98,7 @@ def test_scalar_knobs_ignored_when_transport_injected() -> None:
 
 
 def test_credential_provider_injectable() -> None:
-    """An injected CredentialProvider wins over auth= wrapping (D-P3-14)."""
+    """An injected CredentialProvider wins over auth= wrapping."""
 
     provider = _StubCredentialProvider()
     session = DataSluiceSession(credential_provider=provider)
@@ -107,7 +107,7 @@ def test_credential_provider_injectable() -> None:
 
 
 def test_storage_injectable() -> None:
-    """An injected StoragePort is stored on the session (D-P3-20)."""
+    """An injected StoragePort is stored on the session."""
 
     storage = _StubStorage()
     session = DataSluiceSession(storage=storage)
@@ -116,7 +116,7 @@ def test_storage_injectable() -> None:
 
 
 def test_cache_injectable() -> None:
-    """An injected CachePort is stored as the session cache (D-P3-02)."""
+    """An injected CachePort is stored as the session cache."""
 
     cache = _StubCache()
     session = DataSluiceSession(cache=cache)
@@ -134,7 +134,7 @@ def test_state_store_injectable() -> None:
 
 
 def test_connector_context_signature_unchanged() -> None:
-    """ConnectorContext fields stay exactly (base_url, transport, auth, page_size) (D-P3-21)."""
+    """ConnectorContext fields stay exactly (base_url, transport, auth, page_size)."""
 
     fields = tuple(inspect.signature(ConnectorContext).parameters)
     assert fields == ("base_url", "transport", "auth", "page_size")

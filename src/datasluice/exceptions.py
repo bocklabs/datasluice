@@ -37,7 +37,7 @@ class PortalDetectionError(DataSluiceError):
 
     Attributes:
         detection_result: Optional :class:`DetectionResult` that triggered the
-            failure (D-P5-20 feed). Carries the evidence trail so Plan 05-03's
+            failure. Carries the evidence trail so -03's
             ``session.portal()`` can surface why detection failed without
             re-running it. Backward-compatible: defaults to ``None``.
     """
@@ -93,7 +93,7 @@ class FormatError(DataSluiceError):
 
 
 class DecompressionError(FormatError):
-    """Raised when a compressed resource cannot be decompressed (D-P4-21).
+    """Raised when a compressed resource cannot be decompressed.
 
     Compression is format-adjacent: a decompression failure means the bytes
     could not be decoded into the underlying format, so it hangs off
@@ -102,12 +102,12 @@ class DecompressionError(FormatError):
 
 
 class TransformError(FormatError):
-    """Raised when a transform step cannot be applied (D-P6-15).
+    """Raised when a transform step cannot be applied.
 
-    Transform failures are data-shape/decoding failures (an unsafe cast, a
-    missing column, an unsupported nesting), so they hang off
-    :class:`FormatError` — matching the :class:`DecompressionError` precedent
-    (D-P4-21). No new exception root.
+        Transform failures are data-shape/decoding failures (an unsafe cast, a
+        missing column, an unsupported nesting), so they hang off
+        :class:`FormatError` — matching the :class:`DecompressionError` precedent
+    . No new exception root.
     """
 
 
@@ -116,18 +116,18 @@ class ConfigError(DataSluiceError):
 
 
 class StateStoreError(DataSluiceError):
-    """Raised when a state store cannot read or write durable sync state (D-P7-26).
+    """Raised when a state store cannot read or write durable sync state.
 
     A direct child of :class:`DataSluiceError` because store I/O failures are
     neither portal, download, nor format errors: a corrupt or wrong-version
     JSON envelope is a data-integrity failure of the local/remote state file.
     Fails loud (never silently treats corrupt state as "no state") because
-    staleness is worse than a loud failure (D-P7-03).
+    staleness is worse than a loud failure.
     """
 
 
 class SyncStateConflictError(StateStoreError):
-    """Raised when a state write loses an optimistic compare-and-swap race (D-P7-27).
+    """Raised when a state write loses an optimistic compare-and-swap race.
 
     The version read before the write had already been replaced by a
     concurrent writer; the caller must re-read and re-apply their mutation
@@ -136,15 +136,15 @@ class SyncStateConflictError(StateStoreError):
 
 
 class UnsupportedAccessError(DownloadError):
-    """Raised when a resource's access kind has no reader implementation (D-P4-09).
+    """Raised when a resource's access kind has no reader implementation.
 
-    Phase 4 implements HttpDownload, ObjectStorage, and LocalFile readers.
-    QueryAccess raises this error; Phase 5 adds query readers.
+    implements HttpDownload, ObjectStorage, and LocalFile readers.
+    QueryAccess raises this error; adds query readers.
     """
 
 
 class StreamClosedError(DataSluiceError):
-    """Raised when operating on a closed :class:`BatchStream` (D-P4-21).
+    """Raised when operating on a closed :class:`BatchStream`.
 
     A direct child of :class:`DataSluiceError` because it is an operational
     use-after-close error — the download already succeeded and the format is
@@ -154,7 +154,7 @@ class StreamClosedError(DataSluiceError):
 
 
 class SchemaUnificationError(DataSluiceError):
-    """Raised when batch schemas cannot be unified under pyarrow promotion (D-P4-21).
+    """Raised when batch schemas cannot be unified under pyarrow promotion.
 
     A direct child of :class:`DataSluiceError` because it is a data-reconciliation
     error — neither a download nor a format failure. datasluice relies on
@@ -164,7 +164,7 @@ class SchemaUnificationError(DataSluiceError):
 
 
 class UnsupportedQueryFieldError(DataSluiceError):
-    """Raised when a caller sets a ``Query`` filter field the connector rejects (D-P5-07).
+    """Raised when a caller sets a ``Query`` filter field the connector rejects.
 
     A direct child of :class:`DataSluiceError` (sibling to :class:`AdapterError`),
     NOT under :class:`PortalError`: the reject policy fires pre-flight, before
