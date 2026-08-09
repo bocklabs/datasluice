@@ -18,7 +18,7 @@ jobs:
     name: Auto-generate PR title & description (PR-Agent /describe)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ github.actor != 'renovate[bot]' && github.actor != 'dependabot[bot]' }}
+    if: github.event.pull_request.user.type != 'Bot'
     steps:
       - name: PR Agent /describe
         uses: the-pr-agent/pr-agent@743f52d80f3513193dfc7626f778c73478df6d0a # v0.41.1
