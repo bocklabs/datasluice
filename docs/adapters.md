@@ -36,8 +36,9 @@ Implement `BaseAdapter` and register it to support any portal:
 ```python
 from datasluice.adapters import BaseAdapter, registry
 
-class MyAdapter(BaseAdapter):
-    ...
+
+class MyAdapter(BaseAdapter): ...
+
 
 registry.register("my_portal", MyAdapter)
 ```
