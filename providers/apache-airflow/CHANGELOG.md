@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/bocklabs/datasluice/compare/apache-airflow-providers-datasluice-v0.1.1...apache-airflow-providers-datasluice-v0.1.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **provider:** correct project URLs ([#52](https://github.com/bocklabs/datasluice/issues/52)) ([1e07d7b](https://github.com/bocklabs/datasluice/commit/1e07d7b5fa1b7429a55dd2d4f62b567cfdab89f4))
+
 ## [0.1.1](https://github.com/bocklabs/datasluice/compare/apache-airflow-providers-datasluice-v0.1.0...apache-airflow-providers-datasluice-v0.1.1) (2026-08-09)
 
 
