@@ -18,6 +18,12 @@ jobs:
   release-please:
     name: Maintain release PR / cut release
     runs-on: ubuntu-latest
+    outputs:
+      core_release: ${{ steps.collect.outputs.core_release }}
+      provider_releases: ${{ steps.collect.outputs.provider_releases }}
+      release_ref: ${{ steps.collect.outputs.release_ref }}
+      has_releases: ${{ steps.collect.outputs.has_releases }}
+
     steps:
       - name: Mint release-bot app token
         id: app-token
@@ -32,9 +38,102 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - id: release
+      - name: Run Release Please
+        id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Collect released components
+        id: collect
+        if: always()
+        env:
+          RELEASE_OUTPUTS: ${{ toJSON(steps.release.outputs) }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+
+          outputs = json.loads(os.environ.get("RELEASE_OUTPUTS") or "{}")
+
+          with open("providers/registry.json", encoding="utf-8") as file:
+              registry = json.load(file)
+
+          def was_created(value):
+              return str(value).lower() == "true"
+
+          core = {}
+          if was_created(outputs.get("release_created")):
+              core = {
+                  "component": "core",
+                  "path": ".",
+                  "package_name": "datasluice",
+                  "version": outputs["version"],
+                  "tag_name": outputs["tag_name"],
+                  "testpypi_env": "test-pypi",
+                  "pypi_env": "pypi",
+              }
+
+          providers = []
+          for provider in registry.get("providers", []):
+              path = provider["path"]
+
+              if not was_created(
+                  outputs.get(f"{path}--release_created")
+              ):
+                  continue
+
+              providers.append(
+                  {
+                      **provider,
+                      "version": outputs[f"{path}--version"],
+                      "tag_name": outputs[f"{path}--tag_name"],
+                  }
+              )
+
+          release_ref = (
+              core.get("tag_name")
+              or (
+                  providers[0]["tag_name"]
+                  if providers
+                  else ""
+              )
+          )
+
+          has_releases = bool(core or providers)
+
+          output_file = os.environ["GITHUB_OUTPUT"]
+          with open(output_file, "a", encoding="utf-8") as file:
+              file.write(
+                  "core_release="
+                  + json.dumps(core, separators=(",", ":"))
+                  + "\n"
+              )
+              file.write(
+                  "provider_releases="
+                  + json.dumps(providers, separators=(",", ":"))
+                  + "\n"
+              )
+              file.write(f"release_ref={release_ref}\n")
+              file.write(
+                  f"has_releases={str(has_releases).lower()}\n"
+              )
+          PY
+
+  publish-release:
+    name: Publish coordinated release
+    needs: release-please
+    if: needs.release-please.outputs.has_releases == 'true'
+    uses: ./.github/workflows/publish.yml
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      core_release: ${{ needs.release-please.outputs.core_release }}
+      provider_releases: ${{ needs.release-please.outputs.provider_releases }}
+      release_ref: ${{ needs.release-please.outputs.release_ref }}
+    secrets: inherit
