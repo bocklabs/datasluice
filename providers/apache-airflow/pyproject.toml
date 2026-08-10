@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apache-airflow-providers-datasluice"
-version = "0.1.1"
+version = "0.1.2"
 description = "Apache Airflow provider for DataSluice open-data discovery, streaming, and materialization"
 requires-python = ">=3.12"
 license = {text = "MIT"}
