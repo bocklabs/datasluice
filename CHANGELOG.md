@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2](https://github.com/bocklabs/datasluice/compare/datasluice-v0.2.1...datasluice-v0.2.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* Add build distribution workflow and update publish workflow ([#47](https://github.com/bocklabs/datasluice/issues/47)) ([07009dc](https://github.com/bocklabs/datasluice/commit/07009dc54f1fd36f5c47a7e0355e2e0f503bf76b))
+
 ## [0.2.1](https://github.com/bocklabs/datasluice/compare/datasluice-v0.2.0...datasluice-v0.2.1) (2026-08-09)
 
 
