@@ -22,7 +22,6 @@ permissions:
   actions: read
   contents: read
   id-token: write
-  attestations: write
 
 jobs:
   build-core:
@@ -176,7 +175,9 @@ jobs:
           import subprocess
           from pathlib import Path
 
-          core = json.loads(os.environ["CORE_RELEASE"])
+          core = json.loads(
+              os.environ["CORE_RELEASE"]
+          )
           providers = json.loads(
               os.environ["PROVIDER_RELEASES"]
           )
@@ -184,11 +185,37 @@ jobs:
           venv = Path(os.environ["SMOKE_VENV"])
           python = venv / "bin" / "python"
 
+          def run_check(label, command):
+              print(
+                  f"::group::{label}",
+                  flush=True,
+              )
+
+              try:
+                  subprocess.run(
+                      command,
+                      check=True,
+                  )
+              except subprocess.CalledProcessError as error:
+                  print(
+                      f"::error title={label} failed::"
+                      "Command exited with status "
+                      f"{error.returncode}",
+                      flush=True,
+                  )
+                  raise
+              finally:
+                  print(
+                      "::endgroup::",
+                      flush=True,
+                  )
+
           candidates = []
 
           if core:
               candidates.append(
-                  f"{core['package_name']}=={core['version']}"
+                  f"{core['package_name']}=="
+                  f"{core['version']}"
               )
 
           candidates.extend(
@@ -197,7 +224,8 @@ jobs:
               for provider in providers
           )
 
-          subprocess.run(
+          run_check(
+              "Install release candidates",
               [
                   "uv",
                   "pip",
@@ -212,11 +240,11 @@ jobs:
                   "https://pypi.org/simple/",
                   *candidates,
               ],
-              check=True,
           )
 
           if core:
-              subprocess.run(
+              run_check(
+                  "Smoke core public API",
                   [
                       str(python),
                       "-c",
@@ -226,12 +254,14 @@ jobs:
                           "print(datasluice.__version__)"
                       ),
                   ],
-                  check=True,
               )
 
-              subprocess.run(
-                  [str(venv / "bin" / "datasluice"), "--help"],
-                  check=True,
+              run_check(
+                  "Smoke core CLI",
+                  [
+                      str(venv / "bin" / "datasluice"),
+                      "--help",
+                  ],
               )
 
           for provider in providers:
@@ -241,9 +271,12 @@ jobs:
                   / "smoke.py"
               )
 
-              subprocess.run(
-                  [str(python), str(smoke)],
-                  check=True,
+              run_check(
+                  f"Smoke provider {provider['slug']}",
+                  [
+                      str(python),
+                      str(smoke),
+                  ],
               )
           PY
 

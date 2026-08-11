@@ -56,15 +56,21 @@ jobs:
           import json
           import os
 
-          outputs = json.loads(os.environ.get("RELEASE_OUTPUTS") or "{}")
+          outputs = json.loads(
+              os.environ.get("RELEASE_OUTPUTS") or "{}"
+          )
 
-          with open("providers/registry.json", encoding="utf-8") as file:
+          with open(
+              "providers/registry.json",
+              encoding="utf-8",
+          ) as file:
               registry = json.load(file)
 
           def was_created(value):
               return str(value).lower() == "true"
 
           core = {}
+
           if was_created(outputs.get("release_created")):
               core = {
                   "component": "core",
@@ -77,6 +83,7 @@ jobs:
               }
 
           providers = []
+
           for provider in registry.get("providers", []):
               path = provider["path"]
 
@@ -105,20 +112,34 @@ jobs:
           has_releases = bool(core or providers)
 
           output_file = os.environ["GITHUB_OUTPUT"]
-          with open(output_file, "a", encoding="utf-8") as file:
+
+          with open(
+              output_file,
+              "a",
+              encoding="utf-8",
+          ) as file:
               file.write(
                   "core_release="
-                  + json.dumps(core, separators=(",", ":"))
+                  + json.dumps(
+                      core,
+                      separators=(",", ":"),
+                  )
                   + "\n"
               )
               file.write(
                   "provider_releases="
-                  + json.dumps(providers, separators=(",", ":"))
+                  + json.dumps(
+                      providers,
+                      separators=(",", ":"),
+                  )
                   + "\n"
               )
-              file.write(f"release_ref={release_ref}\n")
               file.write(
-                  f"has_releases={str(has_releases).lower()}\n"
+                  f"release_ref={release_ref}\n"
+              )
+              file.write(
+                  "has_releases="
+                  f"{str(has_releases).lower()}\n"
               )
           PY
 
@@ -136,4 +157,3 @@ jobs:
       core_release: ${{ needs.release-please.outputs.core_release }}
       provider_releases: ${{ needs.release-please.outputs.provider_releases }}
       release_ref: ${{ needs.release-please.outputs.release_ref }}
-    secrets: inherit
