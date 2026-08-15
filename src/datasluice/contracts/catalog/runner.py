@@ -178,6 +178,7 @@ def _outcome(case: CatalogContractCase, metadata: Mapping[str, object], error: E
             mode=case.mode,
             capability="available" if case.outcome in _SUCCESS_OUTCOMES else "unavailable",
             state="passed",
+            tier=case.outcome,
             warnings=(),
             platform_metadata=metadata,
         )
@@ -186,6 +187,7 @@ def _outcome(case: CatalogContractCase, metadata: Mapping[str, object], error: E
         mode=case.mode,
         capability="available" if case.outcome in _SUCCESS_OUTCOMES else "unavailable",
         state="failed",
+        tier=case.outcome,
         warnings=(case.pytest_id, str(error)[:256]),
         platform_metadata=metadata,
     )
@@ -290,4 +292,13 @@ def run_catalog_contract(
     if not set(cases) <= set(expected):
         raise ValueError("Catalog contract cases must be generated from the pinned fixture set.")
     outcomes = _run_reference_cases(cases, sync_client, async_client, fixture_set)
-    return ComplianceReport(outcomes=outcomes, platform_metadata=sync_client.platform_metadata())
+    return ComplianceReport(
+        outcomes=outcomes,
+        connector_id=f"datasluice/{fixture_set.platform}",
+        manifest_version="reference-v1",
+        profile_version=fixture_set.profile_version,
+        fixture_fingerprint=fixture_set.fingerprint,
+        contract_schema_version=str(ComplianceReport.SCHEMA_VERSION),
+        expected_case_ids=tuple(contract_case.pytest_id for contract_case in cases),
+        platform_metadata=sync_client.platform_metadata(),
+    )
