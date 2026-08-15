@@ -1,20 +1,27 @@
-name: Publish coordinated release
+name: Publish package
 
 on:
   workflow_call:
     inputs:
-      core_release:
-        description: JSON object describing the core release, or {}
+      component:
         required: true
         type: string
-
-      provider_releases:
-        description: JSON array describing provider releases
+      package_path:
         required: true
         type: string
-
-      release_ref:
-        description: Release tag used for coordinated smoke tests
+      package_name:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      testpypi_environment:
+        required: true
+        type: string
+      pypi_environment:
         required: true
         type: string
 
@@ -24,327 +31,92 @@ permissions:
   id-token: write
 
 jobs:
-  build-core:
-    name: Build core
-    if: inputs.core_release != '{}'
-    uses: ./.github/workflows/build-distribution.yml
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
       attestations: write
-    with:
-      component: core
-      package_path: ${{ fromJson(inputs.core_release).path }}
-      version: ${{ fromJson(inputs.core_release).version }}
-      ref: ${{ fromJson(inputs.core_release).tag_name }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          enable-cache: false
+      - run: uv build --no-sources ${{ inputs.package_path }}
+      - run: uvx twine check dist/*
+      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dist-${{ inputs.component }}-${{ inputs.version }}
+          path: dist/
 
-  build-providers:
-    name: Build provider ${{ matrix.provider.slug }}
-    if: inputs.provider_releases != '[]'
-    strategy:
-      fail-fast: false
-      matrix:
-        provider: ${{ fromJson(inputs.provider_releases) }}
-    uses: ./.github/workflows/build-distribution.yml
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    with:
-      component: ${{ matrix.provider.slug }}
-      package_path: ${{ matrix.provider.path }}
-      version: ${{ matrix.provider.version }}
-      ref: ${{ matrix.provider.tag_name }}
-
-  publish-core-testpypi:
-    name: Publish core to TestPyPI
-    needs:
-      - build-core
-    if: |
-      always() &&
-      inputs.core_release != '{}' &&
-      needs.build-core.result == 'success'
+  publish-testpypi:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
-      name: ${{ fromJson(inputs.core_release).testpypi_env }}
-      url: https://test.pypi.org/p/datasluice
+      name: ${{ inputs.testpypi_environment }}
+      url: https://test.pypi.org/p/${{ inputs.package_name }}
     permissions:
       actions: read
       contents: read
       id-token: write
-
     steps:
-      - name: Download core distribution
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: dist-core-${{ fromJson(inputs.core_release).version }}
+          name: dist-${{ inputs.component }}-${{ inputs.version }}
           path: dist/
-
-      - name: Publish core to TestPyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           repository-url: https://test.pypi.org/legacy/
 
-  publish-providers-testpypi:
-    name: Publish provider ${{ matrix.provider.slug }} to TestPyPI
-    needs:
-      - build-providers
-      - publish-core-testpypi
-    if: |
-      always() &&
-      inputs.provider_releases != '[]' &&
-      needs.build-providers.result == 'success' &&
-      (
-        inputs.core_release == '{}' ||
-        needs.publish-core-testpypi.result == 'success'
-      )
-    strategy:
-      fail-fast: false
-      matrix:
-        provider: ${{ fromJson(inputs.provider_releases) }}
+  smoke:
+    needs: [build, publish-testpypi]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment:
-      name: ${{ matrix.provider.testpypi_env }}
-      url: https://test.pypi.org/p/${{ matrix.provider.package_name }}
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Download provider distribution
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-${{ matrix.provider.slug }}-${{ matrix.provider.version }}
-          path: dist/
-
-      - name: Publish provider to TestPyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
-  smoke-candidates:
-    name: Smoke released candidates
-    needs:
-      - publish-core-testpypi
-      - publish-providers-testpypi
-    if: |
-      always() &&
-      (
-        inputs.core_release != '{}' ||
-        inputs.provider_releases != '[]'
-      ) &&
-      (
-        inputs.core_release == '{}' ||
-        needs.publish-core-testpypi.result == 'success'
-      ) &&
-      (
-        inputs.provider_releases == '[]' ||
-        needs.publish-providers-testpypi.result == 'success'
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
-      CORE_RELEASE: ${{ inputs.core_release }}
-      PROVIDER_RELEASES: ${{ inputs.provider_releases }}
-      SMOKE_VENV: /tmp/datasluice-release-smoke
-
+      SMOKE_VENV: /tmp/smoke-${{ inputs.component }}
     steps:
-      - name: Checkout coordinated release ref
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          ref: ${{ inputs.release_ref }}
+          ref: ${{ inputs.ref }}
           persist-credentials: false
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           enable-cache: false
-
-      - name: Install and smoke exact candidates
-        run: |
+      - run: |
           uv venv --python 3.12 "$SMOKE_VENV"
+          uv pip install --python "$SMOKE_VENV/bin/python" --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${{ inputs.package_name }}==${{ inputs.version }}"
+      - if: inputs.package_name == 'datasluice'
+        run: |
+          "$SMOKE_VENV/bin/python" -c "import datasluice"
+          "$SMOKE_VENV/bin/datasluice" --help
+      - if: inputs.package_name != 'datasluice'
+        working-directory: ${{ inputs.package_path }}
+        run: '"$SMOKE_VENV/bin/python" tests/smoke.py'
 
-          python3 <<'PY'
-          import json
-          import os
-          import subprocess
-          from pathlib import Path
-
-          core = json.loads(
-              os.environ["CORE_RELEASE"]
-          )
-          providers = json.loads(
-              os.environ["PROVIDER_RELEASES"]
-          )
-
-          venv = Path(os.environ["SMOKE_VENV"])
-          python = venv / "bin" / "python"
-
-          def run_check(label, command):
-              print(
-                  f"::group::{label}",
-                  flush=True,
-              )
-
-              try:
-                  subprocess.run(
-                      command,
-                      check=True,
-                  )
-              except subprocess.CalledProcessError as error:
-                  print(
-                      f"::error title={label} failed::"
-                      "Command exited with status "
-                      f"{error.returncode}",
-                      flush=True,
-                  )
-                  raise
-              finally:
-                  print(
-                      "::endgroup::",
-                      flush=True,
-                  )
-
-          candidates = []
-
-          if core:
-              candidates.append(
-                  f"{core['package_name']}=="
-                  f"{core['version']}"
-              )
-
-          candidates.extend(
-              f"{provider['package_name']}=="
-              f"{provider['version']}"
-              for provider in providers
-          )
-
-          run_check(
-              "Install release candidates",
-              [
-                  "uv",
-                  "pip",
-                  "install",
-                  "--python",
-                  str(python),
-                  "--index-strategy",
-                  "unsafe-best-match",
-                  "--index-url",
-                  "https://test.pypi.org/simple/",
-                  "--extra-index-url",
-                  "https://pypi.org/simple/",
-                  *candidates,
-              ],
-          )
-
-          if core:
-              run_check(
-                  "Smoke core public API",
-                  [
-                      str(python),
-                      "-c",
-                      (
-                          "import datasluice; "
-                          "from datasluice import DataSluice; "
-                          "print(datasluice.__version__)"
-                      ),
-                  ],
-              )
-
-              run_check(
-                  "Smoke core CLI",
-                  [
-                      str(venv / "bin" / "datasluice"),
-                      "--help",
-                  ],
-              )
-
-          for provider in providers:
-              smoke = (
-                  Path(provider["path"])
-                  / "tests"
-                  / "smoke.py"
-              )
-
-              run_check(
-                  f"Smoke provider {provider['slug']}",
-                  [
-                      str(python),
-                      str(smoke),
-                  ],
-              )
-          PY
-
-  publish-core-pypi:
-    name: Publish core to PyPI
-    needs:
-      - build-core
-      - smoke-candidates
-    if: |
-      always() &&
-      inputs.core_release != '{}' &&
-      needs.build-core.result == 'success' &&
-      needs.smoke-candidates.result == 'success'
+  publish-pypi:
+    needs: [build, publish-testpypi, smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
-      name: ${{ fromJson(inputs.core_release).pypi_env }}
-      url: https://pypi.org/p/datasluice
+      name: ${{ inputs.pypi_environment }}
+      url: https://pypi.org/p/${{ inputs.package_name }}
     permissions:
       actions: read
       contents: read
       id-token: write
-
     steps:
-      - name: Download core distribution
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: dist-core-${{ fromJson(inputs.core_release).version }}
+          name: dist-${{ inputs.component }}-${{ inputs.version }}
           path: dist/
-
-      - name: Publish core to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-
-  publish-providers-pypi:
-    name: Publish provider ${{ matrix.provider.slug }} to PyPI
-    needs:
-      - build-providers
-      - smoke-candidates
-      - publish-core-pypi
-    if: |
-      always() &&
-      inputs.provider_releases != '[]' &&
-      needs.build-providers.result == 'success' &&
-      needs.smoke-candidates.result == 'success' &&
-      (
-        inputs.core_release == '{}' ||
-        needs.publish-core-pypi.result == 'success'
-      )
-    strategy:
-      fail-fast: false
-      matrix:
-        provider: ${{ fromJson(inputs.provider_releases) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment:
-      name: ${{ matrix.provider.pypi_env }}
-      url: https://pypi.org/p/${{ matrix.provider.package_name }}
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-
-    steps:
-      - name: Download provider distribution
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-${{ matrix.provider.slug }}-${{ matrix.provider.version }}
-          path: dist/
-
-      - name: Publish provider to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
