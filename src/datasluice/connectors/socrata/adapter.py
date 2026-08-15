@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from datasluice.connectors._reject import _reject_unsupported_fields
 from datasluice.connectors.base import BaseAdapter
 from datasluice.connectors.socrata.mapper import map_dataset
 from datasluice.connectors.socrata.pagination import SocrataPage
@@ -94,7 +93,6 @@ class SocrataAdapter(BaseAdapter):
     def search(self, query: Query | None = None) -> SearchResult:
         """Search datasets via the Discovery API."""
         query = query or Query()
-        _reject_unsupported_fields(query, self.capabilities.supported_query_fields, "socrata")
         page = SocrataPage(offset=query.offset, limit=query.limit)
         params: dict[str, object] = {**page.to_params()}
         if query.text:

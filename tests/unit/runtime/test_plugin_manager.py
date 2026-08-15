@@ -20,9 +20,9 @@ from datasluice.runtime.plugin_manager import PluginFailure, PluginManager
 def test_entry_point_discovery() -> None:
     pm = PluginManager()
     connectors = pm.list_connectors()
-    assert "ckan" in connectors
-    assert "datagouv" in connectors
-    assert "socrata" in connectors
+    assert "datasluice/ckan" in connectors
+    assert "datasluice/udata" in connectors
+    assert "datasluice/socrata" in connectors
 
 
 def test_programmatic_registration() -> None:
