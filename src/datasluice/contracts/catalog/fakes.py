@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import TracebackType
+from urllib.parse import urlsplit, urlunsplit
 
 from datasluice.contracts.catalog.fixtures import ReferenceCase, ReferenceFixtureSet
 from datasluice.contracts.catalog.protocols import CapabilityState, CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import DatasetRecord, NativeRecord, PlatformMetadata, ResultEnvelope
+from datasluice.domain.catalog.observability import DiagnosticPolicy, StructuredEvent, TelemetryPolicy, TLSPolicy
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import BulkCheckpoint, BulkItemReceipt, BulkPlan, MutationReceipt
-from datasluice.domain.catalog.safety import MutationPolicy
+from datasluice.domain.catalog.resilience import CircuitKey, CircuitState, RetryDecision, TimeBudget
+from datasluice.domain.catalog.safety import IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     CatalogError,
     CatalogRateLimitError,
@@ -28,12 +31,21 @@ class SyncReferenceConnector:
     """Independent synchronous fixture-backed catalog reference client."""
 
     def __init__(
-        self, fixture_set: ReferenceFixtureSet | None = None, *, capability: CapabilityState = "available"
+        self,
+        fixture_set: ReferenceFixtureSet | None = None,
+        *,
+        capability: CapabilityState = "available",
+        diagnostic_policy: DiagnosticPolicy | None = None,
+        event_sink: Callable[[StructuredEvent], None] | None = None,
     ) -> None:
         self._capability = capability
         self._fixture_set = fixture_set
+        self._diagnostic_policy = diagnostic_policy or DiagnosticPolicy()
+        self._event_sink = event_sink
+        self._circuit = CircuitState()
         self._datasets = {dataset_id: dict(value) for dataset_id, value in _FIXTURE_DATASETS.items()}
         self.dispatches: list[str] = []
+        self.events: list[StructuredEvent] = []
         self.closed = False
 
     @property
@@ -59,9 +71,55 @@ class SyncReferenceConnector:
             "platform": self._fixture_set.platform if self._fixture_set is not None else "reference",
             "fixture": self._fixture_set.fingerprint if self._fixture_set is not None else "dataset-v1",
             "environment": "deterministic",
-            "access_token": "never-report-this",
-            "raw_body": "never-report-this",
         }
+
+    @property
+    def circuit(self) -> CircuitState:
+        """Return the typed in-memory circuit state for this fake instance."""
+        return self._circuit
+
+    @property
+    def circuit_key(self) -> CircuitKey:
+        """Return a credential-scoped synthetic circuit identity without a live endpoint."""
+        return CircuitKey(
+            origin="https://reference.invalid",
+            credential_scope=self._fixture_set.platform if self._fixture_set else "reference",
+        )
+
+    @property
+    def tls_policy(self) -> TLSPolicy:
+        """Return the secure default TLS policy represented by the fake."""
+        return TLSPolicy()
+
+    @property
+    def telemetry_policy(self) -> TelemetryPolicy:
+        """Return inactive-by-default telemetry policy for deterministic fakes."""
+        return TelemetryPolicy()
+
+    def diagnostic(self, body: bytes) -> bytes | None:
+        """Return caller-opted-in raw diagnostics bounded by its explicit policy."""
+        if not self._diagnostic_policy.include_raw_body:
+            return None
+        return self._diagnostic_policy.bound_raw_body(body)
+
+    def record_event(self, name: str, metadata: Mapping[str, object]) -> StructuredEvent:
+        """Record one locally redacted event and optionally notify a caller sink."""
+        event = StructuredEvent(name=name, metadata=_sanitize_event_metadata(metadata))
+        self.events.append(event)
+        if self._event_sink is not None:
+            self._event_sink(event)
+        return event
+
+    def retry_decision(self, policy: IdempotencyPolicy) -> RetryDecision:
+        """Derive a typed retry decision for a deterministic rate-limited response."""
+        return RetryDecision.for_response(
+            attempt=1,
+            max_attempts=2,
+            status_code=429,
+            retry_after=1,
+            idempotency=policy,
+            budget=TimeBudget(),
+        )
 
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Return one deterministic fixture dataset."""
@@ -163,6 +221,9 @@ class SyncReferenceConnector:
         }
         error_type = errors.get(case.outcome)
         if error_type is not None:
+            self.record_event(
+                "catalog.reference.rejected", {"operation": str(case.operation_id), "outcome": case.outcome}
+            )
             raise error_type(
                 "Reference fixture state rejected the operation before dispatch.",
                 operation=str(case.operation_id),
@@ -171,6 +232,8 @@ class SyncReferenceConnector:
                 safe_action="Inspect the declared reference case before retrying.",
             )
         if case.outcome == "rate-limited":
+            self._circuit = self._circuit.record_failure()
+            self.record_event("catalog.reference.rate_limited", {"operation": str(case.operation_id), "retry_after": 1})
             raise CatalogRateLimitError(
                 "Reference fixture rate limit.",
                 operation=str(case.operation_id),
@@ -179,6 +242,9 @@ class SyncReferenceConnector:
                 retry_after=1,
             )
         self.dispatches.append(str(case.operation_id))
+        self.record_event(
+            "catalog.reference.dispatched", {"operation": str(case.operation_id), "outcome": case.outcome}
+        )
 
     def _result(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord]:
         platform = CatalogPlatform(case.operation_id.platform)
@@ -219,10 +285,20 @@ class AsyncReferenceConnector:
     """Independent asynchronous fixture-backed catalog reference client."""
 
     def __init__(
-        self, fixture_set: ReferenceFixtureSet | None = None, *, capability: CapabilityState = "available"
+        self,
+        fixture_set: ReferenceFixtureSet | None = None,
+        *,
+        capability: CapabilityState = "available",
+        diagnostic_policy: DiagnosticPolicy | None = None,
+        event_sink: Callable[[StructuredEvent], None] | None = None,
     ) -> None:
         self._capability = capability
-        self._sync = SyncReferenceConnector(fixture_set, capability=capability)
+        self._sync = SyncReferenceConnector(
+            fixture_set,
+            capability=capability,
+            diagnostic_policy=diagnostic_policy,
+            event_sink=event_sink,
+        )
         self._fixture_set = fixture_set
         self._datasets = {dataset_id: dict(value) for dataset_id, value in _FIXTURE_DATASETS.items()}
         self.dispatches: list[str] = []
@@ -291,3 +367,17 @@ class AsyncReferenceConnector:
     ) -> None:
         """Close the asynchronous reference client context."""
         await self.aclose()
+
+
+def _sanitize_event_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
+    """Remove query-bearing URLs before structured-event redaction runs."""
+    sanitized: dict[str, object] = {}
+    for key, value in metadata.items():
+        if isinstance(value, Mapping):
+            sanitized[key] = _sanitize_event_metadata(value)
+        elif key.lower().replace("-", "_") in {"url", "uri", "signed_url"} and isinstance(value, str):
+            parsed = urlsplit(value)
+            sanitized[key] = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        else:
+            sanitized[key] = value
+    return sanitized
