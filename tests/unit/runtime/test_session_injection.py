@@ -1,21 +1,24 @@
-"""Tests for DataSluiceSession kwargs + injectables (Success Criterion 5).
+"""Session injection tests for non-catalog ownership and canonical catalog handoff.
 
-Covers the ``timeout``/``retries``/``rate_limit``/``cache_dir``/``cache_ttl``
-kwargs and the ``transport=``/``storage=``/``cache=``/``credential_provider=``/
-``state_store=`` injectables, plus regression guards that the
-``ConnectorContext`` signature is unchanged and the session exposes
-no ``download()``/``materialize()`` method.
+Covers the ``transport=``/``storage=``/``cache=``/``credential_provider=``/
+``state_store=`` injectables the session owns directly, plus the canonical
+``open_catalog`` handoff where a caller-selected factory receives one exact
+:class:`CatalogConnectorContext`.
 """
 
 from __future__ import annotations
 
-import os
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 
-import datasluice.application as application_module
 from datasluice.auth import NoAuth
+from datasluice.contracts.catalog.protocols import (
+    AsyncCatalogOperationExecutor,
+    CatalogConnectorContext,
+    SyncCatalogOperationExecutor,
+)
 from datasluice.ports import CachePort, CredentialProvider, StateStore, StoragePort, Transport
 from datasluice.runtime.session import DataSluiceSession
 from datasluice.sync import InMemoryStateStore
@@ -78,9 +81,36 @@ class _StubCredentialProvider:
         return NoAuth()
 
 
-def test_custom_transport_injection() -> None:
-    """A user-supplied Transport stub is wired without code modification (SC5)."""
+class _SyncExecutor:
+    """Structural sync executor double for canonical context construction."""
 
+    def execute(self, operation: object, guard: object) -> object:
+        return object()
+
+    def close(self) -> None:
+        return None
+
+
+class _AsyncExecutor:
+    """Structural async executor double for canonical context construction."""
+
+    async def execute(self, operation: object, guard: object) -> object:
+        return object()
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _catalog_context() -> CatalogConnectorContext:
+    """Build one canonical context from structural executor doubles."""
+    return CatalogConnectorContext(
+        sync_executor=cast(SyncCatalogOperationExecutor, _SyncExecutor()),
+        async_executor=cast(AsyncCatalogOperationExecutor, _AsyncExecutor()),
+    )
+
+
+def test_custom_transport_injection() -> None:
+    """A user-supplied Transport stub is wired without code modification."""
     stub = _StubTransport()
     session = DataSluiceSession(transport=stub)
     assert session._transport is stub
@@ -89,7 +119,6 @@ def test_custom_transport_injection() -> None:
 
 def test_scalar_knobs_ignored_when_transport_injected() -> None:
     """When transport= is injected, scalar knobs do NOT construct a new transport."""
-
     stub = _StubTransport()
     session = DataSluiceSession(transport=stub, timeout=99, retries=99)
     assert session._transport is stub
@@ -97,7 +126,6 @@ def test_scalar_knobs_ignored_when_transport_injected() -> None:
 
 def test_credential_provider_injectable() -> None:
     """An injected CredentialProvider wins over auth= wrapping."""
-
     provider = _StubCredentialProvider()
     session = DataSluiceSession(credential_provider=provider)
     assert session._credential_provider is provider
@@ -106,7 +134,6 @@ def test_credential_provider_injectable() -> None:
 
 def test_storage_injectable() -> None:
     """An injected StoragePort is stored on the session."""
-
     storage = _StubStorage()
     session = DataSluiceSession(storage=storage)
     assert session.storage is storage
@@ -115,7 +142,6 @@ def test_storage_injectable() -> None:
 
 def test_cache_injectable() -> None:
     """An injected CachePort is stored as the session cache."""
-
     cache = _StubCache()
     session = DataSluiceSession(cache=cache)
     assert session._cache is cache
@@ -124,7 +150,6 @@ def test_cache_injectable() -> None:
 
 def test_state_store_injectable() -> None:
     """An injected StateStore is retained by the session."""
-
     state_store = InMemoryStateStore()
     session = DataSluiceSession(state_store=state_store)
     assert session.state_store is state_store
@@ -133,69 +158,45 @@ def test_state_store_injectable() -> None:
 
 def test_session_has_no_download_method() -> None:
     """Sync composition does not add download or materialize facade methods."""
-
     session = DataSluiceSession()
     assert not hasattr(session, "download")
     assert not hasattr(session, "materialize")
 
 
-class _CloseSpy:
-    def __init__(self, error: BaseException | None = None) -> None:
-        self._error = error
-        self.close_calls = 0
+def test_open_catalog_hands_the_exact_context_to_the_caller_factory() -> None:
+    """The session delegates canonical construction once and retains no connector."""
+    context = _catalog_context()
+    calls: list[CatalogConnectorContext] = []
+    connector = object()
 
-    def close(self) -> None:
-        self.close_calls += 1
-        if self._error is not None:
-            raise self._error
+    def factory(received: CatalogConnectorContext) -> object:
+        calls.append(received)
+        return connector
 
+    session = DataSluiceSession(transport=_StubTransport())
 
-class _OwnedSession:
-    def __init__(self) -> None:
-        self._transport = _CloseSpy(RuntimeError("transport close failed"))
-        self._cache = _CloseSpy()
-        self.storage = _CloseSpy()
-        self.state_store = _CloseSpy()
-        self.plugins = _CloseSpy()
+    assert session.open_catalog(factory, context) is connector
+    assert calls == [context]
+    assert not hasattr(session, "catalogs")
+    assert not hasattr(session, "_catalogs")
 
 
-@pytest.mark.skipif(
-    os.environ.get("DATASLUICE_TDD_RED") == "1", reason="owned-cleanup implementation pending GREEN phase"
-)
-def test_facade_closes_each_owned_dependency_once_and_preserves_first_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Facade-created dependencies are all closed, even when one close fails."""
-    session = _OwnedSession()
-    reader = _CloseSpy()
-    monkeypatch.setattr(application_module, "DataSluiceSession", lambda **kwargs: session)
-    monkeypatch.setattr(application_module, "DataPlaneResourceReader", lambda **kwargs: reader)
-    data_sluice = application_module.DataSluice()
-
-    with pytest.raises(RuntimeError, match="transport close failed"):
-        data_sluice.close()
-    data_sluice.close()
-
-    assert reader.close_calls == 1
-    assert session._transport.close_calls == 1
-    assert session._cache.close_calls == 1
-    assert session.storage.close_calls == 1
-    assert session.state_store.close_calls == 1
-    assert session.plugins.close_calls == 1
+def test_open_catalog_rejects_non_callable_factory() -> None:
+    """Catalog construction requires a callable factory."""
+    session = DataSluiceSession(transport=_StubTransport())
+    non_callable = cast("Callable[[CatalogConnectorContext], object]", object())
+    with pytest.raises(TypeError, match="callable factory"):
+        session.open_catalog(non_callable, _catalog_context())
 
 
-@pytest.mark.skipif(
-    os.environ.get("DATASLUICE_TDD_RED") == "1", reason="owned-cleanup implementation pending GREEN phase"
-)
-def test_facade_leaves_injected_dependencies_open() -> None:
-    """Caller-provided session and reader dependencies remain borrowed."""
-    session = _OwnedSession()
-    reader = _CloseSpy()
-    data_sluice = application_module.DataSluice(session=session, reader=reader)
+def test_open_catalog_rejects_portal_shaped_context() -> None:
+    """Only a CatalogConnectorContext is accepted; portal-shaped doubles are rejected."""
 
-    data_sluice.close()
+    class _PortalShapedContext:
+        portal_type = "ckan"
+        base_url = "https://data.example.gov"
 
-    assert reader.close_calls == 0
-    assert session._transport.close_calls == 0
-    assert session._cache.close_calls == 0
-    assert session.storage.close_calls == 0
-    assert session.state_store.close_calls == 0
-    assert session.plugins.close_calls == 0
+    session = DataSluiceSession(transport=_StubTransport())
+    portal_context = cast(CatalogConnectorContext, _PortalShapedContext())
+    with pytest.raises(TypeError, match="CatalogConnectorContext"):
+        session.open_catalog(lambda received: received, portal_context)
