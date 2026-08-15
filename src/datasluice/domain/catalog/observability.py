@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol
 
 _REDACTED = "***"
@@ -16,8 +17,11 @@ _SENSITIVE_PARTS = frozenset(
 class FrozenMetadata(Mapping[str, object]):
     """An immutable redacted mapping that remains safe in dataclass serialization."""
 
-    def __init__(self, values: Mapping[str, object] = {}) -> None:
-        self._values = dict(values)
+    __slots__ = ("_values",)
+    _values: Mapping[str, object]
+
+    def __init__(self, values: Mapping[str, object] | None = None) -> None:
+        self._values = MappingProxyType(dict(values or {}))
 
     def __getitem__(self, key: str) -> object:
         """Return one redacted metadata value."""
@@ -30,6 +34,10 @@ class FrozenMetadata(Mapping[str, object]):
     def __len__(self) -> int:
         """Return the bounded metadata entry count."""
         return len(self._values)
+
+    def __deepcopy__(self, memo: dict[int, object]) -> FrozenMetadata:
+        """Return this immutable mapping during serialization copies."""
+        return self
 
 
 def _redact_metadata(values: Mapping[str, object]) -> FrozenMetadata:
