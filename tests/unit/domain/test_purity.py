@@ -7,13 +7,7 @@ on it without pulling heavy optional deps into the import graph.
 
 from __future__ import annotations
 
-import os
 import sys
-
-import pytest
-
-if os.environ.get("DATASLUICE_TDD_RED") == "1":
-    pytest.skip("domain capability removal implementation pending GREEN phase", allow_module_level=True)
 
 _FORBIDDEN_OPTIONAL_MODULES = ("pyarrow", "pandas", "polars", "dlt", "duckdb", "openpyxl", "airflow")
 _FORBIDDEN_DOMAIN_IMPORTS = ("datasluice.adapters", "datasluice.connectors")

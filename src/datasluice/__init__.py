@@ -12,7 +12,6 @@ from datasluice.application import (
 from datasluice.domain import (
     Artifact,
     ArtifactProvenance,
-    CatalogCapabilities,
     CredentialScope,
     Dataset,
     DetectionResult,
@@ -65,7 +64,6 @@ __all__ = [
     "SearchResult",
     "Artifact",
     "ArtifactProvenance",
-    "CatalogCapabilities",
     "CredentialScope",
     "DetectionResult",
     "Digest",
