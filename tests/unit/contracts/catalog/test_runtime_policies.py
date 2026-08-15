@@ -4,12 +4,12 @@ from dataclasses import asdict
 
 import pytest
 
-from datasluice.domain.catalog.observability import DiagnosticPolicy, StructuredEvent, TLSPolicy, TelemetryPolicy
+from datasluice.domain.catalog.observability import DiagnosticPolicy, StructuredEvent, TelemetryPolicy, TLSPolicy
 from datasluice.domain.catalog.resilience import CircuitKey, CircuitState, RetryDecision, TimeBudget
 from datasluice.domain.catalog.safety import (
     BulkExecutionPolicy,
-    ConfirmationPolicy,
     ConcurrencyPolicy,
+    ConfirmationPolicy,
     DryRunPolicy,
     IdempotencyPolicy,
     MutationPolicy,
