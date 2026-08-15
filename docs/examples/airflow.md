@@ -20,11 +20,13 @@ from airflow.providers.datasluice.hooks.datasluice import DataSluiceHook
 
 hook = DataSluiceHook(airflow_conn_id="datasluice_default")
 results = hook.search("open data")
-artifact = hook.materialize({
-    "portal_url": "https://catalog.example.test/api",
-    "dataset_id": "dataset-1",
-    "resource_id": "resource-1",
-})
+artifact = hook.materialize(
+    {
+        "portal_url": "https://catalog.example.test/api",
+        "dataset_id": "dataset-1",
+        "resource_id": "resource-1",
+    }
+)
 ```
 
 ## Search operator
