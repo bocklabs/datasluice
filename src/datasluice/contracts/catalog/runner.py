@@ -5,9 +5,16 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from datasluice.contracts.catalog.protocols import AsyncCatalogClient, CapabilityState, SyncCatalogClient
+from datasluice.contracts.catalog.protocols import (
+    AsyncCatalogClient,
+    CapabilityState,
+    CatalogOperationGuard,
+    CatalogOperationRequest,
+    SyncCatalogClient,
+)
 from datasluice.contracts.catalog.report import CaseOutcome, ComplianceReport
-from datasluice.domain import Dataset
+from datasluice.domain.catalog.models import DatasetRecord, ResultEnvelope
+from datasluice.domain.catalog.operations import OperationId
 from datasluice.exceptions import DataSluiceError
 
 
@@ -38,14 +45,22 @@ def _require_available(operation_id: str, capability: CapabilityState) -> None:
         raise UnsupportedCatalogOperationError(operation_id=operation_id, capability=capability)
 
 
-def _assert_dataset(result: Dataset, case: CatalogContractCase) -> None:
-    if not isinstance(result, Dataset) or result.id != case.dataset_id:
+def _assert_dataset(result: ResultEnvelope[DatasetRecord], case: CatalogContractCase) -> None:
+    if len(result.items) != 1 or result.items[0].id.value != case.dataset_id:
         raise AssertionError(f"{case.operation_id} returned an unexpected normalized dataset.")
+
+
+def _dataset_get_call(case: CatalogContractCase) -> tuple[CatalogOperationRequest, CatalogOperationGuard]:
+    operation_id = OperationId(platform="catalog", service="datasets", method="get")
+    return CatalogOperationRequest(operation_id=operation_id, payload={"id": case.dataset_id}), CatalogOperationGuard(
+        operation_id=operation_id
+    )
 
 
 async def _run_async_case(case: CatalogContractCase, client: AsyncCatalogClient) -> CaseOutcome:
     async with client:
-        result = await client.datasets.get(case.dataset_id)
+        operation, guard = _dataset_get_call(case)
+        result = await client.datasets.get(operation, guard)
         _assert_dataset(result, case)
         return CaseOutcome(
             operation_id=case.operation_id,
@@ -66,7 +81,8 @@ def run_catalog_contract(
     _require_available(case.operation_id, sync_client.capability(case.operation_id))
     _require_available(case.operation_id, async_client.capability(case.operation_id))
     with sync_client:
-        sync_result = sync_client.datasets.get(case.dataset_id)
+        operation, guard = _dataset_get_call(case)
+        sync_result = sync_client.datasets.get(operation, guard)
         _assert_dataset(sync_result, case)
         sync_outcome = CaseOutcome(
             operation_id=case.operation_id,

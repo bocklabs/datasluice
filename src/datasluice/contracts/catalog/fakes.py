@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import TracebackType
 
-from datasluice.contracts.catalog.protocols import CapabilityState
-from datasluice.domain import Dataset
+from datasluice.contracts.catalog.protocols import CapabilityState, CatalogOperationGuard, CatalogOperationRequest
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.models import DatasetRecord, ResultEnvelope
 
 _FIXTURE_DATASETS = {"fixture-dataset": {"id": "fixture-dataset", "title": "Fixture dataset"}}
 
@@ -41,11 +42,19 @@ class SyncReferenceConnector:
             "raw_body": "never-report-this",
         }
 
-    def get(self, dataset_id: str) -> Dataset:
+    def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Return one deterministic fixture dataset."""
+        guard.require_allowed()
         self.dispatches.append("datasets.get")
-        payload = self._datasets[dataset_id]
-        return Dataset(id=payload["id"], title=payload["title"])
+        payload = self._datasets[str(operation.payload["id"])]
+        return ResultEnvelope(
+            items=(
+                DatasetRecord(
+                    id=CatalogId(CatalogPlatform("reference"), ResourceKind.DATASET, payload["id"]),
+                    name=payload["title"],
+                ),
+            )
+        )
 
     def close(self) -> None:
         """Close the synchronous reference client exactly once."""
@@ -95,11 +104,21 @@ class AsyncReferenceConnector:
             "raw_body": "never-report-this",
         }
 
-    async def get(self, dataset_id: str) -> Dataset:
+    async def get(
+        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
+    ) -> ResultEnvelope[DatasetRecord]:
         """Return one deterministic fixture dataset without sync delegation."""
+        guard.require_allowed()
         self.dispatches.append("datasets.get")
-        payload = self._datasets[dataset_id]
-        return Dataset(id=payload["id"], title=payload["title"])
+        payload = self._datasets[str(operation.payload["id"])]
+        return ResultEnvelope(
+            items=(
+                DatasetRecord(
+                    id=CatalogId(CatalogPlatform("reference"), ResourceKind.DATASET, payload["id"]),
+                    name=payload["title"],
+                ),
+            )
+        )
 
     async def aclose(self) -> None:
         """Close the asynchronous reference client exactly once."""
