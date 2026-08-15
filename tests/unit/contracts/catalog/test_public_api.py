@@ -8,13 +8,23 @@ import datasluice.contracts as contracts
 import datasluice.contracts.catalog as catalog
 
 
-def test_catalog_contract_package_exports_only_the_documented_tracer_surface() -> None:
-    """The package exposes only deliberate tracer types and Protocols."""
+def test_catalog_contract_package_exports_only_the_documented_contract_surface() -> None:
+    """The package exposes only deliberate contract types and Protocols."""
     assert catalog.__all__ == [
+        "catalog_contract_cases",
         "run_catalog_contract",
+        "certify_catalog_report",
         "CatalogContractCase",
         "CaseOutcome",
         "ComplianceReport",
+        "CatalogCertification",
+        "ConnectorId",
+        "ConnectorManifest",
+        "CertificationRecord",
+        "DeclaredCapabilityProfile",
+        "ReferenceCase",
+        "ReferenceFixtureSet",
+        "load_reference_fixture_set",
         "SyncCatalogClient",
         "AsyncCatalogClient",
     ]

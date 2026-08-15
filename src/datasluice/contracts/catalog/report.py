@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping
@@ -232,6 +233,17 @@ class ComplianceReport:
     def is_compliant(self) -> bool:
         """Return whether all runner-owned required evidence passed."""
         return not self.gaps
+
+    @property
+    def fingerprint(self) -> str:
+        """Return the stable SHA-256 fingerprint of the report envelope."""
+        payload = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    @property
+    def report_id(self) -> str:
+        """Return the certificate-compatible report identity."""
+        return f"sha256:{self.fingerprint}"
 
     @property
     def coverage_by_mode(self) -> dict[str, int]:
