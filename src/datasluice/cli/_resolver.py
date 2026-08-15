@@ -12,23 +12,14 @@ from datasluice.exceptions import DataSluiceError
 
 
 def parse_locator(
-    locator: str | None,
-    *,
-    portal: str | None,
-    dataset: str | None,
-    resource: str | None,
+    locator: str,
 ) -> DirectResourceLocator:
-    """Parse either a direct locator or catalog options without I/O."""
-    if locator is not None:
-        if portal is not None or dataset is not None or resource is not None:
-            raise DataSluiceError("A direct locator cannot be combined with --portal, --dataset, or --resource")
-        if not locator:
-            raise DataSluiceError("A direct locator cannot be empty")
-        path = urlsplit(locator).path
-        format_name = Path(path).suffix.removeprefix(".").upper() or None
-        return DirectResourceLocator(uri=locator, format=format_name)
-
-    raise DataSluiceError("Catalog references are no longer supported; provide a direct locator")
+    """Parse one direct locator without performing I/O."""
+    if not locator:
+        raise DataSluiceError("A direct locator cannot be empty")
+    path = urlsplit(locator).path
+    format_name = Path(path).suffix.removeprefix(".").upper() or None
+    return DirectResourceLocator(uri=locator, format=format_name)
 
 
 def resolve_one_resource(data_sluice: Any, locator: DirectResourceLocator) -> tuple[DirectResourceLocator, Resource]:

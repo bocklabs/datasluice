@@ -116,12 +116,7 @@ def test_parser_round_trips_direct_locator_to_locked_contract() -> None:
     """The shared parser returns the exact direct schema-v1 locator envelope."""
     fixture = json.loads(Path("tests/fixtures/contracts/locator-v1.json").read_text())
 
-    direct = parse_locator(
-        "https://data.example.test/files/observations.csv?api_key=secret&page=1",
-        portal=None,
-        dataset=None,
-        resource=None,
-    )
+    direct = parse_locator("https://data.example.test/files/observations.csv?api_key=secret&page=1")
     expected_direct = {**fixture["direct"], "format": "CSV", "extensions": {}}
 
     assert direct.to_dict() == expected_direct

@@ -52,10 +52,7 @@ def _render_human(result: Mapping[str, Any]) -> None:
 
 
 def scan(
-    locator: Annotated[str | None, typer.Argument(help="Direct resource URI or local path")] = None,
-    portal: Annotated[str | None, typer.Option("--portal", help="Catalog portal URL")] = None,
-    dataset: Annotated[str | None, typer.Option("--dataset", help="Catalog dataset ID")] = None,
-    resource: Annotated[str | None, typer.Option("--resource", help="Catalog resource selector")] = None,
+    locator: Annotated[str, typer.Argument(help="Direct resource URI or local path")],
     full: Annotated[bool, typer.Option("--full", help="Compute exact whole-resource statistics")] = False,
     output: Annotated[str, typer.Option("--output", help="Output format: human or json")] = "human",
 ) -> None:
@@ -64,7 +61,7 @@ def scan(
         diagnostic_console.print("[red]Error:[/red] --output must be human or json")
         raise typer.Exit(1)
     try:
-        parsed = parse_locator(locator, portal=portal, dataset=dataset, resource=resource)
+        parsed = parse_locator(locator)
         with DataSluice() as data_sluice:
             resolved_locator, resolved_resource = resolve_one_resource(data_sluice, parsed)
             diagnostic_console.print("Scanning resource")
