@@ -110,9 +110,7 @@ def test_detect_is_reentrant_no_module_level_mutable_state() -> None:
             raise OSError("miss")
 
     r1 = detect("https://a.example", _Miss(), _StubPM(["ckan"]))  # ty: ignore[invalid-argument-type]
-    r2 = detect("https://b.example", _Miss(), _StubPM(["datagouv"]))  # ty: ignore[invalid-argument-type]
+    r2 = detect("https://b.example", _Miss(), _StubPM(["udata"]))  # ty: ignore[invalid-argument-type]
 
     assert {ev.check for ev in r1.evidence} == {path for path, ptype in PATH_FINGERPRINTS.items() if ptype == "ckan"}
-    assert {ev.check for ev in r2.evidence} == {
-        path for path, ptype in PATH_FINGERPRINTS.items() if ptype == "datagouv"
-    }
+    assert {ev.check for ev in r2.evidence} == {path for path, ptype in PATH_FINGERPRINTS.items() if ptype == "udata"}

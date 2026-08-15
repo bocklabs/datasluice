@@ -55,7 +55,7 @@ class _StubPM:
     """Minimal PluginManager stub for filtered-portal tests.
 
     The real :class:`PluginManager` eagerly loads ALL built-in entry points
-    (ckan/datagouv/socrata from ``pyproject.toml``), so a freshly-constructed
+    (ckan/udata/socrata from ``pyproject.toml``), so a freshly-constructed
     instance cannot exercise the filtering contract. detect() only calls
     ``list_connectors()``, so this stub is sufficient.
     """
@@ -68,7 +68,7 @@ class _StubPM:
 
 
 def _pm_with_all() -> _StubPM:
-    return _StubPM(["ckan", "datagouv", "socrata"])
+    return _StubPM(["ckan", "udata", "socrata"])
 
 
 def _expected_probe_count(pm: _StubPM) -> int:

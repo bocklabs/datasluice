@@ -7,13 +7,13 @@ from datasluice.discovery import HTML_FINGERPRINTS, PATH_FINGERPRINTS, PortalMet
 
 def test_path_fingerprints_populated() -> None:
     assert "ckan" in PATH_FINGERPRINTS.values()
-    assert "datagouv" in PATH_FINGERPRINTS.values()
+    assert "udata" in PATH_FINGERPRINTS.values()
     assert "socrata" in PATH_FINGERPRINTS.values()
 
 
 def test_html_fingerprints_populated() -> None:
     assert "ckan" in HTML_FINGERPRINTS
-    assert "datagouv" in HTML_FINGERPRINTS.values()
+    assert "udata" in HTML_FINGERPRINTS.values()
 
 
 def test_portal_metadata() -> None:

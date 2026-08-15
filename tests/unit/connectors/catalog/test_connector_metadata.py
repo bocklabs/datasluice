@@ -3,17 +3,11 @@
 from __future__ import annotations
 
 import importlib
-import os
 import tomllib
 from pathlib import Path
 
 from datasluice.discovery.fingerprints import HTML_FINGERPRINTS, PATH_FINGERPRINTS
 from datasluice.runtime import plugin_manager
-
-if os.environ.get("DATASLUICE_TDD_RED") == "1":
-    import pytest
-
-    pytest.skip("canonical connector metadata implementation pending GREEN phase", allow_module_level=True)
 
 
 def test_builtin_entry_points_target_only_canonical_factories() -> None:
