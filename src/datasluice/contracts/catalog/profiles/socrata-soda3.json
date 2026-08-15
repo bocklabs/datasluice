@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "profile_version": "3.0",
+  "platform": "socrata",
+  "platform_api_version": "SODA 3",
+  "official_source_uri": "https://dev.socrata.com/docs/endpoints",
+  "source_accessed_at": "2026-08-15",
+  "fixture_fingerprint": "d2a67a4d9ecafe4903d9e7b703a34d6007cf8be6e9ee8704975a22cfe5804083",
+  "operations": [
+    {
+      "id": "socrata/soda-v3-query",
+      "capability": "core",
+      "authentication": "application-token-or-authenticated",
+      "mutation": "read",
+      "evidence_requirement": "application-token-or-controlled-authentication"
+    },
+    {
+      "id": "socrata/soda-v3-export",
+      "capability": "core",
+      "authentication": "application-token-or-authenticated",
+      "mutation": "read",
+      "evidence_requirement": "application-token-or-controlled-authentication"
+    },
+    {
+      "id": "socrata/soda-v3-row-create-update-upsert-delete",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "delete",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "socrata/soda-v3-soql-query-types-and-format-negotiation",
+      "capability": "core",
+      "authentication": "application-token-or-authenticated",
+      "mutation": "read",
+      "evidence_requirement": "application-token-or-controlled-authentication"
+    },
+    {
+      "id": "socrata/catalog-discovery-and-view-metadata",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "deployment-probe"
+    },
+    {
+      "id": "socrata/asset-dataset-metadata-and-permission-management",
+      "capability": "optional",
+      "authentication": "privileged",
+      "mutation": "admin",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "socrata/user-current-identity-and-permission-probe",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "read",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "socrata/application-token-basic-auth-and-oauth",
+      "capability": "core",
+      "authentication": "authenticated",
+      "mutation": "read",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "socrata/async-request-status-rate-limit-and-request-id",
+      "capability": "core",
+      "authentication": "application-token-or-authenticated",
+      "mutation": "read",
+      "evidence_requirement": "deployment-probe"
+    }
+  ],
+  "opt_out_operations": [
+    {
+      "id": "socrata/soda-v2-legacy-resource-endpoints",
+      "reason": "Locked project scope supports the latest stable SODA 3 profile only."
+    }
+  ]
+}

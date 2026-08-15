@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "platform": "socrata",
+  "profile_version": "3.0",
+  "cases": [
+    {
+      "operation": "socrata/soda-v3-query",
+      "outcome": "core",
+      "credential_class": "application-token"
+    },
+    {
+      "operation": "socrata/soda-v3-export",
+      "outcome": "core",
+      "credential_class": "application-token"
+    },
+    {
+      "operation": "socrata/soda-v3-row-create-update-upsert-delete",
+      "outcome": "authenticated-success",
+      "credential_class": "basic"
+    },
+    {
+      "operation": "socrata/application-token-basic-auth-and-oauth",
+      "outcome": "authenticated-success",
+      "credential_class": "oauth"
+    },
+    {
+      "operation": "socrata/soda-v3-query",
+      "outcome": "missing-credentials"
+    },
+    {
+      "operation": "socrata/soda-v3-query",
+      "outcome": "invalid-credentials",
+      "credential_class": "application-token"
+    },
+    {
+      "operation": "socrata/asset-dataset-metadata-and-permission-management",
+      "outcome": "optional",
+      "credential_class": "basic"
+    },
+    {
+      "operation": "socrata/user-current-identity-and-permission-probe",
+      "outcome": "forbidden",
+      "credential_class": "oauth"
+    },
+    {
+      "operation": "socrata/asset-dataset-metadata-and-permission-management",
+      "outcome": "deployment-disabled",
+      "credential_class": "basic"
+    },
+    {
+      "operation": "socrata/async-request-status-rate-limit-and-request-id",
+      "outcome": "async-pending",
+      "credential_class": "application-token"
+    },
+    {
+      "operation": "socrata/async-request-status-rate-limit-and-request-id",
+      "outcome": "rate-limited",
+      "credential_class": "application-token",
+      "receipt_metadata": "request-id-allowed"
+    },
+    {
+      "operation": "socrata/catalog-discovery-and-view-metadata",
+      "outcome": "unavailable"
+    }
+  ]
+}
