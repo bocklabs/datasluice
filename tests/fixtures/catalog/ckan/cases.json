@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "platform": "ckan",
+  "profile_version": "2.11.5",
+  "cases": [
+    {
+      "operation": "ckan/action-api-v3.dataset-list-show-search",
+      "outcome": "core"
+    },
+    {
+      "operation": "ckan/datastore-extension.query-and-record-crud",
+      "outcome": "optional"
+    },
+    {
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "outcome": "missing-credentials"
+    },
+    {
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "outcome": "invalid-credentials"
+    },
+    {
+      "operation": "ckan/action-api-v3.user-list-show-create-update-delete-token-management",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "ckan/plugin-provided-action-and-extension-probes",
+      "outcome": "deployment-disabled"
+    },
+    {
+      "operation": "ckan/action-api-v3.discovery-help-and-status",
+      "outcome": "unavailable"
+    }
+  ]
+}

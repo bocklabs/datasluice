@@ -6,7 +6,6 @@ import hashlib
 import json
 from pathlib import Path
 
-
 _ROOT = Path(__file__).parents[4]
 _PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/ckan-2.11.json"
 _EVIDENCE_PATH = _ROOT / "tests/fixtures/catalog/ckan/evidence.json"
