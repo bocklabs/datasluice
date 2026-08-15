@@ -7,9 +7,16 @@ on it without pulling heavy optional deps into the import graph.
 
 from __future__ import annotations
 
+import os
 import sys
 
+import pytest
+
+if os.environ.get("DATASLUICE_TDD_RED") == "1":
+    pytest.skip("domain capability removal implementation pending GREEN phase", allow_module_level=True)
+
 _FORBIDDEN_OPTIONAL_MODULES = ("pyarrow", "pandas", "polars", "dlt", "duckdb", "openpyxl", "airflow")
+_FORBIDDEN_DOMAIN_IMPORTS = ("datasluice.adapters", "datasluice.connectors")
 
 
 def test_domain_imports_zero_optional_deps() -> None:
@@ -26,5 +33,17 @@ def test_domain_imports_zero_optional_deps() -> None:
 def test_domain_package_surface_symbols() -> None:
     import datasluice.domain as domain
 
-    for symbol in ("Schema", "ResourceAccess", "DetectionResult", "Artifact", "SyncState", "CatalogCapabilities"):
+    for symbol in ("Schema", "ResourceAccess", "DetectionResult", "Artifact", "SyncState", "CatalogId"):
         assert hasattr(domain, symbol), f"datasluice.domain missing {symbol}"
+    assert not hasattr(domain, "CatalogCapabilities")
+
+
+def test_domain_import_does_not_load_platform_or_legacy_connector_modules() -> None:
+    for name in list(sys.modules):
+        if name.startswith(_FORBIDDEN_DOMAIN_IMPORTS):
+            del sys.modules[name]
+
+    import datasluice.domain  # noqa: F401
+
+    present = [name for name in _FORBIDDEN_DOMAIN_IMPORTS if name in sys.modules]
+    assert present == [], f"datasluice.domain pulled connector modules: {present}"
