@@ -32,7 +32,6 @@ with DataSluice() as ds:
 
     artifact: Artifact = ds.materialize(direct, "/tmp/datasluice-out.parquet")
     print(artifact.content_digest, artifact.uri)
-
 ```
 
 ## CLI
