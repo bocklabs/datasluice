@@ -133,6 +133,72 @@ class CatalogConnectorContext:
             raise ValueError("Catalog executor ownership flags must be booleans.")
 
 
+class SyncManagedExecutor:
+    """Lifecycle wrapper that closes only an executor owned by the connector."""
+
+    def __init__(self, context: CatalogConnectorContext) -> None:
+        self._context = context
+        self._closed = False
+
+    def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
+        """Guard a call before sending it to the injected executor."""
+        guard.require_allowed()
+        return self._context.sync_executor.execute(operation, guard)
+
+    def close(self) -> None:
+        """Close the managed executor exactly once."""
+        if not self._closed:
+            self._closed = True
+            if self._context.manages_sync_executor:
+                self._context.sync_executor.close()
+
+    def __enter__(self) -> Self:
+        """Enter the managed executor context."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Close owned executor resources."""
+        self.close()
+
+
+class AsyncManagedExecutor:
+    """Lifecycle wrapper that closes only an asynchronously owned executor."""
+
+    def __init__(self, context: CatalogConnectorContext) -> None:
+        self._context = context
+        self._closed = False
+
+    async def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
+        """Guard a call before sending it to the injected executor."""
+        guard.require_allowed()
+        return await self._context.async_executor.execute(operation, guard)
+
+    async def aclose(self) -> None:
+        """Close the managed asynchronous executor exactly once."""
+        if not self._closed:
+            self._closed = True
+            if self._context.manages_async_executor:
+                await self._context.async_executor.aclose()
+
+    async def __aenter__(self) -> Self:
+        """Enter the managed asynchronous executor context."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Close owned executor resources."""
+        await self.aclose()
+
+
 @runtime_checkable
 class SyncDatasetService(Protocol):
     """Portable synchronous dataset behavior."""

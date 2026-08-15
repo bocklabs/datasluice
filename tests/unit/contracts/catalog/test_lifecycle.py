@@ -46,6 +46,14 @@ class AsyncRecordingExecutor:
         self.closed += 1
 
 
+class DeniedGuard:
+    """Raise before a recording executor can observe work."""
+
+    def require_allowed(self) -> None:
+        """Reject the attempted operation."""
+        raise RuntimeError("blocked")
+
+
 def _call() -> tuple[CatalogOperationRequest, CatalogOperationGuard]:
     operation_id = OperationId(platform="catalog", service="datasets", method="get")
     return CatalogOperationRequest(operation_id=operation_id), CatalogOperationGuard(operation_id=operation_id)
@@ -55,7 +63,9 @@ def test_sync_context_only_closes_managed_executor_and_guards_before_dispatch() 
     """Caller-owned sync executors survive while denied work never dispatches."""
     sync_executor = SyncRecordingExecutor()
     async_executor = AsyncRecordingExecutor()
-    context = CatalogConnectorContext(sync_executor=sync_executor, async_executor=async_executor, manages_sync_executor=True)
+    context = CatalogConnectorContext(
+        sync_executor=sync_executor, async_executor=async_executor, manages_sync_executor=True
+    )
     operation, guard = _call()
 
     with SyncManagedExecutor(context) as managed:
@@ -70,7 +80,9 @@ def test_async_context_only_closes_managed_executor() -> None:
     """Async ownership and idempotent close mirror the sync lifecycle."""
     sync_executor = SyncRecordingExecutor()
     async_executor = AsyncRecordingExecutor()
-    context = CatalogConnectorContext(sync_executor=sync_executor, async_executor=async_executor, manages_async_executor=False)
+    context = CatalogConnectorContext(
+        sync_executor=sync_executor, async_executor=async_executor, manages_async_executor=False
+    )
     operation, guard = _call()
 
     async def exercise() -> None:
@@ -91,8 +103,7 @@ def test_guard_rejection_prevents_executor_dispatch() -> None:
     context = CatalogConnectorContext(sync_executor=sync_executor, async_executor=async_executor)
     operation, guard = _call()
 
-    object.__setattr__(guard, "require_allowed", lambda: (_ for _ in ()).throw(RuntimeError("blocked")))
     with pytest.raises(RuntimeError, match="blocked"):
-        SyncManagedExecutor(context).execute(operation, guard)
+        SyncManagedExecutor(context).execute(operation, DeniedGuard())  # type: ignore[arg-type]
 
     assert sync_executor.calls == []
