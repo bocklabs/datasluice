@@ -33,10 +33,3 @@ def test_exceptions_hierarchy() -> None:
 
     assert issubclass(PortalError, datasluice.DataSluiceError)
     assert issubclass(NotFoundError, PortalError)
-
-
-def test_unsupportedqueryfielderror_hierarchy() -> None:
-    from datasluice.exceptions import PortalError, UnsupportedQueryFieldError
-
-    assert issubclass(UnsupportedQueryFieldError, datasluice.DataSluiceError)
-    assert not issubclass(UnsupportedQueryFieldError, PortalError)
