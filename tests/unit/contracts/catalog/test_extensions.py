@@ -51,6 +51,7 @@ def test_third_party_manifests_need_explicit_activation_and_certification_metada
     )
 
     assert manifest.activation_policy is ActivationPolicy.EXPLICIT
+    assert manifest.certification is not None
     assert manifest.certification.report_id == "sha256:compliance-report"
 
     with pytest.raises(ValueError, match="entry point"):

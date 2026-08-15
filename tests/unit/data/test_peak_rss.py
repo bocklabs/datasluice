@@ -59,7 +59,8 @@ reader = pacsv.open_csv(src)
 total = 0
 for batch in reader:
     total += batch.num_rows
-peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+peak_kb = peak_rss // 1024 if sys.platform == "darwin" else peak_rss
 print(f"rows={total}")
 print(f"peak_rss_kb={peak_kb}")
 sys.stdout.flush()
@@ -87,7 +88,8 @@ data = b"".join(_gen_jsonl(n_rows))
 input_bytes = len(data)
 read_options = paj.ReadOptions(block_size=1 << 20)
 table = paj.read_json(io.BytesIO(data), read_options=read_options)
-peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+peak_kb = peak_rss // 1024 if sys.platform == "darwin" else peak_rss
 print(f"rows={table.num_rows}")
 print(f"input_bytes={input_bytes}")
 print(f"peak_rss_kb={peak_kb}")

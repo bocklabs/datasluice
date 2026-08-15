@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 _ROOT = Path(__file__).parents[4]
 _PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/ckan-2.11.json"
@@ -27,7 +28,7 @@ _EXPECTED_OPERATION_IDS = {
 }
 
 
-def _read_json(path: Path) -> dict[str, object]:
+def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -70,9 +71,7 @@ def test_evidence_pins_official_read_observation_and_controlled_mutation_boundar
     assert evidence["mutation_evidence"] == "controlled-environment-only"
     assert "credential" not in json.dumps(evidence).lower()
     assert "raw_body" not in json.dumps(evidence).lower()
-    assert profile["fixture_fingerprint"] == hashlib.sha256(
-        _CASES_PATH.read_bytes()
-    ).hexdigest()
+    assert profile["fixture_fingerprint"] == hashlib.sha256(_CASES_PATH.read_bytes()).hexdigest()
 
 
 def test_cases_cover_required_effective_capability_outcomes() -> None:

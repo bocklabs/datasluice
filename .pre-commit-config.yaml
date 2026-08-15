@@ -25,14 +25,14 @@ repos:
     hooks:
       - id: ty
         name: type check (ty)
-        entry: uv run --all-extras ty check .
+        entry: uv run --frozen --all-extras ty check .
         language: system
         types: [python]
         pass_filenames: false
 
       - id: pytest
         name: tests (pytest)
-        entry: uv run pytest -q
+        entry: uv run --frozen pytest -q
         language: system
         types: [python]
         pass_filenames: false

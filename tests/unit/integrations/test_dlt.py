@@ -296,6 +296,7 @@ def test_dlt_lazy_import_no_module_level() -> None:
     code = """
 import sys
 import types
+sys.path.insert(0, "src")
 import datasluice
 from datasluice.domain import SearchResult
 

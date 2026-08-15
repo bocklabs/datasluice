@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import inspect
 from datetime import date
+from typing import cast
 
 import pytest
 
-from datasluice.contracts.catalog.protocols import CatalogConnectorContext
+from datasluice.contracts.catalog.protocols import (
+    CatalogConnectorContext,
+    CatalogOperationGuard,
+    CatalogOperationRequest,
+    SyncCatalogOperationExecutor,
+)
+from datasluice.domain.catalog.models import ResultEnvelope
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -32,9 +39,9 @@ from datasluice.domain.catalog.profiles import (
 class SyncExecutor:
     """Minimal synchronous executor for façade construction."""
 
-    def execute(self, operation: object, guard: object) -> object:
+    def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
         """Provide the injected executor seam."""
-        return object()
+        return cast(ResultEnvelope[object], object())
 
     def close(self) -> None:
         """Provide explicit lifecycle closure."""
@@ -43,9 +50,9 @@ class SyncExecutor:
 class AsyncExecutor:
     """Minimal asynchronous executor for façade construction."""
 
-    async def execute(self, operation: object, guard: object) -> object:
+    async def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
         """Provide the injected executor seam."""
-        return object()
+        return cast(ResultEnvelope[object], object())
 
     async def aclose(self) -> None:
         """Provide explicit lifecycle closure."""
@@ -85,8 +92,8 @@ def _effective_ckan_profile() -> EffectiveCapabilityProfile:
 
 def _context(*, profile: EffectiveCapabilityProfile | None = None) -> CatalogConnectorContext:
     return CatalogConnectorContext(
-        sync_executor=SyncExecutor(),  # type: ignore[arg-type]
-        async_executor=AsyncExecutor(),  # type: ignore[arg-type]
+        sync_executor=SyncExecutor(),
+        async_executor=AsyncExecutor(),
         normalized_sync=object(),
         normalized_async=object(),
         native_sync=object(),
@@ -153,8 +160,8 @@ def test_factory_requires_both_typed_executor_modes() -> None:
     from datasluice.connectors.catalog.ckan import create_ckan_connector
 
     context = CatalogConnectorContext(
-        sync_executor=object(),  # type: ignore[arg-type]
-        async_executor=AsyncExecutor(),  # type: ignore[arg-type]
+        sync_executor=cast(SyncCatalogOperationExecutor, object()),
+        async_executor=AsyncExecutor(),
         normalized_sync=object(),
         normalized_async=object(),
         native_sync=object(),

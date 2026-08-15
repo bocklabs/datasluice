@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "platform": "udata",
+  "profile_version": "17.3.0",
+  "cases": [
+    {
+      "operation": "udata/api-v1.root-and-effective-profile-probe",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
+      "outcome": "optional"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "missing-credentials"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "invalid-credentials"
+    },
+    {
+      "operation": "udata/api-v1.harvest-moderation-and-admin-operations",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
+      "outcome": "deployment-disabled"
+    },
+    {
+      "operation": "udata/api-v1.root-and-effective-profile-probe",
+      "outcome": "unavailable"
+    }
+  ]
+}
