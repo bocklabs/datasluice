@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from types import MappingProxyType
+from typing import cast
 
 import pytest
+
 from datasluice.domain.catalog import (
     CatalogId,
     CatalogPlatform,
@@ -17,7 +20,6 @@ from datasluice.domain.catalog import (
     ResultEnvelope,
     WarningRecord,
 )
-
 from datasluice.exceptions import DataSluiceError
 
 
@@ -47,9 +49,12 @@ def test_catalog_id_requires_typed_platform_and_resource_kind_and_round_trips() 
     with pytest.raises(DataSluiceError):
         CatalogId(CatalogPlatform.CKAN, "dataset", "weather")  # ty: ignore[invalid-argument-type]: runtime validation
     with pytest.raises(DataSluiceError):
-        CatalogId.from_dict({**identifier.to_dict(), "platform": "udata"})
-    with pytest.raises(DataSluiceError):
-        CatalogId.from_dict({**identifier.to_dict(), "resource_kind": "organization"})
+        NativeRecord(
+            platform=CatalogPlatform.UDATA,
+            resource_kind=ResourceKind.DATASET,
+            id=identifier,
+            payload={"id": "weather"},
+        )
 
 
 def test_native_and_normalized_records_are_recursively_immutable_and_thaw_to_fresh_values() -> None:
@@ -66,13 +71,15 @@ def test_native_and_normalized_records_are_recursively_immutable_and_thaw_to_fre
     assert isinstance(native.payload["tags"], tuple)
     assert isinstance(dataset.extensions, MappingProxyType)
     with pytest.raises(TypeError):
-        native.payload["state"] = "active"  # ty: ignore[unsupported-operator]: immutable mapping assertion
+        cast(dict[str, object], native.payload)["state"] = "active"
     with pytest.raises(dataclasses.FrozenInstanceError):
         dataset.name = "Other"  # ty: ignore[invalid-assignment]: frozen dataclass assertion
 
     serialized = native.to_dict()
-    serialized["payload"]["tags"][0]["name"] = "changed"  # ty: ignore[index]: JSON-shape assertion
-    assert native.payload["tags"][0]["name"] == "climate"  # ty: ignore[index]: immutable nested JSON assertion
+    serialized_payload = cast(dict[str, list[dict[str, str]]], serialized["payload"])
+    serialized_payload["tags"][0]["name"] = "changed"
+    native_payload = cast(Mapping[str, tuple[Mapping[str, str], ...]], native.payload)
+    assert native_payload["tags"][0]["name"] == "climate"
     assert NativeRecord.from_dict(native.to_dict()) == native
     assert DatasetRecord.from_dict(dataset.to_dict()) == dataset
 
@@ -110,8 +117,8 @@ def test_result_envelopes_preserve_items_page_warnings_and_platform_metadata() -
     [
         {"schema_version": 2, "kind": "catalog_id", "platform": "ckan", "resource_kind": "dataset", "value": "x"},
         {"schema_version": 1, "kind": "wrong", "platform": "ckan", "resource_kind": "dataset", "value": "x"},
-        {"schema_version": 1, "kind": "catalog_id", "platform": "unknown", "resource_kind": "dataset", "value": "x"},
-        {"schema_version": 1, "kind": "catalog_id", "platform": "ckan", "resource_kind": "unknown", "value": "x"},
+        {"schema_version": 1, "kind": "catalog_id", "platform": "not valid", "resource_kind": "dataset", "value": "x"},
+        {"schema_version": 1, "kind": "catalog_id", "platform": "ckan", "resource_kind": "not valid", "value": "x"},
     ],
 )
 def test_catalog_id_rejects_malformed_versions_kinds_and_values(value: object) -> None:
