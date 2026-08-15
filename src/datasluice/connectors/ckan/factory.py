@@ -8,14 +8,11 @@ calls it with a :class:`ConnectorContext` carrying the injected infra ports.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any
 
 from datasluice.connectors.ckan.adapter import CKANAdapter
 
-if TYPE_CHECKING:
-    from datasluice.runtime.context import ConnectorContext
 
-
-def create_ckan_connector(ctx: ConnectorContext) -> CKANAdapter:
+def create_ckan_connector(ctx: Any) -> CKANAdapter:
     """Construct a :class:`CKANAdapter` wired to the context's transport/auth."""
     return CKANAdapter(ctx.base_url, auth=ctx.auth, transport=ctx.transport)

@@ -168,42 +168,6 @@ def test_materialize_rejects_missing_destination_invalid_mode_and_secret_input(m
     assert facade.materialized == []
 
 
-def test_ambiguous_catalog_reference_fails_before_materialization(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A selector-free multi-resource dataset cannot cause a destination write."""
-    facade = _Facade(
-        _artifact(),
-        Dataset(
-            id="weather",
-            resources=[
-                Resource(id="first", url="https://data.example.test/first.csv", format="CSV"),
-                Resource(id="second", url="https://data.example.test/second.csv", format="CSV"),
-            ],
-        ),
-    )
-    _patch_facade(monkeypatch, facade)
-
-    outcome = runner.invoke(
-        app,
-        [
-            "materialize",
-            "--portal",
-            "https://catalog.example.test",
-            "--dataset",
-            "weather",
-            "--destination",
-            "memory://contract-output",
-            "--output",
-            "json",
-        ],
-    )
-
-    assert outcome.exit_code == 1
-    assert outcome.stdout == ""
-    assert "Valid selectors: first, second" in outcome.stderr
-    assert facade.resolved == []
-    assert facade.materialized == []
-
-
 def test_help_registers_new_commands_and_uses_annotated_parameters() -> None:
     """The root app exposes each new workflow without B008-style defaults."""
     root_help = runner.invoke(app, ["--help"])

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from datasluice.logging import get_logger
 
@@ -63,7 +63,7 @@ def datasluice_source(
     @dlt.source(name="datasluice")
     def _source() -> Any:
         with DataSluice() as data_sluice:
-            result = data_sluice.search(portal, Query(text=query, limit=limit, **query_kwargs))
+            result = cast(Any, data_sluice).search(portal, Query(text=query, limit=limit, **query_kwargs))
         datasets = result.datasets
         from datasluice.sync._identity import canonical_identity
 

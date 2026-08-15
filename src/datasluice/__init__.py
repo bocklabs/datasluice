@@ -4,12 +4,9 @@ format normalization, and pipeline integration.
 
 from datasluice._version import __version__
 from datasluice.application import (
-    CatalogResourceLocator,
     DataSluice,
     DirectResourceLocator,
     OpenedResource,
-    Portal,
-    ResourceLocator,
     resource_locator_from_dict,
 )
 from datasluice.domain import (
@@ -56,11 +53,8 @@ from datasluice.exceptions import (
 __all__ = [
     "__version__",
     "DataSluice",
-    "Portal",
     "OpenedResource",
     "DirectResourceLocator",
-    "CatalogResourceLocator",
-    "ResourceLocator",
     "resource_locator_from_dict",
     # Domain models
     "Dataset",

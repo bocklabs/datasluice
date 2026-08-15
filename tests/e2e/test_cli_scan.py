@@ -112,8 +112,8 @@ def _write_fixture(path: Path, suffix: str, row_count: int) -> None:
         pq.write_table(table, path)
 
 
-def test_parser_round_trips_direct_and_catalog_locators_to_locked_contract() -> None:
-    """The shared parser returns the exact schema-v1 locator envelopes."""
+def test_parser_round_trips_direct_locator_to_locked_contract() -> None:
+    """The shared parser returns the exact direct schema-v1 locator envelope."""
     fixture = json.loads(Path("tests/fixtures/contracts/locator-v1.json").read_text())
 
     direct = parse_locator(
@@ -122,28 +122,9 @@ def test_parser_round_trips_direct_and_catalog_locators_to_locked_contract() -> 
         dataset=None,
         resource=None,
     )
-    catalog = parse_locator(
-        None,
-        portal="https://catalog.example.test/api",
-        dataset="dataset-42",
-        resource="resource-7",
-    )
-
     expected_direct = {**fixture["direct"], "format": "CSV", "extensions": {}}
-    expected_catalog = {**fixture["catalog"], "extensions": {}}
 
     assert direct.to_dict() == expected_direct
-    assert catalog.to_dict() == expected_catalog
-    assert (
-        parse_locator(
-            None,
-            portal="https://catalog.example.test/api",
-            dataset="dataset-42",
-            resource="https://data.example.test/observations.csv?token=secret",
-        )
-        .to_dict()["resource_id"]
-        .endswith("token=***")
-    )
 
 
 @pytest.mark.parametrize("suffix", [".csv", ".parquet"])
@@ -194,30 +175,6 @@ def test_scan_full_computes_exact_statistics(monkeypatch: pytest.MonkeyPatch) ->
     assert result["columns"][1]["null_count"] == 179
     assert len(result["sample"]) == 20
     assert opened.yielded_rows == 1_250
-
-
-def test_ambiguous_catalog_reference_lists_sanitized_selectors_before_opening(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Catalog ambiguity is actionable and cannot cause a byte read."""
-    secret_resource = _resource("https://data.example.test/a.csv?token=secret")
-    selected_resource = _resource("observations")
-    facade = _Facade(
-        selected_resource,
-        _Opened(_batches(1)),
-        Dataset(id="weather", resources=[secret_resource, selected_resource]),
-    )
-    _patch_facade(monkeypatch, facade)
-
-    outcome = runner.invoke(
-        scan_app,
-        ["--portal", "https://catalog.example.test", "--dataset", "weather", "--output", "json"],
-    )
-
-    assert outcome.exit_code == 1
-    assert outcome.stdout == ""
-    assert "observations" in outcome.stderr
-    assert "secret" not in outcome.stderr
-    assert facade.opened == []
-    assert facade.resolved == []
 
 
 def test_machine_result_and_error_diagnostics_use_separate_streams(monkeypatch: pytest.MonkeyPatch) -> None:

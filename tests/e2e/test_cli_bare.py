@@ -81,7 +81,7 @@ def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
-    for command in ("search", "inspect", "download", "detect", "scan", "open", "materialize"):
+    for command in ("scan", "open", "materialize"):
         assert command in result.stdout, f"console --help missing command {command}"
 
 

@@ -8,14 +8,11 @@ calls it with a :class:`ConnectorContext` carrying the injected infra ports.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any
 
 from datasluice.connectors.socrata.adapter import SocrataAdapter
 
-if TYPE_CHECKING:
-    from datasluice.runtime.context import ConnectorContext
 
-
-def create_socrata_connector(ctx: ConnectorContext) -> SocrataAdapter:
+def create_socrata_connector(ctx: Any) -> SocrataAdapter:
     """Construct a :class:`SocrataAdapter` wired to the context's transport/auth."""
     return SocrataAdapter(ctx.base_url, auth=ctx.auth, transport=ctx.transport)

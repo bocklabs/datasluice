@@ -1,23 +1,10 @@
-"""DataSluiceSession — internal composition substrate.
-
-The session wires :class:`PluginManager`, the transport factory
-(:func:`create_default_transport`), and explicit auth into a zero-config
-facade. It replaces the legacy ``DataSluice`` class and removes the
-``Settings`` env-var system.
-
-: the session gains explicit kwargs (``timeout``/``retries``/
-``rate_limit``/``cache_dir``/``cache_ttl``) and injectables
-(``transport=``/``storage=``/``cache=``/``credential_provider=``). Scalar knobs
-configure only the default-constructed transport; when ``transport=`` is
-injected the scalars are ignored. The session surface stays
-``portal``/``search``-only until adds sync composition, while
-``ConnectorContext`` remains unchanged.
-"""
+"""DataSluiceSession composition substrate with explicit catalog handoff."""
 
 from __future__ import annotations
 
 import importlib
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from datasluice.auth import NoAuth
 from datasluice.config.defaults import (
@@ -28,17 +15,15 @@ from datasluice.config.defaults import (
     DEFAULT_RETRIES,
     DEFAULT_TIMEOUT,
 )
-from datasluice.domain import Query, SearchResult
+from datasluice.contracts.catalog.protocols import CatalogConnectorContext
 from datasluice.logging import configure_logging, get_logger
-from datasluice.runtime.context import ConnectorContext
 from datasluice.runtime.defaults import create_default_transport
 from datasluice.runtime.plugin_manager import PluginManager
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Iterable, Iterator
 
     from datasluice.auth import BaseAuth
-    from datasluice.connectors.base import BaseAdapter
     from datasluice.ports import CachePort, CredentialProvider, StateStore, StoragePort, Transport
     from datasluice.sync.sync import SyncOutcome
 
@@ -65,11 +50,7 @@ class _StaticCredentialProvider:
 
 
 class DataSluiceSession:
-    """Internal composition substrate for the public DataSluice facade.
-
-        Wires the :class:`PluginManager`, transport, auth, state store, and
-        optional storage / cache / credential provider into a zero-config session.
-        Every override is explicit — no env-var-driven settings.
+    """Own transport, storage, cache, and state dependencies for data-plane work.
 
         Args:
             auth: Authentication strategy; defaults to :class:`NoAuth`. When
@@ -79,8 +60,8 @@ class DataSluiceSession:
                 :class:`Transport` port. A default transport is constructed
                 when omitted; scalar knobs below are IGNORED when this is injected
     .
-            page_size: Default page size hint for paginated catalog calls.
-            plugins: Optional :class:`PluginManager` for dependency injection.
+            page_size: Default page size hint retained for caller-owned configuration.
+            plugins: Optional :class:`PluginManager` retained for explicit extension management.
                 A fresh instance is constructed when omitted.
             timeout: Request timeout in seconds (default transport only).
             retries: Max retry attempts (default transport only).
@@ -95,11 +76,6 @@ class DataSluiceSession:
             state_store: Optional :class:`StateStore`; defaults to a fresh
                 :class:`InMemoryStateStore` owned by this session.
 
-        Example:
-            >>> from datasluice.runtime.session import DataSluiceSession
-            >>> session = DataSluiceSession()
-            >>> connector = session.portal("https://catalog.data.gov")
-            >>> results = connector.search()
     """
 
     def __init__(
@@ -157,7 +133,7 @@ class DataSluiceSession:
 
         self.plugins = plugins or PluginManager()
         configure_logging(DEFAULT_LOG_LEVEL)
-        logger.debug("DataSluiceSession initialised with %d connector(s)", len(self.plugins.list_connectors()))
+        logger.debug("DataSluiceSession initialized")
 
     @staticmethod
     def _build_default_cache(cache_dir: str, cache_ttl: int) -> CachePort | None:
@@ -181,62 +157,13 @@ class DataSluiceSession:
             )
             return None
 
-    def portal(self, url: str, portal_type: str | None = None) -> BaseAdapter:
-        """Resolve and construct a connector for *url*.
-
-        Auto-detects the portal type via :func:`detect` and resolves the factory
-        through :class:`PluginManager`, unless *portal_type* is supplied in which
-        case detection is bypassed entirely. The returned connector
-        structurally conforms to :class:`CatalogPort`.
-
-        Args:
-            url: Base URL of the open-data portal.
-            portal_type: Explicit portal type override; when set, detection is
-                skipped.
-
-        Returns:
-            A connector instance conforming to :class:`CatalogPort`.
-
-        Raises:
-            PortalDetectionError: If detection yields ``portal_type=None`` or
-                ``confidence < 1.0``. The exception carries the
-                :class:`DetectionResult` as ``.detection_result``.
-            AdapterNotFoundError: If no connector is registered for the resolved type.
-        """
-        from datasluice.discovery import detect
-        from datasluice.exceptions import PortalDetectionError
-
-        if portal_type is None:
-            result = detect(url, transport=self._transport, plugin_manager=self.plugins)
-            if result.portal_type is None or result.confidence < 1.0:
-                raise PortalDetectionError(
-                    f"Could not auto-detect portal for {url!r}. Tried {len(result.evidence)} probe(s); "
-                    f"specify portal_type= explicitly.",
-                    detection_result=result,
-                )
-            portal_type = result.portal_type
-        factory = cast("Callable[[ConnectorContext], BaseAdapter]", self.plugins.get(portal_type))
-        ctx = ConnectorContext(base_url=url, transport=self._transport, auth=self.auth, page_size=self.page_size)
-        connector = factory(ctx)
-        logger.debug("Resolved connector %s for %s", portal_type, url)
-        return connector
-
-    def search(self, url: str, query: str | Query | None = None, **kwargs: Any) -> SearchResult:
-        """Convenience method: resolve a portal and search in one call.
-
-        Args:
-            url: Base URL of the open-data portal.
-            query: Search text or a :class:`Query` object.
-            **kwargs: Additional :class:`Query` fields (limit, tags, etc.).
-
-        Returns:
-            A :class:`SearchResult` page.
-        """
-        if isinstance(query, Query):
-            q = query
-        else:
-            q = Query(text=query, **kwargs)
-        return self.portal(url).search(q)
+    def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
+        """Construct one canonical catalog connector from caller-owned inputs."""
+        if not callable(factory):
+            raise TypeError("Catalog construction requires a callable factory.")
+        if not isinstance(context, CatalogConnectorContext):
+            raise TypeError("Catalog construction requires a CatalogConnectorContext.")
+        return factory(context)
 
     def sync_resources(
         self,
@@ -272,4 +199,4 @@ class DataSluiceSession:
         )
 
     def __repr__(self) -> str:
-        return f"<DataSluiceSession(connectors={len(self.plugins.list_connectors())})>"
+        return "<DataSluiceSession>"

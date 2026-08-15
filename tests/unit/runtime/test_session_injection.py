@@ -9,7 +9,6 @@ no ``download()``/``materialize()`` method.
 
 from __future__ import annotations
 
-import inspect
 import os
 from typing import Any
 
@@ -18,7 +17,6 @@ import pytest
 import datasluice.application as application_module
 from datasluice.auth import NoAuth
 from datasluice.ports import CachePort, CredentialProvider, StateStore, StoragePort, Transport
-from datasluice.runtime.context import ConnectorContext
 from datasluice.runtime.session import DataSluiceSession
 from datasluice.sync import InMemoryStateStore
 
@@ -131,13 +129,6 @@ def test_state_store_injectable() -> None:
     session = DataSluiceSession(state_store=state_store)
     assert session.state_store is state_store
     assert isinstance(session.state_store, StateStore)
-
-
-def test_connector_context_signature_unchanged() -> None:
-    """ConnectorContext fields stay exactly (base_url, transport, auth, page_size)."""
-
-    fields = tuple(inspect.signature(ConnectorContext).parameters)
-    assert fields == ("base_url", "transport", "auth", "page_size")
 
 
 def test_session_has_no_download_method() -> None:
