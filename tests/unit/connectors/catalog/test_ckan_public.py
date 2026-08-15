@@ -19,8 +19,14 @@ from datasluice.domain.catalog.operations import (
     OperationSpec,
     OperationTier,
 )
-from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile, EffectiveCapabilityProfile, ProbeEvidence
-from datasluice.domain.catalog.profiles import CredentialClassification, ProbeResponseClass, RoleClassification
+from datasluice.domain.catalog.profiles import (
+    CredentialClassification,
+    DeclaredCapabilityProfile,
+    EffectiveCapabilityProfile,
+    ProbeEvidence,
+    ProbeResponseClass,
+    RoleClassification,
+)
 
 
 class SyncExecutor:
@@ -140,6 +146,24 @@ def test_factory_accepts_canonical_context_and_validates_profile_identity() -> N
 
     with pytest.raises(ValueError, match="CKAN"):
         create_ckan_connector(_context(profile=wrong_profile))
+
+
+def test_factory_requires_both_typed_executor_modes() -> None:
+    """A façade cannot silently fall back to an absent executor mode."""
+    from datasluice.connectors.catalog.ckan import create_ckan_connector
+
+    context = CatalogConnectorContext(
+        sync_executor=object(),  # type: ignore[arg-type]
+        async_executor=AsyncExecutor(),  # type: ignore[arg-type]
+        normalized_sync=object(),
+        normalized_async=object(),
+        native_sync=object(),
+        native_async=object(),
+        effective_profile=_effective_ckan_profile(),
+    )
+
+    with pytest.raises(ValueError, match="synchronous"):
+        create_ckan_connector(context)
 
 
 def test_adapter_exposes_injected_normalized_native_services_and_effective_profile() -> None:

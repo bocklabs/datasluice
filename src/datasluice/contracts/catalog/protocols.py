@@ -127,6 +127,11 @@ class CatalogConnectorContext:
     credentials: CatalogCredential | None = None
     manages_sync_executor: bool = True
     manages_async_executor: bool = True
+    normalized_sync: object | None = None
+    normalized_async: object | None = None
+    native_sync: object | None = None
+    native_async: object | None = None
+    effective_profile: EffectiveCapabilityProfile | None = None
 
     def __post_init__(self) -> None:
         if type(self.manages_sync_executor) is not bool or type(self.manages_async_executor) is not bool:
