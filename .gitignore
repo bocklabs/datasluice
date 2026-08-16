@@ -30,7 +30,8 @@ coverage.xml
 .envrc
 .venv
 .opencode
-
+.commandcode
+.gsd
 # uv
 #   Generally recommended to include uv.lock in version control for
 #   reproducibility. Uncomment for libraries where you want consumers
