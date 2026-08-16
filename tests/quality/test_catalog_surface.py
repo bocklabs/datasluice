@@ -366,8 +366,6 @@ PUBLIC_CATALOG_TREES: tuple[Path, ...] = (
 _SCAN_SUFFIXES = frozenset({".py", ".md", ".toml", ".json", ".yaml", ".yml", ".cfg"})
 _COVERAGE_ROW_RE = re.compile(r"^\|\s*(\w+)\.([\w.-]+)\s*\|\s*(INTEGRATE|OPT-OUT)\s*\|", re.MULTILINE)
 
-_TDD_RED = os.environ.get("DATASLUICE_TDD_RED") == "1"
-
 
 def _tracked_files() -> list[str]:
     result = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=False)
@@ -488,9 +486,7 @@ def _static_audit_gaps() -> list[str]:
 
 _STATIC_GAPS = _static_audit_gaps()
 if _STATIC_GAPS:
-    if _TDD_RED:
-        pytest.fail(f"catalog surface invariants unmet: {'; '.join(_STATIC_GAPS[:6])}", pytrace=False)
-    pytest.skip("catalog surface audit pending GREEN phase", allow_module_level=True)
+    pytest.fail(f"catalog surface invariants unmet: {'; '.join(_STATIC_GAPS[:6])}", pytrace=False)
 
 
 def _certificate_parts(platform: str):

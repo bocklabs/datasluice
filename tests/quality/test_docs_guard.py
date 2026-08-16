@@ -9,14 +9,12 @@ URL-driven facade construction, or deleted CLI commands fails this gate.
 Removed identifiers stay legal only inside this file, which defines the
 negative audit, and inside the explicit per-file allowlist below.
 
-While documentation is still being migrated the module skips (or fails
-under ``DATASLUICE_TDD_RED=1``) so TDD RED commits can land through the
-repository's full-suite pytest hook.
+Any detected violation fails module collection, so a documentation
+regression can never surface as a green CI run with skipped gates.
 """
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,8 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 README = REPO_ROOT / "README.md"
 DOCS_DIR = REPO_ROOT / "docs"
 ZENSICAL = REPO_ROOT / "zensical.toml"
-
-_TDD_RED = os.environ.get("DATASLUICE_TDD_RED") == "1"
 
 # Legacy Airflow surface that must stay absent from current documentation.
 AIRFLOW_OBSOLETE_PATTERNS = [
@@ -292,10 +288,12 @@ def _migration_violations() -> list[str]:
     )
 
 
-if _migration_violations():
-    if _TDD_RED:
-        pytest.fail("current documentation still references removed or non-canonical surfaces", pytrace=False)
-    pytest.skip("current-doc migration pending GREEN phase", allow_module_level=True)
+_DOCS_VIOLATIONS = _migration_violations()
+if _DOCS_VIOLATIONS:
+    pytest.fail(
+        f"current documentation still references removed or non-canonical surfaces: {_DOCS_VIOLATIONS[0]}",
+        pytrace=False,
+    )
 
 
 def test_published_docs_omit_removed_core_airflow_surface() -> None:
