@@ -136,6 +136,8 @@ class ConnectorManifest:
         return selected_connector_id == self.connector_id
 
     def require_activation(self, selected_connector_id: ConnectorId | None) -> None:
-        """Reject implicit activation and silent built-in overrides."""
+        """Reject implicit activation, inactive manifests, and silent built-in overrides."""
+        if self.activation_policy is not ActivationPolicy.EXPLICIT:
+            raise ValueError("Connector manifests must declare explicit activation to be selectable.")
         if not self.is_activated(selected_connector_id):
             raise ValueError("Connector activation requires explicit caller selection of the connector ID.")

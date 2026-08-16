@@ -92,8 +92,11 @@ def test_plugins_default_to_inactive_and_builtin_overrides_require_selection() -
     assert not manifest.is_activated(builtin_id)
     assert manifest.is_activated(connector_id)
 
-    with pytest.raises(ValueError, match="explicit caller selection"):
+    with pytest.raises(ValueError, match="declare explicit activation"):
         manifest.require_activation(builtin_id)
+
+    with pytest.raises(ValueError, match="declare explicit activation"):
+        manifest.require_activation(connector_id)
 
 
 def test_optional_requirements_are_descriptive_and_never_install_at_runtime() -> None:
