@@ -30,10 +30,10 @@ dependencies = [
 provider_info = "airflow.providers.datasluice.get_provider_info:get_provider_info"
 
 [project.urls]
-bugs = "https://github.com/nitish-raj/datasluice/issues"
-changelog = "https://github.com/nitish-raj/datasluice/releases"
-documentation = "https://nitish-raj.github.io/datasluice/"
-homepage = "https://github.com/nitish-raj/datasluice"
+bugs = "https://github.com/bocklabs/datasluice/issues"
+changelog = "https://github.com/bocklabs/datasluice/releases"
+documentation = "https://bocklabs.github.io/datasluice/"
+homepage = "https://github.com/bocklabs/datasluice"
 
 [tool.hatch.build.targets.wheel]
 sources = ["src"]
