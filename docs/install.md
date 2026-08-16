@@ -57,5 +57,5 @@ datasluice --version
 
 ## Development install
 
-See the [README](https://github.com/nitish-raj/datasluice) for local
+See the [README](https://github.com/bocklabs/datasluice) for local
 development setup instructions.

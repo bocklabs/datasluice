@@ -5,5 +5,5 @@ description: |
   awaits the canonical platform executors of later phases.
 integrations:
   - integration-name: DataSluice
-    external-doc-url: https://nitish-raj.github.io/datasluice/
+    external-doc-url: https://bocklabs.github.io/datasluice/
     tags: [open-data]

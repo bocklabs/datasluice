@@ -8,8 +8,8 @@
 
 <p align="center">
   <a href="https://pypi.org/project/datasluice/"><img src="https://img.shields.io/pypi/v/datasluice.svg" alt="PyPI version"></a>
-  <a href="https://github.com/nitish-raj/datasluice/actions"><img src="https://github.com/nitish-raj/datasluice/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://nitish-raj.github.io/datasluice/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Documentation"></a>
+  <a href="https://github.com/bocklabs/datasluice/actions"><img src="https://github.com/bocklabs/datasluice/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://bocklabs.github.io/datasluice/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Documentation"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
 </p>
 
@@ -18,7 +18,7 @@
 
 ---
 
-* [GitHub](https://github.com/nitish-raj/datasluice/) | [PyPI](https://pypi.org/project/datasluice/) | [Documentation](https://nitish-raj.github.io/datasluice/)
+* [GitHub](https://github.com/bocklabs/datasluice/) | [PyPI](https://pypi.org/project/datasluice/) | [Documentation](https://bocklabs.github.io/datasluice/)
 * Created by [Nitish Raj](https://rajnitish.com/) | GitHub [@nitish-raj](https://github.com/nitish-raj) | PyPI [@nitish-raj](https://pypi.org/user/nitish-raj/)
 * MIT License
 
@@ -141,7 +141,7 @@ datasluice materialize ./source.csv --destination ./out.parquet --output json
 
 Documentation is built with [Zensical](https://zensical.org/) and deployed to GitHub Pages.
 
-* **Live site:** https://nitish-raj.github.io/datasluice/
+* **Live site:** https://bocklabs.github.io/datasluice/
 * **Preview locally:** `just docs-serve` (serves at http://localhost:8000)
 * **Build:** `just docs-build`
 
