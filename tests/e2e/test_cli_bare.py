@@ -17,6 +17,8 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+_RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
+
 
 @pytest.fixture(scope="session")
 def bare_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
@@ -83,6 +85,22 @@ def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
     assert result.returncode == 0, result.stderr
     for command in ("scan", "open", "materialize"):
         assert command in result.stdout, f"console --help missing command {command}"
+    for retired in _RETIRED_COMMANDS:
+        assert retired not in result.stdout, f"console --help must not advertise retired command {retired}"
+
+
+def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str]) -> None:
+    """Former portal-era commands fail resolution in the installed bare wheel."""
+    result = subprocess.run(
+        [bare_env["console"], "search", "https://data.example.test"],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "No such command" in combined
 
 
 def test_bare_import_no_optional_dependency_required(bare_env: dict[str, str]) -> None:

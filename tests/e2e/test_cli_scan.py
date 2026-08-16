@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import json
-import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.csv as pacsv
@@ -16,16 +13,11 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from datasluice.domain import Dataset, HttpDownload, Resource
+from datasluice.cli import scan as scan_command
+from datasluice.cli._resolver import parse_locator
+from datasluice.domain import HttpDownload, Resource
 from datasluice.exceptions import DataSluiceError
 
-if importlib.util.find_spec("datasluice.cli.scan") is None:
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.fail("bounded scan CLI contracts pending GREEN phase", pytrace=False)
-    pytest.skip("bounded scan CLI contracts pending GREEN phase", allow_module_level=True)
-
-scan_command = cast(Any, importlib.import_module("datasluice.cli.scan"))
-parse_locator = cast(Any, importlib.import_module("datasluice.cli._resolver")).parse_locator
 scan_app = typer.Typer()
 scan_app.command()(scan_command.scan)
 
@@ -53,21 +45,10 @@ class _Opened:
         self.closed = True
 
 
-class _CatalogPortal:
-    def __init__(self, dataset: Dataset) -> None:
-        self._dataset = dataset
-        self.dataset_ids: list[str] = []
-
-    def get_dataset(self, dataset_id: str) -> Dataset:
-        self.dataset_ids.append(dataset_id)
-        return self._dataset
-
-
 class _Facade:
-    def __init__(self, resource: Resource, opened: _Opened, dataset: Dataset | None = None) -> None:
+    def __init__(self, resource: Resource, opened: _Opened) -> None:
         self._resource = resource
         self._opened = opened
-        self._portal = _CatalogPortal(dataset or Dataset(id="dataset", resources=[resource]))
         self.resolved: list[object] = []
         self.opened: list[Resource] = []
 
@@ -76,9 +57,6 @@ class _Facade:
 
     def __exit__(self, *exc: Any) -> None:
         return None
-
-    def portal(self, _url: str) -> _CatalogPortal:
-        return self._portal
 
     def resolve(self, locator: object) -> Resource:
         self.resolved.append(locator)
