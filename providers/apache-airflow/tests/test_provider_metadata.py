@@ -60,13 +60,14 @@ def test_get_provider_info_returns_locked_identity() -> None:
     assert info["versions"] == [_PROVIDER_VERSION]
 
 
-def test_yaml_and_python_metadata_match_package_name_and_version() -> None:
-    """provider.yaml and get_provider_info agree on package, name, and version."""
+def test_yaml_carries_no_pinned_version_and_python_metadata_owns_it() -> None:
+    """provider.yaml declares identity only; get_provider_info derives the version."""
     info = _provider_info()
     data = _provider_yaml()
     assert data["package-name"] == info["package-name"] == _PROVIDER_PACKAGE
     assert data["name"] == info["name"]
-    assert data["versions"] == info["versions"] == [_PROVIDER_VERSION]
+    assert "versions" not in data
+    assert info["versions"] == [_PROVIDER_VERSION]
 
 
 def test_metadata_declares_no_hook_operator_or_connection() -> None:
