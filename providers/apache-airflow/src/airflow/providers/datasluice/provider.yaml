@@ -1,21 +1,11 @@
 package-name: apache-airflow-providers-datasluice
 name: DataSluice
 description: |
-  Apache Airflow provider for DataSluice open-data discovery, streaming, and
-  materialization.
+  Metadata-only Apache Airflow provider for DataSluice. Runtime integration
+  awaits the canonical platform executors of later phases.
+versions:
+  - 0.1.2
 integrations:
   - integration-name: DataSluice
     external-doc-url: https://nitish-raj.github.io/datasluice/
     tags: [open-data]
-operators:
-  - integration-name: DataSluice
-    python-modules:
-      - airflow.providers.datasluice.operators.search
-      - airflow.providers.datasluice.operators.materialize
-hooks:
-  - integration-name: DataSluice
-    python-modules:
-      - airflow.providers.datasluice.hooks.datasluice
-connection-types:
-  - hook-class-name: airflow.providers.datasluice.hooks.datasluice.DataSluiceHook
-    connection-type: datasluice
