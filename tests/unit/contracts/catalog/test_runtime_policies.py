@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict
+from typing import cast
 
 import pytest
 
@@ -70,3 +72,19 @@ def test_tls_diagnostics_events_and_telemetry_have_secure_defaults() -> None:
     assert event.metadata["token"] == "***"
     assert "secret" not in str(asdict(event))
     assert not TelemetryPolicy().enabled
+
+
+def test_structured_event_sequences_are_truncated_and_redacted_recursively() -> None:
+    event = StructuredEvent(
+        name="catalog.request",
+        metadata={"notes": ["n" * 512, {"api_key": "secret", "depth": ["d" * 512]}]},
+    )
+
+    notes = cast(tuple[object, ...], event.metadata["notes"])
+    assert notes[0] == "n" * 256
+    nested = cast(Mapping[str, object], notes[1])
+    assert nested["api_key"] == "***"
+    assert cast(tuple[object, ...], nested["depth"])[0] == "d" * 256
+
+    with pytest.raises(ValueError, match="sequence exceeds the entry limit"):
+        StructuredEvent(name="catalog.request", metadata={"notes": ["x"] * 33})

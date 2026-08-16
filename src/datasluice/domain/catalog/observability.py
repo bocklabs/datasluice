@@ -9,6 +9,7 @@ from typing import Protocol
 
 _REDACTED = "***"
 _MAX_METADATA_ENTRIES = 32
+_MAX_TEXT_LENGTH = 256
 _SENSITIVE_PARTS = frozenset(
     {"authorization", "credential", "token", "secret", "password", "cookie", "api_key", "body", "header"}
 )
@@ -50,17 +51,21 @@ def _redact_metadata(values: Mapping[str, object]) -> FrozenMetadata:
         normalized = key.lower().replace("-", "_")
         if any(part in normalized for part in _SENSITIVE_PARTS):
             redacted[key] = _REDACTED
-        elif isinstance(value, Mapping):
-            redacted[key] = _redact_metadata(value)
-        elif isinstance(value, tuple | list):
-            if len(value) > _MAX_METADATA_ENTRIES:
-                raise ValueError("Event metadata sequence exceeds the entry limit.")
-            redacted[key] = tuple(value)
-        elif isinstance(value, str):
-            redacted[key] = value[:256]
         else:
-            redacted[key] = value
+            redacted[key] = _redact_value(value)
     return FrozenMetadata(redacted)
+
+
+def _redact_value(value: object) -> object:
+    if isinstance(value, str):
+        return value[:_MAX_TEXT_LENGTH]
+    if isinstance(value, Mapping):
+        return _redact_metadata(value)
+    if isinstance(value, tuple | list):
+        if len(value) > _MAX_METADATA_ENTRIES:
+            raise ValueError("Event metadata sequence exceeds the entry limit.")
+        return tuple(_redact_value(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
