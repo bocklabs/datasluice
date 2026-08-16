@@ -465,7 +465,7 @@ def _fixture_linkage_violations() -> list[str]:
         expected = {operation_id for operation_id in integrate_ids if operation_id.startswith(f"{platform}/")}
         if operations != expected:
             violations.append(f"{platform} profile diverges from the locked matrix")
-        cases_path = REPO_ROOT / "tests/fixtures/catalog" / platform / "cases.json"
+        cases_path = REPO_ROOT / "src/datasluice/contracts/catalog/fixtures" / platform / "cases.json"
         try:
             covered = {case["operation"] for case in json.loads(cases_path.read_text(encoding="utf-8"))["cases"]}
         except (OSError, json.JSONDecodeError, KeyError):
@@ -656,14 +656,19 @@ def test_cli_registers_only_retained_direct_resource_commands() -> None:
 
 def test_removed_fixture_trees_and_example_page_stay_deleted() -> None:
     """Test 2: unversioned fixture trees and the former example page remain gone."""
-    for removed_fixture in ("tests/fixtures/ckan", "tests/fixtures/datagouv", "tests/fixtures/socrata"):
+    for removed_fixture in (
+        "tests/fixtures/ckan",
+        "tests/fixtures/datagouv",
+        "tests/fixtures/socrata",
+        "tests/fixtures/catalog",
+    ):
         assert not (REPO_ROOT / removed_fixture).exists(), f"{removed_fixture} must stay deleted"
     assert not (REPO_ROOT / "docs/examples/datagouv.md").exists()
     navigation = ZENSICAL.read_text(encoding="utf-8")
     assert "datagouv" not in navigation and "data.gouv" not in navigation
     for platform in PLATFORMS:
         for fixture_file in ("cases.json", "evidence.json"):
-            assert (REPO_ROOT / "tests/fixtures/catalog" / platform / fixture_file).is_file()
+            assert (REPO_ROOT / "src/datasluice/contracts/catalog/fixtures" / platform / fixture_file).is_file()
 
 
 def test_airflow_provider_tree_is_metadata_only() -> None:

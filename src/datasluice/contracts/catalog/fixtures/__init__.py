@@ -9,9 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
-_ROOT = Path(__file__).parents[4]
-_PROFILES = _ROOT / "src/datasluice/contracts/catalog/profiles"
-_FIXTURES = _ROOT / "tests/fixtures/catalog"
+_PROFILES = Path(__file__).parents[1] / "profiles"
+_FIXTURES = Path(__file__).parent
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,11 +154,14 @@ def _operation_id(value: object) -> ReferenceOperationId:
 
 
 def _read_json(path: Path) -> object:
-    """Read one checked-in JSON object with a useful strict-loader failure."""
+    """Read one packaged JSON object with a useful strict-loader failure."""
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"Reference fixture {path.name} is not valid checked-in JSON.") from error
+        raise ValueError(
+            f"Reference fixture {path.name} is missing from the installed package ({path}); "
+            "the datasluice distribution may be corrupted."
+        ) from error
 
 
 def _object(value: object, name: str) -> dict[str, object]:

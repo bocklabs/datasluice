@@ -9,8 +9,8 @@ from typing import Any
 
 _ROOT = Path(__file__).parents[4]
 _PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/udata-17.3.json"
-_EVIDENCE_PATH = _ROOT / "tests/fixtures/catalog/udata/evidence.json"
-_CASES_PATH = _ROOT / "tests/fixtures/catalog/udata/cases.json"
+_EVIDENCE_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/evidence.json"
+_CASES_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/cases.json"
 _EXPECTED_OPERATION_IDS = {
     "udata/api-v1.root-and-effective-profile-probe",
     "udata/api-v1.dataset-list-search-show-create-update-delete",

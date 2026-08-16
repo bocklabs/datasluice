@@ -103,6 +103,24 @@ def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str]) 
     assert "No such command" in combined
 
 
+def test_bare_wheel_ships_reference_fixture_sets(bare_env: dict[str, str]) -> None:
+    """The installed wheel loads every reference fixture set without the checkout."""
+    result = subprocess.run(
+        [
+            bare_env["python"],
+            "-c",
+            "from datasluice.contracts.catalog import load_reference_fixture_set;"
+            "print([load_reference_fixture_set(p).platform for p in ('ckan', 'udata', 'socrata')])",
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "['ckan', 'udata', 'socrata']"
+
+
 def test_bare_import_no_optional_dependency_required(bare_env: dict[str, str]) -> None:
     """A bare install imports without requiring pyarrow, httpx, or fsspec."""
     result = subprocess.run(

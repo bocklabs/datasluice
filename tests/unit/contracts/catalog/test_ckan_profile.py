@@ -9,8 +9,8 @@ from typing import Any
 
 _ROOT = Path(__file__).parents[4]
 _PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/ckan-2.11.json"
-_EVIDENCE_PATH = _ROOT / "tests/fixtures/catalog/ckan/evidence.json"
-_CASES_PATH = _ROOT / "tests/fixtures/catalog/ckan/cases.json"
+_EVIDENCE_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/ckan/evidence.json"
+_CASES_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/ckan/cases.json"
 _EXPECTED_OPERATION_IDS = {
     "ckan/action-api-v3.discovery-help-and-status",
     "ckan/action-api-v3.dataset-list-show-search",

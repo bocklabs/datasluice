@@ -9,8 +9,8 @@ from typing import Any
 
 _ROOT = Path(__file__).parents[4]
 _PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/socrata-soda3.json"
-_EVIDENCE_PATH = _ROOT / "tests/fixtures/catalog/socrata/evidence.json"
-_CASES_PATH = _ROOT / "tests/fixtures/catalog/socrata/cases.json"
+_EVIDENCE_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/socrata/evidence.json"
+_CASES_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/socrata/cases.json"
 _EXPECTED_OPERATION_IDS = {
     "socrata/soda-v3-query",
     "socrata/soda-v3-export",

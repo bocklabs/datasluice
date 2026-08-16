@@ -23,7 +23,7 @@ def test_reference_fixture_sets_are_strictly_profile_bound(platform: str) -> Non
     assert fixture_set.cases
     assert all(case.operation_id.platform == platform for case in fixture_set.cases)
 
-    cases_path = Path(__file__).parents[4] / "tests/fixtures/catalog" / platform / "cases.json"
+    cases_path = Path(__file__).parents[4] / "src/datasluice/contracts/catalog/fixtures" / platform / "cases.json"
     original = json.loads(cases_path.read_text(encoding="utf-8"))
     original["cases"][0]["operation"] = "ckan/unknown.operation"
     tampered = cases_path.with_name("tampered.json")
