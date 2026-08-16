@@ -2,7 +2,7 @@
   <img src="assets/datasluice.png" alt="DataSluice" width="800">
 </p>
 
-One Python interface for open-data discovery, extraction, format normalization, and pipeline integration.
+A contract-driven Python SDK for public-data catalog platforms, plus a direct-resource data plane for extraction and format normalization.
 
 !!! warning "Unstable — under active development"
     DataSluice is pre-1.0 and evolving fast. **Breaking changes may occur at any time**
@@ -12,14 +12,13 @@ One Python interface for open-data discovery, extraction, format normalization, 
 
 - [Installation](install.md) — how to install DataSluice
 - [Architecture](architecture.md) — how the library is structured
-- [Adapters](adapters.md) — how portal adapters work
-- [Supported Portals](supported-portals.md) — CKAN, data.gouv.fr, Socrata, and more
+- [Connectors](adapters.md) — the typed connector contract and platform factories
+- [Platform Contracts](supported-portals.md) — pinned CKAN, uData, and Socrata capability profiles
 - [API Reference](api.md) — auto-generated API documentation
 
 ## Examples
 
 - [CKAN](examples/ckan.md)
-- [data.gouv.fr](examples/datagouv.md)
 - [Socrata](examples/socrata.md)
 - [pandas](examples/pandas.md)
 - [dlt](examples/dlt.md)

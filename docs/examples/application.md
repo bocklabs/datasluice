@@ -1,7 +1,7 @@
 # Application Example
 
-This example walks the explicit public `DataSluice` data-plane flow and its
-direct-resource CLI commands.
+This example walks the explicit public `DataSluice` data-plane flow, the
+canonical connector entry points, and the direct-resource CLI commands.
 
 ## Facade: streaming and materialization
 
@@ -32,6 +32,49 @@ with DataSluice() as ds:
 
     artifact: Artifact = ds.materialize(direct, "/tmp/datasluice-out.parquet")
     print(artifact.content_digest, artifact.uri)
+```
+
+## Catalog connectors
+
+Catalog behavior never arrives through a URL or an implicit platform
+choice. Connectors are imported explicitly from their platform packages
+and constructed through their factories with a fully assembled
+`CatalogConnectorContext`:
+
+```python
+from datasluice.connectors.catalog.ckan import create_ckan_connector
+from datasluice.connectors.catalog.socrata import create_socrata_connector
+from datasluice.connectors.catalog.udata import create_udata_connector
+
+with DataSluice() as ds:
+    connector = ds.open_catalog(create_ckan_connector, context)
+```
+
+The context supplies the injected sync and async executors, normalized
+and native service projections, and the pinned effective capability
+profile — see [Connectors](../adapters.md). In Phase 1 the executors are
+caller-supplied; deterministic reference fakes satisfy every projection,
+and live CKAN, uData, and Socrata endpoint clients arrive in Phases 3–5.
+
+## Verifying contracts with reference fakes
+
+The public compliance runner executes deterministic fixture cases against
+any sync/async client pair and emits a machine-readable
+`ComplianceReport`:
+
+```python
+from datasluice.contracts.catalog import CatalogContractCase, run_catalog_contract
+from datasluice.contracts.catalog.fakes import (
+    AsyncReferenceConnector,
+    SyncReferenceConnector,
+)
+
+report = run_catalog_contract(
+    CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),
+    sync_client=SyncReferenceConnector(),
+    async_client=AsyncReferenceConnector(),
+)
+print([(outcome.mode, outcome.state) for outcome in report.outcomes])
 ```
 
 ## CLI
