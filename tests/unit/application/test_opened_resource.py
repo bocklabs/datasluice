@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import pytest
 
 from datasluice import DataSluice, OpenedResourceConsumedError, Resource
 from datasluice.domain import HttpDownload
-
-if os.environ.get("DATASLUICE_TDD_RED") == "1":
-    pytest.skip("opened-resource lifecycle implementation pending GREEN phase", allow_module_level=True)
 
 
 class _Stream:
