@@ -61,6 +61,11 @@
     {
       "operation": "socrata/catalog-discovery-and-view-metadata",
       "outcome": "unavailable"
+    },
+    {
+      "operation": "socrata/soda-v3-soql-query-types-and-format-negotiation",
+      "outcome": "core",
+      "credential_class": "application-token"
     }
   ]
 }

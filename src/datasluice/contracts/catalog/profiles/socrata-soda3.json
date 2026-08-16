@@ -5,7 +5,7 @@
   "platform_api_version": "SODA 3",
   "official_source_uri": "https://dev.socrata.com/docs/endpoints",
   "source_accessed_at": "2026-08-15",
-  "fixture_fingerprint": "d2a67a4d9ecafe4903d9e7b703a34d6007cf8be6e9ee8704975a22cfe5804083",
+  "fixture_fingerprint": "5efa030b488733646893c5a785067e9b1e2df9e2e40040a6990ee21b2eafb16f",
   "operations": [
     {
       "id": "socrata/soda-v3-query",

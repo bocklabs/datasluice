@@ -5,7 +5,7 @@
   "platform_api_version": "uData API v1",
   "official_source_uri": "https://udata.readthedocs.io/en/17.3/",
   "source_accessed_at": "2026-08-15",
-  "fixture_fingerprint": "1b63c4d2a13818a5b894b6ff3b248f60c91d327a5d0050eeeb51b6c78e0fd897",
+  "fixture_fingerprint": "64545cfcdc5ba7177d15b458fd4097a41ee96c745383442654c383651dfa39f8",
   "operations": [
     {
       "id": "udata/api-v1.root-and-effective-profile-probe",
