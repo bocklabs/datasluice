@@ -85,14 +85,16 @@ def test_install_docs_name_the_separate_provider_distribution() -> None:
     assert "datasluice[airflow]" not in text, "install.md must not advertise the removed core extra"
 
 
-def test_airflow_docs_use_provider_namespace_and_operators() -> None:
-    """The Airflow example goes through airflow.providers.datasluice, not the core module."""
+def test_airflow_docs_state_provider_boundary() -> None:
+    """The Airflow page stays on the provider namespace without retired operators."""
     airflow = DOCS_DIR / "examples" / "airflow.md"
     if not airflow.exists():
         pytest.skip("airflow.md missing")
     text = airflow.read_text(encoding="utf-8")
     assert "airflow.providers.datasluice" in text, "airflow.md must use the provider namespace"
-    assert "DataSluiceHook" in text or "DataSluiceSearchOperator" in text
+    assert "DataSluiceHook" not in text, "airflow.md must not teach the retired hook"
+    assert "DataSluiceSearchOperator" not in text, "airflow.md must not teach the retired search operator"
+    assert "DataSluiceMaterializeOperator" not in text, "airflow.md must not teach the retired materialize operator"
     assert "DataSluiceOperator" not in text, "airflow.md must not use the removed preview operator"
     assert "integrations.airflow" not in text, "airflow.md must not import the removed core module"
 
