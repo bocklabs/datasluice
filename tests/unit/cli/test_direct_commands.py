@@ -1,8 +1,9 @@
-"""Contract tests for direct-resource CLI commands."""
+"""Contract tests for direct-resource CLI commands and the retained command inventory."""
 
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -14,6 +15,8 @@ from datasluice.cli.open import open
 from datasluice.cli.scan import scan
 
 runner = CliRunner()
+
+_RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
 
 
 @pytest.mark.parametrize(
@@ -28,6 +31,31 @@ runner = CliRunner()
 def test_parse_locator_accepts_direct_resource_locator(locator: str) -> None:
     """Direct file, object-storage, and HTTP locators remain supported."""
     assert parse_locator(locator).uri == locator
+
+
+def test_app_registers_exactly_the_retained_direct_commands() -> None:
+    """The Typer app registers only scan, open, and materialize."""
+    registered = {command.name for command in app.registered_commands}
+    assert registered == {"scan", "open", "materialize"}
+
+
+def test_help_lists_retained_commands_and_makes_removals_visible() -> None:
+    """Root help advertises exactly the retained commands with no retired names."""
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    for command in ("scan", "open", "materialize"):
+        assert command in result.output
+    for retired in _RETIRED_COMMANDS:
+        assert retired not in result.output
+
+
+@pytest.mark.parametrize("retired", _RETIRED_COMMANDS)
+def test_retired_commands_are_not_invokable(retired: str) -> None:
+    """Retired portal-era commands fail resolution instead of redirecting."""
+    result = runner.invoke(app, [retired, "https://data.example.test/records.csv"])
+
+    assert result.exit_code == 2
+    assert re.search(r"No such command", result.output, re.IGNORECASE)
 
 
 @pytest.mark.parametrize(
