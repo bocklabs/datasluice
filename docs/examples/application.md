@@ -45,16 +45,20 @@ and constructed through their factories with a fully assembled
 from datasluice.connectors.catalog.ckan import create_ckan_connector
 from datasluice.connectors.catalog.socrata import create_socrata_connector
 from datasluice.connectors.catalog.udata import create_udata_connector
+```
 
-with DataSluice() as ds:
-    connector = ds.open_catalog(create_ckan_connector, context)
+With a context assembled (see [Connectors](../adapters.md)), a facade
+opens exactly one caller-selected connector:
+
+```python
+# connector = ds.open_catalog(create_ckan_connector, context)
 ```
 
 The context supplies the injected sync and async executors, normalized
 and native service projections, and the pinned effective capability
-profile — see [Connectors](../adapters.md). In Phase 1 the executors are
-caller-supplied; deterministic reference fakes satisfy every projection,
-and live CKAN, uData, and Socrata endpoint clients arrive in Phases 3–5.
+profile. In Phase 1 the executors are caller-supplied; deterministic
+reference fakes satisfy every projection, and live CKAN, uData, and
+Socrata endpoint clients arrive in Phases 3–5.
 
 ## Verifying contracts with reference fakes
 
