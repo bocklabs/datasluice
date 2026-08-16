@@ -32,7 +32,7 @@ def bare_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         timeout=180,
     )
     if build.returncode != 0:
-        pytest.skip(f"uv build failed: {build.stderr[:300]}")
+        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
 
     wheels = list(wheel_dir.glob("datasluice-*.whl"))
     assert len(wheels) == 1, f"expected one wheel, found {wheels}"
@@ -49,7 +49,7 @@ def bare_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         timeout=180,
     )
     if install.returncode != 0:
-        pytest.skip(f"pip install failed: {install.stderr[:300]}")
+        pytest.fail(f"pip install failed: {install.stderr[:300]}", pytrace=False)
 
     console = str(venv / "bin" / "datasluice")
     assert Path(console).exists(), f"console script not found at {console}"
