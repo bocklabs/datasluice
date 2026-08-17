@@ -6,7 +6,10 @@ scoped to that installed package at runtime. Running pytest under an in-process
 ``Coverage`` here avoids the module-replacement breakage that a dotted
 ``--source`` name triggers in the Airflow provider import path. The reported
 total, ``precision=2`` rounding, and the ``fail-under`` exit code are taken
-straight from coverage 7.14+.
+straight from coverage 7.14+. The provider directory is derived from
+``sysconfig`` instead of ``importlib.util.find_spec`` because ``find_spec``
+executes the namespace-package portions (including ``get_provider_info``)
+before ``cov.start()``, silently deflating the measured total.
 """
 
 from __future__ import annotations
@@ -34,12 +37,13 @@ def _command(argv: list[str]) -> list[str]:
 
 
 def _provider_dir() -> str:
-    import importlib.util
+    import sysconfig
+    from pathlib import Path
 
-    spec = importlib.util.find_spec("airflow.providers.datasluice")
-    if spec is None or spec.submodule_search_locations is None:
+    provider_dir = Path(sysconfig.get_path("purelib")) / "airflow" / "providers" / "datasluice"
+    if not provider_dir.is_dir():
         raise RuntimeError("airflow.providers.datasluice is not installed in this environment")
-    return next(iter(spec.submodule_search_locations))
+    return str(provider_dir)
 
 
 def _reported_total(cov: object) -> float:

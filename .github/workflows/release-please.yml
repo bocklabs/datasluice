@@ -6,10 +6,6 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-
 concurrency:
   group: release-please
   cancel-in-progress: false
@@ -18,6 +14,9 @@ jobs:
   release-please:
     name: Maintain release PR / cut release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       core--release_created: ${{ steps.release.outputs.release_created }}
       core--version: ${{ steps.release.outputs.version }}
@@ -29,6 +28,8 @@ jobs:
         with:
           client-id: ${{ secrets.RELEASE_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0

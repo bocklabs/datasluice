@@ -37,6 +37,13 @@ repos:
         types: [python]
         pass_filenames: false
 
+      - id: zizmor
+        name: zizmor (GitHub Actions security)
+        entry: uvx zizmor
+        language: system
+        files: ^\.github/workflows/
+        types: [yaml]
+
       - id: graphify
         name: graphify knowledge graph rebuild
         entry: graphify update .

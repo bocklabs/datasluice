@@ -326,7 +326,11 @@ def test_candidate_smoke_precedes_production() -> None:
     install = next(s for s in smoke_steps if "uv pip install" in s.get("run", ""))
     assert "--index-url https://test.pypi.org/simple/" in install["run"]
     assert "--extra-index-url https://pypi.org/simple/" in install["run"]
-    assert '"${{ inputs.package_name }}==${{ inputs.version }}"' in install["run"]
+    assert '"${PACKAGE_NAME}==${PACKAGE_VERSION}"' in install["run"]
+    install_env = install["env"]
+    assert install_env["PACKAGE_NAME"] == "${{ inputs.package_name }}"
+    assert install_env["PACKAGE_VERSION"] == "${{ inputs.version }}"
+    assert "${{ inputs." not in install["run"], "run block must not expand workflow template expressions"
     assert "$SMOKE_VENV" in install["run"]
     core_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name == 'datasluice'")
     assert "$SMOKE_VENV" in core_smoke["run"]
