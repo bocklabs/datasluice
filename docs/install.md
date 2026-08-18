@@ -18,8 +18,8 @@ uv add datasluice
 
 ## Optional dependencies
 
-DataSluice keeps its core dependency footprint small. Some features require
-optional packages:
+DataSluice keeps its core dependency footprint small. Some features
+require optional packages:
 
 | Feature          | Install command                    |
 |------------------|------------------------------------|
@@ -37,6 +37,18 @@ Airflow integration ships as a **separate distribution** called
 `airflow.providers.datasluice` namespace. It is released and versioned
 independently of the core `datasluice` package.
 
+## Connector extras
+
+The base installation already carries the full connector contract
+surface: typed models, sync and async client Protocols, capability
+profiles, reference fakes, and the public compliance runner.
+
+Installable named connector extras (`ckan`, `udata`, `socrata`, and the
+`all-connectors` convenience extra) belong to Phase 2 packaging work
+(PACK-01/PACK-02) and their dependency tables. This release does not add
+or advertise them, and the library never downloads dependencies at
+runtime — missing capabilities explain the required install instead.
+
 ## Verify installation
 
 ```bash
@@ -45,5 +57,5 @@ datasluice --version
 
 ## Development install
 
-See the [README](https://github.com/nitish-raj/datasluice) for local
+See the [README](https://github.com/bocklabs/datasluice) for local
 development setup instructions.

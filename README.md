@@ -3,13 +3,13 @@
 </p>
 
 <p align="center">
-  One Python interface for open-data discovery, extraction, format normalization, and pipeline integration
+  A contract-driven Python SDK for public-data catalog platforms, plus a direct-resource data plane for extraction and format normalization
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/datasluice/"><img src="https://img.shields.io/pypi/v/datasluice.svg" alt="PyPI version"></a>
-  <a href="https://github.com/nitish-raj/datasluice/actions"><img src="https://github.com/nitish-raj/datasluice/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://nitish-raj.github.io/datasluice/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Documentation"></a>
+  <a href="https://github.com/bocklabs/datasluice/actions"><img src="https://github.com/bocklabs/datasluice/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://bocklabs.github.io/datasluice/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Documentation"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
 </p>
 
@@ -18,7 +18,7 @@
 
 ---
 
-* [GitHub](https://github.com/nitish-raj/datasluice/) | [PyPI](https://pypi.org/project/datasluice/) | [Documentation](https://nitish-raj.github.io/datasluice/)
+* [GitHub](https://github.com/bocklabs/datasluice/) | [PyPI](https://pypi.org/project/datasluice/) | [Documentation](https://bocklabs.github.io/datasluice/)
 * Created by [Nitish Raj](https://rajnitish.com/) | GitHub [@nitish-raj](https://github.com/nitish-raj) | PyPI [@nitish-raj](https://pypi.org/user/nitish-raj/)
 * MIT License
 
@@ -28,68 +28,120 @@
 pip install datasluice
 ```
 
-Optional extras for format and integration support:
+Optional extras cover format readers and pipeline integrations:
 
 ```bash
 pip install "datasluice[pandas,polars,parquet,xlsx]"
-pip install "datasluice[all]"          # everything
+pip install "datasluice[all]"          # every optional integration
 ```
+
+The base installation carries the full connector contract surface: typed
+models, sync and async client Protocols, capability profiles, reference
+fakes, and the public compliance runner. Installable named connector
+extras (`ckan`, `udata`, `socrata`, `all-connectors`) are planned for
+Phase 2 packaging work and are **not** advertised or installable from this
+release.
 
 ### Apache Airflow
 
-Airflow integration is a separate distribution that imports from the
+Airflow integration is a separate distribution that reserves the
 `airflow.providers.datasluice` namespace:
 
 ```bash
 pip install apache-airflow-providers-datasluice
 ```
 
+The provider currently ships package metadata only. Hooks and operators
+arrive with the live platform executors of later phases.
+
 ## Quick Start
 
+### Direct-resource data plane
+
+Resolve, stream, and materialize individual resources without any catalog
+connector:
+
 ```python
-from datasluice import DataSluice
+from datasluice import DataSluice, DirectResourceLocator
 
-# Point at any supported portal — the portal type is auto-detected
-ds = DataSluice("https://www.data.gouv.fr")
+with DataSluice() as ds:
+    direct = DirectResourceLocator(uri="https://example.org/data.csv")
+    resource = ds.resolve(direct)
 
-# Search for datasets
-results = ds.search("climate")
-for dataset in results:
-    print(dataset.title, len(dataset.resources))
+    with ds.open(direct) as opened:
+        for batch in opened:
+            print(batch.num_rows)
 
-# Inspect a dataset and list its resources
-dataset = ds.get_dataset("some-dataset-id")
-for resource in dataset.resources:
-    print(resource.format, resource.url)
-
-# Download a resource
-path = ds.download(dataset.resources[0], "data/")
-print(path)
+    artifact = ds.materialize(direct, "out.parquet")
+    print(artifact.content_digest, artifact.uri)
 ```
+
+### Catalog connector contract
+
+Connectors are explicit, typed, and factory-constructed. Each platform is
+imported from its own package — the catalog namespace never re-exports
+platform APIs:
+
+```python
+from datasluice.connectors.catalog.ckan import CKANAdapter, create_ckan_connector
+from datasluice.connectors.catalog.socrata import SocrataAdapter, create_socrata_connector
+from datasluice.connectors.catalog.udata import UDataAdapter, create_udata_connector
+```
+
+Every factory accepts a `CatalogConnectorContext` carrying injected sync
+and async executors, normalized and native service projections, and the
+pinned effective capability profile. In Phase 1 those executors are
+caller-supplied — deterministic reference fakes back the executable
+contract suite:
+
+```python
+from datasluice.contracts.catalog import (
+    CatalogContractCase,
+    run_catalog_contract,
+)
+from datasluice.contracts.catalog.fakes import (
+    AsyncReferenceConnector,
+    SyncReferenceConnector,
+)
+
+report = run_catalog_contract(
+    CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),
+    sync_client=SyncReferenceConnector(),
+    async_client=AsyncReferenceConnector(),
+)
+print([(outcome.mode, outcome.state) for outcome in report.outcomes])
+```
+
+Live CKAN, uData, and Socrata endpoint clients are implemented in Phases
+3–5, after pinned capability profiles and controlled endpoint evidence
+are recorded for each platform. Until then, connector façades accept
+injected executors only; nothing in this release contacts a live
+deployment.
 
 CLI:
 
 ```bash
-datasluice search "climate" --portal https://www.data.gouv.fr
-datasluice inspect -p https://www.data.gouv.fr <dataset-id>
-datasluice detect https://demo.ckan.org
-datasluice download -p https://www.data.gouv.fr <dataset-id> --format csv
+datasluice --version
+datasluice scan ./source.csv --output json
+datasluice open ./source.csv --output jsonl
+datasluice materialize ./source.csv --destination ./out.parquet --output json
 ```
 
 ## Features
 
-* **Unified API** — one interface for CKAN, data.gouv.fr, Socrata, and custom portals
-* **Auto-detection** — point at a URL and DataSluice figures out the portal type
-* **Format normalization** — CSV, JSON, XLSX, Parquet, and GeoJSON readers
-* **Integrations** — pandas, Polars, dlt, DuckDB, and Apache Airflow (separate provider)
-* **CLI** — search, inspect, download, and detect from the command line
-* **Pipeline-ready** — retry, rate-limiting, caching, and checksum verification built in
+* **Typed connector contracts** — explicit platform packages for CKAN, uData, and Socrata with factory-constructed façades over normalized and native service Protocols
+* **Sync and async parity** — separate context-managed clients with identical operation surfaces and independent lifecycles
+* **Evidence-backed capabilities** — pinned versioned profiles distinguish core, optional, authenticated, and deployment-unavailable operations; guards fail before dispatch with typed remedies
+* **Public compliance runner** — fixture-backed contract cases produce pytest results and a machine-readable compliance report for built-in and third-party connectors
+* **Direct-resource data plane** — streaming readers for CSV, JSON, JSONL, XLSX, Parquet, and GeoJSON over a shared batch-stream contract
+* **Integrations** — pandas, Polars, dlt, and DuckDB (optional extras); Apache Airflow (separate provider)
+* **CLI** — scan, open, and materialize resources from the command line
 
 ## Documentation
 
 Documentation is built with [Zensical](https://zensical.org/) and deployed to GitHub Pages.
 
-* **Live site:** https://nitish-raj.github.io/datasluice/
+* **Live site:** https://bocklabs.github.io/datasluice/
 * **Preview locally:** `just docs-serve` (serves at http://localhost:8000)
 * **Build:** `just docs-build`
 

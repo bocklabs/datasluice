@@ -14,8 +14,8 @@ from __future__ import annotations
 PATH_FINGERPRINTS: dict[str, str] = {
     "/api/3/action/package_search": "ckan",
     "/api/3/action/group_list": "ckan",
-    "/api/1/datasets/": "datagouv",
-    "/api/1/organizations/": "datagouv",
+    "/api/1/datasets/": "udata",
+    "/api/1/organizations/": "udata",
     "/api/catalog/v1": "socrata",
     "/api/views.json": "socrata",
 }
@@ -23,7 +23,6 @@ PATH_FINGERPRINTS: dict[str, str] = {
 # HTML signature substrings (found in <head> or meta tags)
 HTML_FINGERPRINTS: dict[str, str] = {
     "ckan": "ckan",
-    "data.gouv.fr": "datagouv",
-    "udata": "datagouv",
+    "udata": "udata",
     "socrata": "socrata",
 }

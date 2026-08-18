@@ -8,13 +8,9 @@ import typer
 from rich.console import Console
 
 from datasluice import __version__
-from datasluice.cli.detect import detect
-from datasluice.cli.download import download
-from datasluice.cli.inspect import inspect
 from datasluice.cli.materialize import materialize
 from datasluice.cli.open import open
 from datasluice.cli.scan import scan
-from datasluice.cli.search import search
 
 console = Console()
 
@@ -25,7 +21,7 @@ app = typer.Typer(
 )
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
     version: Annotated[
         bool,
@@ -43,10 +39,6 @@ def main(
         raise typer.Exit()
 
 
-app.command(name="search")(search)
-app.command(name="inspect")(inspect)
-app.command(name="download")(download)
-app.command(name="detect")(detect)
 app.command(name="scan")(scan)
 app.command(name="open")(open)
 app.command(name="materialize")(materialize)

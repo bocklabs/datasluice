@@ -21,21 +21,34 @@ repos:
         args: ["--fix"]
       - id: ruff-format
 
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks-docker
+        name: gitleaks (hardcoded secrets)
+
   - repo: local
     hooks:
       - id: ty
         name: type check (ty)
-        entry: uv run --all-extras ty check .
+        entry: uv run --frozen --all-extras ty check .
         language: system
         types: [python]
         pass_filenames: false
 
       - id: pytest
         name: tests (pytest)
-        entry: uv run pytest -q
+        entry: uv run --frozen pytest -q
         language: system
         types: [python]
         pass_filenames: false
+
+      - id: zizmor
+        name: zizmor (GitHub Actions security)
+        entry: uvx zizmor
+        language: system
+        files: ^\.github/workflows/
+        types: [yaml]
 
       - id: graphify
         name: graphify knowledge graph rebuild

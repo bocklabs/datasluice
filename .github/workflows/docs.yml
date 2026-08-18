@@ -39,11 +39,11 @@ jobs:
       - name: Run executable public documentation examples
         run: uv run --group docs --extra pandas --extra streaming --extra storage --extra http pytest tests/e2e/test_docs_examples.py tests/e2e/test_cli_bare.py -x
 
-      - name: Import provider sample DAG from installed wheels
+      - name: Smoke provider metadata from installed wheels
         run: |
           uv run python providers/apache-airflow/tests/run_candidate.py \
             --airflow-version 3.2.2 \
-            -- python providers/apache-airflow/tests/dags/example_datasluice.py
+            -- python providers/apache-airflow/tests/smoke.py
 
       - name: Build docs (warnings fatal)
         env:

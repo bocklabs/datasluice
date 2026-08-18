@@ -1,0 +1,18 @@
+{
+  "platform_version": "Socrata SODA 3.0",
+  "official_sources": {
+    "endpoints": "https://dev.socrata.com/docs/endpoints",
+    "authentication": "https://dev.socrata.com/docs/authentication",
+    "response_codes": "https://dev.socrata.com/docs/response-codes.html"
+  },
+  "source_accessed_at": "2026-08-15",
+  "declared_support": "latest-soda3-profile",
+  "legacy_observation": {
+    "deployment_url": "https://data.cityofchicago.org/resource/ijzp-q8t2.json?$limit=1",
+    "accessed_at": "2026-08-15",
+    "response_class": "success",
+    "sanitized": true,
+    "classification": "deployed-legacy-observation-not-soda3-availability"
+  },
+  "mutation_evidence": "controlled-environment-only"
+}

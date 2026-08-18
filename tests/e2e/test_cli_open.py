@@ -182,7 +182,9 @@ open_command.DataSluice = Facade
 with open(os.devnull, "w") as sink:
     with contextlib.redirect_stdout(sink):
         open_command.open("https://data.example.test/large.csv", all_rows=True, output="jsonl")
-print(f"peak_rss_kb={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}")
+peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+peak_rss_kb = peak_rss // 1024 if sys.platform == "darwin" else peak_rss
+print(f"peak_rss_kb={peak_rss_kb}")
 """
 
 

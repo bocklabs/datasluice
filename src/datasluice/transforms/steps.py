@@ -47,9 +47,8 @@ class SelectColumns:
     """Project a subset (or re-ordering) of columns.
 
     Raises ``TransformError`` naming the missing column(s) AND the available
-    ones when a requested column is absent (actionable auto-generated message,
-    mirrors :class:`~datasluice.exceptions.UnsupportedQueryFieldError`). Empty
-    selection is rejected at construction.
+    ones when a requested column is absent (actionable auto-generated message).
+    Empty selection is rejected at construction.
 
     Attributes:
         columns: Column names to keep, in output order.

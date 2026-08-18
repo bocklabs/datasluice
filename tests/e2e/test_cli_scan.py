@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import json
-import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.csv as pacsv
@@ -16,16 +13,11 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from datasluice.domain import Dataset, HttpDownload, Resource
+from datasluice.cli import scan as scan_command
+from datasluice.cli._resolver import parse_locator
+from datasluice.domain import HttpDownload, Resource
 from datasluice.exceptions import DataSluiceError
 
-if importlib.util.find_spec("datasluice.cli.scan") is None:
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.fail("bounded scan CLI contracts pending GREEN phase", pytrace=False)
-    pytest.skip("bounded scan CLI contracts pending GREEN phase", allow_module_level=True)
-
-scan_command = cast(Any, importlib.import_module("datasluice.cli.scan"))
-parse_locator = cast(Any, importlib.import_module("datasluice.cli._resolver")).parse_locator
 scan_app = typer.Typer()
 scan_app.command()(scan_command.scan)
 
@@ -53,21 +45,10 @@ class _Opened:
         self.closed = True
 
 
-class _CatalogPortal:
-    def __init__(self, dataset: Dataset) -> None:
-        self._dataset = dataset
-        self.dataset_ids: list[str] = []
-
-    def get_dataset(self, dataset_id: str) -> Dataset:
-        self.dataset_ids.append(dataset_id)
-        return self._dataset
-
-
 class _Facade:
-    def __init__(self, resource: Resource, opened: _Opened, dataset: Dataset | None = None) -> None:
+    def __init__(self, resource: Resource, opened: _Opened) -> None:
         self._resource = resource
         self._opened = opened
-        self._portal = _CatalogPortal(dataset or Dataset(id="dataset", resources=[resource]))
         self.resolved: list[object] = []
         self.opened: list[Resource] = []
 
@@ -76,9 +57,6 @@ class _Facade:
 
     def __exit__(self, *exc: Any) -> None:
         return None
-
-    def portal(self, _url: str) -> _CatalogPortal:
-        return self._portal
 
     def resolve(self, locator: object) -> Resource:
         self.resolved.append(locator)
@@ -112,38 +90,14 @@ def _write_fixture(path: Path, suffix: str, row_count: int) -> None:
         pq.write_table(table, path)
 
 
-def test_parser_round_trips_direct_and_catalog_locators_to_locked_contract() -> None:
-    """The shared parser returns the exact schema-v1 locator envelopes."""
+def test_parser_round_trips_direct_locator_to_locked_contract() -> None:
+    """The shared parser returns the exact direct schema-v1 locator envelope."""
     fixture = json.loads(Path("tests/fixtures/contracts/locator-v1.json").read_text())
 
-    direct = parse_locator(
-        "https://data.example.test/files/observations.csv?api_key=secret&page=1",
-        portal=None,
-        dataset=None,
-        resource=None,
-    )
-    catalog = parse_locator(
-        None,
-        portal="https://catalog.example.test/api",
-        dataset="dataset-42",
-        resource="resource-7",
-    )
-
+    direct = parse_locator("https://data.example.test/files/observations.csv?api_key=secret&page=1")
     expected_direct = {**fixture["direct"], "format": "CSV", "extensions": {}}
-    expected_catalog = {**fixture["catalog"], "extensions": {}}
 
     assert direct.to_dict() == expected_direct
-    assert catalog.to_dict() == expected_catalog
-    assert (
-        parse_locator(
-            None,
-            portal="https://catalog.example.test/api",
-            dataset="dataset-42",
-            resource="https://data.example.test/observations.csv?token=secret",
-        )
-        .to_dict()["resource_id"]
-        .endswith("token=***")
-    )
 
 
 @pytest.mark.parametrize("suffix", [".csv", ".parquet"])
@@ -194,30 +148,6 @@ def test_scan_full_computes_exact_statistics(monkeypatch: pytest.MonkeyPatch) ->
     assert result["columns"][1]["null_count"] == 179
     assert len(result["sample"]) == 20
     assert opened.yielded_rows == 1_250
-
-
-def test_ambiguous_catalog_reference_lists_sanitized_selectors_before_opening(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Catalog ambiguity is actionable and cannot cause a byte read."""
-    secret_resource = _resource("https://data.example.test/a.csv?token=secret")
-    selected_resource = _resource("observations")
-    facade = _Facade(
-        selected_resource,
-        _Opened(_batches(1)),
-        Dataset(id="weather", resources=[secret_resource, selected_resource]),
-    )
-    _patch_facade(monkeypatch, facade)
-
-    outcome = runner.invoke(
-        scan_app,
-        ["--portal", "https://catalog.example.test", "--dataset", "weather", "--output", "json"],
-    )
-
-    assert outcome.exit_code == 1
-    assert outcome.stdout == ""
-    assert "observations" in outcome.stderr
-    assert "secret" not in outcome.stderr
-    assert facade.opened == []
-    assert facade.resolved == []
 
 
 def test_machine_result_and_error_diagnostics_use_separate_streams(monkeypatch: pytest.MonkeyPatch) -> None:

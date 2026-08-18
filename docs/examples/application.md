@@ -1,30 +1,20 @@
 # Application Example
 
-This example walks the complete public `DataSluice` facade flow and all seven
-CLI commands against a local portal and a local file.
+This example walks the explicit public `DataSluice` data-plane flow, the
+canonical connector entry points, and the direct-resource CLI commands.
 
-## Facade: discovery, search, streaming, and materialization
+## Facade: streaming and materialization
 
 ```python
 from datasluice import (
     Artifact,
-    CatalogResourceLocator,
     DataSluice,
     DirectResourceLocator,
-    resource_locator_from_dict,
 )
 
 SOURCE_FILE = "/tmp/datasluice-source.csv"
 
 with DataSluice() as ds:
-    # Detect a portal and search datasets through the Portal wrapper.
-    portal = ds.portal("https://catalog.example.test/api")
-    results = portal.search("open data")
-    print(results.total)
-
-    # One-shot convenience: ds.search directly.
-    results = ds.search("https://catalog.example.test/api", "climate")
-
     # Direct locator (a local file or URL).
     direct = DirectResourceLocator(uri=SOURCE_FILE)
     resource = ds.resolve(direct)
@@ -40,19 +30,55 @@ with DataSluice() as ds:
     frame: DataFrame = ds.open(direct).to_pandas()
     print(frame.shape)
 
-    # Catalog locator with a strict serialized identity.
-    catalog = CatalogResourceLocator(
-        portal_url="https://catalog.example.test/api",
-        dataset_id="dataset-1",
-        resource_id="resource-1",
-    )
-    artifact: Artifact = ds.materialize(catalog, "/tmp/datasluice-out.parquet")
+    artifact: Artifact = ds.materialize(direct, "/tmp/datasluice-out.parquet")
     print(artifact.content_digest, artifact.uri)
+```
 
-    # Locators round-trip through a versioned JSON envelope.
-    payload = direct.to_dict()
-    locator = resource_locator_from_dict(payload)
-    assert locator == direct
+## Catalog connectors
+
+Catalog behavior never arrives through a URL or an implicit platform
+choice. Connectors are imported explicitly from their platform packages
+and constructed through their factories with a fully assembled
+`CatalogConnectorContext`:
+
+```python
+from datasluice.connectors.catalog.ckan import create_ckan_connector
+from datasluice.connectors.catalog.socrata import create_socrata_connector
+from datasluice.connectors.catalog.udata import create_udata_connector
+```
+
+With a context assembled (see [Connectors](../adapters.md)), a facade
+opens exactly one caller-selected connector:
+
+```python
+# connector = ds.open_catalog(create_ckan_connector, context)
+```
+
+The context supplies the injected sync and async executors, normalized
+and native service projections, and the pinned effective capability
+profile. In Phase 1 the executors are caller-supplied; deterministic
+reference fakes satisfy every projection, and live CKAN, uData, and
+Socrata endpoint clients arrive in Phases 3–5.
+
+## Verifying contracts with reference fakes
+
+The public compliance runner executes deterministic fixture cases against
+any sync/async client pair and emits a machine-readable
+`ComplianceReport`:
+
+```python
+from datasluice.contracts.catalog import CatalogContractCase, run_catalog_contract
+from datasluice.contracts.catalog.fakes import (
+    AsyncReferenceConnector,
+    SyncReferenceConnector,
+)
+
+report = run_catalog_contract(
+    CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),
+    sync_client=SyncReferenceConnector(),
+    async_client=AsyncReferenceConnector(),
+)
+print([(outcome.mode, outcome.state) for outcome in report.outcomes])
 ```
 
 ## CLI
@@ -60,20 +86,10 @@ with DataSluice() as ds:
 Each command is installed with the `datasluice` console script.
 
 ```bash
-# Search and inspect a catalog dataset.
-datasluice search "open data" --portal https://catalog.example.test/api --output json
-datasluice inspect --portal https://catalog.example.test/api dataset-1 --output json
-
-# Detect a portal's type.
-datasluice detect https://catalog.example.test/api --output json
-
 # Scan (bounded sample) and open (bounded preview) a resource.
 datasluice scan ./source.csv --output json
 datasluice open ./source.csv --output json
 datasluice open ./source.csv --all --output jsonl
-
-# Download raw bytes into a directory.
-datasluice download --portal https://catalog.example.test/api dataset-1 --dest downloads/ --format CSV
 
 # Materialize exactly one resource into a normalized Artifact.
 datasluice materialize ./source.csv --destination ./out.parquet --output json

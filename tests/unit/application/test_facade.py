@@ -1,246 +1,270 @@
-"""Application facade delegation and resource-resolution contracts."""
+"""Application facade tests for direct data-plane work and explicit catalog composition.
+
+The facade exposes direct resource access through caller-owned readers and
+canonical catalog construction through an explicit
+``Callable[[CatalogConnectorContext], T]`` factory handoff only.
+"""
 
 from __future__ import annotations
 
-import importlib
-import os
-from typing import Any, cast
+from collections.abc import Callable, Iterator
+from typing import cast
 
 import pytest
 
-from datasluice.domain import Dataset, DetectionResult, HttpDownload, Query, Resource, SearchResult
-
-application = importlib.import_module("datasluice.application")
-_REQUIRED_CONTRACTS = (
-    "detect_portal",
-    "materialize",
-    "open_resource",
-    "read_stream",
-    "run_transform_pipeline",
-    "search_datasets",
+import datasluice.application as application_module
+from datasluice.application import DataSluice, DirectResourceLocator, OpenedResource
+from datasluice.contracts.catalog.protocols import (
+    AsyncCatalogOperationExecutor,
+    CatalogConnectorContext,
+    SyncCatalogOperationExecutor,
 )
-_missing = tuple(name for name in _REQUIRED_CONTRACTS if not hasattr(application, name))
-if _missing:
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.skip("application service contracts pending GREEN phase", allow_module_level=True)
-    pytest.fail(f"missing public application service contracts: {_missing}", pytrace=False)
+from datasluice.exceptions import StreamClosedError
+from datasluice.runtime.session import DataSluiceSession
 
 
-application_contracts = cast(Any, application)
-DataSluice = application_contracts.DataSluice
-CatalogResourceLocator = application_contracts.CatalogResourceLocator
-ResourceResolutionError = application_contracts.ResourceResolutionError
-detect_portal = application_contracts.detect_portal
-materialize_resource = application_contracts.materialize
-open_resource = application_contracts.open_resource
-read_stream = application_contracts.read_stream
-run_transform_pipeline = application_contracts.run_transform_pipeline
-search_datasets = application_contracts.search_datasets
+class _Transport:
+    """Structural transport double for constructing real sessions."""
+
+    def request(self, url: str, **kwargs: object) -> bytes:
+        return b""
+
+    def get_json(self, url: str, **kwargs: object) -> dict[str, object]:
+        return {}
+
+    def download(self, url: str, **kwargs: object) -> bytes:
+        return b""
 
 
-class _Connector:
-    def __init__(self, result: SearchResult, dataset: Dataset) -> None:
-        self._result = result
-        self._dataset = dataset
-        self.search_queries: list[Query] = []
-        self.dataset_ids: list[str] = []
+class _SyncExecutor:
+    """Structural sync executor double for canonical context construction."""
 
-    def search(self, query: Query) -> SearchResult:
-        self.search_queries.append(query)
-        return self._result
+    def execute(self, operation: object, guard: object) -> object:
+        return object()
 
-    def get_dataset(self, dataset_id: str) -> Dataset:
-        self.dataset_ids.append(dataset_id)
-        return self._dataset
+    def close(self) -> None:
+        return None
 
 
-class _Session:
-    def __init__(self, connector: _Connector) -> None:
-        self._connector = connector
-        self._transport = object()
-        self.plugins = object()
-        self.portal_calls: list[tuple[str, str | None]] = []
+class _AsyncExecutor:
+    """Structural async executor double for canonical context construction."""
 
-    def portal(self, url: str, portal_type: str | None = None) -> _Connector:
-        self.portal_calls.append((url, portal_type))
-        return self._connector
+    async def execute(self, operation: object, guard: object) -> object:
+        return object()
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _catalog_context() -> CatalogConnectorContext:
+    """Build one canonical context from structural executor doubles."""
+    return CatalogConnectorContext(
+        sync_executor=cast(SyncCatalogOperationExecutor, _SyncExecutor()),
+        async_executor=cast(AsyncCatalogOperationExecutor, _AsyncExecutor()),
+    )
+
+
+class _MinimalSession:
+    """Injected session double exposing only the canonical catalog handoff."""
+
+    _transport = object()
+
+    def open_catalog[T](self, factory: object, context: CatalogConnectorContext) -> T:
+        return cast("T", cast("Callable[[CatalogConnectorContext], object]", factory)(context))
+
+
+class _BatchStream:
+    """Deterministic batch stream double closed exactly once by consumption."""
+
+    def __init__(self, batches: list[bytes]) -> None:
+        self._batches = batches
+        self.closed = 0
+
+    def iter_batches(self) -> Iterator[bytes]:
+        """Return the deterministic batch iterator."""
+        return iter(self._batches)
+
+    def close(self) -> None:
+        self.closed += 1
 
 
 class _Reader:
-    def __init__(self, stream: object) -> None:
-        self._stream = stream
-        self.opened: list[Resource] = []
+    """Injected reader double recording every resolved resource it opens."""
 
-    def open(self, resource: Resource) -> object:
+    def __init__(self, batches: list[bytes]) -> None:
+        self._batches = batches
+        self.opened: list[object] = []
+
+    def open(self, resource: object) -> _BatchStream:
         self.opened.append(resource)
-        return self._stream
+        return _BatchStream(self._batches)
 
 
-class _Pipeline:
-    def __init__(self, transformed: object) -> None:
-        self._transformed = transformed
-        self.streams: list[object] = []
+class _CallerOwnedConnector:
+    """Connector double whose lifecycle stays with the caller."""
 
-    def run(self, stream: object) -> object:
-        self.streams.append(stream)
-        return self._transformed
+    def __init__(self) -> None:
+        self.close_calls = 0
 
-
-def _resource(resource_id: str, url: str = "https://data.example.test/observations.csv") -> Resource:
-    return Resource(id=resource_id, url=url, format="CSV", access=HttpDownload(url=url))
+    def close(self) -> None:
+        self.close_calls += 1
 
 
-def _facade(*resources: Resource) -> tuple[Any, _Session, _Connector, SearchResult]:
-    result = SearchResult(datasets=[])
-    connector = _Connector(result, Dataset(id="weather", resources=list(resources)))
-    session = _Session(connector)
-    return DataSluice(session=session, reader=object()), session, connector, result
+def test_facade_open_catalog_uses_only_explicit_factory_and_context() -> None:
+    """The facade hands the caller-selected factory one exact canonical context."""
+    context = _catalog_context()
+    connector = _CallerOwnedConnector()
+    calls: list[CatalogConnectorContext] = []
+
+    def factory(received: CatalogConnectorContext) -> _CallerOwnedConnector:
+        calls.append(received)
+        return connector
+
+    data_sluice = DataSluice(session=DataSluiceSession(transport=_Transport()))
+
+    assert data_sluice.open_catalog(factory, context) is connector
+    assert calls == [context]
 
 
-def test_one_shot_and_portal_search_share_connector_agnostic_service() -> None:
-    """Portal-bound and one-shot searches return the exact same domain result."""
-    data_sluice, session, connector, result = _facade(_resource("observations"))
-    query = Query(text="rain", limit=3)
+def test_facade_close_never_closes_caller_owned_catalog_connectors() -> None:
+    """Connectors built through open_catalog keep caller-owned lifecycles."""
+    connector = _CallerOwnedConnector()
+    data_sluice = DataSluice(session=DataSluiceSession(transport=_Transport()))
 
-    assert data_sluice.search("https://catalog.example.test", query) is result
-    portal = data_sluice.portal("https://catalog.example.test")
-    assert portal.search(query) is result
-
-    assert connector.search_queries == [query, query]
-    assert session.portal_calls == [
-        ("https://catalog.example.test", None),
-        ("https://catalog.example.test", None),
-    ]
-    assert "connector" not in portal.__dict__
-    assert not hasattr(portal, "_session")
-
-
-def test_portal_dataset_lookup_keeps_the_connector_private() -> None:
-    """Portal exposes catalog lookup through the application service only."""
-    data_sluice, session, connector, _result = _facade(_resource("observations"))
-
-    dataset = data_sluice.portal("https://catalog.example.test").get_dataset("weather")
-
-    assert dataset is connector._dataset
-    assert connector.dataset_ids == ["weather"]
-    assert session.portal_calls == [("https://catalog.example.test", None)]
-
-
-def test_search_service_preserves_explicit_portal_type_and_query_identity() -> None:
-    """The dependency-explicit search service uses the supplied session unchanged."""
-    data_sluice, session, connector, result = _facade(_resource("observations"))
-    query = Query(text="rain")
-
-    assert search_datasets(session, "https://catalog.example.test", query, portal_type="ckan") is result
-
-    assert connector.search_queries == [query]
-    assert session.portal_calls == [("https://catalog.example.test", "ckan")]
+    data_sluice.open_catalog(lambda received: connector, _catalog_context())
+    data_sluice.close()
     data_sluice.close()
 
-
-def test_detect_returns_the_injected_detector_result_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Detection is a dependency-explicit operation with no facade-specific result mapping."""
-    data_sluice, session, _connector, _result = _facade(_resource("observations"))
-    detected = DetectionResult(portal_type="ckan", confidence=1.0, evidence=[])
-    calls: list[tuple[str, object, object]] = []
-
-    def _detect(url: str, *, transport: object, plugin_manager: object) -> DetectionResult:
-        calls.append((url, transport, plugin_manager))
-        return detected
-
-    monkeypatch.setattr("datasluice.discovery.detect", _detect)
-
-    assert (
-        detect_portal("https://catalog.example.test", transport=session._transport, plugin_manager=session.plugins)
-        is detected
-    )
-    assert data_sluice.detect("https://catalog.example.test") is detected
-    assert calls == [
-        ("https://catalog.example.test", session._transport, session.plugins),
-        ("https://catalog.example.test", session._transport, session.plugins),
-    ]
+    assert connector.close_calls == 0
 
 
-def test_resource_operations_delegate_to_explicit_reader_pipeline_and_materializer(
+def test_facade_rejects_portal_shaped_catalog_contexts() -> None:
+    """A context double carrying portal identity is rejected before dispatch."""
+
+    class _PortalShapedContext:
+        portal_type = "ckan"
+        base_url = "https://data.example.gov"
+
+    data_sluice = DataSluice(session=DataSluiceSession(transport=_Transport()))
+    portal_context = cast(CatalogConnectorContext, _PortalShapedContext())
+    with pytest.raises(TypeError, match="CatalogConnectorContext"):
+        data_sluice.open_catalog(lambda received: received, portal_context)
+
+
+def test_facade_resolves_direct_locator_to_canonical_resource() -> None:
+    """Direct data-plane resolution turns a locator into the canonical Resource."""
+    data_sluice = DataSluice(session=_MinimalSession(), reader=_Reader([]))
+    locator = DirectResourceLocator(uri="file:///data/example.csv", format="csv", media_type="text/csv")
+
+    resource = data_sluice.resolve(locator)
+
+    assert resource.url == "file:///data/example.csv"
+    assert resource.format == "csv"
+    assert resource.media_type == "text/csv"
+
+
+def test_facade_opens_direct_locator_through_the_injected_reader() -> None:
+    """Direct data-plane access streams through the caller-injected reader."""
+    reader = _Reader([b"batch-one"])
+    data_sluice = DataSluice(session=_MinimalSession(), reader=reader)
+
+    with data_sluice.open(DirectResourceLocator(uri="file:///data/example.csv")) as opened:
+        batches = list(opened)
+
+    assert batches == [b"batch-one"]
+    assert len(reader.opened) == 1
+    assert reader.opened[0].url == "file:///data/example.csv"  # ty: ignore[unresolved-attribute]
+
+
+def test_facade_open_returns_lazy_single_use_resource_wrapper() -> None:
+    """The facade returns the lazy wrapper without eagerly opening a stream."""
+    reader = _Reader([b"batch-one"])
+    data_sluice = DataSluice(session=_MinimalSession(), reader=reader)
+
+    opened = data_sluice.open(DirectResourceLocator(uri="file:///data/example.csv"))
+
+    assert isinstance(opened, OpenedResource)
+    assert reader.opened == []
+    opened.close()
+
+
+def test_closed_facade_rejects_catalog_and_data_plane_work() -> None:
+    """A closed facade refuses both catalog composition and direct data-plane work."""
+    data_sluice = DataSluice(session=_MinimalSession(), reader=_Reader([]))
+    data_sluice.close()
+
+    with pytest.raises(StreamClosedError):
+        data_sluice.open_catalog(lambda received: received, _catalog_context())
+    with pytest.raises(StreamClosedError):
+        data_sluice.open(DirectResourceLocator(uri="file:///data/example.csv"))
+
+
+def test_facade_exposes_no_portal_surface() -> None:
+    """The application module and facade carry no portal, search, or discovery members."""
+    assert not hasattr(DataSluice, "portal")
+    assert not hasattr(DataSluice, "search")
+    assert not hasattr(DataSluice, "detect")
+    for retired_name in ("detect_portal", "search_datasets", "CatalogResourceLocator"):
+        assert not hasattr(application_module, retired_name)
+
+
+class _CloseSpy:
+    """Close-counting double that optionally fails on close."""
+
+    def __init__(self, error: BaseException | None = None) -> None:
+        self._error = error
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self._error is not None:
+            raise self._error
+
+
+class _OwnedSession:
+    """Session double whose data-plane dependencies are all closeable."""
+
+    def __init__(self) -> None:
+        self._transport = _CloseSpy(RuntimeError("transport close failed"))
+        self._cache = _CloseSpy()
+        self.storage = _CloseSpy()
+        self.state_store = _CloseSpy()
+        self.plugins = _CloseSpy()
+
+
+def test_facade_closes_each_owned_dependency_once_and_preserves_first_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The remaining use cases delegate without eagerly opening a resource."""
-    resource = _resource("observations")
-    source_locator = application_contracts.DirectResourceLocator(uri="https://data.example.test/observations.csv")
-    raw_stream = object()
-    transformed_stream = object()
-    reader = _Reader(raw_stream)
-    pipeline = _Pipeline(transformed_stream)
-    artifact = object()
-    materialize_calls: list[dict[str, object]] = []
+    """Facade-created dependencies are all closed, even when one close fails."""
+    session = _OwnedSession()
+    reader = _CloseSpy()
+    monkeypatch.setattr(application_module, "DataSluiceSession", lambda **kwargs: session)
+    monkeypatch.setattr(application_module, "DataPlaneResourceReader", lambda **kwargs: reader)
+    data_sluice = application_module.DataSluice()
 
-    def _materialize_artifact(resource: Resource, **kwargs: object) -> object:
-        materialize_calls.append({"resource": resource, **kwargs})
-        return artifact
+    with pytest.raises(RuntimeError, match="transport close failed"):
+        data_sluice.close()
+    data_sluice.close()
 
-    monkeypatch.setattr(
-        importlib.import_module("datasluice.sync.materialize"), "materialize_artifact", _materialize_artifact
-    )
-
-    opened = open_resource(resource, source_locator=source_locator, reader=reader)
-
-    assert reader.opened == []
-    assert read_stream(resource, reader=reader) is raw_stream
-    assert run_transform_pipeline(raw_stream, pipeline) is transformed_stream
-    assert (
-        materialize_resource(
-            resource,
-            destination_uri="memory://artifacts",
-            source_locator=source_locator,
-            stream=transformed_stream,
-            transforms=("SelectColumns",),
-        )
-        is artifact
-    )
-    assert opened.is_open is False
-    assert reader.opened == [resource]
-    assert pipeline.streams == [raw_stream]
-    assert materialize_calls == [
-        {
-            "resource": resource,
-            "destination_uri": "memory://artifacts",
-            "source_locator": source_locator,
-            "reader": None,
-            "stream": transformed_stream,
-            "mode": "parquet",
-            "transforms": ("SelectColumns",),
-        }
-    ]
+    assert reader.close_calls == 1
+    assert session._transport.close_calls == 1
+    assert session._cache.close_calls == 1
+    assert session.storage.close_calls == 1
+    assert session.state_store.close_calls == 1
+    assert session.plugins.close_calls == 1
 
 
-def test_catalog_resolution_requires_one_exact_resource_and_sanitizes_selectors() -> None:
-    """Missing and duplicate resource selectors are actionable without leaking URI secrets."""
-    secret_id = "https://data.example.test/entry.csv?token=must-not-leak"
-    data_sluice, _session, connector, _result = _facade(
-        _resource(secret_id),
-        _resource("observations", "https://data.example.test/observations.csv?api_key=secret"),
-    )
+def test_facade_leaves_injected_dependencies_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Caller-provided session and reader dependencies remain borrowed."""
+    session = _OwnedSession()
+    reader = _CloseSpy()
+    data_sluice = application_module.DataSluice(session=session, reader=reader)
 
-    with pytest.raises(ResourceResolutionError) as missing:
-        data_sluice.resolve(
-            CatalogResourceLocator(
-                portal_url="https://catalog.example.test",
-                dataset_id="weather",
-                resource_id="absent",
-            )
-        )
+    data_sluice.close()
 
-    message = str(missing.value)
-    assert "absent" in message
-    assert "observations" in message
-    assert "must-not-leak" not in message
-
-    connector._dataset = Dataset(id="weather", resources=[_resource("duplicate"), _resource("duplicate")])
-    with pytest.raises(ResourceResolutionError, match="ambiguous"):
-        data_sluice.resolve(
-            CatalogResourceLocator(
-                portal_url="https://catalog.example.test",
-                dataset_id="weather",
-                resource_id="duplicate",
-            )
-        )
+    assert reader.close_calls == 0
+    assert session._transport.close_calls == 0
+    assert session._cache.close_calls == 0
+    assert session.storage.close_calls == 0
+    assert session.state_store.close_calls == 0
+    assert session.plugins.close_calls == 0

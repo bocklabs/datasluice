@@ -32,7 +32,6 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: Ruff format check
-        continue-on-error: true
         run: uv run ruff format --check .
 
       - name: Ruff lint
@@ -168,10 +167,14 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: Run provider tests (local candidate wheels)
+        env:
+          CANDIDATE_PYTHON: ${{ matrix.python }}
+          CANDIDATE_CORE_VERSION: ${{ matrix.core_version }}
+          CANDIDATE_AIRFLOW: ${{ matrix.airflow }}
         run: |
-          uv run --python=${{ matrix.python }} python providers/apache-airflow/tests/run_candidate.py \
-            --core-version ${{ matrix.core_version }} \
-            --airflow-version ${{ matrix.airflow }} \
+          uv run --python="$CANDIDATE_PYTHON" python providers/apache-airflow/tests/run_candidate.py \
+            --core-version "$CANDIDATE_CORE_VERSION" \
+            --airflow-version "$CANDIDATE_AIRFLOW" \
             -- pytest providers/apache-airflow/tests -x
 
   coverage-provider:
@@ -244,7 +247,7 @@ jobs:
           DATASLUICE_E2E_EXTRAS: all
 
   provider-e2e:
-    name: Provider DAG import E2E (py${{ matrix.python-version }})
+    name: Provider installed-wheel E2E (py${{ matrix.python-version }})
     needs: build
     runs-on: ubuntu-latest
     strategy:
@@ -260,11 +263,11 @@ jobs:
       - name: Set up UV
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
-      - name: Import sample DAG from installed wheels
+      - name: Smoke provider metadata from installed wheels
         run: |
           uv run --python=${{ matrix.python-version }} python providers/apache-airflow/tests/run_candidate.py \
             --airflow-version 3.2.2 \
-            -- python providers/apache-airflow/tests/dags/example_datasluice.py
+            -- python providers/apache-airflow/tests/smoke.py
 
   smoke-test:
     name: Smoke test (install wheel)

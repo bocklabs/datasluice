@@ -17,6 +17,8 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+_RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
+
 
 @pytest.fixture(scope="session")
 def bare_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
@@ -30,7 +32,7 @@ def bare_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         timeout=180,
     )
     if build.returncode != 0:
-        pytest.skip(f"uv build failed: {build.stderr[:300]}")
+        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
 
     wheels = list(wheel_dir.glob("datasluice-*.whl"))
     assert len(wheels) == 1, f"expected one wheel, found {wheels}"
@@ -47,7 +49,7 @@ def bare_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         timeout=180,
     )
     if install.returncode != 0:
-        pytest.skip(f"pip install failed: {install.stderr[:300]}")
+        pytest.fail(f"pip install failed: {install.stderr[:300]}", pytrace=False)
 
     console = str(venv / "bin" / "datasluice")
     assert Path(console).exists(), f"console script not found at {console}"
@@ -81,8 +83,42 @@ def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
-    for command in ("search", "inspect", "download", "detect", "scan", "open", "materialize"):
+    for command in ("scan", "open", "materialize"):
         assert command in result.stdout, f"console --help missing command {command}"
+    for retired in _RETIRED_COMMANDS:
+        assert retired not in result.stdout, f"console --help must not advertise retired command {retired}"
+
+
+def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str]) -> None:
+    """Former portal-era commands fail resolution in the installed bare wheel."""
+    result = subprocess.run(
+        [bare_env["console"], "search", "https://data.example.test"],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "No such command" in combined
+
+
+def test_bare_wheel_ships_reference_fixture_sets(bare_env: dict[str, str]) -> None:
+    """The installed wheel loads every reference fixture set without the checkout."""
+    result = subprocess.run(
+        [
+            bare_env["python"],
+            "-c",
+            "from datasluice.contracts.catalog import load_reference_fixture_set;"
+            "print([load_reference_fixture_set(p).platform for p in ('ckan', 'udata', 'socrata')])",
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "['ckan', 'udata', 'socrata']"
 
 
 def test_bare_import_no_optional_dependency_required(bare_env: dict[str, str]) -> None:

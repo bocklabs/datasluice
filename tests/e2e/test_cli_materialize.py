@@ -2,28 +2,18 @@
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import inspect
 import json
-import os
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
-from datasluice.domain import Dataset, HttpDownload, Resource
-
-if importlib.util.find_spec("datasluice.cli.materialize") is None:
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.fail("materialize CLI contracts pending GREEN phase", pytrace=False)
-    pytest.skip("materialize CLI contracts pending GREEN phase", allow_module_level=True)
-
-materialize_command = cast(Any, importlib.import_module("datasluice.cli.materialize"))
-app = cast(Any, importlib.import_module("datasluice.cli.app")).app
-Artifact = cast(Any, importlib.import_module("datasluice.domain")).Artifact
+from datasluice.cli import materialize as materialize_command
+from datasluice.cli.app import app
+from datasluice.domain import Artifact, HttpDownload, Resource
 
 runner = CliRunner()
 
@@ -35,16 +25,8 @@ def _plain(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
-class _Portal:
-    def __init__(self, dataset: Dataset) -> None:
-        self._dataset = dataset
-
-    def get_dataset(self, _dataset_id: str) -> Dataset:
-        return self._dataset
-
-
 class _Facade:
-    def __init__(self, artifact: Any, dataset: Dataset | None = None) -> None:
+    def __init__(self, artifact: Any) -> None:
         self._artifact = artifact
         self._resource = Resource(
             id="observations",
@@ -52,7 +34,6 @@ class _Facade:
             format="CSV",
             access=HttpDownload(url="https://data.example.test/observations.csv"),
         )
-        self._portal = _Portal(dataset or Dataset(id="weather", resources=[self._resource]))
         self.resolved: list[object] = []
         self.materialized: list[tuple[Resource, str, str]] = []
 
@@ -61,9 +42,6 @@ class _Facade:
 
     def __exit__(self, *exc: Any) -> None:
         return None
-
-    def portal(self, _url: str) -> _Portal:
-        return self._portal
 
     def resolve(self, locator: object) -> Resource:
         self.resolved.append(locator)
@@ -164,42 +142,6 @@ def test_materialize_rejects_missing_destination_invalid_mode_and_secret_input(m
     assert "--mode must be parquet or raw" in invalid_mode.stderr
     assert secret_input.exit_code == 1
     assert "password" not in secret_input.stderr
-    assert facade.resolved == []
-    assert facade.materialized == []
-
-
-def test_ambiguous_catalog_reference_fails_before_materialization(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A selector-free multi-resource dataset cannot cause a destination write."""
-    facade = _Facade(
-        _artifact(),
-        Dataset(
-            id="weather",
-            resources=[
-                Resource(id="first", url="https://data.example.test/first.csv", format="CSV"),
-                Resource(id="second", url="https://data.example.test/second.csv", format="CSV"),
-            ],
-        ),
-    )
-    _patch_facade(monkeypatch, facade)
-
-    outcome = runner.invoke(
-        app,
-        [
-            "materialize",
-            "--portal",
-            "https://catalog.example.test",
-            "--dataset",
-            "weather",
-            "--destination",
-            "memory://contract-output",
-            "--output",
-            "json",
-        ],
-    )
-
-    assert outcome.exit_code == 1
-    assert outcome.stdout == ""
-    assert "Valid selectors: first, second" in outcome.stderr
     assert facade.resolved == []
     assert facade.materialized == []
 

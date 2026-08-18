@@ -71,18 +71,18 @@ all = [
 ]
 
 [project.urls]
-bugs = "https://github.com/nitish-raj/datasluice/issues"
-changelog = "https://github.com/nitish-raj/datasluice/releases"
-documentation = "https://nitish-raj.github.io/datasluice/"
-homepage = "https://github.com/nitish-raj/datasluice"
+bugs = "https://github.com/bocklabs/datasluice/issues"
+changelog = "https://github.com/bocklabs/datasluice/releases"
+documentation = "https://bocklabs.github.io/datasluice/"
+homepage = "https://github.com/bocklabs/datasluice"
 
 [project.scripts]
 datasluice = "datasluice.cli.app:app"
 
 [project.entry-points."datasluice.connectors"]
-ckan = "datasluice.connectors.ckan.factory:create_ckan_connector"
-datagouv = "datasluice.connectors.datagouv.factory:create_datagouv_connector"
-socrata = "datasluice.connectors.socrata.factory:create_socrata_connector"
+"datasluice/ckan" = "datasluice.connectors.catalog.ckan.factory:create_ckan_connector"
+"datasluice/udata" = "datasluice.connectors.catalog.udata.factory:create_udata_connector"
+"datasluice/socrata" = "datasluice.connectors.catalog.socrata.factory:create_socrata_connector"
 
 [tool.ty]
 # All rules are enabled as "error" by default; no need to specify unless overriding.

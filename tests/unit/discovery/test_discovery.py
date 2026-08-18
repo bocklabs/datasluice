@@ -4,16 +4,32 @@ from __future__ import annotations
 
 from datasluice.discovery import HTML_FINGERPRINTS, PATH_FINGERPRINTS, PortalMetadata
 
-
-def test_path_fingerprints_populated() -> None:
-    assert "ckan" in PATH_FINGERPRINTS.values()
-    assert "datagouv" in PATH_FINGERPRINTS.values()
-    assert "socrata" in PATH_FINGERPRINTS.values()
+_CANONICAL_PLATFORM_IDS = frozenset({"ckan", "udata", "socrata"})
+_FORMER_CONNECTOR_NAMES = ("datagouv",)
 
 
-def test_html_fingerprints_populated() -> None:
-    assert "ckan" in HTML_FINGERPRINTS
-    assert "datagouv" in HTML_FINGERPRINTS.values()
+def _fingerprint_corpus() -> str:
+    parts: list[str] = [
+        *PATH_FINGERPRINTS.keys(),
+        *PATH_FINGERPRINTS.values(),
+        *HTML_FINGERPRINTS.keys(),
+        *HTML_FINGERPRINTS.values(),
+    ]
+    return " ".join(parts)
+
+
+def test_path_fingerprints_use_exactly_canonical_platform_ids() -> None:
+    assert set(PATH_FINGERPRINTS.values()) == _CANONICAL_PLATFORM_IDS
+
+
+def test_html_fingerprints_use_exactly_canonical_platform_ids() -> None:
+    assert set(HTML_FINGERPRINTS.values()) == _CANONICAL_PLATFORM_IDS
+
+
+def test_former_connector_names_are_absent_from_fingerprints() -> None:
+    corpus = _fingerprint_corpus()
+    for former in _FORMER_CONNECTOR_NAMES:
+        assert former not in corpus
 
 
 def test_portal_metadata() -> None:

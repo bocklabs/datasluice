@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -144,7 +145,14 @@ def _manifest_ready() -> bool:
         return False
     if "release-type" in root or "release-type" in provider:
         return False
-    return _load_json(RELEASE_MANIFEST) == {".": "0.1.0"}
+    manifest = _load_json(RELEASE_MANIFEST)
+    if set(manifest) != set(packages):
+        return False
+    return all(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version) for version in manifest.values())
+
+
+def _package_version(path: Path) -> str:
+    return tomllib.loads(path.read_text(encoding="utf-8"))["project"]["version"]
 
 
 def _routing_ready() -> bool:
@@ -318,7 +326,11 @@ def test_candidate_smoke_precedes_production() -> None:
     install = next(s for s in smoke_steps if "uv pip install" in s.get("run", ""))
     assert "--index-url https://test.pypi.org/simple/" in install["run"]
     assert "--extra-index-url https://pypi.org/simple/" in install["run"]
-    assert '"${{ inputs.package_name }}==${{ inputs.version }}"' in install["run"]
+    assert '"${PACKAGE_NAME}==${PACKAGE_VERSION}"' in install["run"]
+    install_env = install["env"]
+    assert install_env["PACKAGE_NAME"] == "${{ inputs.package_name }}"
+    assert install_env["PACKAGE_VERSION"] == "${{ inputs.version }}"
+    assert "${{ inputs." not in install["run"], "run block must not expand workflow template expressions"
     assert "$SMOKE_VENV" in install["run"]
     core_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name == 'datasluice'")
     assert "$SMOKE_VENV" in core_smoke["run"]
@@ -358,14 +370,17 @@ def test_manifest_components() -> None:
     assert "release-type" not in provider
     assert "release-as" not in root
     assert "release-as" not in provider
-    assert manifest == {".": "0.1.0"}
+    assert manifest == {
+        ".": _package_version(REPO_ROOT / "pyproject.toml"),
+        PROVIDER_PATH: _package_version(REPO_ROOT / PROVIDER_PATH / "pyproject.toml"),
+    }
 
 
 def test_initial_release_versions_and_tags() -> None:
     """One-time root Release-As plus provider initial-version yield exact versions and component tags."""
     _require(_manifest_ready(), "two-component manifest not yet configured")
     config = _load_json(RELEASE_CONFIG)
-    manifest = _load_json(RELEASE_MANIFEST)
+    manifest = {".": "0.1.0"}
     commits = [
         _Commit(package=".", kind="feat", release_as="1.0.0"),
         _Commit(package=PROVIDER_PATH, kind="feat"),

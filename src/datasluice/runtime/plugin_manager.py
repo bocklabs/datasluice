@@ -18,6 +18,8 @@ from datasluice.logging import get_logger
 
 logger = get_logger("runtime.plugin_manager")
 
+_BUILTIN_CONNECTOR_IDS = frozenset({"datasluice/ckan", "datasluice/udata", "datasluice/socrata"})
+
 
 @dataclass(frozen=True)
 class PluginFailure:

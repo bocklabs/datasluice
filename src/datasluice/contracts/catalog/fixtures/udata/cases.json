@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "platform": "udata",
+  "profile_version": "17.3.0",
+  "cases": [
+    {
+      "operation": "udata/api-v1.root-and-effective-profile-probe",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
+      "outcome": "optional"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "missing-credentials"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "invalid-credentials"
+    },
+    {
+      "operation": "udata/api-v1.harvest-moderation-and-admin-operations",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
+      "outcome": "deployment-disabled"
+    },
+    {
+      "operation": "udata/api-v1.root-and-effective-profile-probe",
+      "outcome": "unavailable"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.organizations-and-memberships",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.users-me-and-api-token-management",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.authentication-and-oauth-flows",
+      "outcome": "optional"
+    },
+    {
+      "operation": "udata/api-v1.taxonomies-licenses-frequencies-formats-badges-and-schemas",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.followers-activities-discussions-and-reuses",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.topics-territories-contact-points-and-dataservices",
+      "outcome": "optional"
+    }
+  ]
+}

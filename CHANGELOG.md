@@ -61,5 +61,5 @@ This release reserves the PyPI package name and establishes the project scaffold
 - Issue templates, PR template, contributing guide, code of conduct, security policy
 - MIT license, .editorconfig, .gitignore
 
-[Unreleased]: https://github.com/nitish-raj/datasluice/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/nitish-raj/datasluice/releases/tag/v0.1.0
+[Unreleased]: https://github.com/bocklabs/datasluice/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/bocklabs/datasluice/releases/tag/v0.1.0

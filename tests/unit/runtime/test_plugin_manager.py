@@ -1,39 +1,79 @@
 """Unit tests for the plugin manager and plugin failure record.
 
-Covers (entry-point discovery), (per-entry error isolation),
- (programmatic registration), and (the connector registry is an
-injected PluginManager instance, never a module-level singleton).
+Covers entry-point discovery of namespaced canonical connector IDs, explicit
+activation of registered factories, per-entry error isolation, and the
+injected-PluginManager (never module-level singleton) contract.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import types
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 
 from datasluice.exceptions import AdapterNotFoundError
 from datasluice.runtime.plugin_manager import PluginFailure, PluginManager
 
+CANONICAL_CONNECTOR_IDS = frozenset({"datasluice/ckan", "datasluice/udata", "datasluice/socrata"})
 
-def test_entry_point_discovery() -> None:
+
+def test_entry_point_discovery_lists_namespaced_canonical_ids() -> None:
     pm = PluginManager()
-    connectors = pm.list_connectors()
-    assert "ckan" in connectors
-    assert "datagouv" in connectors
-    assert "socrata" in connectors
+    connectors = set(pm.list_connectors())
+    assert CANONICAL_CONNECTOR_IDS <= connectors
+    assert "datagouv" not in connectors
+    assert "ckan" not in connectors
+    assert "socrata" not in connectors
 
 
-def test_programmatic_registration() -> None:
+def test_discovery_never_activates_loaded_factories(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def recording_factory(context: object) -> str:
+        calls.append("activated")
+        return "connector"
+
+    ep = types.SimpleNamespace(name="acme/archive", load=lambda: recording_factory)
+    monkeypatch.setattr(
+        "datasluice.runtime.plugin_manager.entry_points",
+        lambda group=None: [ep],
+    )
+
     pm = PluginManager()
 
-    def fake_factory(ctx: object) -> str:
-        return "fake"
+    assert calls == []
+    assert pm.get("acme/archive") is recording_factory
+    assert calls == []
 
-    pm.register("fake_portal", fake_factory)
-    assert "fake_portal" in pm.list_connectors()
-    assert pm.get("fake_portal") is fake_factory
+
+def test_programmatic_registration_uses_namespaced_ids_and_explicit_activation() -> None:
+    pm = PluginManager()
+    calls: list[object] = []
+
+    def factory(context: object) -> str:
+        calls.append(context)
+        return "activated-connector"
+
+    pm.register("acme/inventory", factory)
+    assert "acme/inventory" in pm.list_connectors()
+    assert calls == []
+
+    activated = cast("Callable[[object], str]", pm.get("acme/inventory"))
+    connector = activated({"context": True})
+    assert connector == "activated-connector"
+    assert calls == [{"context": True}]
+
+
+def test_former_connector_name_is_not_implicitly_activated() -> None:
+    pm = PluginManager.__new__(PluginManager)
+    pm._factories = {name: lambda ctx: "connector" for name in CANONICAL_CONNECTOR_IDS}
+    pm._failures = []
+
+    with pytest.raises(AdapterNotFoundError):
+        pm.get("datagouv")
 
 
 def test_get_unknown_raises() -> None:
@@ -44,7 +84,7 @@ def test_get_unknown_raises() -> None:
 
 def test_list_failures_empty_when_clean() -> None:
     pm = PluginManager.__new__(PluginManager)
-    pm._factories = {"ckan": lambda ctx: None}
+    pm._factories = {"datasluice/ckan": lambda ctx: None}
     pm._failures = []
     assert pm.list_failures() == []
 
@@ -53,7 +93,7 @@ def test_error_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
     def _broken_load() -> Any:
         raise ImportError("missing dependency")
 
-    broken_ep = types.SimpleNamespace(name="broken", load=_broken_load)
+    broken_ep = types.SimpleNamespace(name="acme/broken", load=_broken_load)
 
     monkeypatch.setattr(
         "datasluice.runtime.plugin_manager.entry_points",
@@ -61,19 +101,19 @@ def test_error_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     pm = PluginManager()
-    assert "broken" not in pm.list_connectors()
+    assert "acme/broken" not in pm.list_connectors()
     failures = pm.list_failures()
     assert len(failures) == 1
-    assert failures[0].name == "broken"
+    assert failures[0].name == "acme/broken"
     assert "missing dependency" in failures[0].error
 
-    pm.register("still_works", lambda ctx: "ok")
-    assert "still_works" in pm.list_connectors()
+    pm.register("acme/resilient", lambda ctx: "ok")
+    assert "acme/resilient" in pm.list_connectors()
 
 
 def test_duplicate_entry_point_recorded_as_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    dup_a = types.SimpleNamespace(name="dup", load=lambda: lambda ctx: "a")
-    dup_b = types.SimpleNamespace(name="dup", load=lambda: lambda ctx: "b")
+    dup_a = types.SimpleNamespace(name="acme/dup", load=lambda: lambda ctx: "a")
+    dup_b = types.SimpleNamespace(name="acme/dup", load=lambda: lambda ctx: "b")
     monkeypatch.setattr(
         "datasluice.runtime.plugin_manager.entry_points",
         lambda group=None: [dup_a, dup_b],
@@ -81,7 +121,7 @@ def test_duplicate_entry_point_recorded_as_failure(monkeypatch: pytest.MonkeyPat
     pm = PluginManager()
     failures = pm.list_failures()
     assert len(failures) == 1
-    assert failures[0].name == "dup"
+    assert failures[0].name == "acme/dup"
     assert "duplicate" in failures[0].error
 
 
@@ -93,14 +133,14 @@ def test_plugin_failure_is_frozen() -> None:
 
 def test_get_error_message_lists_available() -> None:
     pm = PluginManager.__new__(PluginManager)
-    pm._factories = {"ckan": lambda ctx: None, "socrata": lambda ctx: None}
+    pm._factories = {"datasluice/ckan": lambda ctx: None, "datasluice/socrata": lambda ctx: None}
     pm._failures = []
     with pytest.raises(AdapterNotFoundError) as excinfo:
         pm.get("missing")
     message = str(excinfo.value)
     assert "missing" in message
-    assert "ckan" in message
-    assert "socrata" in message
+    assert "datasluice/ckan" in message
+    assert "datasluice/socrata" in message
 
 
 def test_list_failures_returns_copy() -> None:

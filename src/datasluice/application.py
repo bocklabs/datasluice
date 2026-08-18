@@ -10,27 +10,18 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from datasluice._uri import sanitize_uri
+from datasluice.contracts.catalog.protocols import CatalogConnectorContext
 from datasluice.data.access import DataPlaneResourceReader
-from datasluice.domain import (
-    DetectionResult,
-    HttpDownload,
-    LocalFile,
-    ObjectStorage,
-    Query,
-    Resource,
-    SearchResult,
-)
+from datasluice.domain import HttpDownload, LocalFile, ObjectStorage, Resource
 from datasluice.domain.artifact import _freeze_extensions
 from datasluice.exceptions import (
     DataSluiceError,
     OpenedResourceConsumedError,
-    ResourceResolutionError,
     StreamClosedError,
 )
 from datasluice.runtime.session import DataSluiceSession
 
 _DIRECT_LOCATOR_KEYS = frozenset({"schema_version", "kind", "uri", "format", "media_type", "extensions"})
-_CATALOG_LOCATOR_KEYS = frozenset({"schema_version", "kind", "portal_url", "dataset_id", "resource_id", "extensions"})
 
 
 def _contract_error(path: str) -> DataSluiceError:
@@ -118,90 +109,16 @@ class DirectResourceLocator:
         )
 
 
-@dataclass(frozen=True)
-class CatalogResourceLocator:
-    """A validated, serializable catalog resource reference."""
-
-    portal_url: str
-    dataset_id: str
-    resource_id: str
-    extensions: Mapping[str, object] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        _validate_uri(self.portal_url, "portal_url")
-        if not isinstance(self.dataset_id, str) or not self.dataset_id:
-            raise _contract_error("dataset_id")
-        if not isinstance(self.resource_id, str) or not self.resource_id:
-            raise _contract_error("resource_id")
-        object.__setattr__(self, "extensions", _freeze_extensions(self.extensions))
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a fresh, secret-free locator envelope."""
-        from datasluice.domain.artifact import _thaw_json
-
-        return {
-            "schema_version": 1,
-            "kind": "catalog",
-            "portal_url": sanitize_uri(self.portal_url),
-            "dataset_id": sanitize_uri(self.dataset_id),
-            "resource_id": sanitize_uri(self.resource_id),
-            "extensions": _thaw_json(self.extensions),
-        }
-
-    @classmethod
-    def from_dict(cls, value: object) -> CatalogResourceLocator:
-        """Decode one strict catalog locator envelope."""
-        data = _object_dict(value, "catalog")
-        if set(data) != _CATALOG_LOCATOR_KEYS:
-            raise _contract_error("catalog")
-        if data["schema_version"] != 1 or type(data["schema_version"]) is not int or data["kind"] != "catalog":
-            raise _contract_error("catalog")
-        portal_url = data["portal_url"]
-        dataset_id = data["dataset_id"]
-        resource_id = data["resource_id"]
-        extensions = data["extensions"]
-        if not isinstance(portal_url, str) or not isinstance(dataset_id, str) or not isinstance(resource_id, str):
-            raise _contract_error("catalog")
-        return cls(
-            portal_url=portal_url,
-            dataset_id=dataset_id,
-            resource_id=resource_id,
-            extensions=_object_dict(extensions, "extensions"),
-        )
-
-
-type ResourceLocator = DirectResourceLocator | CatalogResourceLocator
-
-
-def resource_locator_from_dict(value: object) -> ResourceLocator:
+def resource_locator_from_dict(value: object) -> DirectResourceLocator:
     """Decode one strict, tagged ResourceLocator envelope."""
     data = _object_dict(value, "locator")
     kind = data.get("kind")
     if kind == "direct":
         return DirectResourceLocator.from_dict(data)
-    if kind == "catalog":
-        return CatalogResourceLocator.from_dict(data)
     raise _contract_error("kind")
 
 
-def search_datasets(
-    session: Any,
-    url: str,
-    query: str | Query | None = None,
-    *,
-    portal_type: str | None = None,
-    **kwargs: Any,
-) -> SearchResult:
-    """Search one portal through injected session dependencies."""
-    selected_query = query if isinstance(query, Query) else Query(text=query, **kwargs)
-    return session.portal(url, portal_type=portal_type).search(selected_query)
-
-
-def detect_portal(url: str, *, transport: Any, plugin_manager: Any) -> DetectionResult:
-    """Detect a portal through caller-supplied infrastructure."""
-    from datasluice.discovery import detect
-
-    return detect(url, transport=transport, plugin_manager=plugin_manager)
+type ResourceLocator = DirectResourceLocator
 
 
 def read_stream(resource: Resource, *, reader: Any) -> Any:
@@ -243,28 +160,6 @@ def materialize(
     )
 
 
-def _sanitized_resource_selectors(resources: list[Resource]) -> str:
-    selectors = sorted({sanitize_uri(resource.id) for resource in resources})
-    return ", ".join(selectors) or "(none)"
-
-
-def _resolve_catalog_resource(session: Any, locator: CatalogResourceLocator) -> Resource:
-    dataset = session.portal(locator.portal_url).get_dataset(locator.dataset_id)
-    matches = [resource for resource in dataset.resources if resource.id == locator.resource_id]
-    selectors = _sanitized_resource_selectors(dataset.resources)
-    if len(matches) == 1:
-        return matches[0]
-    if not matches:
-        raise ResourceResolutionError(
-            f"Resource selector {sanitize_uri(locator.resource_id)!r} was not found in dataset "
-            f"{sanitize_uri(locator.dataset_id)!r}. Valid selectors: {selectors}"
-        )
-    raise ResourceResolutionError(
-        f"Resource selector {sanitize_uri(locator.resource_id)!r} is ambiguous in dataset "
-        f"{sanitize_uri(locator.dataset_id)!r}. Valid selectors: {selectors}"
-    )
-
-
 _OBJECT_STORAGE_SCHEMES = frozenset({"s3", "gs", "gcs", "az", "azure", "abfs"})
 
 
@@ -299,32 +194,11 @@ class _ApplicationServices:
         self._session = session
         self._reader = reader
 
-    def search(
-        self,
-        url: str,
-        query: str | Query | None = None,
-        *,
-        portal_type: str | None = None,
-        **kwargs: Any,
-    ) -> SearchResult:
-        """Search through the injected composition substrate."""
-        return search_datasets(self._session, url, query, portal_type=portal_type, **kwargs)
-
-    def get_dataset(self, url: str, dataset_id: str, *, portal_type: str | None = None) -> Any:
-        """Retrieve catalog metadata through the private session substrate."""
-        return self._session.portal(url, portal_type=portal_type).get_dataset(dataset_id)
-
-    def detect(self, url: str) -> DetectionResult:
-        """Run injected portal detection without facade-specific mapping."""
-        return detect_portal(url, transport=self._session._transport, plugin_manager=self._session.plugins)
-
-    def resolve(self, locator: ResourceLocator) -> Resource:
+    def resolve(self, locator: DirectResourceLocator) -> Resource:
         """Resolve one public locator to the canonical Resource model."""
-        if isinstance(locator, DirectResourceLocator):
-            return _resolve_direct_resource(locator)
-        return _resolve_catalog_resource(self._session, locator)
+        return _resolve_direct_resource(locator)
 
-    def open(self, resource: Resource | ResourceLocator) -> OpenedResource:
+    def open(self, resource: Resource | DirectResourceLocator) -> OpenedResource:
         """Build one lazy opened-resource wrapper."""
         if isinstance(resource, Resource):
             resolved = resource
@@ -336,7 +210,7 @@ class _ApplicationServices:
 
     def materialize(
         self,
-        resource: Resource | ResourceLocator,
+        resource: Resource | DirectResourceLocator,
         destination_uri: str,
         *,
         mode: str = "parquet",
@@ -361,23 +235,6 @@ class _ApplicationServices:
         return results
 
 
-class Portal:
-    """Stable application wrapper for a portal URL."""
-
-    def __init__(self, services: _ApplicationServices, url: str, portal_type: str | None = None) -> None:
-        self._services = services
-        self._url = url
-        self._portal_type = portal_type
-
-    def search(self, query: str | Query | None = None, **kwargs: Any) -> SearchResult:
-        """Search through the facade without exposing a connector."""
-        return self._services.search(self._url, query, portal_type=self._portal_type, **kwargs)
-
-    def get_dataset(self, dataset_id: str) -> Any:
-        """Retrieve one dataset without exposing the underlying connector."""
-        return self._services.get_dataset(self._url, dataset_id, portal_type=self._portal_type)
-
-
 class DataSluice:
     """Canonical public facade for discovery, resource access, and materialization."""
 
@@ -398,34 +255,24 @@ class DataSluice:
         self._owned_closeables = self._collect_owned_closeables(session_kwargs)
         self._closed = False
 
-    def portal(self, url: str, portal_type: str | None = None) -> Portal:
-        """Return a stable Portal wrapper for *url*."""
+    def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
+        """Return one explicit caller-selected canonical catalog connector."""
         self._ensure_open()
-        return Portal(self._services, url, portal_type)
+        return self._session.open_catalog(factory, context)
 
-    def search(self, url: str, query: str | Query | None = None, **kwargs: Any) -> SearchResult:
-        """Search one portal through the session substrate."""
-        self._ensure_open()
-        return self._services.search(url, query, **kwargs)
-
-    def detect(self, url: str) -> DetectionResult:
-        """Detect a portal through the session's injected infrastructure."""
-        self._ensure_open()
-        return self._services.detect(url)
-
-    def resolve(self, locator: ResourceLocator) -> Resource:
+    def resolve(self, locator: DirectResourceLocator) -> Resource:
         """Resolve one public locator into the canonical Resource model."""
         self._ensure_open()
         return self._services.resolve(locator)
 
-    def open(self, resource: Resource | ResourceLocator) -> OpenedResource:
+    def open(self, resource: Resource | DirectResourceLocator) -> OpenedResource:
         """Return a lazy, single-use OpenedResource wrapper."""
         self._ensure_open()
         return self._services.open(resource)
 
     def materialize(
         self,
-        resource: Resource | ResourceLocator,
+        resource: Resource | DirectResourceLocator,
         destination_uri: str,
         *,
         mode: str = "parquet",

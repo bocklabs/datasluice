@@ -55,7 +55,7 @@ class _StubPM:
     """Minimal PluginManager stub for filtered-portal tests.
 
     The real :class:`PluginManager` eagerly loads ALL built-in entry points
-    (ckan/datagouv/socrata from ``pyproject.toml``), so a freshly-constructed
+    (ckan/udata/socrata from ``pyproject.toml``), so a freshly-constructed
     instance cannot exercise the filtering contract. detect() only calls
     ``list_connectors()``, so this stub is sufficient.
     """
@@ -68,7 +68,7 @@ class _StubPM:
 
 
 def _pm_with_all() -> _StubPM:
-    return _StubPM(["ckan", "datagouv", "socrata"])
+    return _StubPM(["ckan", "udata", "socrata"])
 
 
 def _expected_probe_count(pm: _StubPM) -> int:
@@ -131,6 +131,27 @@ def test_plugin_manager_filters_which_portals_are_probed() -> None:
     assert len(ckan_paths) == 2
     assert len(result.evidence) == 2
     assert {ev.check for ev in result.evidence} == set(ckan_paths)
+
+
+def test_evidence_preserves_fingerprint_iteration_order() -> None:
+    """Evidence rows keep PATH_FINGERPRINTS insertion order for registered portals."""
+
+    stub = _StubTransport(hit_substring=None)
+    result = detect("https://example.gov", stub, _pm_with_all())  # ty: ignore[invalid-argument-type]
+    registered = set(_pm_with_all().list_connectors())
+    expected = [path for path, portal_type in PATH_FINGERPRINTS.items() if portal_type in registered]
+    assert [ev.check for ev in result.evidence] == expected
+
+
+def test_former_connector_names_never_appear_in_detection_results() -> None:
+    """A plugin manager listing only a former name probes nothing and claims no identity."""
+
+    stub = _StubTransport(hit_substring=None)
+    result = detect("https://example.gov", stub, _StubPM(["datagouv"]))  # ty: ignore[invalid-argument-type]
+    assert result.portal_type is None
+    assert result.confidence == 0.0
+    assert result.evidence == ()
+    assert stub.requested == []
 
 
 def test_real_socket_ckan_hit() -> None:

@@ -2,7 +2,7 @@
 
 from datasluice.domain.access import HttpDownload, LocalFile, ObjectStorage, QueryAccess, ResourceAccess, StreamAccess
 from datasluice.domain.artifact import Artifact, ArtifactProvenance, Digest
-from datasluice.domain.capabilities import CatalogCapabilities
+from datasluice.domain.catalog import CatalogId
 from datasluice.domain.credentials import CredentialScope
 from datasluice.domain.dataset import Dataset
 from datasluice.domain.detection import DetectionResult
@@ -17,7 +17,7 @@ from datasluice.domain.sync_state import SyncState
 __all__ = [
     "Artifact",
     "ArtifactProvenance",
-    "CatalogCapabilities",
+    "CatalogId",
     "CredentialScope",
     "Dataset",
     "DetectionResult",

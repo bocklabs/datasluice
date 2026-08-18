@@ -1,7 +1,9 @@
 """Provider discovery and metadata contract tests for apache-airflow-providers-datasluice.
 
 Runs inside the wheel-only candidate venv built by ``run_candidate.py`` so every
-assertion reflects the installed-wheel experience Airflow will encounter.
+assertion reflects the installed-wheel experience Airflow will encounter. After
+the Phase 1 clean break the provider is metadata-only: it declares no hook,
+operator, or connection registration.
 """
 
 from __future__ import annotations
@@ -16,12 +18,10 @@ from packaging.requirements import Requirement
 
 _PROVIDER_PACKAGE = "apache-airflow-providers-datasluice"
 _IMPORT_NS = "airflow.providers.datasluice"
-_HOOK_CLASS = f"{_IMPORT_NS}.hooks.datasluice.DataSluiceHook"
-_CONNECTION_TYPE = "datasluice"
-_OPERATOR_MODULES = {
-    f"{_IMPORT_NS}.operators.search",
-    f"{_IMPORT_NS}.operators.materialize",
-}
+_RUNTIME_DECLARATION_KEYS = ("operators", "hooks", "hook-class-names", "connection-types")
+_EXECUTION_CLAIM_WORDS = ("discovery", "streaming", "materialization", "materialize", "search operator")
+_DEPENDENCY_TABLE_TEXT = 'dependencies = [\n    "datasluice>=0.2,<1",\n    "apache-airflow>=3.2,<4",\n]\n'
+_DEPENDENCY_TABLE_LIST = ["datasluice>=0.2,<1", "apache-airflow>=3.2,<4"]
 
 _PROVIDER_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 _PROVIDER_PROJECT = tomllib.load(_PROVIDER_PYPROJECT.open("rb"))["project"]
@@ -41,55 +41,57 @@ def _provider_yaml() -> dict[str, object]:
     return yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
 
 
+def _descriptions() -> dict[str, str]:
+    info = _provider_info()
+    data = _provider_yaml()
+    return {
+        "get-provider-info": str(info["description"]),
+        "provider-yaml": str(data["description"]),
+        "provider-pyproject": str(_PROVIDER_PROJECT["description"]),
+    }
+
+
 def test_get_provider_info_returns_locked_identity() -> None:
-    """get_provider_info returns the locked package name and stable metadata."""
+    """get_provider_info returns the locked package identity and current version."""
     info = _provider_info()
     assert info["package-name"] == _PROVIDER_PACKAGE
     assert isinstance(info["name"], str) and info["name"]
     assert isinstance(info["description"], str) and info["description"]
-    versions = info.get("versions", [])
-    assert isinstance(versions, list) and _PROVIDER_VERSION in versions
+    assert info["versions"] == [_PROVIDER_VERSION]
 
 
-def test_get_provider_info_declares_hook_and_connection_type() -> None:
-    """Metadata declares the DataSluiceHook class and datasluice connection type."""
-    info = _provider_info()
-    hook_names = info.get("hook-class-names")
-    assert isinstance(hook_names, list) and _HOOK_CLASS in hook_names
-    conn_types = info.get("connection-types")
-    assert isinstance(conn_types, list)
-    matched = [
-        entry for entry in conn_types if isinstance(entry, dict) and entry.get("connection-type") == _CONNECTION_TYPE
-    ]
-    assert len(matched) == 1
-    assert matched[0].get("hook-class-name") == _HOOK_CLASS
-
-
-def test_get_provider_info_declares_operator_modules() -> None:
-    """Metadata declares both operator modules from the provider contract."""
-    operators = _provider_info().get("operators", [])
-    modules = {module for entry in operators for module in entry.get("python-modules", [])}
-    assert modules == _OPERATOR_MODULES
-
-
-def test_provider_yaml_exists_and_agrees_with_get_provider_info() -> None:
-    """provider.yaml and get_provider_info agree on the locked identity and hook."""
+def test_yaml_carries_no_pinned_version_and_python_metadata_owns_it() -> None:
+    """provider.yaml declares identity only; get_provider_info derives the version."""
     info = _provider_info()
     data = _provider_yaml()
-    assert data["package-name"] == info["package-name"]
+    assert data["package-name"] == info["package-name"] == _PROVIDER_PACKAGE
     assert data["name"] == info["name"]
+    assert "versions" not in data
+    assert info["versions"] == [_PROVIDER_VERSION]
 
-    yaml_hook_modules = {module for entry in data.get("hooks", []) for module in entry.get("python-modules", [])}
-    assert f"{_IMPORT_NS}.hooks.datasluice" in yaml_hook_modules
 
-    yaml_operator_modules = {
-        module for entry in data.get("operators", []) for module in entry.get("python-modules", [])
-    }
-    assert yaml_operator_modules == _OPERATOR_MODULES
+def test_metadata_declares_no_hook_operator_or_connection() -> None:
+    """Neither metadata source declares a hook, operator, or connection registration."""
+    info = _provider_info()
+    data = _provider_yaml()
+    for key in _RUNTIME_DECLARATION_KEYS:
+        assert key not in info, f"get_provider_info still declares {key!r}"
+        assert key not in data, f"provider.yaml still declares {key!r}"
 
-    yaml_conn_types = data.get("connection-types", [])
-    matched = [entry for entry in yaml_conn_types if entry.get("connection-type") == _CONNECTION_TYPE]
-    assert len(matched) == 1 and matched[0]["hook-class-name"] == _HOOK_CLASS
+
+def test_descriptions_make_no_execution_claims() -> None:
+    """No provider description claims removed discovery, streaming, or materialization execution."""
+    for source, description in _descriptions().items():
+        lowered = description.lower()
+        for word in _EXECUTION_CLAIM_WORDS:
+            assert word not in lowered, f"{source} description claims {word!r}"
+
+
+def test_dependency_table_is_byte_for_byte_unchanged() -> None:
+    """The provider dependency table keeps the exact Phase 1 lines with no connector extras."""
+    text = _PROVIDER_PYPROJECT.read_text(encoding="utf-8")
+    assert _DEPENDENCY_TABLE_TEXT in text
+    assert _PROVIDER_PROJECT["dependencies"] == _DEPENDENCY_TABLE_LIST
 
 
 def test_wheel_exposes_exactly_one_provider_entry_point() -> None:

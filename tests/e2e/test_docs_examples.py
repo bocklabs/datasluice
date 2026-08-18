@@ -1,125 +1,158 @@
-"""Executable documentation examples gate.
+"""Executable canonical documentation examples gate.
 
-Release validation must prove that the published facade and CLI examples run
-against built artifacts, so this test executes the Python blocks extracted from
-``docs/examples/application.md`` and asserts every CLI command documented there
-works. The example's example-domain portal URL is rebound to a local mock CKAN
-server so no live network is touched.
+Every Python fence in the canonical documentation must run against the
+installed package using deterministic fixtures only: canonical platform
+imports, pinned-profile fixture inspection, the reference-fake compliance
+run, and the retained direct-resource data plane. The former local-CKAN
+endpoint and removed-command execution is gone with the surfaces it
+documented.
+
+Data-plane example URLs are rebound to a fixture-owned local file before
+execution, and a socket guard proves the examples never contact external
+hosts or require credentials: reference fakes, pinned fixtures, and local
+files are the only inputs. ``docs/examples/dlt.md`` shows the Phase 3+
+caller-owned client pattern with an unbound placeholder, so it is scanned
+statically but not executed; ``tests/helpers/http_server.py`` remains the
+pattern for transport and lifecycle boundary tests, which this gate does
+not exercise.
 """
 
 from __future__ import annotations
 
-import json
+import importlib
 import re
-import shutil
+import socket
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from tests.helpers.http_server import MockResponse, start_test_server
-
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-APPLICATION_DOC = REPO_ROOT / "docs" / "examples" / "application.md"
-EXAMPLE_PORTAL = "https://catalog.example.test/api"
 
-_MOCK_CKAN = {
-    "/api/3/action/package_search": MockResponse(
-        body=b'{"success": true, "result": {"count": 2, "results": ['
-        b'{"id": "dataset-1", "name": "climate", "title": "Climate", "resources": []},'
-        b'{"id": "dataset-2", "name": "weather", "title": "Weather", "resources": []}'
-        b"]}}"
-    ),
-    "/api/3/action/package_show": MockResponse(
-        body=json.dumps(
-            {
-                "success": True,
-                "result": {
-                    "id": "dataset-1",
-                    "name": "climate",
-                    "title": "Climate",
-                    "resources": [
-                        {
-                            "id": "resource-1",
-                            "name": "data.csv",
-                            "format": "CSV",
-                            "url": "PLACEHOLDER_URL",
-                        }
-                    ],
-                },
-            }
-        ).encode()
-    ),
-    "/api/3/action/group_list": MockResponse(body=b'{"success": true, "result": []}'),
+EXECUTABLE_PAGES: tuple[Path, ...] = (
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "docs/adapters.md",
+    REPO_ROOT / "docs/supported-portals.md",
+    REPO_ROOT / "docs/examples/application.md",
+    REPO_ROOT / "docs/examples/ckan.md",
+    REPO_ROOT / "docs/examples/socrata.md",
+)
+
+OPTIONAL_EXTRA_PAGES: dict[str, Path] = {
+    "pandas": REPO_ROOT / "docs/examples/pandas.md",
 }
 
-SOURCE_FILE = "/tmp/datasluice-source.csv"
-DEST_FILE = "/tmp/datasluice-out.parquet"
+STATIC_ONLY_PAGES: tuple[Path, ...] = (REPO_ROOT / "docs/examples/dlt.md",)
+
+CREDENTIAL_ACCESS_PATTERNS: tuple[str, ...] = (
+    "os.environ",
+    "os.getenv",
+    "getpass",
+    "keyring",
+    "requests.get",
+    "requests.post",
+)
+
+_FENCE_RE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+_DATA_PLANE_PAGES: tuple[Path, ...] = (REPO_ROOT / "README.md", REPO_ROOT / "docs/examples/application.md")
 
 
 def _python_blocks(doc: Path) -> list[str]:
-    text = doc.read_text(encoding="utf-8")
-    return re.findall(r"```python\n(.*?)```", text, flags=re.DOTALL)
+    text = doc.read_text(encoding="utf-8") if doc.exists() else ""
+    return _FENCE_RE.findall(text)
 
 
-def _bind_env(code: str, base_url: str) -> str:
-    return code.replace(EXAMPLE_PORTAL, base_url).replace(
-        'SOURCE_FILE = "/tmp/datasluice-source.csv"', f'SOURCE_FILE = r"{SOURCE_FILE}"'
-    )
+def _rebind_to_local_fixture(body: str, source: Path, destination: Path) -> str:
+    rebound = body.replace('"https://example.org/data.csv"', f'"{source}"')
+    rebound = rebound.replace('SOURCE_FILE = "/tmp/datasluice-source.csv"', f'SOURCE_FILE = r"{source}"')
+    rebound = rebound.replace('"/tmp/datasluice-out.parquet"', f'"{destination}"')
+    rebound = rebound.replace('"out.parquet"', f'"{destination}"')
+    return rebound
 
 
-def test_application_facade_example_executes_against_built_artifacts() -> None:
-    """The facade Python block runs against installed DataSluice and a local portal."""
-    if not APPLICATION_DOC.exists():
-        pytest.skip("application.md missing")
-    Path(SOURCE_FILE).write_text("city,value\nA,1\nB,2\n", encoding="utf-8")
-    for path in (Path(SOURCE_FILE).with_suffix(".parquet"), Path(DEST_FILE)):
-        if path.is_dir():
-            shutil.rmtree(path)
-        elif path.exists():
-            path.unlink()
+@contextmanager
+def _no_external_sockets() -> Iterator[None]:
+    real_connect = socket.socket.connect
+    real_create = socket.create_connection
 
-    server, base_url = start_test_server(dict(_MOCK_CKAN))
+    def blocked_connect(sock: socket.socket, address: Any) -> None:
+        raise AssertionError(f"documented example contacted {address!r}")
+
+    def blocked_create(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
+        raise AssertionError(f"documented example contacted {address!r}")
+
+    socket.socket.connect = blocked_connect  # ty: ignore[invalid-assignment]
+    socket.create_connection = blocked_create  # ty: ignore[invalid-assignment]
     try:
-        _MOCK_CKAN["/api/3/action/package_show"] = MockResponse(
-            body=json.dumps(
-                {
-                    "success": True,
-                    "result": {
-                        "id": "dataset-1",
-                        "name": "climate",
-                        "title": "Climate",
-                        "resources": [
-                            {"id": "resource-1", "name": "data.csv", "format": "CSV", "url": f"{base_url}/file.csv"}
-                        ],
-                    },
-                }
-            ).encode()
-        )
-        server.responses["/api/3/action/package_show"] = _MOCK_CKAN["/api/3/action/package_show"]
-        server.responses["/file.csv"] = MockResponse(body=b"city,value\nA,1\nB,2\n")
-        _MOCK_CKAN["/api/3/action/package_search"] = MockResponse(
-            body=b'{"success": true, "result": {"count": 2, "results": ['
-            b'{"id": "dataset-1", "name": "climate", "title": "Climate", "resources": []},'
-            b'{"id": "dataset-2", "name": "weather", "title": "Weather", "resources": []}'
-            b"]}}"
-        )
-        for block in _python_blocks(APPLICATION_DOC):
-            body = _bind_env(block, base_url)
-            namespace: dict[str, object] = {}
-            exec(compile(body, str(APPLICATION_DOC), "exec"), namespace)
+        yield
     finally:
-        server.shutdown()
-        for path in (Path(SOURCE_FILE), Path(SOURCE_FILE).with_suffix(".parquet"), Path(DEST_FILE)):
-            if path.is_dir():
-                shutil.rmtree(path)
-            elif path.exists():
-                path.unlink()
+        socket.socket.connect = real_connect
+        socket.create_connection = real_create
 
 
-def test_application_cli_example_commands_are_present_in_help() -> None:
-    """Every CLI command documented in application.md is registered on the app."""
+def _execute_page(page: Path, tmp_path: Path) -> None:
+    source = tmp_path / "source.csv"
+    source.write_text("city,value\nA,1\nB,2\n", encoding="utf-8")
+    destination = tmp_path / "out.parquet"
+    for block in _python_blocks(page):
+        body = _rebind_to_local_fixture(block, source, destination)
+        namespace: dict[str, object] = {}
+        with _no_external_sockets():
+            exec(compile(body, str(page), "exec"), namespace)
+
+
+@pytest.mark.parametrize(
+    "page",
+    [pytest.param(page, id=page.relative_to(REPO_ROOT).as_posix()) for page in EXECUTABLE_PAGES],
+)
+def test_canonical_imports_profile_inspection_and_compliance_examples_execute(page: Path, tmp_path: Path) -> None:
+    """Test 1: documented canonical, profile-inspection, and compliance examples run."""
+    _execute_page(page, tmp_path)
+
+
+def test_optional_extra_example_pages_execute_when_the_extra_is_installed(tmp_path: Path) -> None:
+    """Test 1: optional-extra pages run under the same offline harness when installed."""
+    for extra, page in OPTIONAL_EXTRA_PAGES.items():
+        try:
+            importlib.import_module(extra)
+        except ImportError:
+            pytest.skip(f"optional extra {extra!r} not installed")
+        _execute_page(page, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "page", [pytest.param(page, id=page.relative_to(REPO_ROOT).as_posix()) for page in _DATA_PLANE_PAGES]
+)
+def test_direct_data_plane_examples_execute_without_a_portal_adapter(page: Path, tmp_path: Path) -> None:
+    """Test 2: the facade flow runs from a local file with no connector import."""
+    for block in _python_blocks(page):
+        if "DataSluice(" in block:
+            assert "datasluice.connectors" not in block, "facade flow must not construct portal connectors"
+    _execute_page(page, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        pytest.param(page, id=page.relative_to(REPO_ROOT).as_posix())
+        for page in (*EXECUTABLE_PAGES, *OPTIONAL_EXTRA_PAGES.values(), *STATIC_ONLY_PAGES)
+    ],
+)
+def test_documented_examples_never_contact_external_hosts_or_read_credentials(page: Path) -> None:
+    """Test 3: no documented fence fetches credentials or opens network sessions."""
+    for block in _python_blocks(page):
+        for pattern in CREDENTIAL_ACCESS_PATTERNS:
+            assert pattern not in block, f"{page.name} fence reads credentials or web sessions ({pattern})"
+
+
+def test_retained_cli_commands_document_the_direct_data_plane() -> None:
+    """Test 4: the documented CLI keeps exactly the retained direct-resource commands."""
     from datasluice.cli.app import app
 
     names = {info.name for info in app.registered_commands}
-    for command in ("search", "inspect", "download", "detect", "scan", "open", "materialize"):
-        assert command in names, f"documented CLI command {command} not registered"
+    assert names == {"scan", "open", "materialize"}
+    application_doc = (REPO_ROOT / "docs/examples/application.md").read_text(encoding="utf-8")
+    for command in names:
+        assert re.search(rf"datasluice {command}\b", application_doc), f"{command} missing from application docs"

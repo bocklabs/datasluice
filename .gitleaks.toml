@@ -1,0 +1,20 @@
+# Gitleaks configuration for DataSluice.
+#
+# Extends the built-in rule set and allowlists the deliberate fake-secret
+# fixtures used by the redaction/security test suite and contract fixtures.
+# Real credentials must never be committed; add narrowly scoped allowlist
+# entries only when a string is provably synthetic.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic redaction-test fixtures and contract fixture payloads"
+paths = [
+  '''tests/fixtures/.*''',
+  '''tests/unit/contracts/catalog/test_fake_security\.py''',
+  '''tests/unit/contracts/catalog/test_public_api\.py''',
+  '''tests/unit/contracts/catalog/test_auth_errors\.py''',
+  '''tests/unit/sync/test_state_store_hardening\.py''',
+  '''src/datasluice/contracts/catalog/fakes\.py''',
+]

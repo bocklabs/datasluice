@@ -1,32 +1,26 @@
 """Provider smoke convention module.
 
-Imports the provider public namespace, validates metadata, and executes the
-sample DAG import against the installed candidate. Run from the provider
+Validates the installed provider package, its discovery metadata, and the
+absence of hook, operator, and connection declarations. Run from the provider
 package root: ``python tests/smoke.py``.
 """
 
 from __future__ import annotations
 
-import runpy
 import sys
-from pathlib import Path
+
+_DECLARATION_KEYS = ("operators", "hooks", "hook-class-names", "connection-types")
 
 
 def main() -> int:
+    import airflow.providers.datasluice as pkg
     from airflow.providers.datasluice.get_provider_info import get_provider_info
-    from airflow.providers.datasluice.hooks.datasluice import DataSluiceHook
-    from airflow.providers.datasluice.operators.materialize import DataSluiceMaterializeOperator
-    from airflow.providers.datasluice.operators.search import DataSluiceSearchOperator
 
+    assert pkg.__name__ == "airflow.providers.datasluice"
     info = get_provider_info()
     assert info["package-name"] == "apache-airflow-providers-datasluice", info
-
-    assert DataSluiceHook is not None
-    assert DataSluiceMaterializeOperator is not None
-    assert DataSluiceSearchOperator is not None
-
-    dag_path = Path(__file__).resolve().parent / "dags" / "example_datasluice.py"
-    runpy.run_path(str(dag_path), run_name="__smoke__")
+    for key in _DECLARATION_KEYS:
+        assert key not in info, f"provider metadata still declares {key}"
     return 0
 
 

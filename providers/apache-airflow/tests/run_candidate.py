@@ -286,9 +286,12 @@ def _assert_datasluice_is_local(core_wheel: Path, venv: Path) -> None:
     url = payload.get("url", "")
     if not url.startswith("file://"):
         raise RuntimeError(f"datasluice was installed from a non-local URL: {url}")
-    expected = core_wheel.resolve().as_uri()
-    if url != expected:
-        raise RuntimeError(f"datasluice installed from {url}; expected the local core candidate wheel {expected}")
+    installed = Path(url.removeprefix("file://")).resolve()
+    expected = core_wheel.resolve()
+    if installed != expected:
+        raise RuntimeError(
+            f"datasluice installed from {url}; expected the local core candidate wheel {expected.as_uri()}"
+        )
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:

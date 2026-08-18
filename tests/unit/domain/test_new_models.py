@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 
@@ -11,7 +12,6 @@ from datasluice.application import DirectResourceLocator
 from datasluice.domain import (
     Artifact,
     ArtifactProvenance,
-    CatalogCapabilities,
     DetectionResult,
     Digest,
     HttpDownload,
@@ -24,6 +24,7 @@ from datasluice.domain import (
     StreamAccess,
     SyncState,
 )
+from datasluice.domain.catalog import CatalogId, CatalogPlatform, DatasetRecord, ResourceKind
 from datasluice.domain.detection import DetectionEvidence
 
 
@@ -129,10 +130,16 @@ def test_schema_extra_and_columns_are_immutable() -> None:
         schema.extra["k"] = "other"  # type: ignore
 
 
-def test_capabilities_notes_is_immutable() -> None:
-    caps = CatalogCapabilities(notes={"search": "full-text"})
-    with pytest.raises((TypeError, AttributeError)):
-        caps.notes["search"] = "none"  # type: ignore
+def test_catalog_models_are_immutable_and_versioned() -> None:
+    identifier = CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather")
+    record = DatasetRecord(id=identifier, name="Weather", extensions={"example.org": {"status": "published"}})
+
+    assert CatalogId.from_dict(identifier.to_dict()) == identifier
+    assert DatasetRecord.from_dict(record.to_dict()) == record
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        record.name = "Other"  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+    with pytest.raises(TypeError):
+        cast(dict[str, object], record.extensions)["example.org"] = {}
 
 
 def test_resource_access_kind_not_overridable() -> None:
@@ -192,19 +199,3 @@ def test_sync_state_is_frozen() -> None:
     state = SyncState(cursor={"res-1": "2026-01-01T00:00:00Z"})
     with pytest.raises(dataclasses.FrozenInstanceError):
         state.cursor = {"res-1": "2026-02-01T00:00:00Z"}  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
-
-
-def test_catalog_capabilities_defaults() -> None:
-    caps = CatalogCapabilities()
-    assert caps.supports_search is True
-    assert caps.supports_organizations is False
-    assert caps.supports_faceted_search is False
-    assert caps.supported_query_fields == frozenset()
-    assert caps.unsupported_query_fields == frozenset()
-    assert caps.notes == {}
-
-
-def test_catalog_capabilities_is_frozen() -> None:
-    caps = CatalogCapabilities()
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        caps.supports_search = False  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime

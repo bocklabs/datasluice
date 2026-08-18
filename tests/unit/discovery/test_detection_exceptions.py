@@ -21,7 +21,7 @@ from datasluice.runtime.plugin_manager import PluginManager
 def _pm() -> PluginManager:
     pm = PluginManager()
     pm.register("ckan", lambda ctx: None)
-    pm.register("datagouv", lambda ctx: None)
+    pm.register("udata", lambda ctx: None)
     pm.register("socrata", lambda ctx: None)
     return pm
 
