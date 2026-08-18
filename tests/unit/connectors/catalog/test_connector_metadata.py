@@ -12,7 +12,7 @@ from datasluice.runtime import plugin_manager
 
 def test_builtin_entry_points_target_only_canonical_factories() -> None:
     """Installed built-ins reserve namespaced IDs for canonical factories."""
-    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    project = tomllib.loads((Path(__file__).resolve().parents[4] / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert project["project"]["entry-points"]["datasluice.connectors"] == {
         "datasluice/ckan": "datasluice.connectors.catalog.ckan.factory:create_ckan_connector",

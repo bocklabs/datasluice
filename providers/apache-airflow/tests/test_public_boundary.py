@@ -114,6 +114,9 @@ def test_provider_tree_imports_no_retired_runtime_module() -> None:
                     assert alias.name not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {alias.name!r}"
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 assert node.module not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {node.module!r}"
+                for alias in node.names:
+                    imported = f"{node.module}.{alias.name}"
+                    assert imported not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {imported!r}"
 
 
 def test_execution_packages_re_export_nothing_and_declare_no_wrapper() -> None:

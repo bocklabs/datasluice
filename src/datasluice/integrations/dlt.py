@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from datasluice.logging import get_logger
 
@@ -35,7 +35,10 @@ def _resource_from_record(record: Any) -> Any:
     elif scheme in {"s3", "gs", "gcs", "az", "azure", "abfs"}:
         access = ObjectStorage(uri=record.url)
     elif scheme == "file" or not scheme:
-        access = LocalFile(path=record.url.removeprefix("file://"))
+        parts = urlsplit(record.url)
+        if parts.netloc not in {"", "localhost"}:
+            raise ValueError(f"Normalized resource {record.id.value!r} has an unsupported direct URL host")
+        access = LocalFile(path=unquote(parts.path))
     else:
         raise ValueError(f"Normalized resource {record.id.value!r} has an unsupported direct URL scheme")
     return Resource(id=record.id.value, name=record.name, url=record.url, access=access)

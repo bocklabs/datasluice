@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Never
@@ -10,11 +11,41 @@ from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.exceptions import DataSluiceError
 
 _MAX_METADATA_ENTRIES = 32
+_MAX_METADATA_DEPTH = 8
 _MAX_TEXT_LENGTH = 256
 _REDACTED = "***"
 _SENSITIVE_PARTS = frozenset(
-    {"authorization", "credential", "token", "secret", "password", "cookie", "api_key", "body", "header"}
+    {
+        "authorization",
+        "credential",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "pwd",
+        "cookie",
+        "api_key",
+        "apikey",
+        "private_key",
+        "access_key",
+        "consumer_key",
+        "client_key",
+        "signature",
+        "body",
+        "header",
+    }
 )
+_CREDENTIAL_QUERY_RE = re.compile(
+    r"(?i)([?&;][^=&;\s]*(?:api[_-]?key|token|secret|password|passwd|credential|authorization|signature)"
+    r"[^=&;\s]*)=[^&;\s]+"
+)
+_AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
+
+
+def _redact_message(message: str) -> str:
+    scrubbed = _CREDENTIAL_QUERY_RE.sub(r"\1=***", message)
+    scrubbed = _AUTH_SCHEME_RE.sub(r"\1 ***", scrubbed)
+    return scrubbed[:_MAX_TEXT_LENGTH]
 
 
 def _platform_value(platform: CatalogPlatform | str) -> str:
@@ -24,9 +55,11 @@ def _platform_value(platform: CatalogPlatform | str) -> str:
     return value
 
 
-def _bounded_metadata(value: Mapping[str, object] | None) -> Mapping[str, object]:
+def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) -> Mapping[str, object]:
     if value is None:
         return MappingProxyType({})
+    if _depth > _MAX_METADATA_DEPTH:
+        raise ValueError("Catalog error metadata exceeds the depth limit.")
     if len(value) > _MAX_METADATA_ENTRIES:
         raise ValueError("Catalog error metadata exceeds the entry limit.")
     sanitized: dict[str, object] = {}
@@ -34,21 +67,25 @@ def _bounded_metadata(value: Mapping[str, object] | None) -> Mapping[str, object
         if not isinstance(key, str) or not key:
             raise ValueError("Catalog error metadata keys must be non-empty strings.")
         normalized = key.lower().replace("-", "_")
-        sanitized[key] = _REDACTED if any(part in normalized for part in _SENSITIVE_PARTS) else _bounded_value(nested)
+        sanitized[key] = (
+            _REDACTED
+            if any(part in normalized for part in _SENSITIVE_PARTS)
+            else _bounded_value(nested, _depth=_depth + 1)
+        )
     return MappingProxyType(sanitized)
 
 
-def _bounded_value(value: object) -> object:
+def _bounded_value(value: object, *, _depth: int = 0) -> object:
     if isinstance(value, str):
-        return value[:_MAX_TEXT_LENGTH]
+        return _redact_message(value)
     if value is None or isinstance(value, bool | int | float):
         return value
     if isinstance(value, Mapping):
-        return _bounded_metadata(value)
+        return _bounded_metadata(value, _depth=_depth)
     if isinstance(value, tuple | list):
         if len(value) > _MAX_METADATA_ENTRIES:
             raise ValueError("Catalog error metadata sequence exceeds the entry limit.")
-        return tuple(_bounded_value(item) for item in value)
+        return tuple(_bounded_value(item, _depth=_depth + 1) for item in value)
     return repr(value)[:_MAX_TEXT_LENGTH]
 
 
@@ -88,6 +125,7 @@ class NativeCatalogError(DataSluiceError):
         platform: CatalogPlatform | str,
         status_code: int | None = None,
         vendor_code: str | None = None,
+        retry_after: float | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> None:
         if not isinstance(message, str) or not message:
@@ -98,11 +136,16 @@ class NativeCatalogError(DataSluiceError):
             raise ValueError("Native catalog error status codes must be valid HTTP status codes.")
         if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > _MAX_TEXT_LENGTH):
             raise ValueError("Native catalog error vendor codes must be bounded strings.")
-        super().__init__(message)
+        if retry_after is not None and (
+            (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
+        ):
+            raise ValueError("Native catalog error Retry-After must be a non-negative number.")
+        super().__init__(_redact_message(message))
         self.operation = operation
         self.platform = _platform_value(platform)
         self.status_code = status_code
         self.vendor_code = vendor_code
+        self.retry_after = float(retry_after) if retry_after is not None else None
         self.metadata = _bounded_metadata(metadata)
 
 
@@ -143,7 +186,9 @@ class CatalogRateLimitError(CatalogError):
         safe_action: str,
         retry_after: float | None = None,
     ) -> None:
-        if retry_after is not None and (not isinstance(retry_after, int | float) or retry_after < 0):
+        if retry_after is not None and (
+            (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
+        ):
             raise ValueError("Retry-After must be a non-negative number.")
         super().__init__(
             message,
@@ -194,13 +239,24 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
     else:
         error_type = CatalogValidationError
         safe_action = "Correct the request before retrying."
-    error = error_type(
-        str(native),
-        operation=native.operation,
-        platform=native.platform,
-        capability_state=capability_state,
-        safe_action=safe_action,
-    )
+    error: CatalogError
+    if error_type is CatalogRateLimitError:
+        error = CatalogRateLimitError(
+            str(native),
+            operation=native.operation,
+            platform=native.platform,
+            capability_state=capability_state,
+            safe_action=safe_action,
+            retry_after=native.retry_after,
+        )
+    else:
+        error = error_type(
+            str(native),
+            operation=native.operation,
+            platform=native.platform,
+            capability_state=capability_state,
+            safe_action=safe_action,
+        )
     error.__cause__ = native
     return error
 

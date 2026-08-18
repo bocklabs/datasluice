@@ -21,6 +21,12 @@ repos:
         args: ["--fix"]
       - id: ruff-format
 
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks-docker
+        name: gitleaks (hardcoded secrets)
+
   - repo: local
     hooks:
       - id: ty

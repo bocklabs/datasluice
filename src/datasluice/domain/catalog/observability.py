@@ -11,7 +11,25 @@ _REDACTED = "***"
 _MAX_METADATA_ENTRIES = 32
 _MAX_TEXT_LENGTH = 256
 _SENSITIVE_PARTS = frozenset(
-    {"authorization", "credential", "token", "secret", "password", "cookie", "api_key", "body", "header"}
+    {
+        "authorization",
+        "credential",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "pwd",
+        "cookie",
+        "api_key",
+        "apikey",
+        "private_key",
+        "access_key",
+        "consumer_key",
+        "client_key",
+        "signature",
+        "body",
+        "header",
+    }
 )
 
 

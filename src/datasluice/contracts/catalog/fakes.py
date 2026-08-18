@@ -212,6 +212,13 @@ class SyncReferenceConnector:
             raise ValueError("Reference cases must be loaded from the pinned fixture set.")
 
     def _guard_case(self, case: ReferenceCase) -> None:
+        self._reject_case(case)
+        self.dispatches.append(str(case.operation_id))
+        self.record_event(
+            "catalog.reference.dispatched", {"operation": str(case.operation_id), "outcome": case.outcome}
+        )
+
+    def _reject_case(self, case: ReferenceCase) -> None:
         errors: dict[str, type[CatalogError]] = {
             "missing-credentials": UnauthenticatedError,
             "invalid-credentials": UnauthenticatedError,
@@ -241,10 +248,6 @@ class SyncReferenceConnector:
                 safe_action="Wait for Retry-After before retrying a safe operation.",
                 retry_after=1,
             )
-        self.dispatches.append(str(case.operation_id))
-        self.record_event(
-            "catalog.reference.dispatched", {"operation": str(case.operation_id), "outcome": case.outcome}
-        )
 
     def _result(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord]:
         platform = CatalogPlatform(case.operation_id.platform)
@@ -346,9 +349,11 @@ class AsyncReferenceConnector:
     async def execute_case(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord]:
         """Execute a declared fixture case without delegating asynchronous I/O."""
         self._sync._require_declared_case(case)
-        self._sync._guard_case(case)
+        self._sync._reject_case(case)
         self.dispatches.append(str(case.operation_id))
-        self._sync.dispatches.pop()
+        self._sync.record_event(
+            "catalog.reference.dispatched", {"operation": str(case.operation_id), "outcome": case.outcome}
+        )
         return self._sync._result(case)
 
     async def aclose(self) -> None:
@@ -377,7 +382,10 @@ def _sanitize_event_metadata(metadata: Mapping[str, object]) -> dict[str, object
             sanitized[key] = _sanitize_event_metadata(value)
         elif key.lower().replace("-", "_") in {"url", "uri", "signed_url"} and isinstance(value, str):
             parsed = urlsplit(value)
-            sanitized[key] = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+            netloc = parsed.hostname or ""
+            if parsed.port:
+                netloc = f"{netloc}:{parsed.port}"
+            sanitized[key] = urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
         else:
             sanitized[key] = value
     return sanitized

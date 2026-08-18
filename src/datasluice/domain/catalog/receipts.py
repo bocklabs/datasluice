@@ -16,8 +16,16 @@ _SENSITIVE_KEY_PARTS = (
     "token",
     "secret",
     "password",
+    "passwd",
+    "pwd",
     "cookie",
     "api_key",
+    "apikey",
+    "private_key",
+    "access_key",
+    "consumer_key",
+    "client_key",
+    "signature",
     "header",
     "body",
 )
@@ -257,7 +265,11 @@ class BulkCheckpoint:
         if not all(isinstance(receipt, BulkItemReceipt) for receipt in self.item_receipts):
             raise _contract_error("bulk_checkpoint.item_receipts")
         indices = tuple(receipt.index for receipt in self.item_receipts)
-        if indices != tuple(sorted(indices)) or len(set(indices)) != len(indices):
+        if (
+            indices != tuple(sorted(indices))
+            or len(set(indices)) != len(indices)
+            or any(index >= len(self.plan.items) for index in indices)
+        ):
             raise _contract_error("bulk_checkpoint.item_receipts")
         if type(self.cancellation_requested) is not bool:
             raise _contract_error("bulk_checkpoint.cancellation_requested")

@@ -11,7 +11,7 @@ import datasluice
 import datasluice.contracts as contracts
 import datasluice.contracts.catalog as catalog
 from datasluice.domain.catalog import CatalogPlatform
-from datasluice.errors.catalog import NativeCatalogError, map_catalog_error
+from datasluice.errors.catalog import CatalogRateLimitError, NativeCatalogError, map_catalog_error
 
 
 def test_catalog_contract_package_exports_only_the_documented_contract_surface() -> None:
@@ -110,3 +110,29 @@ def test_normalized_catalog_errors_preserve_redacted_typed_context_and_cause() -
     assert error.capability_state == "unavailable"
     assert error.safe_action == "Retry after the deployment is available."
     assert error.__cause__ is native
+
+
+def test_rate_limit_mapping_forwards_native_retry_after() -> None:
+    """The normalized rate-limit error keeps the platform-requested delay."""
+    native = NativeCatalogError(
+        "slow down",
+        operation="datasets.get",
+        platform=CatalogPlatform.CKAN,
+        status_code=429,
+        retry_after=7,
+    )
+    error = map_catalog_error(native)
+
+    assert isinstance(error, CatalogRateLimitError)
+    assert error.retry_after == 7.0
+
+
+def test_native_error_messages_are_redacted_and_bounded() -> None:
+    """Credential-shaped message content is scrubbed before it can be logged."""
+    leaked = "GET https://portal.example/api?q=dataset&apikey=super-secret&signature=abc123 failed"
+    native = NativeCatalogError(leaked, operation="datasets.get", platform=CatalogPlatform.CKAN, status_code=400)
+
+    assert "super-secret" not in str(native)
+    assert "abc123" not in str(native)
+    assert "apikey=***" in str(native)
+    assert len(str(native)) <= 256

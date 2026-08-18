@@ -37,6 +37,12 @@ def test_catalog_contract_runs_dataset_get_in_both_modes_and_returns_json_report
     assert sync_client.closed
     assert async_client.closed
 
+    async_outcome = next(outcome for outcome in report.outcomes if outcome.mode == "async")
+    async_metadata = dict(async_outcome.platform_metadata)
+    assert "access_token" not in async_metadata
+    assert "raw_body" not in async_metadata
+    assert set(async_metadata) <= {"platform", "fixture", "environment", "profile_version"}
+
     payload = report.to_dict()
     assert json.loads(json.dumps(payload)) == payload
     assert ComplianceReport.from_dict(payload) == report

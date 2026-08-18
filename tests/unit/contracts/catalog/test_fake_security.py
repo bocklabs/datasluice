@@ -10,7 +10,12 @@ from datasluice.contracts.catalog.fakes import SyncReferenceConnector
 from datasluice.contracts.catalog.fixtures import load_reference_fixture_set
 from datasluice.domain.catalog.observability import DiagnosticPolicy
 from datasluice.domain.catalog.safety import IdempotencyPolicy
-from datasluice.errors.catalog import CatalogRateLimitError, ForbiddenError, UnauthenticatedError
+from datasluice.errors.catalog import (
+    CatalogRateLimitError,
+    ForbiddenError,
+    NativeCatalogError,
+    UnauthenticatedError,
+)
 
 _SECRET = "token=really-secret&signature=also-secret"
 
@@ -21,20 +26,30 @@ def test_secret_shapes_are_redacted_from_fake_public_boundaries() -> None:
     fake = SyncReferenceConnector(fixture_set)
     denied = next(case for case in fixture_set.cases if case.outcome == "invalid-credentials")
 
-    with pytest.raises(UnauthenticatedError) as error:
+    with pytest.raises(UnauthenticatedError):
         fake.execute_case(denied)
     event = fake.record_event(
-        "catalog.reference.test", {"authorization": _SECRET, "url": f"https://example.test/?{_SECRET}"}
+        "catalog.reference.test", {"authorization": _SECRET, "url": f"https://user:pass@example.test/?{_SECRET}"}
+    )
+    native = NativeCatalogError(
+        f"https://example.test/?{_SECRET}",
+        operation="datasets.get",
+        platform=fixture_set.platform,
+        status_code=400,
+        metadata={"url": f"https://user:pass@example.test/?{_SECRET}", "apikey": "leaked-key"},
     )
     public_values = [
-        str(error.value),
         repr(event),
-        json.dumps(fake.platform_metadata()),
         json.dumps(dict(event.metadata)),
+        str(native),
+        json.dumps(dict(native.metadata)),
     ]
 
-    assert all(_SECRET not in value for value in public_values)
+    assert all("really-secret" not in value and "also-secret" not in value for value in public_values)
+    assert "user:pass" not in repr(event)
+    assert "user:pass" not in json.dumps(dict(event.metadata))
     assert event.metadata["authorization"] == "***"
+    assert native.metadata["apikey"] == "***"
 
 
 def test_raw_diagnostics_require_opt_in_and_are_bounded() -> None:
