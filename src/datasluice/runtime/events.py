@@ -117,8 +117,14 @@ class LoggingSink:
 class EventEmitter:
     """Create gate-redacted envelopes and fan them out in registration order."""
 
-    def __init__(self, *, sinks: tuple[EventSink | Callable[[EventEnvelope], None], ...] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        sinks: tuple[EventSink | Callable[[EventEnvelope], None], ...] = (),
+        correlation_id_provider: Callable[[], Mapping[str, object]] | None = None,
+    ) -> None:
         self._sinks = sinks
+        self._correlation_id_provider = correlation_id_provider
 
     def record(
         self,
@@ -130,11 +136,12 @@ class EventEmitter:
         correlation_ids: Mapping[str, object] | None = None,
     ) -> EventEnvelope:
         """Redact metadata once, then send the resulting envelope to every sink."""
+        active_correlation_ids = self._correlation_id_provider() if self._correlation_id_provider is not None else {}
         envelope = EventEnvelope(
             operation_id=operation_id,
             platform=platform,
             outcome=outcome,
-            correlation_ids=MappingProxyType(dict(correlation_ids or {})),
+            correlation_ids=MappingProxyType({**active_correlation_ids, **(correlation_ids or {})}),
             metadata=redact_event_metadata(metadata or {}),
         )
         for sink in self._sinks:
@@ -144,3 +151,60 @@ class EventEmitter:
             else:
                 sink.record(envelope)
         return envelope
+
+
+class OtelBridge:
+    """Adapt redacted envelopes to caller-configured OpenTelemetry APIs."""
+
+    def __init__(self) -> None:
+        try:
+            from opentelemetry import metrics, trace
+        except ImportError as exc:
+            raise ImportError("OtelBridge requires the telemetry extra. Install with: datasluice[telemetry]") from exc
+        self._trace = trace
+        self._tracer = trace.get_tracer("datasluice.runtime")
+        meter = metrics.get_meter("datasluice.runtime")
+        self._retry_counter = meter.create_counter("datasluice.retry.count")
+        self._breaker_counter = meter.create_counter("datasluice.breaker.state_changes")
+        self._budget_histogram = meter.create_histogram("datasluice.budget.usage")
+
+    def correlation_ids(self) -> Mapping[str, object]:
+        """Return the active trace identifiers when a caller SDK has created one."""
+        span_context = self._trace.get_current_span().get_span_context()
+        if not span_context.is_valid:
+            return {}
+        return {"trace_id": f"{span_context.trace_id:032x}", "span_id": f"{span_context.span_id:016x}"}
+
+    def emitter(self, *, sinks: tuple[EventSink | Callable[[EventEnvelope], None], ...] = ()) -> EventEmitter:
+        """Create an emitter that correlates envelopes and exports to this bridge."""
+        return EventEmitter(sinks=(*sinks, self), correlation_id_provider=self.correlation_ids)
+
+    def record(self, event: EventEnvelope) -> None:
+        """Record one redacted envelope as a short-lived span and optional metrics."""
+        attributes = self._attributes(event)
+        span_type = event.metadata.get("span_type", "request")
+        name = f"catalog.{span_type}" if isinstance(span_type, str) else "catalog.request"
+        with self._tracer.start_as_current_span(name, attributes=attributes):
+            pass
+        self._record_metrics(event, attributes)
+
+    def _attributes(self, event: EventEnvelope) -> dict[str, str | int | float | bool]:
+        attributes: dict[str, str | int | float | bool] = {
+            "datasluice.operation_id": event.operation_id,
+            "datasluice.platform": event.platform,
+            "datasluice.outcome": event.outcome,
+        }
+        for key, value in event.correlation_ids.items():
+            if isinstance(value, str | int | float | bool):
+                attributes[f"datasluice.correlation.{key}"] = value
+        return attributes
+
+    def _record_metrics(self, event: EventEnvelope, attributes: Mapping[str, str | int | float | bool]) -> None:
+        retry_count = event.metadata.get("retry_count")
+        if isinstance(retry_count, int) and retry_count > 0:
+            self._retry_counter.add(retry_count, attributes=attributes)
+        if event.outcome == "breaker_state_change":
+            self._breaker_counter.add(1, attributes=attributes)
+        budget_usage = event.metadata.get("budget_usage")
+        if isinstance(budget_usage, int | float) and budget_usage >= 0:
+            self._budget_histogram.record(float(budget_usage), attributes=attributes)
