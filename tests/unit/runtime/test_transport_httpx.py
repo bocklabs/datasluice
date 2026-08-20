@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
 from datasluice.runtime.transport.base import RuntimeRequest, TransportFailure
-from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
+from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
 
 def test_httpx_transport_maps_injected_response() -> None:
@@ -52,6 +54,34 @@ def test_httpx_transport_strips_credentials_and_redacts_sensitive_redirect_query
     )
 
     assert response.body == b"redirected"
+    assert len(seen) == 2
+    assert "Authorization" not in seen[1].headers
+    assert "redirect-secret" not in str(seen[1].url)
+    assert "keep=value" in str(seen[1].url)
+
+
+def test_async_httpx_transport_strips_credentials_and_redacts_sensitive_redirect_query() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(
+                302,
+                headers={"Location": "https://other.test/next?token=redirect-secret&keep=value"},
+            )
+        return httpx.Response(200, content=b"redirected")
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        response = await transport.send(
+            RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer request-secret"})
+        )
+        await transport.aclose()
+        assert response.body == b"redirected"
+
+    asyncio.run(send())
+
     assert len(seen) == 2
     assert "Authorization" not in seen[1].headers
     assert "redirect-secret" not in str(seen[1].url)
