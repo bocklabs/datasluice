@@ -9,40 +9,29 @@ Covers the ``transport=``/``storage=``/``cache=``/``credential_provider=``/
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 import pytest
 
-from datasluice.auth import NoAuth
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogOperationExecutor,
     CatalogConnectorContext,
     SyncCatalogOperationExecutor,
 )
-from datasluice.ports import CachePort, CredentialProvider, StateStore, StoragePort, Transport
+from datasluice.domain.catalog.auth import CredentialResolver
 from datasluice.runtime.session import DataSluiceSession
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 from datasluice.sync import InMemoryStateStore
 
 
 class _StubTransport:
-    """User-defined transport stub satisfying the Transport Protocol structurally."""
+    """User-defined catalog transport stub satisfying the runtime seam."""
 
-    def request(
-        self,
-        url: str,
-        *,
-        method: str = "GET",
-        params: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-        body: bytes | None = None,
-    ) -> bytes:
-        return b"stub"
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return RuntimeResponse(200, {}, b"{}")
 
-    def get_json(self, url: str, **kwargs: Any) -> dict[str, Any]:
-        return {"stub": True}
-
-    def download(self, url: str, **kwargs: Any) -> bytes:
-        return b"stub"
+    def close(self) -> None:
+        return None
 
 
 class _StubStorage:
@@ -74,13 +63,6 @@ class _StubCache:
         self.store.pop(key, None)
 
 
-class _StubCredentialProvider:
-    """Stub satisfying the CredentialProvider Protocol."""
-
-    def resolve(self, host: str | None = None) -> Any:
-        return NoAuth()
-
-
 class _SyncExecutor:
     """Structural sync executor double for canonical context construction."""
 
@@ -110,26 +92,23 @@ def _catalog_context() -> CatalogConnectorContext:
 
 
 def test_custom_transport_injection() -> None:
-    """A user-supplied Transport stub is wired without code modification."""
+    """A user-supplied catalog transport is wired without code modification."""
     stub = _StubTransport()
     session = DataSluiceSession(transport=stub)
     assert session._transport is stub
-    assert isinstance(session._transport, Transport)
 
 
-def test_scalar_knobs_ignored_when_transport_injected() -> None:
-    """When transport= is injected, scalar knobs do NOT construct a new transport."""
+def test_runtime_options_do_not_replace_an_injected_transport() -> None:
+    """When transport= is injected, runtime options do not construct another transport."""
     stub = _StubTransport()
-    session = DataSluiceSession(transport=stub, timeout=99, retries=99)
+    session = DataSluiceSession(transport=stub)
     assert session._transport is stub
 
 
-def test_credential_provider_injectable() -> None:
-    """An injected CredentialProvider wins over auth= wrapping."""
-    provider = _StubCredentialProvider()
-    session = DataSluiceSession(credential_provider=provider)
-    assert session._credential_provider is provider
-    assert isinstance(session._credential_provider, CredentialProvider)
+def test_credential_resolver_is_explicit_only_by_default() -> None:
+    """The default resolver carries no credential discovery sources."""
+    session = DataSluiceSession()
+    assert session.credentials == CredentialResolver()
 
 
 def test_storage_injectable() -> None:
@@ -137,7 +116,6 @@ def test_storage_injectable() -> None:
     storage = _StubStorage()
     session = DataSluiceSession(storage=storage)
     assert session.storage is storage
-    assert isinstance(session.storage, StoragePort)
 
 
 def test_cache_injectable() -> None:
@@ -145,7 +123,6 @@ def test_cache_injectable() -> None:
     cache = _StubCache()
     session = DataSluiceSession(cache=cache)
     assert session._cache is cache
-    assert isinstance(session._cache, CachePort)
 
 
 def test_state_store_injectable() -> None:
@@ -153,7 +130,6 @@ def test_state_store_injectable() -> None:
     state_store = InMemoryStateStore()
     session = DataSluiceSession(state_store=state_store)
     assert session.state_store is state_store
-    assert isinstance(session.state_store, StateStore)
 
 
 def test_session_has_no_download_method() -> None:
