@@ -152,6 +152,38 @@ class CatalogRateLimitError(CatalogError):
         self.retry_after = float(retry_after) if retry_after is not None else None
 
 
+class BudgetExhaustedError(CatalogError):
+    """Raised when an operation exceeds its finite runtime time budget."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        operation: str,
+        platform: CatalogPlatform | str,
+        capability_state: str | None = None,
+        safe_action: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+        retry_state: Mapping[str, object] | None = None,
+    ) -> None:
+        for value, name in ((elapsed_seconds, "Elapsed"), (budget_seconds, "Budget")):
+            if (type(value) is not int and type(value) is not float) or value < 0:
+                raise ValueError(f"{name} seconds must be non-negative numbers.")
+        if budget_seconds <= 0:
+            raise ValueError("Budget seconds must be a positive number.")
+        super().__init__(
+            message,
+            operation=operation,
+            platform=platform,
+            capability_state=capability_state,
+            safe_action=safe_action,
+        )
+        self.elapsed_seconds = float(elapsed_seconds)
+        self.budget_seconds = float(budget_seconds)
+        self.retry_state = _bounded_metadata(retry_state)
+
+
 class CatalogUnavailableError(CatalogError):
     """Raised when a catalog deployment or circuit is unavailable."""
 
