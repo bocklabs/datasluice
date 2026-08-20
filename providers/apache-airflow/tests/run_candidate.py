@@ -27,6 +27,7 @@ import zipfile
 from email.message import Message
 from email.parser import Parser
 from pathlib import Path
+from urllib.parse import unquote
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -286,7 +287,7 @@ def _assert_datasluice_is_local(core_wheel: Path, venv: Path) -> None:
     url = payload.get("url", "")
     if not url.startswith("file://"):
         raise RuntimeError(f"datasluice was installed from a non-local URL: {url}")
-    installed = Path(url.removeprefix("file://")).resolve()
+    installed = Path(unquote(url.removeprefix("file://"))).resolve()
     expected = core_wheel.resolve()
     if installed != expected:
         raise RuntimeError(
