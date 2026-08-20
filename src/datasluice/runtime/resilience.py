@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from threading import RLock
 from time import monotonic
 
@@ -38,10 +38,12 @@ class DeadlineMonitor:
         """Return the remaining total operation time without clipping negatives."""
         return self._budget.total - (self._clock() - self._started_at)
 
-    def assert_dispatchable(self, operation: str, platform: str) -> None:
+    def assert_dispatchable(self, operation: str | None = None, platform: str | None = None) -> None:
         """Raise a typed error when the operation deadline has expired."""
-        self._operation = operation
-        self._platform = platform
+        if operation is not None:
+            self._operation = operation
+        if platform is not None:
+            self._platform = platform
         if self.remaining() <= 0:
             self._raise_exhausted({"phase": "dispatch"})
 
@@ -101,6 +103,7 @@ class RetryLoop:
         """Send until a terminal response or transport failure is reached."""
         last_failure: TransportFailure | None = None
         for attempt in range(1, self._max_attempts + 1):
+            self._deadline.assert_dispatchable()
             try:
                 response = send()
                 status_code = response.status_code
@@ -135,6 +138,52 @@ class RetryLoop:
                 delay,
             )
             self._sleep(delay)
+        raise RuntimeError("Retry loop exhausted without a terminal runtime outcome.")
+
+    async def run_async(
+        self,
+        send: Callable[[], Awaitable[RuntimeResponse]],
+        *,
+        sleep: Callable[[float], Awaitable[None]],
+    ) -> RuntimeResponse:
+        """Asynchronously send until a terminal response or transport failure is reached."""
+        last_failure: TransportFailure | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            self._deadline.assert_dispatchable()
+            try:
+                response = await send()
+                status_code = response.status_code
+                retry_after = response.retry_after
+            except TransportFailure as exc:
+                last_failure = exc
+                response = None
+                status_code = None
+                retry_after = None
+            decision = RetryDecision.for_response(
+                attempt=attempt,
+                max_attempts=self._max_attempts,
+                status_code=status_code,
+                retry_after=retry_after,
+                idempotency=self._idempotency,
+                budget=self._budget,
+            )
+            if not decision.retry:
+                if response is not None:
+                    return response
+                assert last_failure is not None
+                raise last_failure
+            delay = decision.delay or 0.0
+            self._deadline.check_wait(
+                delay,
+                retry_state={"attempt": attempt, "max_attempts": self._max_attempts, "reason": decision.reason},
+            )
+            logger.warning(
+                "Attempt %d/%d received retryable runtime outcome — retrying in %.1fs",
+                attempt,
+                self._max_attempts,
+                delay,
+            )
+            await sleep(delay)
         raise RuntimeError("Retry loop exhausted without a terminal runtime outcome.")
 
 
