@@ -8,7 +8,7 @@ from datetime import date
 
 import pytest
 
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard
+from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -28,12 +28,20 @@ from datasluice.domain.catalog.profiles import (
     ProbeResponseClass,
     RoleClassification,
 )
-from datasluice.errors.catalog import CatalogValidationError, UnsupportedCapabilityError
+from datasluice.errors.catalog import (
+    CatalogError,
+    CatalogValidationError,
+    ForbiddenError,
+    UnauthenticatedError,
+    UnsupportedCapabilityError,
+)
 from datasluice.runtime.capability import (
     EffectiveCapabilityCache,
     build_catalog_operation_guard,
 )
+from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 
 class _Clock:
@@ -209,17 +217,23 @@ def test_async_tasks_share_one_in_flight_probe_and_result() -> None:
 
 
 @pytest.mark.parametrize(
-    ("response_class", "expected_state"),
+    ("response_class", "expected_state", "expected_error"),
     [
-        (ProbeResponseClass.UNSUPPORTED, EffectiveCapabilityState.UNSUPPORTED),
-        (ProbeResponseClass.UNAUTHORIZED, EffectiveCapabilityState.UNAUTHORIZED),
-        (ProbeResponseClass.FORBIDDEN, EffectiveCapabilityState.FORBIDDEN),
-        (ProbeResponseClass.UNAVAILABLE, EffectiveCapabilityState.UNAVAILABLE),
-        (ProbeResponseClass.DEPLOYMENT_DISABLED, EffectiveCapabilityState.DEPLOYMENT_DISABLED),
+        (ProbeResponseClass.UNSUPPORTED, EffectiveCapabilityState.UNSUPPORTED, UnsupportedCapabilityError),
+        (ProbeResponseClass.UNAUTHORIZED, EffectiveCapabilityState.UNAUTHORIZED, UnauthenticatedError),
+        (ProbeResponseClass.FORBIDDEN, EffectiveCapabilityState.FORBIDDEN, ForbiddenError),
+        (ProbeResponseClass.UNAVAILABLE, EffectiveCapabilityState.UNAVAILABLE, UnsupportedCapabilityError),
+        (
+            ProbeResponseClass.DEPLOYMENT_DISABLED,
+            EffectiveCapabilityState.DEPLOYMENT_DISABLED,
+            UnsupportedCapabilityError,
+        ),
     ],
 )
 def test_denied_probe_states_create_typed_guard_rejections(
-    response_class: ProbeResponseClass, expected_state: EffectiveCapabilityState
+    response_class: ProbeResponseClass,
+    expected_state: EffectiveCapabilityState,
+    expected_error: type[CatalogError],
 ) -> None:
     operation = _operation()
     runner = _CountingRunner(_evidence(operation, response_class))
@@ -227,7 +241,7 @@ def test_denied_probe_states_create_typed_guard_rejections(
     cache = EffectiveCapabilityCache(_profile(operation), runner)
     guard = build_catalog_operation_guard(operation.id, cache.resolve(operation.id))
 
-    with pytest.raises(UnsupportedCapabilityError) as raised:
+    with pytest.raises(expected_error) as raised:
         guard.require_allowed()
 
     assert raised.value.capability_state == expected_state.value
@@ -271,3 +285,161 @@ def test_guard_factory_returns_a_catalog_operation_guard() -> None:
     guard = build_catalog_operation_guard(operation.id, cache.resolve(operation.id))
 
     assert isinstance(guard, CatalogOperationGuard)
+
+
+def _request(operation: OperationId) -> CatalogOperationRequest:
+    return CatalogOperationRequest(operation, {"url": "http://127.0.0.1:8000/datasets/fixture"})
+
+
+def _envelope() -> bytes:
+    return (
+        b'{"schema_version":1,"kind":"result_envelope","items":[{"schema_version":1,"kind":"dataset",'
+        b'"id":{"schema_version":1,"kind":"catalog_id","platform":"reference","resource_kind":"dataset",'
+        b'"value":"fixture"},"name":"Fixture dataset","description":null,"extensions":{}}],"page":null,'
+        b'"warnings":[],"platform":null}'
+    )
+
+
+class _SyncTransport:
+    def __init__(self, responses: list[RuntimeResponse]) -> None:
+        self.responses = responses
+        self.requests: list[RuntimeRequest] = []
+
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        self.requests.append(request)
+        return self.responses.pop(0)
+
+    def close(self) -> None:
+        return None
+
+
+class _AsyncTransport:
+    def __init__(self, responses: list[RuntimeResponse]) -> None:
+        self.responses = responses
+        self.requests: list[RuntimeRequest] = []
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        self.requests.append(request)
+        return self.responses.pop(0)
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _SequenceRunner:
+    def __init__(self, operation: OperationSpec, response_classes: list[ProbeResponseClass]) -> None:
+        self.operation = operation
+        self.response_classes = response_classes
+        self.calls: list[OperationId] = []
+
+    def probe(self, operation_id: OperationId) -> ProbeEvidence:
+        self.calls.append(operation_id)
+        response_class = self.response_classes[min(len(self.calls) - 1, len(self.response_classes) - 1)]
+        return _evidence(self.operation, response_class)
+
+
+class _AsyncSequenceRunner:
+    def __init__(self, operation: OperationSpec) -> None:
+        self.operation = operation
+        self.calls: list[OperationId] = []
+
+    async def probe(self, operation_id: OperationId) -> ProbeEvidence:
+        self.calls.append(operation_id)
+        return _evidence(self.operation)
+
+
+def test_sync_client_probes_once_per_operation_and_capability_does_not_send() -> None:
+    operation = _operation()
+    runner = _SequenceRunner(operation, [ProbeResponseClass.SUCCESS])
+    transport = _SyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
+    client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
+
+    client.get(_request(operation.id))
+    client.get(_request(operation.id))
+
+    assert runner.calls == [operation.id]
+    assert len(transport.requests) == 2
+    assert client.capability(str(operation.id)) == "available"
+    assert len(transport.requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_error", "response_class"),
+    [
+        (401, UnauthenticatedError, ProbeResponseClass.UNAUTHORIZED),
+        (403, ForbiddenError, ProbeResponseClass.FORBIDDEN),
+    ],
+)
+def test_sync_client_maps_auth_response_and_rejects_second_dispatch(
+    status_code: int,
+    expected_error: type[CatalogError],
+    response_class: ProbeResponseClass,
+) -> None:
+    operation = _operation()
+    runner = _SequenceRunner(operation, [ProbeResponseClass.SUCCESS])
+    transport = _SyncTransport([RuntimeResponse(status_code, {}, b"")])
+    client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
+
+    with pytest.raises(expected_error) as first:
+        client.get(_request(operation.id))
+    with pytest.raises(expected_error) as second:
+        client.get(_request(operation.id))
+
+    assert first.value.capability_state == response_class.value
+    assert second.value.capability_state == response_class.value
+    assert runner.calls == [operation.id]
+    assert len(transport.requests) == 1
+
+
+def test_sync_client_retains_post_dispatch_forbidden_state_without_probe_runner() -> None:
+    operation = _operation()
+    transport = _SyncTransport([RuntimeResponse(403, {}, b"")])
+    client = SyncCatalogClient(transport, _profile(operation))
+
+    with pytest.raises(ForbiddenError):
+        client.get(_request(operation.id))
+    with pytest.raises(ForbiddenError):
+        client.get(_request(operation.id))
+
+    assert len(transport.requests) == 1
+
+
+def test_sync_client_capability_reports_deployment_disabled_without_transport_send() -> None:
+    operation = _operation()
+    runner = _SequenceRunner(operation, [ProbeResponseClass.DEPLOYMENT_DISABLED])
+    transport = _SyncTransport([])
+    client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
+
+    assert client.capability(str(operation.id)) == "deployment-disabled"
+    assert transport.requests == []
+
+
+def test_sync_client_invalidate_causes_a_new_probe() -> None:
+    operation = _operation()
+    runner = _SequenceRunner(operation, [ProbeResponseClass.SUCCESS, ProbeResponseClass.SUCCESS])
+    transport = _SyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
+    client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
+
+    client.get(_request(operation.id))
+    client.invalidate(str(operation.id))
+    client.get(_request(operation.id))
+
+    assert runner.calls == [operation.id, operation.id]
+    assert len(transport.requests) == 2
+
+
+def test_async_client_uses_async_probe_runner_and_invalidate() -> None:
+    async def exercise() -> None:
+        operation = _operation()
+        runner = _AsyncSequenceRunner(operation)
+        transport = _AsyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
+        client = AsyncCatalogClient(transport, _profile(operation), probe_runner=runner)
+
+        await client.get(_request(operation.id))
+        client.invalidate(str(operation.id))
+        await client.get(_request(operation.id))
+
+        assert runner.calls == [operation.id, operation.id]
+        assert len(transport.requests) == 2
+
+    asyncio.run(exercise())

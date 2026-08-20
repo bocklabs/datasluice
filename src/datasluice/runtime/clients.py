@@ -20,7 +20,7 @@ from datasluice.domain.catalog.profiles import (
     DeclaredCapabilityProfile,
     EffectiveCapabilityProfile,
     EffectiveCapabilityState,
-    EffectiveOperationCapability,
+    ProbeResponseClass,
 )
 from datasluice.domain.catalog.resilience import CircuitKey, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
@@ -30,9 +30,16 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
     map_catalog_error,
 )
+from datasluice.runtime.capability import (
+    AsyncProbeRunner,
+    EffectiveCapabilityCache,
+    ProbeRunner,
+    build_catalog_operation_guard,
+)
 from datasluice.runtime.constants import (
     DEFAULT_BREAKER_COOLDOWN_SECONDS,
     DEFAULT_BREAKER_FAILURE_THRESHOLD,
+    DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
     DEFAULT_CONNECT_BUDGET_SECONDS,
     DEFAULT_OPERATION_TOTAL_BUDGET_SECONDS,
     DEFAULT_READ_BUDGET_SECONDS,
@@ -52,26 +59,6 @@ class AsyncCatalogTransport(Protocol):
 
     async def aclose(self) -> None:
         """Release asynchronous resources."""
-
-
-def _effective_profile(profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile) -> EffectiveCapabilityProfile:
-    if isinstance(profile, EffectiveCapabilityProfile):
-        return profile
-    states = {
-        "core": EffectiveCapabilityState.CORE,
-        "optional": EffectiveCapabilityState.OPTIONAL,
-        "authenticated": EffectiveCapabilityState.AUTHENTICATED,
-        "admin": EffectiveCapabilityState.ADMIN,
-    }
-    return EffectiveCapabilityProfile(
-        declared_profile=profile,
-        capabilities={
-            operation_id: EffectiveOperationCapability(
-                operation=operation, state=states[operation.capability_class.value]
-            )
-            for operation_id, operation in profile.operations.items()
-        },
-    )
 
 
 def _request_for(operation: CatalogOperationRequest) -> RuntimeRequest:
@@ -130,8 +117,15 @@ def _result(
     operation: CatalogOperationRequest,
     response: RuntimeResponse,
     decoder: Callable[[object], object],
+    record_response: Callable[[ProbeResponseClass], object] | None = None,
 ) -> ResultEnvelope[object]:
     if not 200 <= response.status_code < 300:
+        response_class = {
+            401: ProbeResponseClass.UNAUTHORIZED,
+            403: ProbeResponseClass.FORBIDDEN,
+        }.get(response.status_code)
+        if response_class is not None and record_response is not None:
+            record_response(response_class)
         native = NativeCatalogError(
             "Catalog operation returned an unsuccessful HTTP status.",
             operation=str(operation.operation_id),
@@ -168,9 +162,17 @@ class SyncCatalogClient:
         clock: Callable[[], float] = monotonic,
         retry_sleep: Callable[[float], None] = sleep,
         emitter: EventEmitter | None = None,
+        probe_runner: ProbeRunner | None = None,
+        capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
     ) -> None:
         self._transport = transport
-        self._profile = _effective_profile(profile)
+        self._capabilities = EffectiveCapabilityCache(
+            profile,
+            probe_runner=probe_runner,
+            ttl_seconds=capability_cache_ttl,
+            clock=clock,
+        )
+        self._profile = self._capabilities.baseline_profile
         self._credentials = credentials
         self._budget = budget or _default_budget()
         self._breakers = breakers or BreakerRegistry(
@@ -204,7 +206,8 @@ class SyncCatalogClient:
     ) -> ResultEnvelope[object]:
         if self._closed:
             raise RuntimeError("The synchronous catalog client is closed.")
-        CatalogOperationGuard(operation.operation_id, profile=self._profile).require_allowed()
+        effective = self._capabilities.resolve(operation.operation_id)
+        build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
         request = _request_for(operation)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
@@ -237,7 +240,14 @@ class SyncCatalogClient:
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
             ).run(send)
-            result = _result(operation, response, decoder)
+            result = _result(
+                operation,
+                response,
+                decoder,
+                record_response=lambda response_class: self._capabilities.record_response(
+                    operation.operation_id, response_class
+                ),
+            )
         except BudgetExhaustedError:
             self._emit(operation, "budget_exhausted", budget_usage=max(0.0, self._budget.total - deadline.remaining()))
             raise
@@ -277,8 +287,14 @@ class SyncCatalogClient:
         return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, DatasetRecord.from_dict))
 
     def capability(self, operation_id: str) -> str:
-        """Return the non-dispatching profile classification."""
-        return "available" if self._profile.guard(_operation_id(operation_id, self._profile)).allowed else "unavailable"
+        """Return the effective classification without dispatching transport I/O."""
+        operation = _operation_id(operation_id, self._profile)
+        state = self._capabilities.resolve(operation).guard(operation).state
+        return _capability_value(state)
+
+    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
+        """Discard all effective capability state or one operation's state."""
+        self._capabilities.invalidate(_coerce_operation_id(operation_id, self._profile))
 
     def platform_metadata(self) -> Mapping[str, object]:
         """Return safe pinned-profile metadata."""
@@ -319,9 +335,17 @@ class AsyncCatalogClient:
         clock: Callable[[], float] = monotonic,
         retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         emitter: EventEmitter | None = None,
+        probe_runner: AsyncProbeRunner | None = None,
+        capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
     ) -> None:
         self._transport = transport
-        self._profile = _effective_profile(profile)
+        self._capabilities = EffectiveCapabilityCache(
+            profile,
+            async_probe_runner=probe_runner,
+            ttl_seconds=capability_cache_ttl,
+            clock=clock,
+        )
+        self._profile = self._capabilities.baseline_profile
         self._credentials = credentials
         self._budget = budget or _default_budget()
         self._breakers = breakers or BreakerRegistry(
@@ -355,7 +379,8 @@ class AsyncCatalogClient:
     ) -> ResultEnvelope[object]:
         if self._closed:
             raise RuntimeError("The asynchronous catalog client is closed.")
-        CatalogOperationGuard(operation.operation_id, profile=self._profile).require_allowed()
+        effective = await self._capabilities.resolve_async(operation.operation_id)
+        build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
         request = _request_for(operation)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
@@ -388,7 +413,14 @@ class AsyncCatalogClient:
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
             ).run_async(send, sleep=self._retry_sleep)
-            result = _result(operation, response, decoder)
+            result = _result(
+                operation,
+                response,
+                decoder,
+                record_response=lambda response_class: self._capabilities.record_response(
+                    operation.operation_id, response_class
+                ),
+            )
         except BudgetExhaustedError:
             self._emit(operation, "budget_exhausted", budget_usage=max(0.0, self._budget.total - deadline.remaining()))
             raise
@@ -428,8 +460,14 @@ class AsyncCatalogClient:
         return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, DatasetRecord.from_dict))
 
     def capability(self, operation_id: str) -> str:
-        """Return the non-dispatching profile classification."""
-        return "available" if self._profile.guard(_operation_id(operation_id, self._profile)).allowed else "unavailable"
+        """Return the cached effective classification without dispatching transport I/O."""
+        operation = _operation_id(operation_id, self._profile)
+        state = self._capabilities.peek(operation).guard(operation).state
+        return _capability_value(state)
+
+    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
+        """Discard all effective capability state or one operation's state."""
+        self._capabilities.invalidate(_coerce_operation_id(operation_id, self._profile))
 
     def platform_metadata(self) -> Mapping[str, object]:
         """Return safe pinned-profile metadata."""
@@ -457,6 +495,26 @@ def _operation_id(value: str, profile: EffectiveCapabilityProfile) -> OperationI
     return next(
         (operation_id for operation_id in profile.capabilities if str(operation_id) == value),
         OperationId("unknown", "unknown", "unknown"),
+    )
+
+
+def _coerce_operation_id(value: str | OperationId | None, profile: EffectiveCapabilityProfile) -> OperationId | None:
+    if value is None:
+        return None
+    return value if isinstance(value, OperationId) else _operation_id(value, profile)
+
+
+def _capability_value(state: EffectiveCapabilityState) -> str:
+    return (
+        "available"
+        if state
+        in {
+            EffectiveCapabilityState.CORE,
+            EffectiveCapabilityState.OPTIONAL,
+            EffectiveCapabilityState.AUTHENTICATED,
+            EffectiveCapabilityState.ADMIN,
+        }
+        else state.value
     )
 
 

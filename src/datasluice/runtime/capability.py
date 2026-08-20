@@ -21,7 +21,13 @@ from datasluice.domain.catalog.profiles import (
     ProbeEvidence,
     ProbeResponseClass,
 )
-from datasluice.errors.catalog import CatalogValidationError
+from datasluice.errors.catalog import (
+    CatalogError,
+    CatalogValidationError,
+    ForbiddenError,
+    UnauthenticatedError,
+    UnsupportedCapabilityError,
+)
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
 
 
@@ -89,13 +95,14 @@ class EffectiveCapabilityCache:
     def resolve(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
         """Resolve one operation, probing it once per fresh cache interval."""
         self._validate_operation_id(operation_id)
-        if operation_id not in self._declared_profile.operations or self._probe_runner is None:
-            return self._baseline
-
         with self._lock:
             cached = self._fresh_entry(operation_id)
             if cached is not None:
                 return cached.profile
+        if operation_id not in self._declared_profile.operations or self._probe_runner is None:
+            return self._baseline
+
+        with self._lock:
             flight = self._sync_flights.get(operation_id)
             leader = flight is None
             if leader:
@@ -127,14 +134,15 @@ class EffectiveCapabilityCache:
     async def resolve_async(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
         """Resolve one operation through an async runner with single-flight sharing."""
         self._validate_operation_id(operation_id)
+        with self._lock:
+            cached = self._fresh_entry(operation_id)
+            if cached is not None:
+                return cached.profile
         if operation_id not in self._declared_profile.operations or self._async_probe_runner is None:
             return self._baseline
 
         loop = asyncio.get_running_loop()
         with self._lock:
-            cached = self._fresh_entry(operation_id)
-            if cached is not None:
-                return cached.profile
             flight = self._async_flights.get(operation_id)
             leader = flight is None
             if leader:
@@ -299,7 +307,29 @@ def build_catalog_operation_guard(
     operation_id: OperationId, profile: EffectiveCapabilityProfile
 ) -> CatalogOperationGuard:
     """Build the normalized guard for one effective operation profile."""
-    return CatalogOperationGuard(operation_id=operation_id, profile=profile)
+    return _EffectiveCapabilityGuard(operation_id=operation_id, profile=profile)
+
+
+class _EffectiveCapabilityGuard(CatalogOperationGuard):
+    """Raise the normalized error matching the cached capability state."""
+
+    def require_allowed(self) -> None:
+        if self.profile is not None:
+            decision = self.profile.guard(self.operation_id)
+            if not decision.allowed:
+                error_type: type[CatalogError] = {
+                    EffectiveCapabilityState.UNAUTHORIZED: UnauthenticatedError,
+                    EffectiveCapabilityState.FORBIDDEN: ForbiddenError,
+                }.get(decision.state, UnsupportedCapabilityError)
+                raise error_type(
+                    f"The catalog operation is {decision.state.value}.",
+                    operation=str(self.operation_id),
+                    platform=self.operation_id.platform,
+                    capability_state=decision.state.value,
+                    safe_action=decision.remedy or "Inspect the deployment capability profile before retrying.",
+                )
+        if self.permissions is not None:
+            self.permissions.require(str(self.operation_id))
 
 
 def _baseline_profile(profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile) -> EffectiveCapabilityProfile:
