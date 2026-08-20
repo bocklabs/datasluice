@@ -1,0 +1,129 @@
+"""Tests for opt-in secret-manager credential discovery."""
+
+from __future__ import annotations
+
+import sys
+from types import SimpleNamespace
+from typing import cast
+
+import pytest
+
+from datasluice.domain.catalog.auth import CKANCredential, CredentialSource, SecretValue, SocrataCredential
+from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.runtime.credentials import CredentialResolutionError
+from datasluice.runtime.credentials.aws import AwsSecretsManagerProvider
+from datasluice.runtime.credentials.vault import VaultClientFactory, VaultCredentialProvider
+
+
+def test_missing_boto3_names_the_aws_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "boto3", None)
+
+    with pytest.raises(ImportError, match=r"datasluice\[secrets-aws\]"):
+        AwsSecretsManagerProvider("datasluice/ckan").discover(CatalogPlatform.CKAN, {})
+
+
+def test_aws_json_secret_discovers_secret_value() -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def client_factory(region: str | None) -> _AwsClient:
+        calls.append(("factory", region))
+        return _AwsClient('{"api_token": "aws-secret"}', calls)
+
+    discovered = AwsSecretsManagerProvider(
+        "datasluice/ckan", region="eu-central-1", client_factory=client_factory
+    ).discover(CatalogPlatform.CKAN, {})
+
+    credential = discovered[CredentialSource.SECRET_MANAGER]
+    assert calls == [("factory", "eu-central-1"), ("get_secret_value", "datasluice/ckan")]
+    assert isinstance(credential, CKANCredential)
+    assert isinstance(credential.api_token, SecretValue)
+    assert credential.api_token.reveal() == "aws-secret"
+
+
+def test_missing_hvac_names_the_vault_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "hvac", None)
+
+    with pytest.raises(ImportError, match=r"datasluice\[secrets-vault\]"):
+        _vault_provider().discover(CatalogPlatform.CKAN, {})
+
+
+def test_vault_double_nested_secret_discovers_secret_values() -> None:
+    def client_factory(url: str, token: str) -> object:
+        return _VaultClient(
+            {"data": {"data": {"app_token": "vault-app-token", "username": "reader", "password": "vault-password"}}}
+        )
+
+    discovered = _vault_provider(client_factory=cast(VaultClientFactory, client_factory)).discover(
+        CatalogPlatform.SOCRATA, {}
+    )
+
+    credential = discovered[CredentialSource.SECRET_MANAGER]
+    assert isinstance(credential, SocrataCredential)
+    assert isinstance(credential.app_token, SecretValue)
+    assert credential.app_token.reveal() == "vault-app-token"
+    assert credential.username == "reader"
+    assert credential.password is not None
+    assert isinstance(credential.password, SecretValue)
+    assert credential.password.reveal() == "vault-password"
+
+
+@pytest.mark.parametrize(
+    ("source", "secret"),
+    [
+        ("aws", "aws-secret"),
+        ("vault", "vault-token"),
+    ],
+)
+def test_secret_manager_failures_are_redacted(source: str, secret: str) -> None:
+    provider = (
+        AwsSecretsManagerProvider("datasluice/ckan", client_factory=lambda region: _FailingAwsClient())
+        if source == "aws"
+        else _vault_provider(client_factory=cast(VaultClientFactory, lambda url, token: _FailingVaultClient()))
+    )
+
+    with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*") as exc_info:
+        provider.discover(CatalogPlatform.CKAN, {})
+
+    message = str(exc_info.value)
+    assert secret not in message
+    assert "https://vault.example" not in message
+
+
+class _AwsClient:
+    def __init__(self, secret: str, calls: list[tuple[str, str | None]]) -> None:
+        self._secret = secret
+        self._calls = calls
+
+    def get_secret_value(self, *, SecretId: str) -> dict[str, str]:
+        self._calls.append(("get_secret_value", SecretId))
+        return {"SecretString": self._secret}
+
+
+class _VaultClient:
+    def __init__(self, response: dict[str, object]) -> None:
+        self.secrets = SimpleNamespace(
+            kv=SimpleNamespace(v2=SimpleNamespace(read_secret_version=lambda **kwargs: response))
+        )
+
+
+class _FailingAwsClient:
+    def get_secret_value(self, *, SecretId: str) -> dict[str, str]:
+        raise RuntimeError("aws-secret")
+
+
+class _FailingVaultClient:
+    secrets = SimpleNamespace(
+        kv=SimpleNamespace(
+            v2=SimpleNamespace(read_secret_version=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("vault-token")))
+        )
+    )
+
+
+def _vault_provider(client_factory: VaultClientFactory | None = None) -> VaultCredentialProvider:
+    return VaultCredentialProvider(
+        url="https://vault.example",
+        token="vault-token",
+        mount_point="kv",
+        path="datasluice/ckan",
+        client_factory=client_factory,
+    )

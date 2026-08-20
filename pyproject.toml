@@ -49,6 +49,8 @@ docs = [
 
 [project.optional-dependencies]
 keychain = ["keyring>=25.7"]
+secrets-aws = ["boto3>=1.43"]
+secrets-vault = ["hvac>=2.4"]
 pandas = ["pandas"]
 polars = ["polars"]
 dlt = ["dlt"]
