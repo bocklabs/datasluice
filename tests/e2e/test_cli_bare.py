@@ -73,6 +73,32 @@ def test_bare_wheel_imports_from_venv_not_checkout(bare_env: dict[str, str]) -> 
     assert bare_env["venv"] in result.stdout
 
 
+def test_bare_wheel_import_sweep_stays_optional_dependency_free(bare_env: dict[str, str]) -> None:
+    """Every base-reachable public package imports without optional distributions."""
+    result = subprocess.run(
+        [
+            bare_env["python"],
+            "-c",
+            "import sys;"
+            "import datasluice;"
+            "import datasluice.runtime;"
+            "import datasluice.connectors.catalog.ckan;"
+            "import datasluice.connectors.catalog.udata;"
+            "import datasluice.connectors.catalog.socrata;"
+            "optional = ('boto3', 'dlt', 'duckdb', 'fsspec', 'httpx', 'hvac', 'keyring', 'openpyxl', "
+            "'opentelemetry', 'pandas', 'polars', 'pyarrow', 'zstandard');"
+            "loaded = [name for name in optional if any(module == name or module.startswith(name + '.') "
+            "for module in sys.modules)];"
+            "assert not loaded, loaded",
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
     """The bare wheel exposes the datasluice console script and --help."""
     result = subprocess.run(
