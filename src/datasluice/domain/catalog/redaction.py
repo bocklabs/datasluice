@@ -32,7 +32,7 @@ SENSITIVE_PARTS = frozenset(
     }
 )
 CREDENTIAL_QUERY_RE = re.compile(
-    r"(?i)([?&;][^=&;\s]*(?:api[_-]?key|token|secret|password|passwd|credential|authorization|signature)"
+    r"(?i)((?:[?&;]|\b)[^=&;\s]*(?:api[_-]?key|token|secret|password|passwd|credential|authorization|signature)"
     r"[^=&;\s]*)=[^&;\s]+"
 )
 AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")

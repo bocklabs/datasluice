@@ -24,7 +24,12 @@ from datasluice.domain.catalog.profiles import (
 )
 from datasluice.domain.catalog.resilience import CircuitKey, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
-from datasluice.errors.catalog import CatalogUnavailableError, NativeCatalogError, map_catalog_error
+from datasluice.errors.catalog import (
+    BudgetExhaustedError,
+    CatalogUnavailableError,
+    NativeCatalogError,
+    map_catalog_error,
+)
 from datasluice.runtime.constants import (
     DEFAULT_BREAKER_COOLDOWN_SECONDS,
     DEFAULT_BREAKER_FAILURE_THRESHOLD,
@@ -33,6 +38,7 @@ from datasluice.runtime.constants import (
     DEFAULT_READ_BUDGET_SECONDS,
     DEFAULT_WRITE_BUDGET_SECONDS,
 )
+from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse, TransportFailure
 from datasluice.runtime.transport.user_agent import build_user_agent
@@ -161,6 +167,7 @@ class SyncCatalogClient:
         max_attempts: int = 3,
         clock: Callable[[], float] = monotonic,
         retry_sleep: Callable[[float], None] = sleep,
+        emitter: EventEmitter | None = None,
     ) -> None:
         self._transport = transport
         self._profile = _effective_profile(profile)
@@ -172,6 +179,7 @@ class SyncCatalogClient:
         self._max_attempts = max_attempts
         self._clock = clock
         self._retry_sleep = retry_sleep
+        self._emitter = emitter or EventEmitter()
         self._closed = False
 
     @property
@@ -202,25 +210,59 @@ class SyncCatalogClient:
         deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
+            self._emit(operation, "breaker_open")
             raise _circuit_open_error(operation)
 
+        attempts = 0
+
         def send() -> RuntimeResponse:
+            nonlocal attempts
+            attempts += 1
+            before = self._breakers.inspect(key)
             try:
                 response = self._transport.send(request)
             except TransportFailure:
-                self._breakers.record_transport_failure(key)
+                after = self._breakers.record_transport_failure(key)
+                self._emit_breaker_change(operation, before.open, after.open)
                 raise
-            self._breakers.record_response(key, response.status_code)
+            after = self._breakers.record_response(key, response.status_code)
+            self._emit_breaker_change(operation, before.open, after.open)
             return response
 
-        response = RetryLoop(
-            budget=self._budget,
-            idempotency=_idempotency_for(operation),
-            deadline=deadline,
-            max_attempts=self._max_attempts,
-            sleep=self._retry_sleep,
-        ).run(send)
-        return _result(operation, response, decoder)
+        try:
+            response = RetryLoop(
+                budget=self._budget,
+                idempotency=_idempotency_for(operation),
+                deadline=deadline,
+                max_attempts=self._max_attempts,
+                sleep=self._retry_sleep,
+            ).run(send)
+            result = _result(operation, response, decoder)
+        except BudgetExhaustedError:
+            self._emit(operation, "budget_exhausted", budget_usage=max(0.0, self._budget.total - deadline.remaining()))
+            raise
+        except Exception:
+            self._emit(operation, "failed", retry_count=max(0, attempts - 1))
+            raise
+        self._emit(
+            operation,
+            "succeeded",
+            retry_count=max(0, attempts - 1),
+            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
+        )
+        return result
+
+    def _emit(self, operation: CatalogOperationRequest, outcome: str, **metadata: object) -> None:
+        self._emitter.record(
+            operation_id=str(operation.operation_id),
+            platform=operation.operation_id.platform,
+            outcome=outcome,
+            metadata=metadata,
+        )
+
+    def _emit_breaker_change(self, operation: CatalogOperationRequest, before: bool, after: bool) -> None:
+        if before != after:
+            self._emit(operation, "breaker_state_change", breaker_open=after)
 
     def get(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard | None = None
@@ -276,6 +318,7 @@ class AsyncCatalogClient:
         max_attempts: int = 3,
         clock: Callable[[], float] = monotonic,
         retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        emitter: EventEmitter | None = None,
     ) -> None:
         self._transport = transport
         self._profile = _effective_profile(profile)
@@ -287,6 +330,7 @@ class AsyncCatalogClient:
         self._max_attempts = max_attempts
         self._clock = clock
         self._retry_sleep = retry_sleep
+        self._emitter = emitter or EventEmitter()
         self._closed = False
 
     @property
@@ -317,25 +361,59 @@ class AsyncCatalogClient:
         deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
+            self._emit(operation, "breaker_open")
             raise _circuit_open_error(operation)
 
+        attempts = 0
+
         async def send() -> RuntimeResponse:
+            nonlocal attempts
+            attempts += 1
+            before = self._breakers.inspect(key)
             try:
                 response = await self._transport.send(request)
             except TransportFailure:
-                self._breakers.record_transport_failure(key)
+                after = self._breakers.record_transport_failure(key)
+                self._emit_breaker_change(operation, before.open, after.open)
                 raise
-            self._breakers.record_response(key, response.status_code)
+            after = self._breakers.record_response(key, response.status_code)
+            self._emit_breaker_change(operation, before.open, after.open)
             return response
 
-        response = await RetryLoop(
-            budget=self._budget,
-            idempotency=_idempotency_for(operation),
-            deadline=deadline,
-            max_attempts=self._max_attempts,
-            sleep=lambda _: None,
-        ).run_async(send, sleep=self._retry_sleep)
-        return _result(operation, response, decoder)
+        try:
+            response = await RetryLoop(
+                budget=self._budget,
+                idempotency=_idempotency_for(operation),
+                deadline=deadline,
+                max_attempts=self._max_attempts,
+                sleep=lambda _: None,
+            ).run_async(send, sleep=self._retry_sleep)
+            result = _result(operation, response, decoder)
+        except BudgetExhaustedError:
+            self._emit(operation, "budget_exhausted", budget_usage=max(0.0, self._budget.total - deadline.remaining()))
+            raise
+        except Exception:
+            self._emit(operation, "failed", retry_count=max(0, attempts - 1))
+            raise
+        self._emit(
+            operation,
+            "succeeded",
+            retry_count=max(0, attempts - 1),
+            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
+        )
+        return result
+
+    def _emit(self, operation: CatalogOperationRequest, outcome: str, **metadata: object) -> None:
+        self._emitter.record(
+            operation_id=str(operation.operation_id),
+            platform=operation.operation_id.platform,
+            outcome=outcome,
+            metadata=metadata,
+        )
+
+    def _emit_breaker_change(self, operation: CatalogOperationRequest, before: bool, after: bool) -> None:
+        if before != after:
+            self._emit(operation, "breaker_state_change", breaker_open=after)
 
     async def get(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard | None = None

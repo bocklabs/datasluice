@@ -1059,6 +1059,47 @@ def test_outputs_are_secret_safe_by_default() -> None:
     assert "Bearer ***" in serialized_outputs
 
 
+def test_every_runtime_event_sink_is_secret_safe() -> None:
+    """Test 4: every shipped event sink receives only gate-redacted envelopes."""
+    from datasluice.runtime import events
+
+    class CapturingHandler(logging.Handler):
+        """Keep formatted log messages for sink assertions."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            """Capture one formatted log record."""
+            self.messages.append(self.format(record))
+
+    logger = logging.getLogger("datasluice.runtime.events.quality")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    logger.propagate = False
+    try:
+        sink_classes = [
+            value
+            for name, value in inspect.getmembers(events, inspect.isclass)
+            if name.endswith("Sink") and not getattr(value, "_is_protocol", False)
+        ]
+        sinks = [value(logger) if value is events.LoggingSink else value() for value in sink_classes]
+        envelope = events.EventEmitter(sinks=tuple(sinks)).record(
+            operation_id="reference/datasets/get",
+            platform="reference",
+            outcome="succeeded",
+            metadata={"bearer": "Bearer aBcDeFgH1234", "detail": "api_key=credential-value"},
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    serialized = json.dumps(envelope.to_dict())
+    list_outputs = [json.dumps(sink.events[0].to_dict()) for sink in sinks if isinstance(sink, events.ListSink)]
+    all_outputs = (serialized, *list_outputs, *handler.messages)
+    assert all("aBcDeFgH1234" not in output and "credential-value" not in output for output in all_outputs)
+
+
 def test_no_alias_shim_or_deprecation_wrapper_survives() -> None:
     """Test 4: public modules define no compatibility shims."""
     shim_tokens = ("DeprecationWarning", "PendingDeprecationWarning", "warnings.warn")
