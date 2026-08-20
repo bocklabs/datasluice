@@ -61,7 +61,7 @@ class AsyncCatalogTransport(Protocol):
         """Release asynchronous resources."""
 
 
-def _request_for(operation: CatalogOperationRequest) -> RuntimeRequest:
+def _request_for(operation: CatalogOperationRequest, credential: object | None = None) -> RuntimeRequest:
     url = operation.payload.get("url")
     if not isinstance(url, str) or not url:
         raise ValueError("Catalog runtime requests require a non-empty payload URL.")
@@ -74,6 +74,9 @@ def _request_for(operation: CatalogOperationRequest) -> RuntimeRequest:
     headers = operation.payload.get("headers", {})
     if not isinstance(headers, Mapping):
         raise ValueError("Catalog runtime request headers must be a mapping.")
+    access_token = getattr(credential, "access_token", None)
+    if isinstance(access_token, SecretValue):
+        headers = {"Authorization": f"Bearer {access_token.reveal()}", **headers}
     return RuntimeRequest(method=method, url=url, headers={"User-Agent": build_user_agent(), **headers}, body=body)
 
 
@@ -86,8 +89,8 @@ def _default_budget() -> TimeBudget:
     )
 
 
-def _credential_scope(credentials: CredentialResolver | None) -> str:
-    credential = credentials.explicit if credentials is not None else None
+def _credential_scope(credentials: object | None) -> str:
+    credential = credentials.explicit if isinstance(credentials, CredentialResolver) else None
     if credential is None:
         return "anonymous"
     digest = hashlib.sha256()
@@ -98,9 +101,17 @@ def _credential_scope(credentials: CredentialResolver | None) -> str:
     return f"{type(credential).__name__.lower()}-{digest.hexdigest()[:16]}"
 
 
-def _circuit_key(request: RuntimeRequest, credentials: CredentialResolver | None) -> CircuitKey:
+def _circuit_key(request: RuntimeRequest, credentials: object | None) -> CircuitKey:
     parsed = urlsplit(request.url)
     return CircuitKey(origin=f"{parsed.scheme}://{parsed.netloc}", credential_scope=_credential_scope(credentials))
+
+
+def _refreshed_credential(credentials: object | None) -> object | None:
+    if credentials is not None and not isinstance(credentials, CredentialResolver):
+        resolve = getattr(credentials, "resolve", None)
+        if callable(resolve):
+            return cast(Callable[[], object], resolve)()
+    return None
 
 
 def _circuit_open_error(operation: CatalogOperationRequest) -> CatalogUnavailableError:
@@ -153,7 +164,7 @@ class SyncCatalogClient:
         transport: CatalogTransport,
         profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile,
         *,
-        credentials: CredentialResolver | None = None,
+        credentials: object | None = None,
         budget: TimeBudget | None = None,
         breakers: BreakerRegistry | None = None,
         breaker_failure_threshold: int = DEFAULT_BREAKER_FAILURE_THRESHOLD,
@@ -208,7 +219,7 @@ class SyncCatalogClient:
             raise RuntimeError("The synchronous catalog client is closed.")
         effective = self._capabilities.resolve(operation.operation_id)
         build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
-        request = _request_for(operation)
+        request = _request_for(operation, _refreshed_credential(self._credentials))
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
         key = _circuit_key(request, self._credentials)
@@ -326,7 +337,7 @@ class AsyncCatalogClient:
         transport: AsyncCatalogTransport,
         profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile,
         *,
-        credentials: CredentialResolver | None = None,
+        credentials: object | None = None,
         budget: TimeBudget | None = None,
         breakers: BreakerRegistry | None = None,
         breaker_failure_threshold: int = DEFAULT_BREAKER_FAILURE_THRESHOLD,
@@ -381,7 +392,12 @@ class AsyncCatalogClient:
             raise RuntimeError("The asynchronous catalog client is closed.")
         effective = await self._capabilities.resolve_async(operation.operation_id)
         build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
-        request = _request_for(operation)
+        credential = None
+        if self._credentials is not None and not isinstance(self._credentials, CredentialResolver):
+            resolve_async = getattr(self._credentials, "resolve_async", None)
+            if callable(resolve_async):
+                credential = await resolve_async()
+        request = _request_for(operation, credential)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
         key = _circuit_key(request, self._credentials)
