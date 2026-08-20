@@ -39,6 +39,7 @@ import importlib
 import importlib.metadata
 import inspect
 import json
+import logging
 import os
 import re
 import subprocess
@@ -996,7 +997,13 @@ def test_extension_manifests_stay_immutable_and_evidence_bound() -> None:
 def test_outputs_are_secret_safe_by_default() -> None:
     """Test 4: diagnostics stay redacted, telemetry off, TLS verified, reports sanitized."""
     from datasluice.contracts.catalog import CaseOutcome, ComplianceReport
+    from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
     from datasluice.domain.catalog.observability import DiagnosticPolicy, TelemetryPolicy, TLSPolicy
+    from datasluice.domain.catalog.receipts import MutationReceipt
+    from datasluice.errors.catalog import NativeCatalogError
+    from datasluice.exceptions import DataSluiceError
+    from datasluice.logging import RedactingFilter
+    from datasluice.runtime.redaction import redact_for_output
 
     assert DiagnosticPolicy().include_raw_body is False
     assert TelemetryPolicy().enabled is False
@@ -1016,6 +1023,40 @@ def test_outputs_are_secret_safe_by_default() -> None:
     assert report.warnings[0] == "api_key: [REDACTED]"
     serialized = json.dumps(report.to_dict())
     assert "abc123" not in serialized and "secret-value" not in serialized
+
+    secret = "Bearer aBcDeFgH1234"
+    with pytest.raises(DataSluiceError):
+        MutationReceipt(
+            operation="datasets.update",
+            outcome="succeeded",
+            target=CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+            audit_metadata={"details": {"value": secret}},
+        )
+    receipt = MutationReceipt(
+        operation="datasets.update",
+        outcome="succeeded",
+        target=CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+        audit_metadata={"details": {"value": "Bearer ***"}},
+    )
+    error = NativeCatalogError(
+        "request failed",
+        operation="datasets.update",
+        platform=CatalogPlatform.CKAN,
+        metadata={"details": {"value": secret}},
+    )
+    record = logging.LogRecord("datasluice", logging.INFO, __file__, 1, "message", ({"details": secret},), None)
+    RedactingFilter().filter(record)
+    serialized_outputs = json.dumps(
+        {
+            "receipt": receipt.to_dict(),
+            "error": dict(error.metadata),
+            "log": record.args,
+            "gate": redact_for_output(secret),
+        },
+        default=str,
+    )
+    assert "aBcDeFgH1234" not in serialized_outputs
+    assert "Bearer ***" in serialized_outputs
 
 
 def test_no_alias_shim_or_deprecation_wrapper_survives() -> None:

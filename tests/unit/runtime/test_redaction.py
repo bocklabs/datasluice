@@ -7,6 +7,7 @@ import pytest
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
+from datasluice.runtime.redaction import redact_event_metadata, redact_for_output
 
 _redaction = pytest.importorskip("datasluice.domain.catalog.redaction")
 contains_credential_content = _redaction.contains_credential_content
@@ -63,3 +64,13 @@ def test_redaction_bounds_recursion_and_metadata_entries() -> None:
     assert len(redacted_oversized) == 32
     assert "[TRUNCATED]" in redacted_oversized.values()
     assert all(len(value) <= 256 for value in redacted_oversized.values() if isinstance(value, str))
+
+
+def test_runtime_gate_redacts_values_and_has_one_escape_hatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "Bearer aBcDeFgH1234"
+
+    assert redact_for_output(secret) == "Bearer ***"
+    assert redact_event_metadata({"message": secret}) == {"message": "Bearer ***"}
+
+    monkeypatch.setenv("DATASLUICE_NO_REDACT", "1")
+    assert redact_for_output(secret) == secret

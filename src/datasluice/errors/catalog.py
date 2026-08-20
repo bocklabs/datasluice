@@ -10,11 +10,9 @@ from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.redaction import (
     AUTH_SCHEME_RE,
     CREDENTIAL_QUERY_RE,
-    MAX_METADATA_DEPTH,
-    MAX_METADATA_ENTRIES,
     MAX_TEXT_LENGTH,
-    REDACTED,
-    SENSITIVE_PARTS,
+    redact_mapping,
+    redact_value,
 )
 from datasluice.exceptions import DataSluiceError
 
@@ -35,35 +33,12 @@ def _platform_value(platform: CatalogPlatform | str) -> str:
 def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) -> Mapping[str, object]:
     if value is None:
         return MappingProxyType({})
-    if _depth > MAX_METADATA_DEPTH:
-        raise ValueError("Catalog error metadata exceeds the depth limit.")
-    if len(value) > MAX_METADATA_ENTRIES:
-        raise ValueError("Catalog error metadata exceeds the entry limit.")
-    sanitized: dict[str, object] = {}
-    for key, nested in value.items():
-        if not isinstance(key, str) or not key:
-            raise ValueError("Catalog error metadata keys must be non-empty strings.")
-        normalized = key.lower().replace("-", "_")
-        sanitized[key] = (
-            REDACTED
-            if any(part in normalized for part in SENSITIVE_PARTS)
-            else _bounded_value(nested, _depth=_depth + 1)
-        )
-    return MappingProxyType(sanitized)
+    redacted = redact_mapping(value, _depth=_depth)
+    return MappingProxyType(redacted)
 
 
 def _bounded_value(value: object, *, _depth: int = 0) -> object:
-    if isinstance(value, str):
-        return _redact_message(value)
-    if value is None or isinstance(value, bool | int | float):
-        return value
-    if isinstance(value, Mapping):
-        return _bounded_metadata(value, _depth=_depth)
-    if isinstance(value, tuple | list):
-        if len(value) > MAX_METADATA_ENTRIES:
-            raise ValueError("Catalog error metadata sequence exceeds the entry limit.")
-        return tuple(_bounded_value(item, _depth=_depth + 1) for item in value)
-    return repr(value)[:MAX_TEXT_LENGTH]
+    return redact_value(value, _depth=_depth)
 
 
 class CatalogError(DataSluiceError):

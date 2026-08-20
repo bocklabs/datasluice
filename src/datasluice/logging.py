@@ -9,7 +9,6 @@ share one source of truth,, without a circular import —
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 _logger_name = "datasluice"
@@ -49,26 +48,19 @@ class RedactingFilter(logging.Filter):
     whose (lower-cased) key is in ``_SENSITIVE_KEYS`` with ``"***"``. Targeted:
     only known sensitive keys are touched — never value-pattern heuristics — so
     legitimate base64 / open-data payloads pass through unchanged (RESEARCH
-    ). Set ``DATASLUICE_NO_REDACT=1`` to disable redaction entirely
-    (escape hatch for test fixtures and debugging).
+    ). The central runtime gate owns the escape hatch for test fixtures and
+    debugging.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if os.environ.get("DATASLUICE_NO_REDACT") == "1":
-            return True
-        for key, value in list(record.__dict__.items()):
-            if key.lower() in _SENSITIVE_KEYS and isinstance(value, str):
-                record.__dict__[key] = _REDACTED
+        from datasluice.runtime.redaction import redact_event_metadata, redact_for_output
+
+        record.__dict__.update(redact_event_metadata(record.__dict__))
         if record.args:
             record.args = tuple(
-                self._redact_mapping(a) if isinstance(a, dict) else a
-                for a in (record.args if isinstance(record.args, tuple) else (record.args,))
+                redact_for_output(a) for a in (record.args if isinstance(record.args, tuple) else (record.args,))
             )
         return True
-
-    @staticmethod
-    def _redact_mapping(mapping: dict) -> dict:
-        return {k: (_REDACTED if k.lower() in _SENSITIVE_KEYS else v) for k, v in mapping.items()}
 
 
 def configure_logging(
