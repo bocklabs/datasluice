@@ -1,92 +1,83 @@
-"""Evidence-based portal type detection.
-
-The detector probes well-known API endpoints through a caller-injected
-transport and records every probe as a :class:`DetectionEvidence` row. The
-caller decides what to do with the :class:`DetectionResult`; raising
-:class:`PortalDetectionError` on failure is the session's job, not the
-detector's.
-"""
+"""Evidence-based detection through injected capability probes."""
 
 from __future__ import annotations
 
-import urllib.parse
+from collections.abc import Mapping
+from urllib.parse import urlsplit
 
-from datasluice.discovery.fingerprints import PATH_FINGERPRINTS
+from datasluice.domain.catalog.profiles import ProbeEvidence, ProbeResponseClass
 from datasluice.domain.detection import DetectionEvidence, DetectionResult
-from datasluice.exceptions import NotFoundError, PortalError
-from datasluice.logging import get_logger
-from datasluice.ports import Transport
+from datasluice.runtime.capability import EffectiveCapabilityCache
 from datasluice.runtime.plugin_manager import PluginManager
 
-logger = get_logger("discovery")
-
-#: Exception tuple caught per detection probe.
-#:
-#: The legacy bare-``Exception`` swallow hid transport-layer defects; this
-#: narrow tuple is the only acceptable catch. ``NotFoundError`` is currently a
-#: ``PortalError`` subclass and dead for the probe path (transports raise
-#: ``PortalError`` for 404) — it stays for defence-in-depth in case a future
-#: transport surfaces it directly.
-#:
-#: Callers that inject :class:`HttpxTransport` will see
-#: ``httpx.ConnectError``/``httpx.TimeoutException`` PROPAGATE on connection
-#: failure (those are NOT ``OSError``/``PortalError`` subclasses). The CLI
-#: defaults to :class:`HttpClient` (urllib) where this is moot; the contract
-#: suite also uses :class:`HttpClient`. Translating httpx exceptions in the
-#: transport is a future enhancement, out of scope.
-_PROBE_EXCEPTIONS: tuple[type[BaseException], ...] = (NotFoundError, PortalError, OSError)
+_CANONICAL_CONNECTORS = (
+    ("datasluice/ckan", "ckan"),
+    ("datasluice/udata", "udata"),
+    ("datasluice/socrata", "socrata"),
+)
 
 
 def _normalize_base_url(url: str) -> str:
-    """Ensure *url* has a scheme and no trailing slash."""
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-    parsed = urllib.parse.urlparse(url)
+    """Ensure *url* has an HTTPS scheme and is reduced to its origin."""
+    candidate = url if url.startswith(("http://", "https://")) else f"https://{url}"
+    parsed = urlsplit(candidate)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError("Detection URLs must be sanitized HTTPS origins.")
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def detect(url: str, transport: Transport, plugin_manager: PluginManager) -> DetectionResult:
-    """Probe *url* for every registered portal fingerprint.
-
-    Iterates :data:`PATH_FINGERPRINTS`, skipping any portal_type the
-    *plugin_manager* does not list. Each probe is recorded as a
-    :class:`DetectionEvidence` (hit OR miss); any single hit pins
-    ``portal_type`` at confidence ``1.0`` (any-match semantics), zero hits
-    yields ``portal_type=None`` and ``confidence=0.0``.
+def detect(
+    url: str,
+    probe_engines: Mapping[str, EffectiveCapabilityCache],
+    plugin_manager: PluginManager,
+) -> DetectionResult:
+    """Probe installed canonical connector profiles and return their evidence.
 
     Args:
-        url: Root URL of the portal (e.g. ``"https://catalog.data.gov"``).
-        transport: Caller-injected transport satisfying the
-            :class:`~datasluice.ports.Transport` Protocol. The
-            detector NEVER constructs its own transport.
-        plugin_manager: Caller-injected :class:`PluginManager`; only
-            ``list_connectors`` results are probed.
+        url: Root URL represented by the caller-configured probe engines.
+        probe_engines: Caller-injected capability caches keyed by canonical
+            connector ID. Each cache owns its profile and probe runner.
+        plugin_manager: Caller-injected entry-point registry used solely to
+            determine which canonical built-ins are installed.
 
     Returns:
-        A :class:`DetectionResult` carrying the matched portal_type
-        (or ``None``), confidence (1.0 on any hit, 0.0 otherwise), and the
-        full evidence trail.
-
-    Raises:
-        Any exception not in :data:`_PROBE_EXCEPTIONS` propagates — the
-        detector never silences unexpected defects.
+        A detection result containing one evidence row for every operation
+        probed from installed canonical profiles.
     """
-    normalized = _normalize_base_url(url)
-    registered = set(plugin_manager.list_connectors())
-    evidence: list[DetectionEvidence] = []
-    matched_portal: str | None = None
-    for path, portal_type in PATH_FINGERPRINTS.items():
-        if portal_type not in registered:
+    normalized_url = _normalize_base_url(url)
+    installed = frozenset(plugin_manager.list_connectors())
+    evidence_rows: list[DetectionEvidence] = []
+    matched_platform: str | None = None
+
+    for connector_id, platform in _CANONICAL_CONNECTORS:
+        if connector_id not in installed:
             continue
-        probe_url = f"{normalized}{path}"
-        try:
-            transport.request(probe_url)
-        except _PROBE_EXCEPTIONS as exc:
-            logger.debug("probe %s for %s missed: %r", probe_url, portal_type, exc)
-            evidence.append(DetectionEvidence(check=path, matched=False, detail=str(exc)))
+        engine = probe_engines.get(connector_id)
+        if engine is None:
             continue
-        evidence.append(DetectionEvidence(check=path, matched=True, detail=probe_url))
-        if matched_portal is None:
-            matched_portal = portal_type
-    confidence = 1.0 if matched_portal is not None else 0.0
-    return DetectionResult(portal_type=matched_portal, confidence=confidence, evidence=evidence)
+        for operation_id in engine.baseline_profile.declared_profile.operations:
+            effective = engine.resolve(operation_id)
+            probe_evidence = effective.for_operation(operation_id).evidence
+            if probe_evidence is None:
+                raise ValueError(f"Capability probe for {operation_id} did not produce evidence.")
+            matched = probe_evidence.observed_response_class is ProbeResponseClass.SUCCESS
+            evidence_rows.append(_detection_evidence(probe_evidence, normalized_url, matched))
+            if matched and matched_platform is None:
+                matched_platform = platform
+
+    return DetectionResult(
+        portal_type=matched_platform,
+        confidence=1.0 if matched_platform is not None else 0.0,
+        evidence=evidence_rows,
+    )
+
+
+def _detection_evidence(probe_evidence: ProbeEvidence, normalized_url: str, matched: bool) -> DetectionEvidence:
+    """Convert bounded runtime evidence into the legacy-safe detection shape."""
+    if urlsplit(probe_evidence.deployment_url).netloc != urlsplit(normalized_url).netloc:
+        raise ValueError("Capability probe evidence must target the detection origin.")
+    return DetectionEvidence(
+        check=str(probe_evidence.operation_id),
+        matched=matched,
+        detail=f"{probe_evidence.observed_response_class.value} at {probe_evidence.deployment_url}",
+    )
