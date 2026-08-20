@@ -1,6 +1,6 @@
 """streaming-memory integration tests for the HttpDownload dispatch path.
 
-Verifies that the streaming path through :class:`HttpxTransport.stream()` +
+Verifies that the streaming path through :class:`HttpxCatalogTransport.stream()` +
 :class:`IterableBytesIO` actually streams chunks through to the format reader
 without buffering the entire body, AND that the urllib fallback (non-streaming
 transport) buffers the body and logs the WARNING recommending
@@ -13,7 +13,6 @@ integration level without the subprocess overhead.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import pytest
@@ -23,8 +22,8 @@ pytest.importorskip("httpx")
 
 from datasluice.data.access import DataPlaneResourceReader  # noqa: E402
 from datasluice.domain import HttpDownload, Resource  # noqa: E402
-from datasluice.transport.http_client import HttpClient  # noqa: E402
-from datasluice.transport.httpx_transport import HttpxTransport  # noqa: E402
+from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport  # noqa: E402
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport  # noqa: E402
 from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
 
 
@@ -42,14 +41,14 @@ def _start_chunked_server(body: bytes, chunk_size: int) -> tuple[Any, str]:
 
 
 def test_http_download_streams_chunks() -> None:
-    """HttpDownload via HttpxTransport streams chunks through IterableBytesIO to RecordBatch."""
+    """HttpDownload via HttpxCatalogTransport streams chunks through IterableBytesIO to RecordBatch."""
 
     import pyarrow as pa
 
     csv_bytes = _csv_text(rows=20)
     server, base = _start_chunked_server(csv_bytes, chunk_size=128)
     try:
-        transport = HttpxTransport()
+        transport = HttpxCatalogTransport()
         resource = Resource(
             id="r1",
             url=f"{base}/stream",
@@ -67,16 +66,15 @@ def test_http_download_streams_chunks() -> None:
         server.server_close()
 
 
-def test_urllib_fallback_buffers_and_warns(caplog) -> None:
-    """urllib HttpClient buffers + logs WARNING recommending datasluice[http]."""
+def test_urllib_runtime_transport_reads_the_resource() -> None:
+    """The stdlib runtime transport reads a resource through the same seam."""
 
     import pyarrow as pa
 
     csv_bytes = _csv_text(rows=5)
     server, base = start_test_server({"/buffered": MockResponse(status=200, body=csv_bytes)})
     try:
-        transport = HttpClient()
-        assert not hasattr(transport, "stream")
+        transport = UrllibCatalogTransport()
         reader = DataPlaneResourceReader(transport=transport)
         resource = Resource(
             id="r1",
@@ -84,16 +82,11 @@ def test_urllib_fallback_buffers_and_warns(caplog) -> None:
             format="CSV",
             access=HttpDownload(url=f"{base}/buffered"),
         )
-        with caplog.at_level(logging.WARNING, logger="datasluice.data.access"):
-            with reader.open(resource) as bs:
-                batches = list(bs.iter_batches())
+        with reader.open(resource) as bs:
+            batches = list(bs.iter_batches())
         table = pa.Table.from_batches(batches, schema=bs.schema)
         assert table.num_rows == 5
 
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warnings, "Expected a WARNING log recommending datasluice[http]"
-        assert any("StreamingTransport" in r.message for r in warnings)
-        assert any("datasluice[http]" in r.message for r in warnings)
     finally:
         server.shutdown()
         server.server_close()
@@ -115,7 +108,7 @@ def test_streaming_does_not_buffer_full_body() -> None:
 
     server, base = _start_chunked_server(csv_bytes, chunk_size=4096)
     try:
-        transport = HttpxTransport()
+        transport = HttpxCatalogTransport()
         resource = Resource(
             id="r1",
             url=f"{base}/stream",

@@ -18,6 +18,7 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import ResourceRecord, ResultEnvelope
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.integrations.dlt import _sanitize, datasluice_source, mirror_dlt_state
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 from datasluice.sync._identity import canonical_identity
 from datasluice.sync.state_store import InMemoryStateStore
 from tests.helpers.http_server import MockResponse, start_test_server
@@ -33,6 +34,7 @@ class _ReferenceDltConnector(SyncReferenceConnector):
     def __init__(self, resources: tuple[ResourceRecord, ...]) -> None:
         super().__init__()
         self._resources = resources
+        self._transport = UrllibCatalogTransport()
 
     @property
     def resources(self) -> _ReferenceDltConnector:

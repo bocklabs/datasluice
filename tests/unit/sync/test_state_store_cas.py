@@ -299,9 +299,9 @@ def test_sync_uses_cas_for_checkpoint_write(tmp_path) -> None:
 
 def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) -> None:
     from datasluice.data import DataPlaneResourceReader
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
     from datasluice.sync import sync_resources
     from datasluice.sync._identity import canonical_identity
-    from datasluice.transport.httpx_transport import HttpxTransport
 
     _server, url = csv_server()
     resource = make_resource(url, format="CSV")
@@ -312,7 +312,7 @@ def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) 
         sync_resources(
             [resource],
             state_store=store,
-            reader=DataPlaneResourceReader(transport=HttpxTransport()),
+            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
             destination_uri=f"file://{tmp_path}/dest",
         )
     )
@@ -327,10 +327,10 @@ def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) 
 
 def test_sync_fallback_unconditional_put_for_non_atomic(tmp_path, csv_server, make_resource) -> None:
     from datasluice.data import DataPlaneResourceReader
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
     from datasluice.sync import sync_resources
     from datasluice.sync._identity import canonical_identity
     from datasluice.sync.state_store import InMemoryStateStore
-    from datasluice.transport.httpx_transport import HttpxTransport
 
     _server, url = csv_server()
     resource = make_resource(url, format="CSV")
@@ -342,7 +342,7 @@ def test_sync_fallback_unconditional_put_for_non_atomic(tmp_path, csv_server, ma
         sync_resources(
             [resource],
             state_store=store,
-            reader=DataPlaneResourceReader(transport=HttpxTransport()),
+            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
             destination_uri=f"file://{tmp_path}/dest",
         )
     )
@@ -409,9 +409,9 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
     import pyarrow.parquet as pq
 
     from datasluice.data import DataPlaneResourceReader
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
     from datasluice.sync import sync_resources
     from datasluice.sync._identity import canonical_identity
-    from datasluice.transport.httpx_transport import HttpxTransport
 
     schema = pa.schema([("group_id", pa.int64()), ("value", pa.string())])
     table = pa.table({"group_id": [0, 1], "value": ["a", "b"]}, schema=schema)
@@ -435,7 +435,7 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
                 sync_resources(
                     [resource],
                     state_store=store,
-                    reader=DataPlaneResourceReader(transport=HttpxTransport()),
+                    reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
                     destination_uri=dest,
                 )
             )

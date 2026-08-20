@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote, urlsplit
 
 from datasluice.logging import get_logger
+from datasluice.runtime.transport.base import CatalogTransport
 
 if TYPE_CHECKING:
     from datasluice.contracts.catalog.protocols import CatalogOperationRequest, SyncCatalogClient
@@ -69,7 +70,6 @@ def datasluice_source(
 
     from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest, SyncCatalogClient
     from datasluice.data.access import DataPlaneResourceReader
-    from datasluice.transport.httpx_transport import HttpxTransport
 
     if not isinstance(client, SyncCatalogClient):
         raise TypeError("datasluice_source requires a SyncCatalogClient-compatible normalized client")
@@ -115,7 +115,7 @@ def datasluice_source(
                 from datasluice.integrations.arrow import to_arrow
                 from datasluice.sync._hashing import logical_sha256
 
-                transport = HttpxTransport()
+                transport = cast(CatalogTransport, cast(Any, client)._transport)
                 reader = DataPlaneResourceReader(transport=transport)
                 try:
                     state: dict[str, Any] = {"identity": identity, "watermark": None}
@@ -130,7 +130,7 @@ def datasluice_source(
 
                     dlt.current.resource_state()["datasluice"]["watermark"] = logical_sha256(table)
                 finally:
-                    transport.close()
+                    pass
 
             yield _resource_body
 

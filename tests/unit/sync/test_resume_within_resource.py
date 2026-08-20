@@ -695,7 +695,7 @@ def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> N
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from datasluice.transport.httpx_transport import HttpxTransport
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 
     schema = pa.schema([("group_id", pa.int64())])
     sink = pa.BufferOutputStream()
@@ -704,7 +704,7 @@ def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> N
 
     server, url = csv_server(body=parquet_bytes)
     resource = make_resource(url, format="PARQUET", resource_id="http-parquet")
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
     store = InMemoryStateStore()
     reader = DataPlaneResourceReader(transport=transport)
     destination = f"file://{tmp_path}/http-parquet"

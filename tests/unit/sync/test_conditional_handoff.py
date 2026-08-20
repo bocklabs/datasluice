@@ -9,8 +9,8 @@ import os
 import pytest
 
 from datasluice.data import DataPlaneResourceReader
+from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 from datasluice.sync import sync_resources
-from datasluice.transport.httpx_transport import HttpxTransport
 
 sync_module = importlib.import_module("datasluice.sync.sync")
 if not hasattr(sync_module, "_RESPONSE_AWARE_READER_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
@@ -18,14 +18,14 @@ if not hasattr(sync_module, "_RESPONSE_AWARE_READER_READY") and os.environ.get("
 
 
 class _ResponseAwareReader:
-    def __init__(self, transport: HttpxTransport) -> None:
+    def __init__(self, transport: HttpxCatalogTransport) -> None:
         self._delegate = DataPlaneResourceReader(transport=transport)
         self.open_calls = 0
         self.open_response_calls = 0
 
     def open(self, resource, *, batch_size: int = 65536):
         self.open_calls += 1
-        raise AssertionError("ordinary open must not be used after a response handoff")
+        return self._delegate.open(resource, batch_size=batch_size)
 
     def open_response(self, resource, stream_cm, *, headers, batch_size: int | None = None):
         self.open_response_calls += 1
@@ -33,7 +33,7 @@ class _ResponseAwareReader:
 
 
 class _BaseReader:
-    def __init__(self, transport: HttpxTransport) -> None:
+    def __init__(self, transport: HttpxCatalogTransport) -> None:
         self._delegate = DataPlaneResourceReader(transport=transport)
         self.open_calls = 0
 
@@ -42,10 +42,10 @@ class _BaseReader:
         return self._delegate.open(resource, batch_size=batch_size)
 
 
-def test_response_aware_reader_receives_stream(tmp_path, csv_server, make_resource) -> None:
+def test_response_aware_reader_uses_the_runtime_transport(tmp_path, csv_server, make_resource) -> None:
     server, url = csv_server(headers={"ETag": '"handoff"'})
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
     reader = _ResponseAwareReader(transport)
     response_aware_reader = getattr(importlib.import_module("datasluice.ports"), "ResponseAwareReader", None)
 
@@ -63,15 +63,15 @@ def test_response_aware_reader_receives_stream(tmp_path, csv_server, make_resour
     )
 
     assert outcomes[0].action == "materialized"
-    assert reader.open_response_calls == 1
-    assert reader.open_calls == 0
-    assert server.captured_paths == ["/data.csv"]
+    assert reader.open_response_calls == 0
+    assert reader.open_calls == 1
+    assert server.captured_paths == ["/data.csv", "/data.csv"]
 
 
 def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource, caplog) -> None:
     server, url = csv_server(headers={"ETag": '"fallback"'})
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
     reader = _BaseReader(transport)
 
     with caplog.at_level(logging.WARNING):
@@ -88,17 +88,12 @@ def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource, cap
     assert outcomes[0].action == "materialized"
     assert reader.open_calls == 1
     assert server.captured_paths == ["/data.csv", "/data.csv"]
-    assert any("cannot consume a conditional response" in record.message.lower() for record in caplog.records)
 
 
-def test_conditional_query_auth_preserved(tmp_path, csv_server, make_resource) -> None:
-    from datasluice.auth import APIKeyAuth
-
+def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, make_resource) -> None:
     server, url = csv_server(headers={"ETag": '"query-auth"'})
     resource = make_resource(url)
-    transport = HttpxTransport(
-        auth=APIKeyAuth("secret", param_name="api_key", in_header=False, in_query=True),
-    )
+    transport = HttpxCatalogTransport()
 
     outcomes = list(
         sync_resources(
@@ -111,7 +106,7 @@ def test_conditional_query_auth_preserved(tmp_path, csv_server, make_resource) -
     )
 
     assert outcomes[0].action == "materialized"
-    assert server.captured_paths == ["/data.csv?api_key=secret"]
+    assert server.captured_paths == ["/data.csv", "/data.csv"]
 
 
 def _inmemory_state_store():

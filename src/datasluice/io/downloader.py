@@ -10,10 +10,10 @@ from datasluice.io.cache import FileCache
 from datasluice.io.local import ensure_dir, safe_filename, save_bytes
 from datasluice.io.storage import Storage
 from datasluice.logging import get_logger
+from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest
 
 if TYPE_CHECKING:
     from datasluice.domain.resource import Resource
-    from datasluice.transport import HttpClient
 
 logger = get_logger("io.downloader")
 
@@ -29,7 +29,7 @@ class Downloader:
 
     def __init__(
         self,
-        transport: HttpClient,
+        transport: CatalogTransport,
         *,
         storage: Storage | None = None,
         cache: FileCache | None = None,
@@ -71,10 +71,10 @@ class Downloader:
             if cached is not None:
                 data = cached
             else:
-                data = self.transport.download(resource.url)
+                data = self._fetch(resource.url)
                 self.cache.put(cache_key, data)
         else:
-            data = self.transport.download(resource.url)
+            data = self._fetch(resource.url)
 
         if verify_hash:
             import hashlib
@@ -95,6 +95,13 @@ class Downloader:
             return Path(uri)
 
         return save_bytes(data, dest or ".", fname)
+
+    def _fetch(self, url: str) -> bytes:
+        """Fetch bytes through the runtime transport and validate the HTTP outcome."""
+        response = self.transport.send(RuntimeRequest(method="GET", url=url))
+        if not 200 <= response.status_code < 300:
+            raise DownloadError(f"Download for {url!r} returned HTTP {response.status_code}")
+        return response.body
 
     def download_many(
         self,

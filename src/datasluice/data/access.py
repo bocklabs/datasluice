@@ -31,6 +31,7 @@ from datasluice.data.compression import apply_compression
 from datasluice.data.readers import get_reader
 from datasluice.exceptions import DataSluiceError, UnsupportedAccessError
 from datasluice.logging import get_logger
+from datasluice.runtime.transport.base import RuntimeRequest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -166,6 +167,8 @@ class DataPlaneResourceReader:
                 source.close()
                 raise UnsupportedAccessError(f"Checkpointable Parquet resource {resource.id!r} must not be compressed")
             return self._build_parquet_cursor_stream(source, start_row_group_index=0, start_batch_index=0)
+        if (resource.format or "").upper() == "PARQUET" and kind == "http_download" and content_encoding is None:
+            return self._build_batch_stream(resource, source, effective_batch_size)
         try:
             decompressed = apply_compression(source, content_encoding)
         except BaseException:
@@ -310,39 +313,20 @@ class DataPlaneResourceReader:
             raise
 
     def _open_http_download(self, access: Any) -> tuple[Any, str | None]:
-        """HttpDownload: stream via StreamingTransport or buffer via urllib fallback."""
+        """HttpDownload: read through the bounded catalog transport seam."""
 
         if self.transport is None:
             raise UnsupportedAccessError(
                 f"HttpDownload for {getattr(access, 'url', '<unknown>')!r} requires a transport; "
-                "pass transport=HttpxTransport() or install datasluice[http]"
+                "pass a CatalogTransport from the DataSluice runtime"
             )
-
-        from datasluice.ports import StreamingTransport
-
         url = access.url
-
-        if isinstance(self.transport, StreamingTransport):
-            stream_cm = self.transport.stream(url)
-            response = stream_cm.__enter__()
-            try:
-                headers = dict(response.headers) if hasattr(response, "headers") else {}
-                content_encoding = _content_encoding_from_headers(headers)
-                source = _StreamClosingBytesIO(iter(response), response, stream_cm)
-                return source, content_encoding
-            except BaseException:
-                stream_cm.__exit__(None, None, None)
-                raise
-
-        logger.warning(
-            "Transport %s does not satisfy StreamingTransport; buffering HTTP body in memory. "
-            "Install datasluice[http] (httpx) for bounded-memory streaming reads.",
-            type(self.transport).__name__,
-        )
-        body = self.transport.download(url)
         import io
 
-        return io.BytesIO(body), None
+        response = self.transport.send(RuntimeRequest(method="GET", url=url))
+        if not 200 <= response.status_code < 300:
+            raise UnsupportedAccessError(f"HttpDownload for {url!r} returned HTTP {response.status_code}")
+        return io.BytesIO(response.body), _content_encoding_from_headers(dict(response.headers))
 
     def _open_object_storage(self, access: Any) -> tuple[Any, str | None]:
         """ObjectStorage: open via open_filesystem.open."""

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
+from datasluice.runtime.transport.base import RuntimeRequest
 from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
 
 if TYPE_CHECKING:
@@ -143,15 +144,23 @@ def sync_resources(
             url = getattr(access, "url", None) or resource.url
 
             if kind == "http_download" and url is not None:
-                from datasluice.ports import ConditionalTransport
-
                 should_fetch_conditionally = watermark is None or not _looks_like_sha256(watermark)
-                if transport is not None and isinstance(transport, ConditionalTransport) and should_fetch_conditionally:
+                if transport is not None and should_fetch_conditionally:
                     etag, last_modified = _conditional_validators(watermark)
-                    result = transport.conditional_fetch(
-                        url,
-                        if_none_match=etag,
-                        if_modified_since=last_modified,
+                    headers = {
+                        key: value
+                        for key, value in {
+                            "If-None-Match": etag,
+                            "If-Modified-Since": last_modified,
+                        }.items()
+                        if value is not None
+                    }
+                    result = transport.send(
+                        RuntimeRequest(
+                            method="GET",
+                            url=url,
+                            headers=headers,
+                        )
                     )
                     if result.status_code == 304:
                         completed_record = _completed_artifact_record(prior, resource, destination_uri)
@@ -166,22 +175,6 @@ def sync_resources(
                             )
                             continue
                     fresh_watermark = _preferred_watermark(result.headers)
-                    if result.stream is not None:
-                        from datasluice.ports import ResponseAwareReader
-
-                        if isinstance(reader, ResponseAwareReader):
-                            materialize_reader = _SingleStreamReader(
-                                reader.open_response(resource, result.stream, headers=result.headers)
-                            )
-                        else:
-                            with result.stream as response:
-                                for _chunk in response:
-                                    pass
-                            logger.warning(
-                                "Reader %s cannot consume a conditional response; closing it and re-fetching "
-                                "through ordinary open",
-                                type(reader).__name__,
-                            )
 
             # Capture the prior CAS version atomically with the state read above so
             # every state transition chains through the conditional-write path
