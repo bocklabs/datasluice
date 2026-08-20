@@ -14,11 +14,14 @@ from datasluice.contracts.catalog.protocols import CatalogConnectorContext
 from datasluice.data.access import DataPlaneResourceReader
 from datasluice.domain import HttpDownload, LocalFile, ObjectStorage, Resource
 from datasluice.domain.artifact import _freeze_extensions
+from datasluice.domain.catalog.auth import CredentialResolver
+from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile, EffectiveCapabilityProfile
 from datasluice.exceptions import (
     DataSluiceError,
     OpenedResourceConsumedError,
     StreamClosedError,
 )
+from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
 
 _DIRECT_LOCATOR_KEYS = frozenset({"schema_version", "kind", "uri", "format", "media_type", "extensions"})
@@ -259,6 +262,22 @@ class DataSluice:
         """Return one explicit caller-selected canonical catalog connector."""
         self._ensure_open()
         return self._session.open_catalog(factory, context)
+
+    @property
+    def credentials(self) -> CredentialResolver:
+        """Return the session's explicit-only credential resolver."""
+        self._ensure_open()
+        return self._session.credentials
+
+    def sync_client(self, profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile) -> SyncCatalogClient:
+        """Create one synchronous catalog client through the session runtime."""
+        self._ensure_open()
+        return self._session.sync_client(profile)
+
+    def async_client(self, profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile) -> AsyncCatalogClient:
+        """Create one asynchronous catalog client through the session runtime."""
+        self._ensure_open()
+        return self._session.async_client(profile)
 
     def resolve(self, locator: DirectResourceLocator) -> Resource:
         """Resolve one public locator into the canonical Resource model."""

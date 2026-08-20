@@ -20,20 +20,19 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogOperationExecutor,
 )
 from datasluice.exceptions import StreamClosedError
+from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 
 class _Transport:
     """Structural transport double for constructing real sessions."""
 
-    def request(self, url: str, **kwargs: object) -> bytes:
-        return b""
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return RuntimeResponse(200, {}, b"{}")
 
-    def get_json(self, url: str, **kwargs: object) -> dict[str, object]:
-        return {}
-
-    def download(self, url: str, **kwargs: object) -> bytes:
-        return b""
+    def close(self) -> None:
+        return None
 
 
 class _SyncExecutor:
@@ -206,6 +205,13 @@ def test_facade_exposes_no_portal_surface() -> None:
     assert not hasattr(DataSluice, "detect")
     for retired_name in ("detect_portal", "search_datasets", "CatalogResourceLocator"):
         assert not hasattr(application_module, retired_name)
+
+
+def test_facade_module_exposes_new_runtime_client_and_credential_surfaces() -> None:
+    """The public facade module imports the canonical runtime construction surface."""
+    assert application_module.SyncCatalogClient is SyncCatalogClient
+    assert application_module.AsyncCatalogClient is AsyncCatalogClient
+    assert application_module.CredentialResolver is not None
 
 
 class _CloseSpy:
