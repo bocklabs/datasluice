@@ -370,16 +370,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-all = [
-    { name = "dlt" },
-    { name = "duckdb" },
-    { name = "fsspec" },
+all-connectors = [
     { name = "httpx" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "polars" },
-    { name = "pyarrow" },
-    { name = "zstandard" },
+]
+ckan = [
+    { name = "httpx" },
 ]
 compression = [
     { name = "zstandard" },
@@ -411,14 +406,17 @@ secrets-aws = [
 secrets-vault = [
     { name = "hvac" },
 ]
+socrata = [
+    { name = "httpx" },
+]
 storage = [
     { name = "fsspec" },
 ]
-streaming = [
-    { name = "pyarrow" },
-]
 telemetry = [
     { name = "opentelemetry-api" },
+]
+udata = [
+    { name = "httpx" },
 ]
 xlsx = [
     { name = "openpyxl" },
@@ -452,32 +450,26 @@ typecheck = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", marker = "extra == 'secrets-aws'", specifier = ">=1.43" },
-    { name = "dlt", marker = "extra == 'all'" },
+    { name = "datasluice", extras = ["ckan", "udata", "socrata"], marker = "extra == 'all-connectors'" },
+    { name = "datasluice", extras = ["http"], marker = "extra == 'ckan'" },
+    { name = "datasluice", extras = ["http"], marker = "extra == 'socrata'" },
+    { name = "datasluice", extras = ["http"], marker = "extra == 'udata'" },
     { name = "dlt", marker = "extra == 'dlt'" },
-    { name = "duckdb", marker = "extra == 'all'" },
     { name = "duckdb", marker = "extra == 'duckdb'" },
-    { name = "fsspec", marker = "extra == 'all'", specifier = ">=2025.1" },
     { name = "fsspec", marker = "extra == 'storage'", specifier = ">=2025.1" },
-    { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27" },
     { name = "hvac", marker = "extra == 'secrets-vault'", specifier = ">=2.4" },
     { name = "keyring", marker = "extra == 'keychain'", specifier = ">=25.7" },
-    { name = "openpyxl", marker = "extra == 'all'" },
     { name = "openpyxl", marker = "extra == 'xlsx'" },
     { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.44" },
-    { name = "pandas", marker = "extra == 'all'" },
     { name = "pandas", marker = "extra == 'pandas'" },
-    { name = "polars", marker = "extra == 'all'" },
     { name = "polars", marker = "extra == 'polars'" },
-    { name = "pyarrow", marker = "extra == 'all'" },
     { name = "pyarrow", marker = "extra == 'parquet'" },
-    { name = "pyarrow", marker = "extra == 'streaming'" },
     { name = "rich" },
     { name = "typer" },
-    { name = "zstandard", marker = "extra == 'all'", specifier = ">=0.23" },
     { name = "zstandard", marker = "extra == 'compression'", specifier = ">=0.23" },
 ]
-provides-extras = ["keychain", "secrets-aws", "secrets-vault", "pandas", "polars", "dlt", "duckdb", "parquet", "streaming", "compression", "xlsx", "http", "telemetry", "storage", "all"]
+provides-extras = ["all-connectors", "ckan", "compression", "dlt", "duckdb", "http", "keychain", "oauth", "pandas", "parquet", "polars", "secrets-aws", "secrets-vault", "socrata", "storage", "telemetry", "udata", "xlsx"]
 
 [package.metadata.requires-dev]
 dev = [

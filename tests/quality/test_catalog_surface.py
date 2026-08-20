@@ -922,6 +922,7 @@ def test_public_catalog_models_are_frozen_typed_values() -> None:
 
 def test_public_catalog_imports_stay_import_light() -> None:
     """Test 4: importing the public catalog surface pulls no heavy optional runtime."""
+    optional_imports = _optional_dependency_imports()
     script = (
         "import sys\n"
         "import datasluice\n"
@@ -929,7 +930,7 @@ def test_public_catalog_imports_stay_import_light() -> None:
         "import datasluice.connectors.catalog.ckan\n"
         "import datasluice.connectors.catalog.udata\n"
         "import datasluice.connectors.catalog.socrata\n"
-        "heavy = [name for name in ('httpx', 'pandas', 'polars', 'pyarrow', 'openpyxl', 'dlt', 'duckdb', 'airflow')"
+        f"heavy = [name for name in {optional_imports!r}"
         " if any(loaded == name or loaded.startswith(name + '.') for loaded in sys.modules)]\n"
         "print(','.join(heavy))\n"
     )
@@ -989,9 +990,55 @@ def test_extension_manifests_stay_immutable_and_evidence_bound() -> None:
     from datasluice.domain.catalog.extensions import ConnectorManifest
 
     for field in dataclasses.fields(ConnectorManifest):
-        assert field.type not in {"list", "dict", "set", "typing.List", "typing.Dict"}, (
+        assert _annotation_base_name(field.type) not in {"list", "dict", "set"}, (
             f"ConnectorManifest.{field.name} is a mutable extension bag"
         )
+
+
+def _optional_dependency_imports() -> tuple[str, ...]:
+    """Derive optional dependency import roots from the packaging table."""
+    optional_dependencies = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    distributions = {
+        _dependency_distribution(dependency)
+        for dependencies in optional_dependencies.values()
+        for dependency in dependencies
+    }
+    package_map = importlib.metadata.packages_distributions()
+    imports = {
+        package
+        for package, provided_by in package_map.items()
+        if any(distribution in distributions for distribution in provided_by)
+    }
+    imports.discard("datasluice")
+    return tuple(sorted(imports))
+
+
+def _dependency_distribution(requirement: str) -> str:
+    """Return a normalized distribution name from a dependency specifier."""
+    return re.split(r"[<>=!~;[]", requirement, maxsplit=1)[0].replace("_", "-").lower()
+
+
+def _annotation_base_name(annotation: object) -> str:
+    """Return the unparameterized lower-case type name for an annotation."""
+    rendered = str(annotation).strip().split("|")[0].split("[")[0]
+    return rendered.removeprefix("typing.").lower()
+
+
+def test_optional_dependency_imports_follow_the_extras_table() -> None:
+    """Every non-self optional distribution participates in the derived audit."""
+    imports = _optional_dependency_imports()
+    assert {"httpx", "pandas", "pyarrow", "zstandard", "fsspec"}.issubset(imports)
+
+
+def test_mutable_annotation_base_name_detects_parameterized_fields() -> None:
+    """Parameterized mutable annotations retain their mutable base name."""
+
+    @dataclasses.dataclass(frozen=True)
+    class MutableProbe:
+        values: list[str]
+
+    field = dataclasses.fields(MutableProbe)[0]
+    assert _annotation_base_name(field.type) == "list"
 
 
 def test_outputs_are_secret_safe_by_default() -> None:
@@ -1115,11 +1162,32 @@ def test_no_alias_shim_or_deprecation_wrapper_survives() -> None:
 
 
 def test_base_installation_stays_lean_without_connector_extras() -> None:
-    """Test 4: the base distribution claims no connector dependency or named extra."""
+    """Test 4: the base distribution stays lean while connector extras stay explicit."""
     project = _pyproject()["project"]
     dependencies = project["dependencies"]
     assert isinstance(dependencies, list)
     assert sorted(dependencies) == ["rich", "typer"]
     optional = project["optional-dependencies"]
     assert isinstance(optional, dict)
-    assert {"ckan", "udata", "socrata", "all-connectors"}.isdisjoint(optional)
+    assert set(optional) == {
+        "all-connectors",
+        "ckan",
+        "compression",
+        "dlt",
+        "duckdb",
+        "http",
+        "keychain",
+        "oauth",
+        "pandas",
+        "parquet",
+        "polars",
+        "secrets-aws",
+        "secrets-vault",
+        "socrata",
+        "storage",
+        "telemetry",
+        "udata",
+        "xlsx",
+    }
+    assert optional["all-connectors"] == ["datasluice[ckan,udata,socrata]"]
+    assert all(optional[platform] == ["datasluice[http]"] for platform in ("ckan", "udata", "socrata"))
