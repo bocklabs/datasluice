@@ -48,6 +48,7 @@ docs = [
 ]
 
 [project.optional-dependencies]
+keychain = ["keyring>=25.7"]
 pandas = ["pandas"]
 polars = ["polars"]
 dlt = ["dlt"]
