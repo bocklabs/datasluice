@@ -6,9 +6,8 @@ from typing import Annotated, Any
 
 import typer
 
-from datasluice import DataSluice
 from datasluice.cli._output import diagnostic_console, render_json, result_console
-from datasluice.cli._resolver import parse_locator, resolve_one_resource
+from datasluice.cli._resolver import open_data_sluice, parse_locator, resolve_one_resource
 from datasluice.exceptions import DataSluiceError
 
 
@@ -37,7 +36,7 @@ def materialize(
         raise typer.Exit(1)
     try:
         parsed = parse_locator(locator)
-        with DataSluice() as data_sluice:
+        with open_data_sluice() as data_sluice:
             _resolved_locator, resolved_resource = resolve_one_resource(data_sluice, parsed)
             diagnostic_console.print("Materializing resource")
             artifact = data_sluice.materialize(resolved_resource, destination, mode=mode)

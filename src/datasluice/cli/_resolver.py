@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from datasluice.application import DirectResourceLocator
+from datasluice.application import DataSluice, DirectResourceLocator
 from datasluice.domain import Resource
 from datasluice.exceptions import DataSluiceError
 
@@ -25,3 +25,8 @@ def parse_locator(
 def resolve_one_resource(data_sluice: Any, locator: DirectResourceLocator) -> tuple[DirectResourceLocator, Resource]:
     """Resolve exactly one direct Resource."""
     return locator, data_sluice.resolve(locator)
+
+
+def open_data_sluice() -> DataSluice:
+    """Construct the runtime-backed facade for one direct data operation."""
+    return DataSluice()

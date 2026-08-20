@@ -77,7 +77,7 @@ def _batches(row_count: int) -> list[pa.RecordBatch]:
 
 
 def _patch_facade(monkeypatch: pytest.MonkeyPatch, facade: _Facade) -> None:
-    monkeypatch.setattr(open_command, "DataSluice", lambda: facade)
+    monkeypatch.setattr(open_command, "open_data_sluice", lambda: facade)
 
 
 def test_default_preview_reads_and_renders_no_more_than_twenty_rows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,7 +178,7 @@ class Facade:
         return Opened()
 
 
-open_command.DataSluice = Facade
+open_command.open_data_sluice = Facade
 with open(os.devnull, "w") as sink:
     with contextlib.redirect_stdout(sink):
         open_command.open("https://data.example.test/large.csv", all_rows=True, output="jsonl")

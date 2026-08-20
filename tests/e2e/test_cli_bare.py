@@ -99,8 +99,8 @@ def test_bare_wheel_import_sweep_stays_optional_dependency_free(bare_env: dict[s
     assert result.returncode == 0, result.stderr
 
 
-def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
-    """The bare wheel exposes the datasluice console script and --help."""
+def test_bare_console_script_exposes_runtime_cli_surface(bare_env: dict[str, str]) -> None:
+    """The bare wheel exposes version and the safe runtime CLI surface."""
     result = subprocess.run(
         [bare_env["console"], "--help"],
         capture_output=True,
@@ -109,7 +109,16 @@ def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
-    for command in ("scan", "open", "materialize"):
+    version = subprocess.run(
+        [bare_env["console"], "--version"],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.startswith("datasluice ")
+    for command in ("scan", "open", "materialize", "capabilities", "credentials"):
         assert command in result.stdout, f"console --help missing command {command}"
     for retired in _RETIRED_COMMANDS:
         assert retired not in result.stdout, f"console --help must not advertise retired command {retired}"
