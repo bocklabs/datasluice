@@ -165,12 +165,10 @@ PROVIDER_RETIRED_TOKENS: tuple[str, ...] = (
     "DataSluiceHook",
     "DataSluiceSearchOperator",
     "DataSluiceMaterializeOperator",
-    "hooks.datasluice",
     "operators.search",
     "operators.materialize",
     "operators._xcom",
     "example_datasluice",
-    "BaseHook",
 )
 
 PROVIDER_RUNTIME_SOURCE = PROVIDER_ROOT / "src" / "airflow" / "providers" / "datasluice"
@@ -678,8 +676,8 @@ def test_removed_fixture_trees_and_example_page_stay_deleted() -> None:
             assert (REPO_ROOT / "src/datasluice/contracts/catalog/fixtures" / platform / fixture_file).is_file()
 
 
-def test_airflow_provider_tree_is_metadata_only() -> None:
-    """Test 2: no reachable retired hook, operator, import, declaration, or DAG remains."""
+def test_airflow_provider_tree_preserves_only_the_new_runtime_surface() -> None:
+    """Test 2: only the new hook/operator surface survives without legacy paths or DAGs."""
     tracked = [name for name in _tracked_files() if name.startswith("providers/")]
     assert tracked, "provider tree must be tracked"
     violations: list[str] = []
@@ -695,46 +693,71 @@ def test_airflow_provider_tree_is_metadata_only() -> None:
                 violations.append(f"{relative}: retired provider token {token!r}")
     assert not violations, "provider violations: " + "; ".join(violations)
     for retired_source in (
-        PROVIDER_RUNTIME_SOURCE / "hooks" / "datasluice.py",
         PROVIDER_RUNTIME_SOURCE / "operators" / "search.py",
         PROVIDER_RUNTIME_SOURCE / "operators" / "materialize.py",
         PROVIDER_RUNTIME_SOURCE / "operators" / "_xcom.py",
     ):
         assert not retired_source.exists()
-    assert not list(PROVIDER_ROOT.rglob("*dag*")), "sample DAG files must stay deleted"
-    for namespace in ("hooks", "operators"):
-        module_path = PROVIDER_RUNTIME_SOURCE / namespace / "__init__.py"
-        tree = ast.parse(module_path.read_text(encoding="utf-8"))
-        statements = [
-            node for node in tree.body if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Constant)
-        ]
-        assert not statements, f"provider {namespace} namespace must stay docstring-only"
+    provider_dags = PROVIDER_ROOT / "tests" / "dags"
+    assert not provider_dags.exists() or not any(provider_dags.iterdir()), "sample DAG files must stay deleted"
+    hook_source = PROVIDER_RUNTIME_SOURCE / "hooks" / "datasluice.py"
+    assert hook_source.is_file(), "provider hook must be present"
+    hook_tree = ast.parse(hook_source.read_text(encoding="utf-8"))
+    assert any(node.name == "DatasluiceHook" for node in hook_tree.body if isinstance(node, ast.ClassDef))
+    operator_source = PROVIDER_RUNTIME_SOURCE / "operators" / "__init__.py"
+    operator_tree = ast.parse(operator_source.read_text(encoding="utf-8"))
+    assert any(
+        node.name == "DatasluiceCatalogOperator" for node in operator_tree.body if isinstance(node, ast.ClassDef)
+    )
 
 
 def test_provider_metadata_and_dependency_table_stay_locked() -> None:
-    """Test 2: provider metadata registers nothing and the dependency table is frozen."""
+    """Test 2: provider metadata declares runtime modules and preserves the HTTP floor."""
     import yaml
 
     provider_yaml = yaml.safe_load((PROVIDER_RUNTIME_SOURCE / "provider.yaml").read_text(encoding="utf-8"))
-    assert set(provider_yaml) <= {"package-name", "name", "description", "versions", "integrations"}
-    for banned_key in ("hooks", "operators", "connections", "sensors"):
+    assert set(provider_yaml) <= {
+        "package-name",
+        "name",
+        "description",
+        "versions",
+        "integrations",
+        "hooks",
+        "operators",
+    }
+    for required_key in ("hooks", "operators"):
+        assert provider_yaml[required_key]
+    for banned_key in ("connections", "sensors"):
         assert banned_key not in provider_yaml
     info_source = (PROVIDER_RUNTIME_SOURCE / "get_provider_info.py").read_text(encoding="utf-8")
-    for banned_key in ("hooks", "operators", "connections"):
+    for required_key in ("hooks", "operators"):
+        assert f'"{required_key}"' in info_source
+    for banned_key in ("connections",):
         assert f'"{banned_key}"' not in info_source
     provider_pyproject = tomllib.loads((PROVIDER_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert provider_pyproject["project"]["dependencies"] == ["datasluice>=0.2,<1", "apache-airflow>=3.2,<4"]
+    assert provider_pyproject["project"]["dependencies"] == ["datasluice[http]>=0.2,<1", "apache-airflow>=3.2,<4"]
     compatibility = json.loads((PROVIDER_ROOT / "compatibility.json").read_text(encoding="utf-8"))
     assert set(compatibility) == {"airflow", "python"}
     runtime_sources = list((PROVIDER_RUNTIME_SOURCE).rglob("*.py"))
     assert runtime_sources, "provider runtime source must exist"
+    allowed_modules = {
+        "datasluice.application",
+        "datasluice.domain.catalog.auth",
+        "datasluice.domain.catalog.ids",
+        "datasluice.domain.catalog.operations",
+        "datasluice.domain.catalog.profiles",
+        "datasluice.runtime.clients",
+        "datasluice.runtime.credentials",
+    }
     for source in runtime_sources:
         tree = ast.parse(source.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                assert all(not alias.name.startswith("datasluice") for alias in node.names), f"{source} imports core"
+                assert all(
+                    not alias.name.startswith("datasluice") or alias.name in allowed_modules for alias in node.names
+                ), f"{source} imports private core"
             if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("datasluice"):
-                pytest.fail(f"{source} imports core package {node.module}")
+                assert node.module in allowed_modules, f"{source} imports private core package {node.module}"
 
 
 def test_locked_coverage_matrix_matches_profiles_exactly() -> None:

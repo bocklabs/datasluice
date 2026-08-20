@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "apache-airflow-providers-datasluice"
 version = "0.1.2"
-description = "Metadata-only Apache Airflow provider for DataSluice; runtime integration awaits the canonical platform executors of later phases"
+description = "Apache Airflow provider for DataSluice runtime client composition; platform actions await canonical executors in Phases 3-5"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
@@ -22,8 +22,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "datasluice>=0.2,<1",
+    "datasluice[http]>=0.2,<1",
     "apache-airflow>=3.2,<4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
 ]
 
 [project.entry-points."apache_airflow_provider"]

@@ -1,15 +1,16 @@
 """Provider smoke convention module.
 
 Validates the installed provider package, its discovery metadata, and the
-absence of hook, operator, and connection declarations. Run from the provider
-package root: ``python tests/smoke.py``.
+runtime hook/operator declarations, and the absence of connection declarations.
+Run from the provider package root: ``python tests/smoke.py``.
 """
 
 from __future__ import annotations
 
 import sys
 
-_DECLARATION_KEYS = ("operators", "hooks", "hook-class-names", "connection-types")
+_RUNTIME_DECLARATION_KEYS = ("operators", "hooks")
+_FORBIDDEN_DECLARATION_KEYS = ("hook-class-names", "connection-types")
 
 
 def main() -> int:
@@ -19,8 +20,10 @@ def main() -> int:
     assert pkg.__name__ == "airflow.providers.datasluice"
     info = get_provider_info()
     assert info["package-name"] == "apache-airflow-providers-datasluice", info
-    for key in _DECLARATION_KEYS:
-        assert key not in info, f"provider metadata still declares {key}"
+    for key in _RUNTIME_DECLARATION_KEYS:
+        assert info[key], f"provider metadata omits {key}"
+    for key in _FORBIDDEN_DECLARATION_KEYS:
+        assert key not in info, f"provider metadata declares {key}"
     return 0
 
 
