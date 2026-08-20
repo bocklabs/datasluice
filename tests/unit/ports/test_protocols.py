@@ -8,7 +8,6 @@ from datasluice.ports import (
     AtomicStateStore,
     CachePort,
     CatalogPort,
-    CredentialProvider,
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
@@ -16,14 +15,12 @@ from datasluice.ports import (
     SearchableCatalog,
     StateStore,
     StoragePort,
-    Transport,
 )
 
 ALL_PROTOCOLS = [
     AtomicStateStore,
     CachePort,
     CatalogPort,
-    CredentialProvider,
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
@@ -31,7 +28,6 @@ ALL_PROTOCOLS = [
     SearchableCatalog,
     StateStore,
     StoragePort,
-    Transport,
 ]
 
 
@@ -73,9 +69,6 @@ def test_all_protocols_importable_individually() -> None:
         "CachePort",
         "CatalogPort",
         "CheckpointableResourceReader",
-        "ConditionalFetchResult",
-        "ConditionalTransport",
-        "CredentialProvider",
         "OrganizationCatalog",
         "PortalDetector",
         "ResourceReader",
@@ -83,27 +76,16 @@ def test_all_protocols_importable_individually() -> None:
         "SearchableCatalog",
         "StateStore",
         "StoragePort",
-        "StreamingTransport",
-        "Transport",
     ]:
         import datasluice.ports as ports
 
         assert hasattr(ports, name), f"{name} missing from datasluice.ports"
 
 
-def test_ports_all_contains_sixteen_names() -> None:
+def test_ports_all_contains_eleven_names() -> None:
     import datasluice.ports as ports
 
-    assert len(ports.__all__) == 16
-
-
-def test_transport_declares_request_get_json_download() -> None:
-    for method in ("request", "get_json", "download"):
-        assert hasattr(Transport, method), f"Transport missing {method}"
-
-
-def test_credential_provider_declares_resolve() -> None:
-    assert hasattr(CredentialProvider, "resolve")
+    assert len(ports.__all__) == 11
 
 
 def test_portal_detector_declares_detect() -> None:

@@ -32,3 +32,27 @@ def test_httpx_transport_maps_transport_failure() -> None:
 
     with pytest.raises(TransportFailure):
         transport.send(RuntimeRequest("GET", "https://example.test/"))
+
+
+def test_httpx_transport_strips_credentials_and_redacts_sensitive_redirect_query() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return httpx.Response(
+                302,
+                headers={"Location": "https://other.test/next?token=redirect-secret&keep=value"},
+            )
+        return httpx.Response(200, content=b"redirected")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    response = transport.send(
+        RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer request-secret"})
+    )
+
+    assert response.body == b"redirected"
+    assert len(seen) == 2
+    assert "Authorization" not in seen[1].headers
+    assert "redirect-secret" not in str(seen[1].url)
+    assert "keep=value" in str(seen[1].url)

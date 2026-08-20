@@ -87,6 +87,16 @@ REMOVED_MODULES: tuple[str, ...] = (
     "datasluice.cli.download",
 )
 
+_RUNTIME_MODULE_PREFIX = "datasluice."
+
+REMOVED_RUNTIME_MODULES: tuple[str, ...] = (
+    _RUNTIME_MODULE_PREFIX + "auth",
+    _RUNTIME_MODULE_PREFIX + "credentials",
+    _RUNTIME_MODULE_PREFIX + "ports.credentials",
+    _RUNTIME_MODULE_PREFIX + "ports.transport",
+    _RUNTIME_MODULE_PREFIX + "transport",
+)
+
 BANNED_IDENTIFIERS: tuple[str, ...] = (
     *REMOVED_MODULES,
     "BaseAdapter",
@@ -426,7 +436,7 @@ def _removed_module_violations() -> list[str]:
     import importlib.util
 
     violations = []
-    for removed_module in REMOVED_MODULES:
+    for removed_module in (*REMOVED_MODULES, *REMOVED_RUNTIME_MODULES):
         if importlib.util.find_spec(removed_module) is not None:
             violations.append(removed_module)
     return violations
@@ -616,7 +626,7 @@ def test_catalog_root_packages_do_not_re_export_platform_apis(package: str) -> N
             assert not hasattr(public_module, factory_name)
 
 
-@pytest.mark.parametrize("removed_module", REMOVED_MODULES)
+@pytest.mark.parametrize("removed_module", (*REMOVED_MODULES, *REMOVED_RUNTIME_MODULES))
 def test_removed_modules_fail_to_import(removed_module: str) -> None:
     """Test 2: every legacy module path is gone, not forwarded or aliased."""
     with pytest.raises(ModuleNotFoundError):

@@ -28,6 +28,7 @@ from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.errors.catalog import CatalogNotFoundError, UnsupportedCapabilityError
 from datasluice.runtime.clients import SyncCatalogClient
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from datasluice.runtime.transport.user_agent import build_user_agent
 
 
 def _profile() -> DeclaredCapabilityProfile:
@@ -113,6 +114,7 @@ def test_sync_client_dispatches_guarded_dataset_get_and_closes_once() -> None:
 
     assert result.items[0].name == "Fixture dataset"
     assert len(transport.requests) == 1
+    assert transport.requests[0].headers["User-Agent"] == build_user_agent()
     client.close()
     client.close()
     assert transport.close_count == 1
