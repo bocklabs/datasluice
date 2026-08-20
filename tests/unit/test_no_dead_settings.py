@@ -17,7 +17,14 @@ from pathlib import Path
 
 import pytest
 
-ALLOWED_DATASLUICE_ENV_VARS = frozenset({"DATASLUICE_NO_REDACT"})
+ALLOWED_DATASLUICE_ENV_VARS = frozenset(
+    {
+        "DATASLUICE_CKAN_API_TOKEN",
+        "DATASLUICE_NO_REDACT",
+        "DATASLUICE_SOCRATA_APP_TOKEN",
+        "DATASLUICE_UDATA_API_KEY",
+    }
+)
 
 
 def test_no_datasluice_env_vars_in_source() -> None:
