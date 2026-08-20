@@ -23,7 +23,7 @@ from datasluice.runtime.resilience import DeadlineMonitor
 class CheckpointSink(Protocol):
     """Persist a caller-owned bulk checkpoint at each item boundary."""
 
-    def __call__(self, checkpoint: BulkCheckpoint) -> object:
+    def __call__(self, checkpoint: BulkCheckpoint, /) -> object:
         """Store one complete immutable checkpoint snapshot."""
 
 
