@@ -61,10 +61,13 @@ def test_async_cancellation_releases_the_test_transport(catalog_fixture_server: 
     async def exercise() -> AsyncLoopbackTransport:
         transport = AsyncLoopbackTransport()
         task = asyncio.create_task(transport.get(f"{base_url}/cancel"))
+        await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         await transport.aclose()
+        assert transport.closed
+        assert transport._writer is None
         return transport
 
     assert asyncio.run(exercise()).close_count == 1
