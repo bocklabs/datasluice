@@ -2,50 +2,27 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Never
 
 from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.redaction import (
+    AUTH_SCHEME_RE,
+    CREDENTIAL_QUERY_RE,
+    MAX_METADATA_DEPTH,
+    MAX_METADATA_ENTRIES,
+    MAX_TEXT_LENGTH,
+    REDACTED,
+    SENSITIVE_PARTS,
+)
 from datasluice.exceptions import DataSluiceError
-
-_MAX_METADATA_ENTRIES = 32
-_MAX_METADATA_DEPTH = 8
-_MAX_TEXT_LENGTH = 256
-_REDACTED = "***"
-_SENSITIVE_PARTS = frozenset(
-    {
-        "authorization",
-        "credential",
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "pwd",
-        "cookie",
-        "api_key",
-        "apikey",
-        "private_key",
-        "access_key",
-        "consumer_key",
-        "client_key",
-        "signature",
-        "body",
-        "header",
-    }
-)
-_CREDENTIAL_QUERY_RE = re.compile(
-    r"(?i)([?&;][^=&;\s]*(?:api[_-]?key|token|secret|password|passwd|credential|authorization|signature)"
-    r"[^=&;\s]*)=[^&;\s]+"
-)
-_AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
 
 
 def _redact_message(message: str) -> str:
-    scrubbed = _CREDENTIAL_QUERY_RE.sub(r"\1=***", message)
-    scrubbed = _AUTH_SCHEME_RE.sub(r"\1 ***", scrubbed)
-    return scrubbed[:_MAX_TEXT_LENGTH]
+    scrubbed = CREDENTIAL_QUERY_RE.sub(r"\1=***", message)
+    scrubbed = AUTH_SCHEME_RE.sub(r"\1 ***", scrubbed)
+    return scrubbed[:MAX_TEXT_LENGTH]
 
 
 def _platform_value(platform: CatalogPlatform | str) -> str:
@@ -58,9 +35,9 @@ def _platform_value(platform: CatalogPlatform | str) -> str:
 def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) -> Mapping[str, object]:
     if value is None:
         return MappingProxyType({})
-    if _depth > _MAX_METADATA_DEPTH:
+    if _depth > MAX_METADATA_DEPTH:
         raise ValueError("Catalog error metadata exceeds the depth limit.")
-    if len(value) > _MAX_METADATA_ENTRIES:
+    if len(value) > MAX_METADATA_ENTRIES:
         raise ValueError("Catalog error metadata exceeds the entry limit.")
     sanitized: dict[str, object] = {}
     for key, nested in value.items():
@@ -68,8 +45,8 @@ def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) ->
             raise ValueError("Catalog error metadata keys must be non-empty strings.")
         normalized = key.lower().replace("-", "_")
         sanitized[key] = (
-            _REDACTED
-            if any(part in normalized for part in _SENSITIVE_PARTS)
+            REDACTED
+            if any(part in normalized for part in SENSITIVE_PARTS)
             else _bounded_value(nested, _depth=_depth + 1)
         )
     return MappingProxyType(sanitized)
@@ -83,10 +60,10 @@ def _bounded_value(value: object, *, _depth: int = 0) -> object:
     if isinstance(value, Mapping):
         return _bounded_metadata(value, _depth=_depth)
     if isinstance(value, tuple | list):
-        if len(value) > _MAX_METADATA_ENTRIES:
+        if len(value) > MAX_METADATA_ENTRIES:
             raise ValueError("Catalog error metadata sequence exceeds the entry limit.")
         return tuple(_bounded_value(item, _depth=_depth + 1) for item in value)
-    return repr(value)[:_MAX_TEXT_LENGTH]
+    return repr(value)[:MAX_TEXT_LENGTH]
 
 
 class CatalogError(DataSluiceError):
@@ -134,7 +111,7 @@ class NativeCatalogError(DataSluiceError):
             raise ValueError("Native catalog error operations must be non-empty strings.")
         if status_code is not None and (type(status_code) is not int or not 100 <= status_code <= 599):
             raise ValueError("Native catalog error status codes must be valid HTTP status codes.")
-        if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > _MAX_TEXT_LENGTH):
+        if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > MAX_TEXT_LENGTH):
             raise ValueError("Native catalog error vendor codes must be bounded strings.")
         if retry_after is not None and (
             (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
