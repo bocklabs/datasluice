@@ -299,3 +299,33 @@ def test_facade_leaves_injected_dependencies_open(monkeypatch: pytest.MonkeyPatc
     assert session.storage.close_calls == 0
     assert session.state_store.close_calls == 0
     assert session.plugins.close_calls == 0
+
+
+def test_facade_materialize_delegates_once_and_closes_owned_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open materialization preserves exact delegation and owned close choreography."""
+    session = _OwnedSession()
+    reader = _CloseSpy()
+    monkeypatch.setattr(application_module, "DataSluiceSession", lambda **kwargs: session)
+    monkeypatch.setattr(application_module, "DataPlaneResourceReader", lambda **kwargs: reader)
+    data_sluice = application_module.DataSluice()
+    resource = DirectResourceLocator(uri="file:///data/example.csv")
+    destination_uri = "memory://materialized/example"
+    result = object()
+    service = _MaterializeServiceSpy(result=result)
+    monkeypatch.setattr(data_sluice._services, "materialize", service.materialize)
+
+    assert data_sluice.materialize(resource, destination_uri, mode="raw") is result
+    assert service.calls == [(resource, destination_uri, "raw")]
+
+    with pytest.raises(RuntimeError, match="transport close failed"):
+        data_sluice.close()
+    data_sluice.close()
+
+    assert reader.close_calls == 1
+    assert session._transport.close_calls == 1
+    assert session._cache.close_calls == 1
+    assert session.storage.close_calls == 1
+    assert session.state_store.close_calls == 1
+    assert session.plugins.close_calls == 1
