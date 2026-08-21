@@ -60,7 +60,7 @@ def test_two_passes_zero_writes_pass2(tmp_path, csv_server, make_resource, inmem
     assert counting_fs.pipe_file_count == writes_after_first
     assert counting_fs.cat_file(uri) == first_bytes
     assert second_record.content_digest.value == checksum
-    assert server.captured_paths == ["/data.csv", "/data.csv", "/data.csv"]
+    assert server.captured_paths == ["/data.csv", "/data.csv"]
 
 
 def test_changed_content_rewrites(tmp_path, csv_server, make_resource, inmemory_state) -> None:

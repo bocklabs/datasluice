@@ -42,7 +42,7 @@ def test_304_skips_materialize(tmp_path, csv_server, make_resource, inmemory_sta
     state = inmemory_state.get(canonical_identity(resource))
     assert state is not None
     assert state.cursor[canonical_identity(resource)] == '"e1"'
-    assert server.captured_paths == ["/data.csv", "/data.csv"]
+    assert server.captured_paths == ["/data.csv"]
     first_synced_at = state.last_synced_at
     server.captured.clear()
     server.captured_paths.clear()

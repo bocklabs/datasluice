@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from collections.abc import Iterable, Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
+from datasluice.ports import ResponseAwareReader
 from datasluice.runtime.transport.base import RuntimeRequest
 from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
 
@@ -174,7 +176,21 @@ def sync_resources(
                                 state_key=key,
                             )
                             continue
-                    fresh_watermark = _preferred_watermark(result.headers)
+                    if 200 <= result.status_code < 300 and isinstance(reader, ResponseAwareReader):
+                        response_stream = _BufferedResponseStream(result.body)
+                        try:
+                            handed_stream = reader.open_response(
+                                resource,
+                                response_stream,
+                                headers=result.headers,
+                            )
+                        except BaseException as exc:
+                            response_stream.__exit__(type(exc), exc, exc.__traceback__)
+                            raise
+                        materialize_reader = _SingleStreamReader(handed_stream)
+                        fresh_watermark = _preferred_watermark(result.headers)
+                    else:
+                        fresh_watermark = None
 
             # Capture the prior CAS version atomically with the state read above so
             # every state transition chains through the conditional-write path
@@ -499,6 +515,37 @@ class _SingleStreamReader:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+class _BufferedResponseStream:
+    def __init__(self, body: bytes) -> None:
+        self._stream = io.BytesIO(body)
+        self._closed = False
+        self._entered = False
+        self._exited = False
+        self.enter_count = 0
+        self.exit_count = 0
+
+    def __enter__(self) -> io.BytesIO:
+        if self._closed:
+            raise RuntimeError("Buffered response stream was already closed")
+        if not self._entered:
+            self._entered = True
+            self.enter_count += 1
+        return self._stream
+
+    def __exit__(self, *exc: object) -> None:
+        if self._exited:
+            return
+        self._exited = True
+        self.exit_count += 1
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stream.close()
 
 
 def _conditional_validators(watermark: str | None) -> tuple[str | None, str | None]:

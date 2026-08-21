@@ -158,7 +158,7 @@ def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, m
     )
 
     assert outcomes[0].action == "materialized"
-    assert server.captured_paths == ["/data.csv", "/data.csv"]
+    assert server.captured_paths == ["/data.csv"]
 
 
 def _inmemory_state_store():

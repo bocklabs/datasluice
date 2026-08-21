@@ -56,7 +56,7 @@ def test_crash_then_resume_skips_completed_resource(
     assert first_store.get(identities["r1"]) is not None
     assert first_store.get(identities["r2"]) is None
     assert first_store.get(identities["r3"]) is None
-    assert server.captured_paths == ["/r1.csv", "/r1.csv", "/r2.csv", "/r2.csv"]
+    assert server.captured_paths == ["/r1.csv", "/r2.csv"]
 
     resumed_store = InMemoryStateStore()
     completed_r1 = first_store.get(identities["r1"])
@@ -80,7 +80,7 @@ def test_crash_then_resume_skips_completed_resource(
 
     assert [outcome.action for outcome in outcomes] == ["resumed", "materialized", "materialized"]
     assert "/r1.csv" not in server.captured_paths
-    assert server.captured_paths == ["/r2.csv", "/r2.csv", "/r3.csv", "/r3.csv"]
+    assert server.captured_paths == ["/r2.csv", "/r3.csv"]
     assert resumed_store.get(identities["r1"]) == completed_r1
     assert resumed_store.get(identities["r2"]) is not None
     assert resumed_store.get(identities["r3"]) is not None
