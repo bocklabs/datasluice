@@ -36,12 +36,12 @@ def test_httpx_transport_maps_transport_failure() -> None:
         transport.send(RuntimeRequest("GET", "https://example.test/"))
 
 
-def test_httpx_transport_strips_credentials_and_redacts_sensitive_redirect_query() -> None:
+def test_httpx_transport_strips_sensitive_headers_and_redacts_sensitive_redirect_query() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        if len(seen) == 1:
+        if request.url.host == "example.test":
             return httpx.Response(
                 302,
                 headers={"Location": "https://other.test/next?token=redirect-secret&keep=value"},
@@ -49,40 +49,114 @@ def test_httpx_transport_strips_credentials_and_redacts_sensitive_redirect_query
         return httpx.Response(200, content=b"redirected")
 
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    response = transport.send(
-        RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer request-secret"})
-    )
+    request_headers = {
+        "aUtHoRiZaTiOn": "Bearer request-secret",
+        "cOoKiE": "session-secret",
+        "X-API-KEY": "api-secret",
+        "x-AuTh-ToKeN": "token-secret",
+        "X-Benign": "preserve-me",
+    }
+    response = transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
+    transport.close()
 
     assert response.body == b"redirected"
     assert len(seen) == 2
-    assert "Authorization" not in seen[1].headers
+    first_headers = {key.lower(): value for key, value in seen[0].headers.items()}
+    second_headers = {key.lower(): value for key, value in seen[1].headers.items()}
+    assert all(name in first_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
+    assert all(name not in second_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
+    assert second_headers["x-benign"] == "preserve-me"
     assert "redirect-secret" not in str(seen[1].url)
     assert "keep=value" in str(seen[1].url)
 
 
-def test_async_httpx_transport_strips_credentials_and_redacts_sensitive_redirect_query() -> None:
+def test_httpx_transport_same_origin_redirect_preserves_caller_headers() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        if len(seen) == 1:
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"Location": "/next?keep=value"})
+        return httpx.Response(200, content=b"redirected")
+
+    request_headers = {
+        "Authorization": "Bearer request-secret",
+        "Cookie": "session-secret",
+        "X-API-Key": "api-secret",
+        "X-Auth-Token": "token-secret",
+        "X-Benign": "preserve-me",
+    }
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    response = transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
+    transport.close()
+
+    forwarded = {key.lower(): value for key, value in seen[1].headers.items()}
+    assert response.body == b"redirected"
+    assert all(forwarded[key.lower()] == value for key, value in request_headers.items())
+
+
+def test_async_httpx_transport_strips_sensitive_headers_and_redacts_sensitive_redirect_query() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "example.test":
             return httpx.Response(
                 302,
                 headers={"Location": "https://other.test/next?token=redirect-secret&keep=value"},
             )
         return httpx.Response(200, content=b"redirected")
 
+    request_headers = {
+        "aUtHoRiZaTiOn": "Bearer request-secret",
+        "cOoKiE": "session-secret",
+        "X-API-KEY": "api-secret",
+        "x-AuTh-ToKeN": "token-secret",
+        "X-Benign": "preserve-me",
+    }
+
     async def send() -> None:
         transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        response = await transport.send(
-            RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer request-secret"})
-        )
+        response = await transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
         await transport.aclose()
         assert response.body == b"redirected"
 
     asyncio.run(send())
 
     assert len(seen) == 2
-    assert "Authorization" not in seen[1].headers
+    first_headers = {key.lower(): value for key, value in seen[0].headers.items()}
+    second_headers = {key.lower(): value for key, value in seen[1].headers.items()}
+    assert all(name in first_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
+    assert all(name not in second_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
+    assert second_headers["x-benign"] == "preserve-me"
     assert "redirect-secret" not in str(seen[1].url)
     assert "keep=value" in str(seen[1].url)
+
+
+def test_async_httpx_transport_same_origin_redirect_preserves_caller_headers() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"Location": "/next?keep=value"})
+        return httpx.Response(200, content=b"redirected")
+
+    request_headers = {
+        "Authorization": "Bearer request-secret",
+        "Cookie": "session-secret",
+        "X-API-Key": "api-secret",
+        "X-Auth-Token": "token-secret",
+        "X-Benign": "preserve-me",
+    }
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        response = await transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
+        await transport.aclose()
+        assert response.body == b"redirected"
+
+    asyncio.run(send())
+
+    forwarded = {key.lower(): value for key, value in seen[1].headers.items()}
+    assert all(forwarded[key.lower()] == value for key, value in request_headers.items())
