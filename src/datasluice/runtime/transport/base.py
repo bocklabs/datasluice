@@ -7,6 +7,13 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
+SENSITIVE_REDIRECT_HEADERS = frozenset({"authorization", "cookie", "x-api-key", "x-auth-token"})
+
+
+def strip_sensitive_redirect_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """Return a copy without credential-bearing headers."""
+    return {key: value for key, value in headers.items() if key.lower() not in SENSITIVE_REDIRECT_HEADERS}
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeRequest:

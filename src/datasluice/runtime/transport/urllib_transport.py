@@ -13,7 +13,13 @@ from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_ope
 
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import (
+    CatalogTransport,
+    RuntimeRequest,
+    RuntimeResponse,
+    TransportFailure,
+    strip_sensitive_redirect_headers,
+)
 
 _CREDENTIAL_PARTS = (
     "api_key",
@@ -113,9 +119,7 @@ class UrllibCatalogTransport(CatalogTransport):
             next_url = urljoin(current.url, location)
             headers_for_next = dict(current.headers)
             if _origin(current.url) != _origin(next_url):
-                headers_for_next = {
-                    key: value for key, value in headers_for_next.items() if key.lower() != "authorization"
-                }
+                headers_for_next = strip_sensitive_redirect_headers(headers_for_next)
                 next_url = _redacted_redirect_url(next_url)
             current = RuntimeRequest(method=current.method, url=next_url, headers=headers_for_next, body=current.body)
         raise TransportFailure("Catalog redirect limit exceeded.")
