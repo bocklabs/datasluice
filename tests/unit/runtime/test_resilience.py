@@ -12,7 +12,7 @@ from datasluice.errors.catalog import BudgetExhaustedError, CatalogUnavailableEr
 from datasluice.runtime.clients import SyncCatalogClient
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
-from tests.unit.runtime.test_clients_sync import _envelope, _profile, _request
+from tests.unit.runtime.test_clients_sync import _envelope, _guard, _profile, _request
 
 
 class _Clock:
@@ -140,7 +140,7 @@ def test_client_pipeline_retries_503_then_returns_successful_envelope() -> None:
     transport = _SequenceTransport([RuntimeResponse(503, {}, b""), RuntimeResponse(200, {}, _envelope())])
     client = SyncCatalogClient(transport, _profile(), retry_sleep=lambda _: None)
 
-    result = client.get(_request())
+    result = client.get(_request(), _guard())
 
     assert result.items[0].name == "Fixture dataset"
     assert len(transport.requests) == 2
@@ -159,7 +159,7 @@ def test_client_pipeline_exhausts_tiny_total_budget_between_attempts() -> None:
     )
 
     with pytest.raises(BudgetExhaustedError):
-        client.get(_request())
+        client.get(_request(), _guard())
 
 
 def test_client_rejects_open_breaker_until_explicit_reset() -> None:
@@ -174,12 +174,12 @@ def test_client_rejects_open_breaker_until_explicit_reset() -> None:
     )
 
     with pytest.raises(CatalogUnavailableError):
-        client.get(_request())
+        client.get(_request(), _guard())
     key = CircuitKey(origin="http://127.0.0.1:8000", credential_scope="anonymous")
     assert registry.inspect(key).failure_count == 1
     with pytest.raises(CatalogUnavailableError) as raised:
-        client.get(_request())
+        client.get(_request(), _guard())
     assert "cool-down" in raised.value.safe_action
 
     registry.reset(key)
-    assert client.get(_request()).items[0].name == "Fixture dataset"
+    assert client.get(_request(), _guard()).items[0].name == "Fixture dataset"

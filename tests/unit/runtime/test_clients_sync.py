@@ -99,6 +99,10 @@ def _request(operation: OperationId | None = None) -> CatalogOperationRequest:
     )
 
 
+def _guard(operation: OperationId | None = None) -> CatalogOperationGuard:
+    return CatalogOperationGuard(operation_id=operation or OperationId("reference", "datasets", "get"))
+
+
 def _envelope() -> bytes:
     return json.dumps(
         {
@@ -132,7 +136,7 @@ def test_sync_client_dispatches_guarded_dataset_get_and_closes_once() -> None:
     client = SyncCatalogClient(transport, _profile())
 
     assert isinstance(client, SyncCatalogClientProtocol)
-    result = client.datasets.get(_request())
+    result = client.datasets.get(_request(), _guard())
 
     assert result.items[0].name == "Fixture dataset"
     assert len(transport.requests) == 1
@@ -145,9 +149,10 @@ def test_sync_client_dispatches_guarded_dataset_get_and_closes_once() -> None:
 def test_sync_client_rejects_unsupported_operation_without_dispatch() -> None:
     transport = _Transport(RuntimeResponse(200, {}, _envelope()))
     client = SyncCatalogClient(transport, _profile())
+    operation = OperationId("reference", "resources", "get")
 
     with pytest.raises(UnsupportedCapabilityError) as raised:
-        client.datasets.get(_request(OperationId("reference", "resources", "get")))
+        client.datasets.get(_request(operation), _guard(operation))
 
     assert raised.value.safe_action
     assert transport.requests == []
@@ -157,7 +162,7 @@ def test_sync_client_maps_not_found_response() -> None:
     client = SyncCatalogClient(_Transport(RuntimeResponse(404, {}, b"")), _profile())
 
     with pytest.raises(CatalogNotFoundError):
-        client.datasets.get(_request())
+        client.datasets.get(_request(), _guard())
 
 
 def test_sync_clients_own_independent_pools_and_capability_does_not_dispatch() -> None:

@@ -156,6 +156,24 @@ def _result(
     return ResultEnvelope.from_dict(payload, item_decoder=decoder)
 
 
+def _enforce_guards(
+    operation: CatalogOperationRequest,
+    caller_guard: CatalogOperationGuard,
+    effective: EffectiveCapabilityProfile | None = None,
+    *,
+    caller_checked: bool = False,
+) -> None:
+    if caller_guard.operation_id != operation.operation_id:
+        raise ValueError(
+            f"Catalog operation guard operation_id {caller_guard.operation_id} does not match request operation_id "
+            f"{operation.operation_id}."
+        )
+    if not caller_checked:
+        caller_guard.require_allowed()
+    if effective is not None:
+        build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
+
+
 class SyncCatalogClient:
     """Synchronous normalized client over an injected runtime transport."""
 
@@ -213,12 +231,14 @@ class SyncCatalogClient:
     def _dispatch(
         self,
         operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
         decoder: Callable[[object], object],
     ) -> ResultEnvelope[object]:
         if self._closed:
             raise RuntimeError("The synchronous catalog client is closed.")
+        _enforce_guards(operation, guard)
         effective = self._capabilities.resolve(operation.operation_id)
-        build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
+        _enforce_guards(operation, guard, effective, caller_checked=True)
         request = _request_for(operation, _refreshed_credential(self._credentials))
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
@@ -285,17 +305,13 @@ class SyncCatalogClient:
         if before != after:
             self._emit(operation, "breaker_state_change", breaker_open=after)
 
-    def get(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard | None = None
-    ) -> ResultEnvelope[DatasetRecord]:
+    def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Dispatch a dataset get operation."""
-        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, DatasetRecord.from_dict))
+        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, guard, DatasetRecord.from_dict))
 
-    def list(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard | None = None
-    ) -> ResultEnvelope[DatasetRecord]:
+    def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Dispatch a dataset list operation."""
-        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, DatasetRecord.from_dict))
+        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, guard, DatasetRecord.from_dict))
 
     def capability(self, operation_id: str) -> str:
         """Return the effective classification without dispatching transport I/O."""

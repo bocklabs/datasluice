@@ -291,6 +291,10 @@ def _request(operation: OperationId) -> CatalogOperationRequest:
     return CatalogOperationRequest(operation, {"url": "http://127.0.0.1:8000/datasets/fixture"})
 
 
+def _guard(operation: OperationId) -> CatalogOperationGuard:
+    return CatalogOperationGuard(operation_id=operation)
+
+
 def _envelope() -> bytes:
     return (
         b'{"schema_version":1,"kind":"result_envelope","items":[{"schema_version":1,"kind":"dataset",'
@@ -354,8 +358,8 @@ def test_sync_client_probes_once_per_operation_and_capability_does_not_send() ->
     transport = _SyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
     client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
 
-    client.get(_request(operation.id))
-    client.get(_request(operation.id))
+    client.get(_request(operation.id), _guard(operation.id))
+    client.get(_request(operation.id), _guard(operation.id))
 
     assert runner.calls == [operation.id]
     assert len(transport.requests) == 2
@@ -381,9 +385,9 @@ def test_sync_client_maps_auth_response_and_rejects_second_dispatch(
     client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
 
     with pytest.raises(expected_error) as first:
-        client.get(_request(operation.id))
+        client.get(_request(operation.id), _guard(operation.id))
     with pytest.raises(expected_error) as second:
-        client.get(_request(operation.id))
+        client.get(_request(operation.id), _guard(operation.id))
 
     assert first.value.capability_state == response_class.value
     assert second.value.capability_state == response_class.value
@@ -397,9 +401,9 @@ def test_sync_client_retains_post_dispatch_forbidden_state_without_probe_runner(
     client = SyncCatalogClient(transport, _profile(operation))
 
     with pytest.raises(ForbiddenError):
-        client.get(_request(operation.id))
+        client.get(_request(operation.id), _guard(operation.id))
     with pytest.raises(ForbiddenError):
-        client.get(_request(operation.id))
+        client.get(_request(operation.id), _guard(operation.id))
 
     assert len(transport.requests) == 1
 
@@ -420,9 +424,9 @@ def test_sync_client_invalidate_causes_a_new_probe() -> None:
     transport = _SyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
     client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
 
-    client.get(_request(operation.id))
+    client.get(_request(operation.id), _guard(operation.id))
     client.invalidate(str(operation.id))
-    client.get(_request(operation.id))
+    client.get(_request(operation.id), _guard(operation.id))
 
     assert runner.calls == [operation.id, operation.id]
     assert len(transport.requests) == 2

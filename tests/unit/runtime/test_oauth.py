@@ -24,7 +24,7 @@ from datasluice.runtime.oauth import (
     RefreshingCredentialProvider,
 )
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-from tests.unit.runtime.test_clients_sync import _envelope, _profile, _request
+from tests.unit.runtime.test_clients_sync import _envelope, _guard, _profile, _request
 
 
 class _SyncTransport:
@@ -223,7 +223,7 @@ def test_sync_client_uses_a_refreshed_oauth_credential_on_dispatch() -> None:
     transport = Transport(_token_response())
     provider = RefreshingCredentialProvider(_flow(), _expired_credential(), transport)
 
-    SyncCatalogClient(transport, _profile(), credentials=provider).get(_request())
+    SyncCatalogClient(transport, _profile(), credentials=provider).get(_request(), _guard())
 
     assert len(transport.requests) == 2
     assert transport.requests[-1].headers["Authorization"] == "Bearer access-token"

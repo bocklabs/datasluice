@@ -7,7 +7,7 @@ import pytest
 from datasluice.runtime.clients import SyncCatalogClient
 from datasluice.runtime.events import EventEmitter, EventEnvelope, ListSink
 from datasluice.runtime.transport.base import RuntimeResponse
-from tests.unit.runtime.test_clients_sync import _envelope, _profile, _request, _Transport
+from tests.unit.runtime.test_clients_sync import _envelope, _guard, _profile, _request, _Transport
 
 
 def test_event_envelope_round_trips_with_exact_schema() -> None:
@@ -93,7 +93,7 @@ def test_sync_client_emits_one_outcome_envelope() -> None:
         emitter=EventEmitter(sinks=(sink,)),
     )
 
-    client.get(_request())
+    client.get(_request(), _guard())
 
     assert len(sink.events) == 1
     assert sink.events[0].operation_id == "reference/datasets.get"
