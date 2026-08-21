@@ -99,6 +99,18 @@ class _Reader:
         return _BatchStream(self._batches)
 
 
+class _MaterializeServiceSpy:
+    """Service double recording every materialization delegation."""
+
+    def __init__(self, result: object) -> None:
+        self._result = result
+        self.calls: list[tuple[object, str, str]] = []
+
+    def materialize(self, resource: object, destination_uri: str, *, mode: str) -> object:
+        self.calls.append((resource, destination_uri, mode))
+        return self._result
+
+
 class _CallerOwnedConnector:
     """Connector double whose lifecycle stays with the caller."""
 
@@ -187,15 +199,28 @@ def test_facade_open_returns_lazy_single_use_resource_wrapper() -> None:
     opened.close()
 
 
-def test_closed_facade_rejects_catalog_and_data_plane_work() -> None:
+def test_closed_facade_rejects_catalog_and_data_plane_work(monkeypatch: pytest.MonkeyPatch) -> None:
     """A closed facade refuses both catalog composition and direct data-plane work."""
-    data_sluice = DataSluice(session=_MinimalSession(), reader=_Reader([]))
+    reader = _Reader([])
+    data_sluice = DataSluice(session=_MinimalSession(), reader=reader)
+    service = _MaterializeServiceSpy(result=object())
+    monkeypatch.setattr(data_sluice._services, "materialize", service.materialize)
+    data_sluice.close()
     data_sluice.close()
 
     with pytest.raises(StreamClosedError):
         data_sluice.open_catalog(lambda received: received, _catalog_context())
     with pytest.raises(StreamClosedError):
         data_sluice.open(DirectResourceLocator(uri="file:///data/example.csv"))
+    with pytest.raises(StreamClosedError):
+        data_sluice.materialize(
+            DirectResourceLocator(uri="file:///data/example.csv"),
+            "memory://destination",
+            mode="raw",
+        )
+
+    assert service.calls == []
+    assert reader.opened == []
 
 
 def test_facade_exposes_no_portal_surface() -> None:
