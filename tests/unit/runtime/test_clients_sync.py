@@ -7,12 +7,12 @@ from datetime import date
 
 import pytest
 
-from datasluice.contracts.catalog.protocols import (
-    CatalogOperationRequest,
-)
+from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.contracts.catalog.protocols import (
     SyncCatalogClient as SyncCatalogClientProtocol,
 )
+from datasluice.domain.catalog.auth import EffectivePermissions
+from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -24,8 +24,14 @@ from datasluice.domain.catalog.operations import (
     OperationSpec,
     OperationTier,
 )
-from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
-from datasluice.errors.catalog import CatalogNotFoundError, UnsupportedCapabilityError
+from datasluice.domain.catalog.profiles import (
+    CredentialClassification,
+    DeclaredCapabilityProfile,
+    ProbeEvidence,
+    ProbeResponseClass,
+    RoleClassification,
+)
+from datasluice.errors.catalog import CatalogNotFoundError, ForbiddenError, UnsupportedCapabilityError
 from datasluice.runtime.clients import SyncCatalogClient
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 from datasluice.runtime.transport.user_agent import build_user_agent
@@ -69,6 +75,22 @@ class _Transport:
 
     def close(self) -> None:
         self.close_count += 1
+
+
+class _ProbeRunner:
+    def __init__(self, response_class: ProbeResponseClass) -> None:
+        self.response_class = response_class
+        self.calls = 0
+
+    def probe(self, operation_id: OperationId) -> ProbeEvidence:
+        self.calls += 1
+        return ProbeEvidence(
+            operation_id=operation_id,
+            deployment_url="https://catalog.example.test/api",
+            credential_classification=CredentialClassification.ANONYMOUS,
+            role_classification=RoleClassification.ANONYMOUS,
+            observed_response_class=self.response_class,
+        )
 
 
 def _request(operation: OperationId | None = None) -> CatalogOperationRequest:
@@ -146,3 +168,52 @@ def test_sync_clients_own_independent_pools_and_capability_does_not_dispatch() -
     assert first is not second
     assert client.capability(str(_request().operation_id)) == "available"
     assert first.requests == []
+
+
+@pytest.mark.parametrize("service_method", ["get", "list"])
+def test_sync_client_rejects_denied_caller_guard_before_probe_or_transport(service_method: str) -> None:
+    operation = _request().operation_id
+    permissions = EffectivePermissions(
+        platform=CatalogPlatform("reference"),
+        scopes=frozenset(),
+        authenticated=True,
+        operation_scopes={str(operation): frozenset({"datasets:read"})},
+    )
+    guard = CatalogOperationGuard(operation_id=operation, permissions=permissions)
+    transport = _Transport(RuntimeResponse(200, {}, _envelope()))
+    runner = _ProbeRunner(ProbeResponseClass.SUCCESS)
+    client = SyncCatalogClient(transport, _profile(), probe_runner=runner)
+
+    with pytest.raises(ForbiddenError):
+        getattr(client.datasets, service_method)(_request(), guard)
+
+    assert runner.calls == 0
+    assert transport.requests == []
+
+
+def test_sync_client_rejects_guard_for_different_operation_before_probe_or_transport() -> None:
+    operation = _request().operation_id
+    guard = CatalogOperationGuard(operation_id=OperationId("reference", "datasets", "list"))
+    transport = _Transport(RuntimeResponse(200, {}, _envelope()))
+    runner = _ProbeRunner(ProbeResponseClass.SUCCESS)
+    client = SyncCatalogClient(transport, _profile(), probe_runner=runner)
+
+    with pytest.raises(ValueError, match="does not match request"):
+        client.datasets.get(_request(operation), guard)
+
+    assert runner.calls == 0
+    assert transport.requests == []
+
+
+def test_sync_client_allowed_caller_guard_does_not_bypass_denied_effective_capability() -> None:
+    operation = _request().operation_id
+    guard = CatalogOperationGuard(operation_id=operation)
+    transport = _Transport(RuntimeResponse(200, {}, _envelope()))
+    runner = _ProbeRunner(ProbeResponseClass.UNAVAILABLE)
+    client = SyncCatalogClient(transport, _profile(), probe_runner=runner)
+
+    with pytest.raises(UnsupportedCapabilityError):
+        client.datasets.get(_request(operation), guard)
+
+    assert runner.calls == 1
+    assert transport.requests == []
