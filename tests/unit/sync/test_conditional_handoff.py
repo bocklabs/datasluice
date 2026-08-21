@@ -142,6 +142,59 @@ def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource, cap
     assert server.captured_paths == ["/data.csv", "/data.csv"]
 
 
+def test_base_reader_checkpoints_materialized_representation(tmp_path, csv_server, make_resource) -> None:
+    body_a = b"id,name\n1,A\n"
+    body_b = b"id,name\n1,B\n"
+    server, url = csv_server(body=body_a, headers={"ETag": '"fallback-a"'})
+    server.responses["/data.csv"] = [
+        MockResponse(body=body_a, headers={"ETag": '"fallback-a"'}),
+        MockResponse(body=body_b, headers={"ETag": '"fallback-b"'}),
+    ]
+    resource = make_resource(url)
+    transport = HttpxCatalogTransport()
+    reader = _BaseReader(transport)
+    state_store = _inmemory_state_store()
+    destination_uri = f"file://{tmp_path}/dest"
+
+    first = list(
+        sync_resources(
+            [resource],
+            state_store=state_store,
+            reader=reader,
+            destination_uri=destination_uri,
+            transport=transport,
+        )
+    )
+
+    server.responses["/data.csv"] = MockResponse(body=body_b, headers={"ETag": '"fallback-b"'})
+    second = list(
+        sync_resources(
+            [resource],
+            state_store=state_store,
+            reader=reader,
+            destination_uri=destination_uri,
+            transport=transport,
+        )
+    )
+
+    record = first[0].record
+    assert record is not None
+    import pyarrow.parquet as pq
+
+    with open(record.uri.removeprefix("file://"), "rb") as published:
+        assert pq.read_table(published).to_pylist() == [{"id": 1, "name": "B"}]
+    state = state_store.get(sync_module.canonical_identity(resource))
+    assert state is not None
+    assert state.cursor[sync_module.canonical_identity(resource)] == record.content_digest.value
+    assert state.cursor[sync_module.canonical_identity(resource)] != '"fallback-a"'
+    assert len(state.cursor[sync_module.canonical_identity(resource)]) == 64
+    assert second[0].action == "skipped-unchanged"
+    assert reader.open_calls == 2
+    assert server.captured_paths == ["/data.csv", "/data.csv", "/data.csv"]
+    assert "if-none-match" not in server.captured[2]
+    assert "if-modified-since" not in server.captured[2]
+
+
 def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, make_resource) -> None:
     server, url = csv_server(headers={"ETag": '"query-auth"'})
     resource = make_resource(url)
