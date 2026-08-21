@@ -297,6 +297,7 @@ class DataSluice:
         mode: str = "parquet",
     ) -> Any:
         """Materialize one Resource or ResourceLocator into an Artifact."""
+        self._ensure_open()
         return self._services.materialize(resource, destination_uri, mode=mode)
 
     def download_many(self, resources: list[Resource], destination: str) -> list[dict[str, object]]:
