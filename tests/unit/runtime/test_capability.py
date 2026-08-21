@@ -439,9 +439,9 @@ def test_async_client_uses_async_probe_runner_and_invalidate() -> None:
         transport = _AsyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
         client = AsyncCatalogClient(transport, _profile(operation), probe_runner=runner)
 
-        await client.get(_request(operation.id))
+        await client.get(_request(operation.id), _guard(operation.id))
         client.invalidate(str(operation.id))
-        await client.get(_request(operation.id))
+        await client.get(_request(operation.id), _guard(operation.id))
 
         assert runner.calls == [operation.id, operation.id]
         assert len(transport.requests) == 2

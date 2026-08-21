@@ -402,12 +402,14 @@ class AsyncCatalogClient:
     async def _dispatch(
         self,
         operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
         decoder: Callable[[object], object],
     ) -> ResultEnvelope[object]:
         if self._closed:
             raise RuntimeError("The asynchronous catalog client is closed.")
+        _enforce_guards(operation, guard)
         effective = await self._capabilities.resolve_async(operation.operation_id)
-        build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
+        _enforce_guards(operation, guard, effective, caller_checked=True)
         credential = None
         if self._credentials is not None and not isinstance(self._credentials, CredentialResolver):
             resolve_async = getattr(self._credentials, "resolve_async", None)
@@ -480,16 +482,16 @@ class AsyncCatalogClient:
             self._emit(operation, "breaker_state_change", breaker_open=after)
 
     async def get(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard | None = None
+        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[DatasetRecord]:
         """Dispatch an asynchronous dataset get operation."""
-        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, DatasetRecord.from_dict))
+        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, guard, DatasetRecord.from_dict))
 
     async def list(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard | None = None
+        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[DatasetRecord]:
         """Dispatch an asynchronous dataset list operation."""
-        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, DatasetRecord.from_dict))
+        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, guard, DatasetRecord.from_dict))
 
     def capability(self, operation_id: str) -> str:
         """Return the cached effective classification without dispatching transport I/O."""
