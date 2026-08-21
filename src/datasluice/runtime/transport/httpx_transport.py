@@ -7,7 +7,12 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import (
+    RuntimeRequest,
+    RuntimeResponse,
+    TransportFailure,
+    strip_sensitive_redirect_headers,
+)
 from datasluice.runtime.transport.urllib_transport import _retry_after
 
 _CREDENTIAL_PARTS = (
@@ -94,7 +99,7 @@ class HttpxCatalogTransport:
             next_url = urljoin(current.url, location)
             headers = dict(current.headers)
             if _origin(current.url) != _origin(next_url):
-                headers = {key: value for key, value in headers.items() if key.lower() != "authorization"}
+                headers = strip_sensitive_redirect_headers(headers)
                 next_url = _redacted_redirect_url(next_url)
             response.close()
             current = RuntimeRequest(current.method, next_url, headers, current.body)
@@ -161,7 +166,7 @@ class AsyncHttpxCatalogTransport:
             next_url = urljoin(current.url, location)
             headers = dict(current.headers)
             if _origin(current.url) != _origin(next_url):
-                headers = {key: value for key, value in headers.items() if key.lower() != "authorization"}
+                headers = strip_sensitive_redirect_headers(headers)
                 next_url = _redacted_redirect_url(next_url)
             await response.aclose()
             current = RuntimeRequest(current.method, next_url, headers, current.body)
