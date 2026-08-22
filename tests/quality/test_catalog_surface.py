@@ -66,6 +66,12 @@ CANONICAL_PLATFORM_EXPORTS: dict[str, tuple[str, str]] = {
     "socrata": ("SocrataConnector", "create_socrata_connector"),
 }
 
+CONNECTOR_MODULE_PATHS: dict[str, str] = {
+    "ckan": "src/datasluice/connectors/catalog/ckan/connector.py",
+    "udata": "src/datasluice/connectors/catalog/udata/connector.py",
+    "socrata": "src/datasluice/connectors/catalog/socrata/connector.py",
+}
+
 EXPECTED_ENTRY_POINTS: dict[str, str] = {
     "datasluice/ckan": "datasluice.connectors.catalog.ckan.factory:create_ckan_connector",
     "datasluice/udata": "datasluice.connectors.catalog.udata.factory:create_udata_connector",
@@ -99,8 +105,13 @@ REMOVED_RUNTIME_MODULES: tuple[str, ...] = (
 
 BANNED_IDENTIFIERS: tuple[str, ...] = (
     *REMOVED_MODULES,
+    "AdapterError",
+    "AdapterNotFoundError",
+    "AdapterRegistry",
     "BaseAdapter",
+    "CKANAdapter",
     "CatalogResourceLocator",
+    "CustomAdapter",
     "DataGouvAdapter",
     "create_datagouv_connector",
     "DataSluiceHook",
@@ -108,6 +119,9 @@ BANNED_IDENTIFIERS: tuple[str, ...] = (
     "DataSluiceSearchOperator",
     "DataSluiceMaterializeOperator",
     "PortalType",
+    "SODA2Adapter",
+    "SocrataAdapter",
+    "UDataAdapter",
     "datagouv",
     "registry.register",
 )
@@ -116,7 +130,11 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
     "tests/quality/test_catalog_surface.py": frozenset(BANNED_IDENTIFIERS),
     "tests/quality/test_docs_guard.py": frozenset(
         {
+            "AdapterError",
+            "AdapterNotFoundError",
+            "AdapterRegistry",
             "BaseAdapter",
+            "CKANAdapter",
             "CatalogResourceLocator",
             "DataGouvAdapter",
             "create_datagouv_connector",
@@ -124,6 +142,9 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
             "DataSluiceOperator",
             "DataSluiceSearchOperator",
             "DataSluiceMaterializeOperator",
+            "SODA2Adapter",
+            "SocrataAdapter",
+            "UDataAdapter",
             "datagouv",
             "datasluice.adapters",
             "datasluice.connectors.ckan",
@@ -137,15 +158,21 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
     "tests/unit/runtime/test_catalog_cutover.py": frozenset({"BaseAdapter", "datasluice.runtime.context"}),
     "tests/unit/application/test_catalog_cutover.py": frozenset({"CatalogResourceLocator"}),
     "tests/unit/application/test_facade.py": frozenset({"CatalogResourceLocator"}),
-    "tests/unit/contracts/catalog/test_public_api.py": frozenset({"CatalogResourceLocator"}),
-    "tests/unit/test_package.py": frozenset({"CatalogResourceLocator"}),
+    "tests/unit/contracts/catalog/test_public_api.py": frozenset(
+        {"AdapterError", "AdapterNotFoundError", "CatalogResourceLocator"}
+    ),
+    "tests/unit/test_package.py": frozenset({"AdapterNotFoundError", "CatalogResourceLocator"}),
     "tests/unit/connectors/catalog/test_udata_public.py": frozenset(
         {"DataGouvAdapter", "create_datagouv_connector", "datagouv"}
     ),
+    "tests/unit/connectors/catalog/test_socrata_public.py": frozenset({"SODA2Adapter"}),
     "tests/unit/discovery/test_detection_evidence.py": frozenset({"datagouv"}),
     "tests/unit/discovery/test_discovery.py": frozenset({"datagouv"}),
     "tests/unit/runtime/test_plugin_manager.py": frozenset({"datagouv"}),
-    "tests/unit/runtime/test_no_global_state.py": frozenset({"registry.register"}),
+    "tests/unit/runtime/test_no_global_state.py": frozenset({"AdapterRegistry", "registry.register"}),
+    "tests/unit/test_former_facade_names_removed.py": frozenset(
+        {"CKANAdapter", "CustomAdapter", "SocrataAdapter", "UDataAdapter"}
+    ),
     "providers/apache-airflow/tests/test_public_boundary.py": frozenset(
         {
             "DataSluiceHook",
@@ -375,6 +402,17 @@ PUBLIC_CATALOG_TREES: tuple[Path, ...] = (
 _SCAN_SUFFIXES = frozenset({".py", ".md", ".toml", ".json", ".yaml", ".yml", ".cfg"})
 _COVERAGE_ROW_RE = re.compile(r"^\|\s*(\w+)\.([\w.-]+)\s*\|\s*(INTEGRATE|OPT-OUT)\s*\|", re.MULTILINE)
 
+RETIRED_WORD_RE = re.compile(r"adapt(er|ers)", re.IGNORECASE)
+RETIRED_WORD_SCAN_ROOTS: tuple[str, ...] = (
+    "src/datasluice/connectors/",
+    "docs/",
+    ".github/workflows/",
+)
+RETIRED_WORD_SCAN_TOPS: tuple[str, ...] = ("README.md", "zensical.toml", "AGENTS.md", "CONTEXT.md")
+RETIRED_WORD_ALLOWLIST: dict[str, frozenset[str]] = {
+    "CONTEXT.md": frozenset({"adapter"}),
+}
+
 
 def _tracked_files() -> list[str]:
     result = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=False)
@@ -413,6 +451,45 @@ def _coverage_rows() -> list[tuple[str, str, str]]:
 def _row_to_operation_id(row: str) -> str:
     platform, _, name = row.partition(".")
     return f"{platform}/{name}"
+
+
+def _retired_word_violations() -> list[str]:
+    """Scan connector-facing surfaces for any casing of the retired word.
+
+    Per-file granularity: a file listed in ``RETIRED_WORD_ALLOWLIST`` permits
+    only its enumerated spellings; every other match in connector trees,
+    docs, workflows, and top-level surfaces fails the gate.
+    """
+    corpus = [
+        REPO_ROOT / name
+        for name in _tracked_files()
+        if name.startswith(RETIRED_WORD_SCAN_ROOTS) or name in RETIRED_WORD_SCAN_TOPS
+    ]
+    violations: list[str] = []
+    for path in corpus:
+        if not path.exists() or path.suffix not in {".py", ".md", ".toml", ".yml", ".yaml"}:
+            continue
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        allowed = RETIRED_WORD_ALLOWLIST.get(relative, frozenset())
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in RETIRED_WORD_RE.finditer(text):
+            if match.group(0).lower() not in allowed:
+                violations.append(f"{relative}: retired word {match.group(0)!r}")
+                break
+    return violations
+
+
+def _connector_module_violations(tracked: list[str]) -> list[str]:
+    """Prove the renamed connector modules are tracked canonical surface."""
+    tracked_set = set(tracked)
+    violations: list[str] = []
+    for platform, module_path in CONNECTOR_MODULE_PATHS.items():
+        if module_path not in tracked_set:
+            violations.append(f"{platform} connector module missing from tracking: {module_path}")
+        former = module_path.replace("connector.py", "adapter.py")
+        if former in tracked_set:
+            violations.append(f"{platform} former facade module still tracked: {former}")
+    return violations
 
 
 def _identifier_violations() -> list[str]:
@@ -485,11 +562,14 @@ def _fixture_linkage_violations() -> list[str]:
 
 def _static_audit_gaps() -> list[str]:
     """Aggregate the fast static invariants gating this module's execution."""
+    tracked = _tracked_files()
     return (
         _removed_module_violations()
         + _entry_point_violations()
         + _identifier_violations()
         + _fixture_linkage_violations()
+        + _retired_word_violations()
+        + _connector_module_violations(tracked)
     )
 
 
