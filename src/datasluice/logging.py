@@ -1,15 +1,13 @@
 """Structured logging utilities for DataSluice.
 
-Owns the canonical ``SENSITIVE_HEADERS`` frozenset (lifted here from
-``transport/redirect`` so the :class:`RedactingFilter` and the redirect handler
-share one source of truth,, without a circular import —
-``redirect.py`` imports it from here).
+Owns the canonical ``SENSITIVE_HEADERS`` frozenset shared by the
+:class:`RedactingFilter` and the redirect handler without a circular
+import — the redirect handler imports it from here.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 _logger_name = "datasluice"
@@ -27,6 +25,34 @@ _SENSITIVE_KEYS = SENSITIVE_HEADERS | {
     "password",
 }
 
+_STANDARD_RECORD_ATTRS = frozenset(
+    {
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "taskName",
+        "thread",
+        "threadName",
+    }
+)
+
 
 def get_logger(name: str | None = None) -> logging.Logger:
     """Return a logger for *name*, defaulting to the package logger.
@@ -43,32 +69,34 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 
 class RedactingFilter(logging.Filter):
-    """Redact known sensitive keys from log records.
+    """Redact sensitive extras and args without touching LogRecord internals.
 
-    Walks ``record.__dict__`` and ``record.args`` dicts replacing string values
-    whose (lower-cased) key is in ``_SENSITIVE_KEYS`` with ``"***"``. Targeted:
-    only known sensitive keys are touched — never value-pattern heuristics — so
-    legitimate base64 / open-data payloads pass through unchanged (RESEARCH
-    ). Set ``DATASLUICE_NO_REDACT=1`` to disable redaction entirely
-    (escape hatch for test fixtures and debugging).
+    Only caller-supplied ``extra`` keys and ``record.args`` entries pass
+    through the central runtime gate. Standard :class:`~logging.LogRecord`
+    internals (``exc_info``, ``exc_text``, ``msg``, ``pathname``,
+    ``stack_info``, …) stay untouched so traceback formatting and message
+    rendering keep working. Targeted: only known sensitive keys are touched —
+    never value-pattern heuristics — so legitimate base64 / open-data payloads
+    pass through unchanged. The central runtime gate owns the escape hatch for
+    test fixtures and debugging.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if os.environ.get("DATASLUICE_NO_REDACT") == "1":
-            return True
-        for key, value in list(record.__dict__.items()):
-            if key.lower() in _SENSITIVE_KEYS and isinstance(value, str):
-                record.__dict__[key] = _REDACTED
-        if record.args:
-            record.args = tuple(
-                self._redact_mapping(a) if isinstance(a, dict) else a
-                for a in (record.args if isinstance(record.args, tuple) else (record.args,))
-            )
-        return True
+        from datasluice.runtime.redaction import redact_event_metadata, redact_for_output
 
-    @staticmethod
-    def _redact_mapping(mapping: dict) -> dict:
-        return {k: (_REDACTED if k.lower() in _SENSITIVE_KEYS else v) for k, v in mapping.items()}
+        extras = {key: value for key, value in record.__dict__.items() if key not in _STANDARD_RECORD_ATTRS}
+        if extras:
+            try:
+                record.__dict__.update(redact_event_metadata(extras))
+            except Exception:
+                pass
+        if record.args:
+            args = record.args if isinstance(record.args, tuple) else (record.args,)
+            try:
+                record.args = tuple(redact_for_output(arg) for arg in args)
+            except Exception:
+                pass
+        return True
 
 
 def configure_logging(

@@ -18,6 +18,8 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import ResourceRecord, ResultEnvelope
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.integrations.dlt import _sanitize, datasluice_source, mirror_dlt_state
+from datasluice.runtime.transport.base import RuntimeRequest
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 from datasluice.sync._identity import canonical_identity
 from datasluice.sync.state_store import InMemoryStateStore
 from tests.helpers.http_server import MockResponse, start_test_server
@@ -27,12 +29,35 @@ duckdb = pytest.importorskip("duckdb")
 pytest.importorskip("pyarrow")
 
 
+class _CountingTransport:
+    """Wrapper recording every request sent through the wrapped transport instance."""
+
+    def __init__(self, inner: UrllibCatalogTransport) -> None:
+        self._inner = inner
+        self.sent: list[RuntimeRequest] = []
+        self.close_calls = 0
+
+    def send(self, request: RuntimeRequest) -> object:
+        self.sent.append(request)
+        return self._inner.send(request)
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self._inner.close()
+
+
 class _ReferenceDltConnector(SyncReferenceConnector):
     """Reference connector extended with normalized resource-list behavior."""
 
-    def __init__(self, resources: tuple[ResourceRecord, ...]) -> None:
+    def __init__(self, resources: tuple[ResourceRecord, ...], *, transport: Any | None = None) -> None:
         super().__init__()
         self._resources = resources
+        self._transport = transport if transport is not None else UrllibCatalogTransport()
+
+    @property
+    def transport(self) -> Any:
+        """Expose the caller-owned shared transport as the public accessor."""
+        return self._transport
 
     @property
     def resources(self) -> _ReferenceDltConnector:
@@ -49,6 +74,20 @@ class _ReferenceDltConnector(SyncReferenceConnector):
         guard.require_allowed()
         self.dispatches.append(str(operation.operation_id))
         return ResultEnvelope(items=self._resources)
+
+
+class _TransportlessDltConnector(SyncReferenceConnector):
+    """Protocol-compatible connector that never exposes a transport accessor."""
+
+    @property
+    def resources(self) -> _TransportlessDltConnector:
+        """Return the normalized resource service."""
+        return self
+
+    @property
+    def organizations(self) -> _TransportlessDltConnector:
+        """Return the normalized organization service."""
+        return self
 
 
 def _query() -> CatalogOperationRequest:
@@ -96,6 +135,12 @@ def test_source_requires_explicit_typed_client_and_query() -> None:
         datasluice_source(cast(SyncCatalogClient, _ReferenceDltConnector(())), cast(Any, "search"))
 
 
+def test_source_requires_a_client_exposing_the_public_transport_accessor() -> None:
+    """A protocol-compatible client without a public transport accessor is rejected early."""
+    with pytest.raises(TypeError, match="transport"):
+        datasluice_source(cast(SyncCatalogClient, _TransportlessDltConnector()), _query())
+
+
 def test_source_uses_reference_connector_resources(tmp_path: Path) -> None:
     """The caller-owned reference connector supplies normalized extraction resources."""
     server, base_url = start_test_server(
@@ -113,6 +158,48 @@ def test_source_uses_reference_connector_resources(tmp_path: Path) -> None:
         assert rows == [(1, "Alice"), (2, "Bob")]
         assert connector.dispatches == ["reference/resources.list"]
     finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_two_resources_share_one_transport_that_stays_usable_after_extraction(tmp_path: Path) -> None:
+    """Repeated extraction flows through one connector-owned transport that never closes."""
+    server, base_url = start_test_server(
+        {
+            "/alpha.csv": MockResponse(body=b"id,name\n1,Alice\n", headers={"Content-Type": "text/csv"}),
+            "/beta.csv": MockResponse(body=b"id,name\n2,Bob\n", headers={"Content-Type": "text/csv"}),
+        }
+    )
+    counting_transport = _CountingTransport(UrllibCatalogTransport())
+    connector = _ReferenceDltConnector(
+        (
+            _make_resource(f"{base_url}/alpha.csv", resource_id="alpha.csv"),
+            _make_resource(f"{base_url}/beta.csv", resource_id="beta.csv"),
+        ),
+        transport=counting_transport,
+    )
+    try:
+        pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "shared_transport")
+
+        _extract_and_load(pipeline, datasluice_source(cast(SyncCatalogClient, connector), _query()))
+
+        with duckdb.connect(str(db_path)) as connection:
+            rows = connection.execute(
+                f'SELECT id FROM "{dataset_name}"."alpha_csv" UNION ALL SELECT id FROM "{dataset_name}"."beta_csv"'
+            ).fetchall()
+        assert sorted(rows) == [(1,), (2,)]
+
+        sent_urls = [request.url for request in counting_transport.sent]
+        assert len(counting_transport.sent) >= 2, f"expected one request per resource, saw {sent_urls}"
+        assert {f"{base_url}/alpha.csv", f"{base_url}/beta.csv"} <= set(sent_urls)
+        assert all(url.startswith(base_url) for url in sent_urls)
+        assert counting_transport.close_calls == 0
+
+        response = connector.transport.send(RuntimeRequest(method="GET", url=f"{base_url}/alpha.csv"))
+        assert response.status_code == 200
+        assert b"Alice" in response.body
+    finally:
+        connector.transport.close()
         server.shutdown()
         server.server_close()
 

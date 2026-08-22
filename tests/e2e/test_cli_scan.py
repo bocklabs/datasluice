@@ -79,7 +79,7 @@ def _batches(row_count: int, batch_size: int = 125) -> list[pa.RecordBatch]:
 
 
 def _patch_facade(monkeypatch: pytest.MonkeyPatch, facade: _Facade) -> None:
-    monkeypatch.setattr(scan_command, "DataSluice", lambda: facade)
+    monkeypatch.setattr(scan_command, "open_data_sluice", lambda: facade)
 
 
 def _write_fixture(path: Path, suffix: str, row_count: int) -> None:

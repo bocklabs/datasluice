@@ -1,6 +1,7 @@
 """Structured errors for the catalog connector contract."""
 
 from datasluice.errors.catalog import (
+    BudgetExhaustedError,
     CatalogConflictError,
     CatalogError,
     CatalogNotFoundError,
@@ -16,6 +17,7 @@ from datasluice.errors.catalog import (
 )
 
 __all__ = [
+    "BudgetExhaustedError",
     "CatalogConflictError",
     "CatalogError",
     "CatalogNotFoundError",

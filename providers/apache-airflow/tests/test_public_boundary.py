@@ -17,13 +17,11 @@ _SAMPLE_DAG = _PROVIDER_TESTS / "dags" / "example_datasluice.py"
 _AIRFLOW_DOC = _ROOT / "docs" / "examples" / "airflow.md"
 
 _RETIRED_RUNTIME_MODULES = (
-    "airflow.providers.datasluice.hooks.datasluice",
     "airflow.providers.datasluice.operators.search",
     "airflow.providers.datasluice.operators.materialize",
     "airflow.providers.datasluice.operators._xcom",
 )
 _RETIRED_SOURCE_FILES = (
-    _PROVIDER_PACKAGE / "hooks" / "datasluice.py",
     _PROVIDER_PACKAGE / "operators" / "search.py",
     _PROVIDER_PACKAGE / "operators" / "materialize.py",
     _PROVIDER_PACKAGE / "operators" / "_xcom.py",
@@ -33,20 +31,30 @@ _RETIRED_TEST_FILES = (
     _PROVIDER_TESTS / "test_search_operator.py",
     _PROVIDER_TESTS / "test_materialize_operator.py",
 )
-_EXECUTION_PACKAGES = ("hooks", "operators")
 _RETIRED_IDENTIFIERS = (
     *_RETIRED_RUNTIME_MODULES,
-    "DataSluiceHook",
     "DataSluiceSearchOperator",
     "DataSluiceMaterializeOperator",
     "datasluice_default",
 )
-_DECLARATION_KEYS = ("operators", "hooks", "hook-class-names", "connection-types")
+_RUNTIME_DECLARATION_KEYS = ("operators", "hooks")
+_FORBIDDEN_DECLARATION_KEYS = ("hook-class-names", "connection-types")
 _SMOKE_ALLOWED_AIRFLOW_IMPORTS = {
     "airflow.providers.datasluice",
     "airflow.providers.datasluice.get_provider_info",
 }
-_NEGATIVE_ASSERTION_ALLOWLIST = (Path(__file__).resolve(),)
+_PUBLIC_CORE_MODULES = frozenset(
+    {
+        "datasluice.application",
+        "datasluice.domain.catalog.auth",
+        "datasluice.domain.catalog.ids",
+        "datasluice.domain.catalog.operations",
+        "datasluice.domain.catalog.profiles",
+        "datasluice.runtime.clients",
+        "datasluice.runtime.credentials",
+    }
+)
+_NEGATIVE_ASSERTION_ALLOWLIST = (_PROVIDER_TESTS / "test_public_boundary.py",)
 
 
 def _provider_python_files() -> list[Path]:
@@ -68,11 +76,13 @@ def test_provider_python_files_use_only_public_core_imports_and_attributes() -> 
             if isinstance(node, ast.ImportFrom) and node.module == "datasluice":
                 core_names.update(alias.asname or alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("datasluice."):
-                raise AssertionError(f"{path} imports private or non-top-level core module {node.module!r}")
+                assert node.module in _PUBLIC_CORE_MODULES, f"{path} imports private core module {node.module!r}"
+                core_names.update(alias.asname or alias.name for alias in node.names)
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name.startswith("datasluice."):
-                        raise AssertionError(f"{path} imports private or non-top-level core module {alias.name!r}")
+                        assert alias.name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {alias.name!r}"
+                        core_names.add(alias.asname or "datasluice")
                     if alias.name == "datasluice":
                         core_names.add(alias.asname or alias.name)
 
@@ -94,15 +104,17 @@ def test_retired_runtime_modules_are_not_importable(module_name: str) -> None:
         importlib.import_module(module_name)
 
 
-def test_runtime_packages_import_neither_core_runner_nor_retired_types() -> None:
+def test_runtime_packages_import_only_new_core_runtime_surfaces() -> None:
     for path in sorted(_PROVIDER_PACKAGE.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    assert alias.name.split(".")[0] != "datasluice", f"{path} imports core module {alias.name!r}"
+                    if alias.name.startswith("datasluice"):
+                        assert alias.name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {alias.name!r}"
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                assert node.module.split(".")[0] != "datasluice", f"{path} imports core module {node.module!r}"
+                if node.module.startswith("datasluice") and node.module != "datasluice":
+                    assert node.module in _PUBLIC_CORE_MODULES, f"{path} imports private core module {node.module!r}"
 
 
 def test_provider_tree_imports_no_retired_runtime_module() -> None:
@@ -119,18 +131,12 @@ def test_provider_tree_imports_no_retired_runtime_module() -> None:
                     assert imported not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {imported!r}"
 
 
-def test_execution_packages_re_export_nothing_and_declare_no_wrapper() -> None:
-    for package_name in _EXECUTION_PACKAGES:
-        module = importlib.import_module(f"airflow.providers.datasluice.{package_name}")
-        public_names = sorted(name for name in vars(module) if not name.startswith("_"))
-        assert public_names == [], f"airflow.providers.datasluice.{package_name} re-exports {public_names}"
+def test_runtime_packages_export_the_new_hook_and_deferred_operator() -> None:
+    hooks = importlib.import_module("airflow.providers.datasluice.hooks")
+    operators = importlib.import_module("airflow.providers.datasluice.operators")
 
-        for path in sorted((_PROVIDER_PACKAGE / package_name).rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in tree.body:
-                assert not isinstance(node, ast.ClassDef), f"{path} declares class {node.name!r}"
-                assert not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)), f"{path} declares {node.name!r}"
-                assert not isinstance(node, (ast.Import, ast.ImportFrom)), f"{path} contains module-level imports"
+    assert hooks.__all__ == ["DatasluiceHook"]
+    assert operators.__all__ == ["DatasluiceCatalogOperator"]
 
 
 def test_sample_dag_is_absent() -> None:
@@ -172,16 +178,19 @@ def test_provider_tree_references_no_retired_surface() -> None:
             assert identifier not in text, f"{path} references retired surface {identifier!r}"
 
 
-def test_provider_metadata_declares_no_runtime_registration() -> None:
-    """Installed Python metadata carries no hook, operator, or connection registration."""
+def test_provider_metadata_declares_runtime_modules_without_connection_registration() -> None:
+    """Installed metadata declares runtime modules without a connection type."""
     from airflow.providers.datasluice.get_provider_info import get_provider_info
 
     info = get_provider_info()
-    for key in _DECLARATION_KEYS:
-        assert key not in info, f"installed provider metadata still declares {key!r}"
+    for key in _RUNTIME_DECLARATION_KEYS:
+        assert info.get(key), f"installed provider metadata omits {key!r}"
     yaml_text = (_PROVIDER_PACKAGE / "provider.yaml").read_text(encoding="utf-8")
-    for key in _DECLARATION_KEYS:
-        assert f"{key}:" not in yaml_text, f"provider.yaml still declares {key!r}"
+    for key in _RUNTIME_DECLARATION_KEYS:
+        assert f"{key}:" in yaml_text, f"provider.yaml omits {key!r}"
+    for key in _FORBIDDEN_DECLARATION_KEYS:
+        assert key not in info, f"installed provider metadata declares {key!r}"
+        assert f"{key}:" not in yaml_text, f"provider.yaml declares {key!r}"
 
 
 def test_airflow_docs_state_phase_boundary_without_retired_examples() -> None:

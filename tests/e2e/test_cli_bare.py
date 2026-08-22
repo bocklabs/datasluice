@@ -9,6 +9,7 @@ distinct from the full all-extras profile exercised by ``test_cli_existing.py``.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -73,8 +74,41 @@ def test_bare_wheel_imports_from_venv_not_checkout(bare_env: dict[str, str]) -> 
     assert bare_env["venv"] in result.stdout
 
 
-def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
-    """The bare wheel exposes the datasluice console script and --help."""
+def test_bare_wheel_import_sweep_stays_optional_dependency_free(bare_env: dict[str, str]) -> None:
+    """Every base-reachable public package imports without optional distributions."""
+    result = subprocess.run(
+        [
+            bare_env["python"],
+            "-c",
+            "import sys;"
+            "import datasluice;"
+            "import datasluice.io;"
+            "import datasluice.sync;"
+            "import datasluice.discovery;"
+            "import datasluice.integrations.dlt;"
+            "import datasluice.runtime;"
+            "import datasluice.runtime.bulk;"
+            "import datasluice.runtime.mutation;"
+            "import datasluice.runtime.oauth;"
+            "import datasluice.connectors.catalog.ckan;"
+            "import datasluice.connectors.catalog.udata;"
+            "import datasluice.connectors.catalog.socrata;"
+            "optional = ('boto3', 'dlt', 'duckdb', 'fsspec', 'httpx', 'hvac', 'keyring', 'openpyxl', "
+            "'opentelemetry', 'pandas', 'polars', 'pyarrow', 'zstandard');"
+            "loaded = [name for name in optional if any(module == name or module.startswith(name + '.') "
+            "for module in sys.modules)];"
+            "assert not loaded, loaded",
+        ],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_bare_console_script_exposes_runtime_cli_surface(bare_env: dict[str, str]) -> None:
+    """The bare wheel exposes version and the safe runtime CLI surface."""
     result = subprocess.run(
         [bare_env["console"], "--help"],
         capture_output=True,
@@ -83,10 +117,24 @@ def test_bare_console_script_exposes_version(bare_env: dict[str, str]) -> None:
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
-    for command in ("scan", "open", "materialize"):
-        assert command in result.stdout, f"console --help missing command {command}"
+    version = subprocess.run(
+        [bare_env["console"], "--version"],
+        capture_output=True,
+        text=True,
+        env=_clean_env(bare_env["venv"]),
+        timeout=60,
+    )
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.startswith("datasluice ")
+    commands_section = result.stdout.split("Commands", 1)[1]
+    for command in ("scan", "open", "materialize", "capabilities", "credentials"):
+        assert re.search(rf"^[\W_]*{command}\b", commands_section, re.MULTILINE), (
+            f"console --help missing command {command}"
+        )
     for retired in _RETIRED_COMMANDS:
-        assert retired not in result.stdout, f"console --help must not advertise retired command {retired}"
+        assert not re.search(rf"^[\W_]*{retired}\b", commands_section, re.MULTILINE), (
+            f"console --help must not advertise retired command {retired}"
+        )
 
 
 def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str]) -> None:

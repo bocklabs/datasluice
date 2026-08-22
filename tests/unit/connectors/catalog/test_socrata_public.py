@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 from datasluice.contracts.catalog.protocols import (
+    AsyncCatalogOperationExecutor,
     CatalogConnectorContext,
     CatalogOperationGuard,
     CatalogOperationRequest,
@@ -170,6 +171,24 @@ def test_factory_requires_both_typed_executor_modes() -> None:
     )
 
     with pytest.raises(ValueError, match="synchronous"):
+        create_socrata_connector(context)
+
+
+def test_factory_rejects_an_invalid_asynchronous_executor() -> None:
+    """A façade cannot silently accept an invalid asynchronous executor."""
+    from datasluice.connectors.catalog.socrata import create_socrata_connector
+
+    context = CatalogConnectorContext(
+        sync_executor=SyncExecutor(),
+        async_executor=cast(AsyncCatalogOperationExecutor, object()),
+        normalized_sync=object(),
+        normalized_async=object(),
+        native_sync=object(),
+        native_async=object(),
+        effective_profile=_effective_socrata_profile(),
+    )
+
+    with pytest.raises(ValueError, match="asynchronous"):
         create_socrata_connector(context)
 
 

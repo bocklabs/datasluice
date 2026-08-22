@@ -1,17 +1,21 @@
-"""Unit tests for the CredentialScope model and credential-aware redirect handling."""
+"""Unit tests for the CredentialScope dataclass model.
+
+CredentialScope redirect-policy enforcement now lives inside the runtime
+transports (``credential_scope=`` on both catalog transports); the behavioral
+coverage for it is in ``tests/unit/runtime/test_transport_urllib.py`` and
+``tests/unit/runtime/test_transport_httpx.py``. This module pins only the
+model's defaults, freezing, and custom values, plus unrelated exception
+contracts that historically shared this file.
+"""
 
 from __future__ import annotations
 
 import dataclasses
-import urllib.request
-from http.client import HTTPMessage
-from io import BytesIO
 
 import pytest
 
 from datasluice.domain import CredentialScope
 from datasluice.exceptions import PortalError, RetryableHTTPError
-from datasluice.transport.redirect import CredentialAwareRedirectHandler
 
 
 def test_credential_scope_defaults() -> None:
@@ -41,57 +45,3 @@ def test_retryable_http_error_carries_status_code() -> None:
 
 def test_retryable_http_error_is_portal_error() -> None:
     assert issubclass(RetryableHTTPError, PortalError)
-
-
-def _redirect(
-    handler: CredentialAwareRedirectHandler, req_url: str, new_url: str, headers: dict[str, str]
-) -> urllib.request.Request | None:
-    req = urllib.request.Request(req_url, headers=headers)
-    return handler.redirect_request(req, BytesIO(b""), 302, "Found", HTTPMessage(), new_url)
-
-
-def test_redirect_handler_strips_authorization_cross_host() -> None:
-    handler = CredentialAwareRedirectHandler()
-    new_req = _redirect(
-        handler, "http://a.example.com/start", "http://b.example.com/target", {"Authorization": "Bearer secret"}
-    )
-    assert new_req is not None
-    assert "Authorization" not in new_req.headers
-
-
-def test_redirect_handler_retains_authorization_same_origin() -> None:
-    handler = CredentialAwareRedirectHandler()
-    new_req = _redirect(
-        handler, "http://a.example.com/start", "http://a.example.com/target", {"Authorization": "Bearer secret"}
-    )
-    assert new_req is not None
-    assert new_req.headers["Authorization"] == "Bearer secret"
-
-
-def test_redirect_handler_strips_on_scheme_downgrade() -> None:
-    handler = CredentialAwareRedirectHandler()
-    new_req = _redirect(
-        handler, "https://a.example.com/start", "http://a.example.com/target", {"Authorization": "Bearer secret"}
-    )
-    assert new_req is not None
-    assert "Authorization" not in new_req.headers
-
-
-def test_redirect_handler_scope_allows_listed_host() -> None:
-    scope = CredentialScope(allowed_hosts=("b.example.com",), allowed_schemes=("http",), send_on_redirect=True)
-    handler = CredentialAwareRedirectHandler(scope)
-    new_req = _redirect(
-        handler, "http://a.example.com/start", "http://b.example.com/target", {"Authorization": "Bearer secret"}
-    )
-    assert new_req is not None
-    assert new_req.headers["Authorization"] == "Bearer secret"
-
-
-def test_redirect_handler_scope_strips_unlisted_host() -> None:
-    scope = CredentialScope(allowed_hosts=("c.example.com",), allowed_schemes=("http",), send_on_redirect=True)
-    handler = CredentialAwareRedirectHandler(scope)
-    new_req = _redirect(
-        handler, "http://a.example.com/start", "http://b.example.com/target", {"Authorization": "Bearer secret"}
-    )
-    assert new_req is not None
-    assert "Authorization" not in new_req.headers

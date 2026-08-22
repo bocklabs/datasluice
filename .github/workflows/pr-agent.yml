@@ -24,7 +24,7 @@ jobs:
         uses: the-pr-agent/pr-agent@f6af7d77554ff8d26adffded077e6461329e92fa # v0.42.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          config.model: ${{ secrets.OCR_LLM_MODEL }}
-          OPENAI_KEY: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          OPENAI.API_BASE: ${{ secrets.OCR_LLM_URL }}
+          config.model: ${{ vars.PR_AGENT_LLM_MODEL }}
+          OPENAI_KEY: ${{ secrets.PR_AGENT_LLM_AUTH_TOKEN }}
+          OPENAI.API_BASE: ${{ secrets.PR_AGENT_LLM_URL }}
           config.fallback_models: '${{ vars.PR_AGENT_FALLBACK_MODEL }}'

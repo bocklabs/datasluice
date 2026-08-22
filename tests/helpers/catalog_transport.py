@@ -29,10 +29,15 @@ class SyncLoopbackTransport:
         """Issue one loopback GET without using the asynchronous transport."""
         if self.closed:
             raise RuntimeError("The synchronous loopback transport is closed.")
+        parsed = urlsplit(url)
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"} or parsed.port is None:
+            raise ValueError("Catalog test transports only connect to explicit loopback HTTP URLs.")
         request = Request(url, headers=dict(headers or {}), method="GET")
         with urlopen(request, timeout=2) as response:  # noqa: S310
             return LoopbackResponse(
-                status=response.status, headers=dict(response.headers.items()), body=response.read()
+                status=response.status,
+                headers=dict(response.headers.items()),
+                body=_sync_body(response),
             )
 
     def close(self) -> None:
@@ -79,7 +84,7 @@ class AsyncLoopbackTransport:
                     break
                 key, value = line.decode("ascii").rstrip("\r\n").split(":", 1)
                 response_headers[key] = value.strip()
-            body = await reader.readexactly(int(response_headers.get("Content-Length", "0")))
+            body = await _async_body(reader, response_headers)
             return LoopbackResponse(status=int(parts[1]), headers=response_headers, body=body)
         finally:
             writer.close()
@@ -96,3 +101,26 @@ class AsyncLoopbackTransport:
                 self._writer.close()
                 await self._writer.wait_closed()
                 self._writer = None
+
+
+def _header(headers: Mapping[str, str], name: str) -> str | None:
+    return next((value for key, value in headers.items() if key.lower() == name), None)
+
+
+def _sync_body(response: object) -> bytes:
+    return response.read()  # ty: ignore[unresolved-attribute]
+
+
+async def _async_body(reader: asyncio.StreamReader, headers: Mapping[str, str]) -> bytes:
+    if _header(headers, "transfer-encoding") == "chunked":
+        parts = bytearray()
+        while True:
+            size = int((await reader.readline()).split(b";", 1)[0], 16)
+            if size == 0:
+                while (await reader.readline()) not in (b"", b"\r\n", b"\n"):
+                    continue
+                return bytes(parts)
+            parts.extend(await reader.readexactly(size))
+            await reader.readexactly(2)
+    content_length = int(_header(headers, "content-length") or "0")
+    return await reader.readexactly(content_length)

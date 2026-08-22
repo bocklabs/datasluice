@@ -2,50 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Never
 
 from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.redaction import MAX_TEXT_LENGTH, redact_mapping, redact_string
 from datasluice.exceptions import DataSluiceError
-
-_MAX_METADATA_ENTRIES = 32
-_MAX_METADATA_DEPTH = 8
-_MAX_TEXT_LENGTH = 256
-_REDACTED = "***"
-_SENSITIVE_PARTS = frozenset(
-    {
-        "authorization",
-        "credential",
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "pwd",
-        "cookie",
-        "api_key",
-        "apikey",
-        "private_key",
-        "access_key",
-        "consumer_key",
-        "client_key",
-        "signature",
-        "body",
-        "header",
-    }
-)
-_CREDENTIAL_QUERY_RE = re.compile(
-    r"(?i)([?&;][^=&;\s]*(?:api[_-]?key|token|secret|password|passwd|credential|authorization|signature)"
-    r"[^=&;\s]*)=[^&;\s]+"
-)
-_AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
-
-
-def _redact_message(message: str) -> str:
-    scrubbed = _CREDENTIAL_QUERY_RE.sub(r"\1=***", message)
-    scrubbed = _AUTH_SCHEME_RE.sub(r"\1 ***", scrubbed)
-    return scrubbed[:_MAX_TEXT_LENGTH]
 
 
 def _platform_value(platform: CatalogPlatform | str) -> str:
@@ -58,35 +21,8 @@ def _platform_value(platform: CatalogPlatform | str) -> str:
 def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) -> Mapping[str, object]:
     if value is None:
         return MappingProxyType({})
-    if _depth > _MAX_METADATA_DEPTH:
-        raise ValueError("Catalog error metadata exceeds the depth limit.")
-    if len(value) > _MAX_METADATA_ENTRIES:
-        raise ValueError("Catalog error metadata exceeds the entry limit.")
-    sanitized: dict[str, object] = {}
-    for key, nested in value.items():
-        if not isinstance(key, str) or not key:
-            raise ValueError("Catalog error metadata keys must be non-empty strings.")
-        normalized = key.lower().replace("-", "_")
-        sanitized[key] = (
-            _REDACTED
-            if any(part in normalized for part in _SENSITIVE_PARTS)
-            else _bounded_value(nested, _depth=_depth + 1)
-        )
-    return MappingProxyType(sanitized)
-
-
-def _bounded_value(value: object, *, _depth: int = 0) -> object:
-    if isinstance(value, str):
-        return _redact_message(value)
-    if value is None or isinstance(value, bool | int | float):
-        return value
-    if isinstance(value, Mapping):
-        return _bounded_metadata(value, _depth=_depth)
-    if isinstance(value, tuple | list):
-        if len(value) > _MAX_METADATA_ENTRIES:
-            raise ValueError("Catalog error metadata sequence exceeds the entry limit.")
-        return tuple(_bounded_value(item, _depth=_depth + 1) for item in value)
-    return repr(value)[:_MAX_TEXT_LENGTH]
+    redacted = redact_mapping(value, _depth=_depth)
+    return MappingProxyType(redacted)
 
 
 class CatalogError(DataSluiceError):
@@ -134,13 +70,13 @@ class NativeCatalogError(DataSluiceError):
             raise ValueError("Native catalog error operations must be non-empty strings.")
         if status_code is not None and (type(status_code) is not int or not 100 <= status_code <= 599):
             raise ValueError("Native catalog error status codes must be valid HTTP status codes.")
-        if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > _MAX_TEXT_LENGTH):
+        if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > MAX_TEXT_LENGTH):
             raise ValueError("Native catalog error vendor codes must be bounded strings.")
         if retry_after is not None and (
             (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
         ):
             raise ValueError("Native catalog error Retry-After must be a non-negative number.")
-        super().__init__(_redact_message(message))
+        super().__init__(redact_string(message))
         self.operation = operation
         self.platform = _platform_value(platform)
         self.status_code = status_code
@@ -198,6 +134,38 @@ class CatalogRateLimitError(CatalogError):
             safe_action=safe_action,
         )
         self.retry_after = float(retry_after) if retry_after is not None else None
+
+
+class BudgetExhaustedError(CatalogError):
+    """Raised when an operation exceeds its finite runtime time budget."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        operation: str,
+        platform: CatalogPlatform | str,
+        capability_state: str | None = None,
+        safe_action: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+        retry_state: Mapping[str, object] | None = None,
+    ) -> None:
+        for value, name in ((elapsed_seconds, "Elapsed"), (budget_seconds, "Budget")):
+            if (type(value) is not int and type(value) is not float) or value < 0:
+                raise ValueError(f"{name} seconds must be non-negative numbers.")
+        if budget_seconds <= 0:
+            raise ValueError("Budget seconds must be a positive number.")
+        super().__init__(
+            message,
+            operation=operation,
+            platform=platform,
+            capability_state=capability_state,
+            safe_action=safe_action,
+        )
+        self.elapsed_seconds = float(elapsed_seconds)
+        self.budget_seconds = float(budget_seconds)
+        self.retry_state = _bounded_metadata(retry_state)
 
 
 class CatalogUnavailableError(CatalogError):

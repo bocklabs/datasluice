@@ -15,6 +15,7 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogOperationExecutor,
 )
 from datasluice.runtime.session import DataSluiceSession
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 if os.environ.get("DATASLUICE_TDD_RED") == "1":
     pytest.skip("runtime catalog cutover implementation pending GREEN phase", allow_module_level=True)
@@ -37,6 +38,12 @@ class _AsyncExecutor:
 
 
 class _Transport:
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return RuntimeResponse(200, {}, b"{}")
+
+    def close(self) -> None:
+        return None
+
     def request(self, url: str, **kwargs: Any) -> bytes:
         return b""
 

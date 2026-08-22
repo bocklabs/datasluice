@@ -147,12 +147,12 @@ def test_http_download_with_streaming_transport() -> None:
 
     pytest.importorskip("httpx")
     from datasluice.domain import HttpDownload, Resource
-    from datasluice.transport.httpx_transport import HttpxTransport
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 
     csv_bytes = _csv_text(rows=8)
     server, base = start_test_server({"/data.csv": MockResponse(status=200, body=csv_bytes)})
     try:
-        transport = HttpxTransport()
+        transport = HttpxCatalogTransport()
         resource = Resource(
             id="r1",
             url=f"{base}/data.csv",

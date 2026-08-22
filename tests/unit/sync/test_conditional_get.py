@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import importlib
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from datasluice.data import DataPlaneResourceReader
+from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 from datasluice.sync import sync_resources
 from datasluice.sync._identity import canonical_identity
-from datasluice.transport.httpx_transport import HttpxTransport
 
 sync_module = importlib.import_module("datasluice.sync.sync")
 if not hasattr(sync_module, "_CONDITIONAL_SYNC_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
@@ -34,7 +35,7 @@ def _sync(tmp_path, resource, state_store, transport, *, cache=None):
 def test_304_skips_materialize(tmp_path, csv_server, make_resource, inmemory_state) -> None:
     server, url = csv_server(headers={"ETag": '"e1"'})
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
 
     first = _sync(tmp_path, resource, inmemory_state, transport)
 
@@ -62,7 +63,7 @@ def test_304_skips_materialize(tmp_path, csv_server, make_resource, inmemory_sta
 def test_304_survives_no_cache(tmp_path, csv_server, make_resource, inmemory_state) -> None:
     _server, url = csv_server(headers={"ETag": '"e1"'})
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
 
     _sync(tmp_path, resource, inmemory_state, transport, cache=None)
     second = _sync(tmp_path, resource, inmemory_state, transport, cache=None)
@@ -70,10 +71,36 @@ def test_304_survives_no_cache(tmp_path, csv_server, make_resource, inmemory_sta
     assert second[0].action == "skipped-unchanged"
 
 
+def test_304_unhealthy_destination_rematerializes(tmp_path, csv_server, make_resource, inmemory_state) -> None:
+    server, url = csv_server(headers={"ETag": '"e1"'})
+    resource = make_resource(url)
+    transport = HttpxCatalogTransport()
+
+    first = _sync(tmp_path, resource, inmemory_state, transport)
+    record = first[0].record
+    assert record is not None
+    Path(record.uri.removeprefix("file://")).unlink()
+    server.captured.clear()
+    server.captured_paths.clear()
+
+    second = _sync(tmp_path, resource, inmemory_state, transport)
+
+    assert second[0].action == "materialized"
+    assert Path(record.uri.removeprefix("file://")).is_file()
+    assert server.captured_paths == ["/data.csv", "/data.csv"]
+    assert server.captured[0]["if-none-match"] == '"e1"'
+    assert "if-none-match" not in server.captured[1]
+    state = inmemory_state.get(canonical_identity(resource))
+    assert state is not None
+    second_record = second[0].record
+    assert second_record is not None
+    assert state.cursor[canonical_identity(resource)] == second_record.content_digest.value
+
+
 def test_headerless_sha_path(tmp_path, csv_server, make_resource, inmemory_state) -> None:
     server, url = csv_server()
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
 
     first = _sync(tmp_path, resource, inmemory_state, transport)
     first_state = inmemory_state.get(canonical_identity(resource))
@@ -91,7 +118,7 @@ def test_headerless_sha_path(tmp_path, csv_server, make_resource, inmemory_state
 def test_conditional_headers_not_stripped(tmp_path, csv_server, make_resource, inmemory_state) -> None:
     server, url = csv_server(headers={"ETag": '"e1"'})
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
 
     _sync(tmp_path, resource, inmemory_state, transport)
     server.captured.clear()
@@ -104,7 +131,7 @@ def test_last_modified_roundtrip(tmp_path, csv_server, make_resource, inmemory_s
     last_modified = "Wed, 30 Jul 2025 00:00:00 GMT"
     server, url = csv_server(headers={"Last-Modified": last_modified})
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
 
     _sync(tmp_path, resource, inmemory_state, transport)
     state = inmemory_state.get(canonical_identity(resource))

@@ -9,10 +9,10 @@ from typing import Any
 import pytest
 
 from datasluice.data import DataPlaneResourceReader
+from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 from datasluice.sync import sync_resources
 from datasluice.sync._identity import canonical_identity
 from datasluice.sync.state_store import InMemoryStateStore
-from datasluice.transport.httpx_transport import HttpxTransport
 from tests.unit.sync.conftest import CSV_BYTES, FaultInjectingStateStore
 
 sync_module = importlib.import_module("datasluice.sync.sync")
@@ -40,7 +40,7 @@ def test_crash_then_resume_skips_completed_resource(
     identities = {resource.id: canonical_identity(resource) for resource in resources}
     first_store = InMemoryStateStore()
     crashing_store = FaultInjectingStateStore(first_store, raise_on_put=2)
-    first_transport = HttpxTransport()
+    first_transport = HttpxCatalogTransport()
 
     with pytest.raises(RuntimeError, match="injected crash"):
         list(
@@ -64,7 +64,7 @@ def test_crash_then_resume_skips_completed_resource(
     resumed_store.put(identities["r1"], completed_r1)
     server.captured.clear()
     server.captured_paths.clear()
-    second_transport = HttpxTransport()
+    second_transport = HttpxCatalogTransport()
 
     resume_sync: Any = sync_module.sync_resources
     outcomes = list(

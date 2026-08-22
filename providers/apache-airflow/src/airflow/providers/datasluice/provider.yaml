@@ -1,8 +1,16 @@
 package-name: apache-airflow-providers-datasluice
 name: DataSluice
 description: |
-  Metadata-only Apache Airflow provider for DataSluice. Runtime integration
-  awaits the canonical platform executors of later phases.
+  Apache Airflow provider for DataSluice runtime client composition. Platform
+  actions await the canonical executors of Phases 3-5.
+hooks:
+  - integration-name: DataSluice
+    python-modules:
+      - airflow.providers.datasluice.hooks
+operators:
+  - integration-name: DataSluice
+    python-modules:
+      - airflow.providers.datasluice.operators
 integrations:
   - integration-name: DataSluice
     external-doc-url: https://bocklabs.github.io/datasluice/

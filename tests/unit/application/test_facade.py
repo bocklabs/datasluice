@@ -19,21 +19,22 @@ from datasluice.contracts.catalog.protocols import (
     CatalogConnectorContext,
     SyncCatalogOperationExecutor,
 )
+from datasluice.domain.catalog.auth import CredentialResolver
+from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.exceptions import StreamClosedError
+from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 
 class _Transport:
     """Structural transport double for constructing real sessions."""
 
-    def request(self, url: str, **kwargs: object) -> bytes:
-        return b""
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return RuntimeResponse(200, {}, b"{}")
 
-    def get_json(self, url: str, **kwargs: object) -> dict[str, object]:
-        return {}
-
-    def download(self, url: str, **kwargs: object) -> bytes:
-        return b""
+    def close(self) -> None:
+        return None
 
 
 class _SyncExecutor:
@@ -98,6 +99,18 @@ class _Reader:
     def open(self, resource: object) -> _BatchStream:
         self.opened.append(resource)
         return _BatchStream(self._batches)
+
+
+class _MaterializeServiceSpy:
+    """Service double recording every materialization delegation."""
+
+    def __init__(self, result: object) -> None:
+        self._result = result
+        self.calls: list[tuple[object, str, str]] = []
+
+    def materialize(self, resource: object, destination_uri: str, *, mode: str) -> object:
+        self.calls.append((resource, destination_uri, mode))
+        return self._result
 
 
 class _CallerOwnedConnector:
@@ -188,15 +201,42 @@ def test_facade_open_returns_lazy_single_use_resource_wrapper() -> None:
     opened.close()
 
 
-def test_closed_facade_rejects_catalog_and_data_plane_work() -> None:
+def test_closed_facade_rejects_catalog_and_data_plane_work(monkeypatch: pytest.MonkeyPatch) -> None:
     """A closed facade refuses both catalog composition and direct data-plane work."""
-    data_sluice = DataSluice(session=_MinimalSession(), reader=_Reader([]))
+    reader = _Reader([])
+    data_sluice = DataSluice(session=_MinimalSession(), reader=reader)
+    service = _MaterializeServiceSpy(result=object())
+    monkeypatch.setattr(data_sluice._services, "materialize", service.materialize)
+    data_sluice.close()
     data_sluice.close()
 
     with pytest.raises(StreamClosedError):
         data_sluice.open_catalog(lambda received: received, _catalog_context())
     with pytest.raises(StreamClosedError):
         data_sluice.open(DirectResourceLocator(uri="file:///data/example.csv"))
+    with pytest.raises(StreamClosedError):
+        data_sluice.materialize(
+            DirectResourceLocator(uri="file:///data/example.csv"),
+            "memory://destination",
+            mode="raw",
+        )
+
+    assert service.calls == []
+    assert reader.opened == []
+
+
+def test_closed_facade_rejects_credential_and_client_surfaces() -> None:
+    """Closed-state guards raise the same typed error on credentials and both clients."""
+    data_sluice = DataSluice(session=_MinimalSession())
+    profile = cast(DeclaredCapabilityProfile, object())
+    data_sluice.close()
+
+    with pytest.raises(StreamClosedError, match="DataSluice is closed"):
+        _ = data_sluice.credentials
+    with pytest.raises(StreamClosedError, match="DataSluice is closed"):
+        data_sluice.sync_client(profile)
+    with pytest.raises(StreamClosedError, match="DataSluice is closed"):
+        data_sluice.async_client(profile)
 
 
 def test_facade_exposes_no_portal_surface() -> None:
@@ -206,6 +246,13 @@ def test_facade_exposes_no_portal_surface() -> None:
     assert not hasattr(DataSluice, "detect")
     for retired_name in ("detect_portal", "search_datasets", "CatalogResourceLocator"):
         assert not hasattr(application_module, retired_name)
+
+
+def test_facade_module_exposes_new_runtime_client_and_credential_surfaces() -> None:
+    """The public facade module imports the canonical runtime construction surface."""
+    assert application_module.SyncCatalogClient is SyncCatalogClient
+    assert application_module.AsyncCatalogClient is AsyncCatalogClient
+    assert application_module.CredentialResolver is CredentialResolver
 
 
 class _CloseSpy:
@@ -268,3 +315,33 @@ def test_facade_leaves_injected_dependencies_open(monkeypatch: pytest.MonkeyPatc
     assert session.storage.close_calls == 0
     assert session.state_store.close_calls == 0
     assert session.plugins.close_calls == 0
+
+
+def test_facade_materialize_delegates_once_and_closes_owned_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Open materialization preserves exact delegation and owned close choreography."""
+    session = _OwnedSession()
+    reader = _CloseSpy()
+    monkeypatch.setattr(application_module, "DataSluiceSession", lambda **kwargs: session)
+    monkeypatch.setattr(application_module, "DataPlaneResourceReader", lambda **kwargs: reader)
+    data_sluice = application_module.DataSluice()
+    resource = DirectResourceLocator(uri="file:///data/example.csv")
+    destination_uri = "memory://materialized/example"
+    result = object()
+    service = _MaterializeServiceSpy(result=result)
+    monkeypatch.setattr(data_sluice._services, "materialize", service.materialize)
+
+    assert data_sluice.materialize(resource, destination_uri, mode="raw") is result
+    assert service.calls == [(resource, destination_uri, "raw")]
+
+    with pytest.raises(RuntimeError, match="transport close failed"):
+        data_sluice.close()
+    data_sluice.close()
+
+    assert reader.close_calls == 1
+    assert session._transport.close_calls == 1
+    assert session._cache.close_calls == 1
+    assert session.storage.close_calls == 1
+    assert session.state_store.close_calls == 1
+    assert session.plugins.close_calls == 1

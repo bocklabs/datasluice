@@ -1,9 +1,9 @@
 """Provider discovery and metadata contract tests for apache-airflow-providers-datasluice.
 
 Runs inside the wheel-only candidate venv built by ``run_candidate.py`` so every
-assertion reflects the installed-wheel experience Airflow will encounter. After
-the Phase 1 clean break the provider is metadata-only: it declares no hook,
-operator, or connection registration.
+assertion reflects the installed-wheel experience Airflow will encounter. The
+provider declares its runtime hook and operator without registering connections
+or claiming platform actions that await Phases 3-5.
 """
 
 from __future__ import annotations
@@ -13,15 +13,17 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 from packaging.requirements import Requirement
 
 _PROVIDER_PACKAGE = "apache-airflow-providers-datasluice"
 _IMPORT_NS = "airflow.providers.datasluice"
-_RUNTIME_DECLARATION_KEYS = ("operators", "hooks", "hook-class-names", "connection-types")
+_RUNTIME_DECLARATION_KEYS = ("operators", "hooks")
+_FORBIDDEN_DECLARATION_KEYS = ("hook-class-names", "connection-types")
 _EXECUTION_CLAIM_WORDS = ("discovery", "streaming", "materialization", "materialize", "search operator")
-_DEPENDENCY_TABLE_TEXT = 'dependencies = [\n    "datasluice>=0.2,<1",\n    "apache-airflow>=3.2,<4",\n]\n'
-_DEPENDENCY_TABLE_LIST = ["datasluice>=0.2,<1", "apache-airflow>=3.2,<4"]
+_DEPENDENCY_TABLE_TEXT = 'dependencies = [\n    "datasluice[http]>=0.2,<1",\n    "apache-airflow>=3.2,<4",\n]\n'
+_DEPENDENCY_TABLE_LIST = ["datasluice[http]>=0.2,<1", "apache-airflow>=3.2,<4"]
 
 _PROVIDER_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 _PROVIDER_PROJECT = tomllib.load(_PROVIDER_PYPROJECT.open("rb"))["project"]
@@ -41,54 +43,80 @@ def _provider_yaml() -> dict[str, object]:
     return yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
 
 
-def _descriptions() -> dict[str, str]:
+def _metadata_value(mapping: dict[str, object], key: str, source: str) -> object:
+    """Return *key* from *mapping*, failing with a message naming the source and key."""
+    if key not in mapping:
+        pytest.fail(f"{source} metadata is missing required key {key!r}")
+    return mapping[key]
+
+
+def _descriptions() -> dict[str, object]:
     info = _provider_info()
     data = _provider_yaml()
     return {
-        "get-provider-info": str(info["description"]),
-        "provider-yaml": str(data["description"]),
-        "provider-pyproject": str(_PROVIDER_PROJECT["description"]),
+        "get-provider-info": _metadata_value(info, "description", "get-provider-info"),
+        "provider-yaml": _metadata_value(data, "description", "provider-yaml"),
+        "provider-pyproject": _metadata_value(_PROVIDER_PROJECT, "description", "provider-pyproject"),
     }
 
 
 def test_get_provider_info_returns_locked_identity() -> None:
     """get_provider_info returns the locked package identity and current version."""
     info = _provider_info()
-    assert info["package-name"] == _PROVIDER_PACKAGE
-    assert isinstance(info["name"], str) and info["name"]
-    assert isinstance(info["description"], str) and info["description"]
-    assert info["versions"] == [_PROVIDER_VERSION]
+    assert _metadata_value(info, "package-name", "get-provider-info") == _PROVIDER_PACKAGE
+    name = _metadata_value(info, "name", "get-provider-info")
+    assert isinstance(name, str) and name, f"get-provider-info 'name' must be non-empty text, got {name!r}"
+    description = _metadata_value(info, "description", "get-provider-info")
+    assert isinstance(description, str) and description, (
+        f"get-provider-info 'description' must be non-empty text, got {description!r}"
+    )
+    assert _metadata_value(info, "versions", "get-provider-info") == [_PROVIDER_VERSION]
 
 
 def test_yaml_carries_no_pinned_version_and_python_metadata_owns_it() -> None:
     """provider.yaml declares identity only; get_provider_info derives the version."""
     info = _provider_info()
     data = _provider_yaml()
-    assert data["package-name"] == info["package-name"] == _PROVIDER_PACKAGE
-    assert data["name"] == info["name"]
-    assert "versions" not in data
-    assert info["versions"] == [_PROVIDER_VERSION]
+    info_package_name = _metadata_value(info, "package-name", "get-provider-info")
+    data_package_name = _metadata_value(data, "package-name", "provider-yaml")
+    assert data_package_name == info_package_name == _PROVIDER_PACKAGE, (
+        f"'package-name' drifted: get_provider_info={info_package_name!r} vs provider.yaml={data_package_name!r} "
+        f"(expected {_PROVIDER_PACKAGE!r})"
+    )
+    info_name = _metadata_value(info, "name", "get-provider-info")
+    data_name = _metadata_value(data, "name", "provider-yaml")
+    assert data_name == info_name, f"'name' drifted: get_provider_info={info_name!r} vs provider.yaml={data_name!r}"
+    assert "versions" not in data, "provider.yaml must not pin a 'versions' key"
+    assert _metadata_value(info, "versions", "get-provider-info") == [_PROVIDER_VERSION]
 
 
-def test_metadata_declares_no_hook_operator_or_connection() -> None:
-    """Neither metadata source declares a hook, operator, or connection registration."""
+def test_metadata_declares_runtime_hook_operator_but_no_connection_registration() -> None:
+    """Both metadata sources declare runtime modules without connection registration."""
     info = _provider_info()
     data = _provider_yaml()
     for key in _RUNTIME_DECLARATION_KEYS:
-        assert key not in info, f"get_provider_info still declares {key!r}"
-        assert key not in data, f"provider.yaml still declares {key!r}"
+        info_value = _metadata_value(info, key, "get-provider-info")
+        data_value = _metadata_value(data, key, "provider-yaml")
+        assert info_value == data_value, (
+            f"{key!r} drifted between sources: get_provider_info={info_value!r} vs provider.yaml={data_value!r}"
+        )
+        assert info_value, f"get_provider_info declares an empty {key!r}; provider.yaml declares {data_value!r}"
+    for key in _FORBIDDEN_DECLARATION_KEYS:
+        assert key not in info, f"get_provider_info declares forbidden key {key!r}"
+        assert key not in data, f"provider.yaml declares forbidden key {key!r}"
 
 
 def test_descriptions_make_no_execution_claims() -> None:
     """No provider description claims removed discovery, streaming, or materialization execution."""
     for source, description in _descriptions().items():
+        assert isinstance(description, str) and description, f"{source} description must be non-empty text"
         lowered = description.lower()
         for word in _EXECUTION_CLAIM_WORDS:
             assert word not in lowered, f"{source} description claims {word!r}"
 
 
 def test_dependency_table_is_byte_for_byte_unchanged() -> None:
-    """The provider dependency table keeps the exact Phase 1 lines with no connector extras."""
+    """The provider dependency table keeps the exact runtime HTTP floor."""
     text = _PROVIDER_PYPROJECT.read_text(encoding="utf-8")
     assert _DEPENDENCY_TABLE_TEXT in text
     assert _PROVIDER_PROJECT["dependencies"] == _DEPENDENCY_TABLE_LIST
@@ -138,6 +166,24 @@ def test_import_namespace_resolves() -> None:
     import airflow.providers.datasluice as pkg
 
     assert pkg.__name__ == _IMPORT_NS
+
+
+def test_hook_injects_connection_credential_into_runtime_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hook constructs a sync client from a connection-defined explicit credential."""
+    from airflow.providers.datasluice.hooks.datasluice import DatasluiceHook
+
+    from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
+    from datasluice.runtime.clients import SyncCatalogClient
+
+    class Connection:
+        extra_dejson = {"platform": "ckan", "api_token": "loopback-token"}
+
+    monkeypatch.setattr(DatasluiceHook, "get_connection", lambda self, _: Connection())
+    client = DatasluiceHook(airflow_conn_id="loopback").get_conn()
+
+    assert isinstance(client, SyncCatalogClient)
+    assert isinstance(client.credentials, CredentialResolver)
+    assert isinstance(client.credentials.explicit, CKANCredential)
 
 
 def test_provider_distribution_metadata_matches_contract() -> None:

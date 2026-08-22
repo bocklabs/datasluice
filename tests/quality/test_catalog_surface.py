@@ -39,6 +39,7 @@ import importlib
 import importlib.metadata
 import inspect
 import json
+import logging
 import os
 import re
 import subprocess
@@ -84,6 +85,16 @@ REMOVED_MODULES: tuple[str, ...] = (
     "datasluice.cli.inspect",
     "datasluice.cli.detect",
     "datasluice.cli.download",
+)
+
+_RUNTIME_MODULE_PREFIX = "datasluice."
+
+REMOVED_RUNTIME_MODULES: tuple[str, ...] = (
+    _RUNTIME_MODULE_PREFIX + "auth",
+    _RUNTIME_MODULE_PREFIX + "credentials",
+    _RUNTIME_MODULE_PREFIX + "ports.credentials",
+    _RUNTIME_MODULE_PREFIX + "ports.transport",
+    _RUNTIME_MODULE_PREFIX + "transport",
 )
 
 BANNED_IDENTIFIERS: tuple[str, ...] = (
@@ -154,12 +165,10 @@ PROVIDER_RETIRED_TOKENS: tuple[str, ...] = (
     "DataSluiceHook",
     "DataSluiceSearchOperator",
     "DataSluiceMaterializeOperator",
-    "hooks.datasluice",
     "operators.search",
     "operators.materialize",
     "operators._xcom",
     "example_datasluice",
-    "BaseHook",
 )
 
 PROVIDER_RUNTIME_SOURCE = PROVIDER_ROOT / "src" / "airflow" / "providers" / "datasluice"
@@ -425,7 +434,7 @@ def _removed_module_violations() -> list[str]:
     import importlib.util
 
     violations = []
-    for removed_module in REMOVED_MODULES:
+    for removed_module in (*REMOVED_MODULES, *REMOVED_RUNTIME_MODULES):
         if importlib.util.find_spec(removed_module) is not None:
             violations.append(removed_module)
     return violations
@@ -615,7 +624,7 @@ def test_catalog_root_packages_do_not_re_export_platform_apis(package: str) -> N
             assert not hasattr(public_module, factory_name)
 
 
-@pytest.mark.parametrize("removed_module", REMOVED_MODULES)
+@pytest.mark.parametrize("removed_module", (*REMOVED_MODULES, *REMOVED_RUNTIME_MODULES))
 def test_removed_modules_fail_to_import(removed_module: str) -> None:
     """Test 2: every legacy module path is gone, not forwarded or aliased."""
     with pytest.raises(ModuleNotFoundError):
@@ -667,8 +676,8 @@ def test_removed_fixture_trees_and_example_page_stay_deleted() -> None:
             assert (REPO_ROOT / "src/datasluice/contracts/catalog/fixtures" / platform / fixture_file).is_file()
 
 
-def test_airflow_provider_tree_is_metadata_only() -> None:
-    """Test 2: no reachable retired hook, operator, import, declaration, or DAG remains."""
+def test_airflow_provider_tree_preserves_only_the_new_runtime_surface() -> None:
+    """Test 2: only the new hook/operator surface survives without legacy paths or DAGs."""
     tracked = [name for name in _tracked_files() if name.startswith("providers/")]
     assert tracked, "provider tree must be tracked"
     violations: list[str] = []
@@ -684,46 +693,71 @@ def test_airflow_provider_tree_is_metadata_only() -> None:
                 violations.append(f"{relative}: retired provider token {token!r}")
     assert not violations, "provider violations: " + "; ".join(violations)
     for retired_source in (
-        PROVIDER_RUNTIME_SOURCE / "hooks" / "datasluice.py",
         PROVIDER_RUNTIME_SOURCE / "operators" / "search.py",
         PROVIDER_RUNTIME_SOURCE / "operators" / "materialize.py",
         PROVIDER_RUNTIME_SOURCE / "operators" / "_xcom.py",
     ):
         assert not retired_source.exists()
-    assert not list(PROVIDER_ROOT.rglob("*dag*")), "sample DAG files must stay deleted"
-    for namespace in ("hooks", "operators"):
-        module_path = PROVIDER_RUNTIME_SOURCE / namespace / "__init__.py"
-        tree = ast.parse(module_path.read_text(encoding="utf-8"))
-        statements = [
-            node for node in tree.body if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Constant)
-        ]
-        assert not statements, f"provider {namespace} namespace must stay docstring-only"
+    provider_dags = PROVIDER_ROOT / "tests" / "dags"
+    assert not provider_dags.exists() or not any(provider_dags.iterdir()), "sample DAG files must stay deleted"
+    hook_source = PROVIDER_RUNTIME_SOURCE / "hooks" / "datasluice.py"
+    assert hook_source.is_file(), "provider hook must be present"
+    hook_tree = ast.parse(hook_source.read_text(encoding="utf-8"))
+    assert any(node.name == "DatasluiceHook" for node in hook_tree.body if isinstance(node, ast.ClassDef))
+    operator_source = PROVIDER_RUNTIME_SOURCE / "operators" / "__init__.py"
+    operator_tree = ast.parse(operator_source.read_text(encoding="utf-8"))
+    assert any(
+        node.name == "DatasluiceCatalogOperator" for node in operator_tree.body if isinstance(node, ast.ClassDef)
+    )
 
 
 def test_provider_metadata_and_dependency_table_stay_locked() -> None:
-    """Test 2: provider metadata registers nothing and the dependency table is frozen."""
+    """Test 2: provider metadata declares runtime modules and preserves the HTTP floor."""
     import yaml
 
     provider_yaml = yaml.safe_load((PROVIDER_RUNTIME_SOURCE / "provider.yaml").read_text(encoding="utf-8"))
-    assert set(provider_yaml) <= {"package-name", "name", "description", "versions", "integrations"}
-    for banned_key in ("hooks", "operators", "connections", "sensors"):
+    assert set(provider_yaml) <= {
+        "package-name",
+        "name",
+        "description",
+        "versions",
+        "integrations",
+        "hooks",
+        "operators",
+    }
+    for required_key in ("hooks", "operators"):
+        assert provider_yaml[required_key]
+    for banned_key in ("connections", "sensors"):
         assert banned_key not in provider_yaml
     info_source = (PROVIDER_RUNTIME_SOURCE / "get_provider_info.py").read_text(encoding="utf-8")
-    for banned_key in ("hooks", "operators", "connections"):
+    for required_key in ("hooks", "operators"):
+        assert f'"{required_key}"' in info_source
+    for banned_key in ("connections",):
         assert f'"{banned_key}"' not in info_source
     provider_pyproject = tomllib.loads((PROVIDER_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert provider_pyproject["project"]["dependencies"] == ["datasluice>=0.2,<1", "apache-airflow>=3.2,<4"]
+    assert provider_pyproject["project"]["dependencies"] == ["datasluice[http]>=0.2,<1", "apache-airflow>=3.2,<4"]
     compatibility = json.loads((PROVIDER_ROOT / "compatibility.json").read_text(encoding="utf-8"))
     assert set(compatibility) == {"airflow", "python"}
     runtime_sources = list((PROVIDER_RUNTIME_SOURCE).rglob("*.py"))
     assert runtime_sources, "provider runtime source must exist"
+    allowed_modules = {
+        "datasluice.application",
+        "datasluice.domain.catalog.auth",
+        "datasluice.domain.catalog.ids",
+        "datasluice.domain.catalog.operations",
+        "datasluice.domain.catalog.profiles",
+        "datasluice.runtime.clients",
+        "datasluice.runtime.credentials",
+    }
     for source in runtime_sources:
         tree = ast.parse(source.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                assert all(not alias.name.startswith("datasluice") for alias in node.names), f"{source} imports core"
+                assert all(
+                    not alias.name.startswith("datasluice") or alias.name in allowed_modules for alias in node.names
+                ), f"{source} imports private core"
             if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("datasluice"):
-                pytest.fail(f"{source} imports core package {node.module}")
+                assert node.module in allowed_modules, f"{source} imports private core package {node.module}"
 
 
 def test_locked_coverage_matrix_matches_profiles_exactly() -> None:
@@ -921,6 +955,7 @@ def test_public_catalog_models_are_frozen_typed_values() -> None:
 
 def test_public_catalog_imports_stay_import_light() -> None:
     """Test 4: importing the public catalog surface pulls no heavy optional runtime."""
+    optional_imports = _optional_dependency_imports()
     script = (
         "import sys\n"
         "import datasluice\n"
@@ -928,7 +963,7 @@ def test_public_catalog_imports_stay_import_light() -> None:
         "import datasluice.connectors.catalog.ckan\n"
         "import datasluice.connectors.catalog.udata\n"
         "import datasluice.connectors.catalog.socrata\n"
-        "heavy = [name for name in ('httpx', 'pandas', 'polars', 'pyarrow', 'openpyxl', 'dlt', 'duckdb', 'airflow')"
+        f"heavy = [name for name in {optional_imports!r}"
         " if any(loaded == name or loaded.startswith(name + '.') for loaded in sys.modules)]\n"
         "print(','.join(heavy))\n"
     )
@@ -988,15 +1023,67 @@ def test_extension_manifests_stay_immutable_and_evidence_bound() -> None:
     from datasluice.domain.catalog.extensions import ConnectorManifest
 
     for field in dataclasses.fields(ConnectorManifest):
-        assert field.type not in {"list", "dict", "set", "typing.List", "typing.Dict"}, (
+        assert _annotation_base_name(field.type) not in {"list", "dict", "set"}, (
             f"ConnectorManifest.{field.name} is a mutable extension bag"
         )
+
+
+def _optional_dependency_imports() -> tuple[str, ...]:
+    """Derive optional dependency import roots from the packaging table."""
+    optional_dependencies = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["optional-dependencies"]
+    distributions = {
+        _dependency_distribution(dependency)
+        for dependencies in optional_dependencies.values()
+        for dependency in dependencies
+    }
+    package_map = importlib.metadata.packages_distributions()
+    imports = {
+        package
+        for package, provided_by in package_map.items()
+        if any(distribution in distributions for distribution in provided_by)
+    }
+    imports.discard("datasluice")
+    return tuple(sorted(imports))
+
+
+def _dependency_distribution(requirement: str) -> str:
+    """Return a normalized distribution name from a dependency specifier."""
+    return re.split(r"[<>=!~;[]", requirement, maxsplit=1)[0].replace("_", "-").lower()
+
+
+def _annotation_base_name(annotation: object) -> str:
+    """Return the unparameterized lower-case type name for an annotation."""
+    rendered = str(annotation).strip().split("[")[0].split("|")[0].strip()
+    return rendered.removeprefix("typing.").lower()
+
+
+def test_optional_dependency_imports_follow_the_extras_table() -> None:
+    """Every non-self optional distribution participates in the derived audit."""
+    imports = _optional_dependency_imports()
+    assert {"httpx", "pandas", "pyarrow", "zstandard", "fsspec"}.issubset(imports)
+
+
+def test_mutable_annotation_base_name_detects_parameterized_fields() -> None:
+    """Parameterized mutable annotations retain their mutable base name."""
+
+    @dataclasses.dataclass(frozen=True)
+    class MutableProbe:
+        values: list[str]
+
+    field = dataclasses.fields(MutableProbe)[0]
+    assert _annotation_base_name(field.type) == "list"
 
 
 def test_outputs_are_secret_safe_by_default() -> None:
     """Test 4: diagnostics stay redacted, telemetry off, TLS verified, reports sanitized."""
     from datasluice.contracts.catalog import CaseOutcome, ComplianceReport
+    from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
     from datasluice.domain.catalog.observability import DiagnosticPolicy, TelemetryPolicy, TLSPolicy
+    from datasluice.domain.catalog.receipts import MutationReceipt
+    from datasluice.errors.catalog import NativeCatalogError
+    from datasluice.exceptions import DataSluiceError
+    from datasluice.logging import RedactingFilter
+    from datasluice.runtime.redaction import redact_for_output
 
     assert DiagnosticPolicy().include_raw_body is False
     assert TelemetryPolicy().enabled is False
@@ -1017,6 +1104,81 @@ def test_outputs_are_secret_safe_by_default() -> None:
     serialized = json.dumps(report.to_dict())
     assert "abc123" not in serialized and "secret-value" not in serialized
 
+    secret = "Bearer aBcDeFgH1234"
+    with pytest.raises(DataSluiceError):
+        MutationReceipt(
+            operation="datasets.update",
+            outcome="succeeded",
+            target=CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+            audit_metadata={"details": {"value": secret}},
+        )
+    receipt = MutationReceipt(
+        operation="datasets.update",
+        outcome="succeeded",
+        target=CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+        audit_metadata={"details": {"value": "Bearer ***"}},
+    )
+    error = NativeCatalogError(
+        "request failed",
+        operation="datasets.update",
+        platform=CatalogPlatform.CKAN,
+        metadata={"details": {"value": secret}},
+    )
+    record = logging.LogRecord("datasluice", logging.INFO, __file__, 1, "message", ({"details": secret},), None)
+    RedactingFilter().filter(record)
+    serialized_outputs = json.dumps(
+        {
+            "receipt": receipt.to_dict(),
+            "error": dict(error.metadata),
+            "log": record.args,
+            "gate": redact_for_output(secret),
+        },
+        default=str,
+    )
+    assert "aBcDeFgH1234" not in serialized_outputs
+    assert "Bearer ***" in serialized_outputs
+
+
+def test_every_runtime_event_sink_is_secret_safe() -> None:
+    """Test 4: every shipped event sink receives only gate-redacted envelopes."""
+    from datasluice.runtime import events
+
+    class CapturingHandler(logging.Handler):
+        """Keep formatted log messages for sink assertions."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            """Capture one formatted log record."""
+            self.messages.append(self.format(record))
+
+    logger = logging.getLogger("datasluice.runtime.events.quality")
+    handler = CapturingHandler()
+    logger.addHandler(handler)
+    logger.propagate = False
+    try:
+        sink_classes = [
+            value
+            for name, value in inspect.getmembers(events, inspect.isclass)
+            if name.endswith("Sink") and not getattr(value, "_is_protocol", False)
+        ]
+        sinks = [value(logger) if value is events.LoggingSink else value() for value in sink_classes]
+        envelope = events.EventEmitter(sinks=tuple(sinks)).record(
+            operation_id="reference/datasets/get",
+            platform="reference",
+            outcome="succeeded",
+            metadata={"bearer": "Bearer aBcDeFgH1234", "detail": "api_key=credential-value"},
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    serialized = json.dumps(envelope.to_dict())
+    list_outputs = [json.dumps(sink.events[0].to_dict()) for sink in sinks if isinstance(sink, events.ListSink)]
+    all_outputs = (serialized, *list_outputs, *handler.messages)
+    assert all("aBcDeFgH1234" not in output and "credential-value" not in output for output in all_outputs)
+
 
 def test_no_alias_shim_or_deprecation_wrapper_survives() -> None:
     """Test 4: public modules define no compatibility shims."""
@@ -1033,11 +1195,33 @@ def test_no_alias_shim_or_deprecation_wrapper_survives() -> None:
 
 
 def test_base_installation_stays_lean_without_connector_extras() -> None:
-    """Test 4: the base distribution claims no connector dependency or named extra."""
+    """Test 4: the base distribution stays lean while connector extras stay explicit."""
     project = _pyproject()["project"]
     dependencies = project["dependencies"]
     assert isinstance(dependencies, list)
     assert sorted(dependencies) == ["rich", "typer"]
     optional = project["optional-dependencies"]
     assert isinstance(optional, dict)
-    assert {"ckan", "udata", "socrata", "all-connectors"}.isdisjoint(optional)
+    assert set(optional) == {
+        "all",
+        "all-connectors",
+        "ckan",
+        "compression",
+        "dlt",
+        "duckdb",
+        "http",
+        "keychain",
+        "oauth",
+        "pandas",
+        "parquet",
+        "polars",
+        "secrets-aws",
+        "secrets-vault",
+        "socrata",
+        "storage",
+        "telemetry",
+        "udata",
+        "xlsx",
+    }
+    assert optional["all-connectors"] == ["datasluice[ckan,udata,socrata]"]
+    assert all(optional[platform] == ["datasluice[http]"] for platform in ("ckan", "udata", "socrata"))

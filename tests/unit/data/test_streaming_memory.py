@@ -1,30 +1,26 @@
-"""streaming-memory integration tests for the HttpDownload dispatch path.
+"""Buffered-download correctness for the HttpDownload dispatch path.
 
-Verifies that the streaming path through :class:`HttpxTransport.stream()` +
-:class:`IterableBytesIO` actually streams chunks through to the format reader
-without buffering the entire body, AND that the urllib fallback (non-streaming
-transport) buffers the body and logs the WARNING recommending
-``datasluice[http]``.
-
-The subprocess peak-RSS test that closes lives in 04-04
-(``test_peak_rss.py``); these tests verify the streaming behaviour at the
-integration level without the subprocess overhead.
+Both runtime transports return the complete body inside ``RuntimeResponse.body``
+today, so HTTP downloads are fully buffered in memory before the format reader
+sees them. These tests verify chunked-transfer reassembly, parity between the
+httpx and stdlib transports through the buffered ``send()`` seam, and complete
+read correctness for large multi-megabyte bodies (all batches consumed; total
+row count and id-column checksum checked against the fixture). They
+intentionally do NOT verify bounded memory: no peak-RSS subprocess covers
+``HttpDownload`` today — the peak-RSS coverage in ``test_peak_rss.py``
+exercises local byte sources only. Bounded-memory HTTP behavior remains
+unverified until a streaming transport seam exists.
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any
-
 import pytest
 
 pytest.importorskip("pyarrow")
-pytest.importorskip("httpx")
 
 from datasluice.data.access import DataPlaneResourceReader  # noqa: E402
 from datasluice.domain import HttpDownload, Resource  # noqa: E402
-from datasluice.transport.http_client import HttpClient  # noqa: E402
-from datasluice.transport.httpx_transport import HttpxTransport  # noqa: E402
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport  # noqa: E402
 from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
 
 
@@ -35,98 +31,93 @@ def _csv_text(rows: int) -> bytes:
     return b"\n".join(lines) + b"\n"
 
 
-def _start_chunked_server(body: bytes, chunk_size: int) -> tuple[Any, str]:
-    """Start the server with a single chunked endpoint serving *body*."""
+def _resource(base: str, path: str) -> Resource:
+    url = f"{base}{path}"
+    return Resource(id="r1", url=url, format="CSV", access=HttpDownload(url=url))
 
-    return start_test_server({"/stream": MockResponse(status=200, body=body, chunk_size=chunk_size)})
 
-
-def test_http_download_streams_chunks() -> None:
-    """HttpDownload via HttpxTransport streams chunks through IterableBytesIO to RecordBatch."""
-
+def _read_row_totals(reader: DataPlaneResourceReader, resource: Resource) -> tuple[int, int]:
+    """Consume every batch and return the summed row count plus the id-column checksum."""
     import pyarrow as pa
 
-    csv_bytes = _csv_text(rows=20)
-    server, base = _start_chunked_server(csv_bytes, chunk_size=128)
+    with reader.open(resource) as batch_stream:
+        batches = list(batch_stream.iter_batches())
+        schema = batch_stream.schema
+    table = pa.Table.from_batches(batches, schema=schema)
+    ids = table.column("id").to_pylist()
+    return table.num_rows, sum(ids)
+
+
+def test_http_download_reads_chunked_response_through_buffered_send_seam() -> None:
+    """A chunked-transfer response is reassembled into one buffered RuntimeResponse body."""
+    pytest.importorskip("httpx")
+
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
+
+    server, base = start_test_server({"/stream": MockResponse(status=200, body=_csv_text(rows=20), chunk_size=128)})
     try:
-        transport = HttpxTransport()
-        resource = Resource(
-            id="r1",
-            url=f"{base}/stream",
-            format="CSV",
-            access=HttpDownload(url=f"{base}/stream"),
-        )
-        reader = DataPlaneResourceReader(transport=transport)
-        with reader.open(resource) as bs:
-            batches = list(bs.iter_batches())
-        table = pa.Table.from_batches(batches, schema=bs.schema)
-        assert table.num_rows == 20
-        assert "id" in table.column_names
+        transport = HttpxCatalogTransport()
+        try:
+            rows, id_checksum = _read_row_totals(
+                DataPlaneResourceReader(transport=transport), _resource(base, "/stream")
+            )
+        finally:
+            transport.close()
+
+        assert rows == 20
+        assert id_checksum == sum(range(20))
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_urllib_fallback_buffers_and_warns(caplog) -> None:
-    """urllib HttpClient buffers + logs WARNING recommending datasluice[http]."""
-
-    import pyarrow as pa
-
-    csv_bytes = _csv_text(rows=5)
-    server, base = start_test_server({"/buffered": MockResponse(status=200, body=csv_bytes)})
+def test_urllib_runtime_transport_reads_the_resource() -> None:
+    """The stdlib runtime transport reads a resource through the same buffered seam."""
+    server, base = start_test_server({"/buffered": MockResponse(status=200, body=_csv_text(rows=5))})
     try:
-        transport = HttpClient()
-        assert not hasattr(transport, "stream")
-        reader = DataPlaneResourceReader(transport=transport)
-        resource = Resource(
-            id="r1",
-            url=f"{base}/buffered",
-            format="CSV",
-            access=HttpDownload(url=f"{base}/buffered"),
-        )
-        with caplog.at_level(logging.WARNING, logger="datasluice.data.access"):
-            with reader.open(resource) as bs:
-                batches = list(bs.iter_batches())
-        table = pa.Table.from_batches(batches, schema=bs.schema)
-        assert table.num_rows == 5
+        transport = UrllibCatalogTransport()
+        try:
+            rows, id_checksum = _read_row_totals(
+                DataPlaneResourceReader(transport=transport), _resource(base, "/buffered")
+            )
+        finally:
+            transport.close()
 
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warnings, "Expected a WARNING log recommending datasluice[http]"
-        assert any("StreamingTransport" in r.message for r in warnings)
-        assert any("datasluice[http]" in r.message for r in warnings)
+        assert rows == 5
+        assert id_checksum == sum(range(5))
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_streaming_does_not_buffer_full_body() -> None:
-    """Iteration is lazy — pulling only the first batch does not consume the full body.
+def test_large_chunked_download_materializes_every_row_without_truncation() -> None:
+    """A multi-megabyte chunked body is fully consumed: row count and checksum must match.
 
-    The chunked endpoint simulates a real streaming server. We open a
-    BatchStream, pull a single RecordBatch, and verify the underlying
-    IterableBytesIO has NOT been exhausted (i.e. we did not slurp the entire
-    body before yielding the first batch). The peak-RSS subprocess
-    test in 04-04 catches accidental full-buffering at the memory level.
+    The full body is consumed by the transport before the first batch is
+    yielded; this test pins read correctness at scale while the streaming
+    seam is absent. Any truncation or dropped chunk changes either the summed
+    row count or the id-column checksum and fails below.
     """
+    pytest.importorskip("httpx")
+
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 
     big_rows = 50_000
     csv_bytes = _csv_text(rows=big_rows)
     assert len(csv_bytes) > 1_000_000, "fixture must produce a large body"
 
-    server, base = _start_chunked_server(csv_bytes, chunk_size=4096)
+    server, base = start_test_server({"/stream": MockResponse(status=200, body=csv_bytes, chunk_size=4096)})
     try:
-        transport = HttpxTransport()
-        resource = Resource(
-            id="r1",
-            url=f"{base}/stream",
-            format="CSV",
-            access=HttpDownload(url=f"{base}/stream"),
-        )
-        reader = DataPlaneResourceReader(transport=transport)
-        with reader.open(resource) as bs:
-            first_batch = next(bs.iter_batches(), None)
-            assert first_batch is not None, "Expected at least one batch from the stream"
-            assert first_batch.num_rows <= big_rows
+        transport = HttpxCatalogTransport()
+        try:
+            rows, id_checksum = _read_row_totals(
+                DataPlaneResourceReader(transport=transport), _resource(base, "/stream")
+            )
+        finally:
+            transport.close()
+
+        assert rows == big_rows
+        assert id_checksum == big_rows * (big_rows - 1) // 2
     finally:
         server.shutdown()
         server.server_close()

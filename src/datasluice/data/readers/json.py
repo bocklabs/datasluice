@@ -45,7 +45,7 @@ class JSONReader(BaseFormatReader):
             import pyarrow as pa
         except ImportError as exc:
             raise FormatError(
-                "Streaming reads require 'pyarrow'. Install with: pip install datasluice[streaming]"
+                "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
         data = source.read()

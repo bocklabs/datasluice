@@ -57,7 +57,7 @@ def _artifact() -> Any:
 
 
 def _patch_facade(monkeypatch: pytest.MonkeyPatch, facade: _Facade) -> None:
-    monkeypatch.setattr(materialize_command, "DataSluice", lambda: facade)
+    monkeypatch.setattr(materialize_command, "open_data_sluice", lambda: facade)
 
 
 def test_default_materialize_emits_the_canonical_artifact_json(monkeypatch: pytest.MonkeyPatch) -> None:

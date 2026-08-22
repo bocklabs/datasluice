@@ -40,7 +40,10 @@ def _provider_dir() -> str:
     import sysconfig
     from pathlib import Path
 
-    provider_dir = Path(sysconfig.get_path("purelib")) / "airflow" / "providers" / "datasluice"
+    purelib = sysconfig.get_path("purelib")
+    if purelib is None:
+        raise RuntimeError("airflow.providers.datasluice is not installed in this environment")
+    provider_dir = Path(purelib) / "airflow" / "providers" / "datasluice"
     if not provider_dir.is_dir():
         raise RuntimeError("airflow.providers.datasluice is not installed in this environment")
     return str(provider_dir)

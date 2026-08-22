@@ -54,17 +54,54 @@ def test_async_transport_uses_an_independent_loopback_socket(
     assert transport.close_count == 1
 
 
-def test_async_cancellation_releases_the_test_transport(catalog_fixture_server: tuple[_CapturingServer, str]) -> None:
-    """Cancellation closes the caller's test transport deterministically."""
+def test_async_cancellation_releases_the_test_transport(
+    catalog_fixture_server: tuple[_CapturingServer, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation parked mid-read runs the transport's own writer cleanup deterministically."""
     _, base_url = catalog_fixture_server
+    close_calls: list[str] = []
+    parked: asyncio.Event = asyncio.Event()
 
     async def exercise() -> AsyncLoopbackTransport:
+        original_open_connection = asyncio.open_connection
+
+        async def gated_open_connection(host: str, port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            reader, writer = await original_open_connection(host, port)
+            original_close = writer.close
+            original_wait_closed = writer.wait_closed
+            original_drain = writer.drain
+
+            def spy_close() -> None:
+                close_calls.append("close")
+                original_close()
+
+            async def spy_wait_closed() -> None:
+                close_calls.append("wait_closed")
+                await original_wait_closed()
+
+            async def gated_drain() -> None:
+                await original_drain()
+                parked.set()
+                await asyncio.Future()
+
+            writer.close = spy_close  # ty: ignore[invalid-assignment]
+            writer.wait_closed = spy_wait_closed  # ty: ignore[invalid-assignment]
+            writer.drain = lambda: gated_drain()  # ty: ignore[invalid-assignment]
+            return reader, writer
+
+        monkeypatch.setattr(asyncio, "open_connection", gated_open_connection)
         transport = AsyncLoopbackTransport()
         task = asyncio.create_task(transport.get(f"{base_url}/cancel"))
+        await asyncio.wait_for(parked.wait(), timeout=5.0)
+        assert transport._writer is not None
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        assert close_calls == ["close", "wait_closed"]
+        assert transport._writer is None
         await transport.aclose()
+        assert transport.closed
         return transport
 
     assert asyncio.run(exercise()).close_count == 1

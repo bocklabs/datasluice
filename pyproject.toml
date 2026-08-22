@@ -37,6 +37,7 @@ lint = [
 ]
 test = [
     "coverage",
+    "opentelemetry-sdk>=1.44",
     "pytest",
 ]
 typecheck = [
@@ -48,27 +49,25 @@ docs = [
 ]
 
 [project.optional-dependencies]
-pandas = ["pandas"]
-polars = ["polars"]
+all = ["datasluice[all-connectors,compression,dlt,duckdb,http,keychain,oauth,pandas,parquet,polars,secrets-aws,secrets-vault,storage,telemetry,xlsx]"]
+all-connectors = ["datasluice[ckan,udata,socrata]"]
+ckan = ["datasluice[http]"]
+compression = ["zstandard>=0.23"]
 dlt = ["dlt"]
 duckdb = ["duckdb"]
-parquet = ["pyarrow"]
-streaming = ["pyarrow"]
-compression = ["zstandard>=0.23"]
-xlsx = ["openpyxl"]
 http = ["httpx>=0.27"]
+keychain = ["keyring>=25.7"]
+oauth = []
+pandas = ["pandas"]
+parquet = ["pyarrow"]
+polars = ["polars"]
+secrets-aws = ["boto3>=1.43"]
+secrets-vault = ["hvac>=2.4"]
+socrata = ["datasluice[http]"]
 storage = ["fsspec>=2025.1"]
-all = [
-    "pandas",
-    "polars",
-    "dlt",
-    "duckdb",
-    "pyarrow",
-    "openpyxl",
-    "httpx>=0.27",
-    "fsspec>=2025.1",
-    "zstandard>=0.23",
-]
+telemetry = ["opentelemetry-api>=1.44"]
+udata = ["datasluice[http]"]
+xlsx = ["openpyxl"]
 
 [project.urls]
 bugs = "https://github.com/bocklabs/datasluice/issues"

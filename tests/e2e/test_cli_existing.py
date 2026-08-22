@@ -21,6 +21,20 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 _RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
 
+_GATED_RUNTIME_SURFACE = (
+    "datasluice",
+    "datasluice.io",
+    "datasluice.sync",
+    "datasluice.discovery",
+    "datasluice.integrations.dlt",
+    "datasluice.runtime.bulk",
+    "datasluice.runtime.mutation",
+    "datasluice.runtime.oauth",
+    "datasluice.connectors.catalog.ckan",
+    "datasluice.connectors.catalog.udata",
+    "datasluice.connectors.catalog.socrata",
+)
+
 
 @pytest.fixture(scope="session")
 def installed_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
@@ -67,6 +81,68 @@ def installed_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     assert Path(console).exists(), f"console script not found at {console}"
 
     return {"console": console, "python": str(venv_python), "venv": str(venv), "extras": extras}
+
+
+@pytest.fixture(scope="session")
+def all_connectors_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+    """Build the wheel and install its all-connectors extra in an isolated venv."""
+    wheel_dir = tmp_path_factory.mktemp("connector-wheels")
+    build = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if build.returncode != 0:
+        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
+
+    wheels = list(wheel_dir.glob("datasluice-*.whl"))
+    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
+    venv = tmp_path_factory.mktemp("all-connectors-venv")
+    venv_python = venv / "bin" / "python"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
+    install = subprocess.run(
+        ["uv", "pip", "install", "--python", str(venv_python), f"{wheels[0]}[all-connectors]"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if install.returncode != 0:
+        pytest.fail(f"all-connectors install failed: {install.stderr[:300]}", pytrace=False)
+
+    return {"python": str(venv_python), "venv": str(venv)}
+
+
+@pytest.fixture(scope="session")
+def bare_install_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+    """Build the wheel and install it with no extras for the bare-gate mirror sweep."""
+    wheel_dir = tmp_path_factory.mktemp("bare-gate-wheels")
+    build = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if build.returncode != 0:
+        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
+
+    wheels = list(wheel_dir.glob("datasluice-*.whl"))
+    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
+    venv = tmp_path_factory.mktemp("bare-gate-venv")
+    venv_python = venv / "bin" / "python"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
+    install = subprocess.run(
+        ["uv", "pip", "install", "--python", str(venv_python), str(wheels[0])],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if install.returncode != 0:
+        pytest.fail(f"bare install failed: {install.stderr[:300]}", pytrace=False)
+
+    return {"python": str(venv_python), "venv": str(venv)}
 
 
 def _run_cli(env_info: dict[str, str], args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -116,6 +192,58 @@ def test_installed_version_flag_reports_the_wheel_version(installed_env: dict[st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().startswith("datasluice ")
+
+
+def test_bare_install_loads_none_of_the_gated_extra_dependencies(bare_install_env: dict[str, str]) -> None:
+    """The bare-install mirror sweep never loads modules behind runtime extra gates."""
+    from datasluice.runtime.extras import _EXTRA_IMPORTS
+
+    checked_modules = tuple(sorted(set(_EXTRA_IMPORTS.values())))
+    script = (
+        "import sys;"
+        + "".join(f"import {module};" for module in _GATED_RUNTIME_SURFACE)
+        + f"optional = {checked_modules!r};"
+        "loaded = [name for name in optional if any(module == name or module.startswith(name + '.') "
+        "for module in sys.modules)];"
+        "assert not loaded, loaded"
+    )
+    result = subprocess.run(
+        [bare_install_env["python"], "-c", script],
+        capture_output=True,
+        text=True,
+        env={"PATH": str(Path(bare_install_env["venv"]) / "bin"), "HOME": os.environ.get("HOME", "")},
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_all_connectors_unlocks_live_client_execution_gates(all_connectors_env: dict[str, str]) -> None:
+    """The all-connectors wheel install provides httpx and passes every live-client gate."""
+    result = subprocess.run(
+        [
+            all_connectors_env["python"],
+            "-c",
+            "import importlib\n"
+            "import httpx\n"
+            "platforms = ('ckan', 'udata', 'socrata')\n"
+            "for platform in platforms:\n"
+            "    module = importlib.import_module(f'datasluice.connectors.catalog.{platform}.live')\n"
+            "    create = module.create_live_client\n"
+            "    try:\n"
+            "        create()\n"
+            "    except NotImplementedError:\n"
+            "        continue\n"
+            "    except ImportError as exc:\n"
+            "        raise AssertionError(f'{platform} extra gate did not unlock') from exc\n"
+            "    raise AssertionError(f'{platform} live seam unexpectedly returned')\n",
+        ],
+        capture_output=True,
+        text=True,
+        env={"PATH": str(Path(all_connectors_env["venv"]) / "bin"), "HOME": os.environ.get("HOME", "")},
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_installed_help_advertises_exactly_the_retained_commands(installed_env: dict[str, str]) -> None:

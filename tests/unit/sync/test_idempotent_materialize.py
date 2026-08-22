@@ -13,9 +13,9 @@ import pytest
 from datasluice.data import DataPlaneResourceReader
 from datasluice.domain import Artifact, LocalFile, Resource
 from datasluice.io.filesystem import open_filesystem
+from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 from datasluice.sync import sync_resources
 from datasluice.sync.state_store import InMemoryStateStore
-from datasluice.transport.httpx_transport import HttpxTransport
 from tests.unit.sync.conftest import CSV_BYTES, write_counting_fs
 
 materialize_module = importlib.import_module("datasluice.sync.materialize")
@@ -39,7 +39,7 @@ def _sync(tmp_path, resource, state_store, transport):
 def test_two_passes_zero_writes_pass2(tmp_path, csv_server, make_resource, inmemory_state) -> None:
     server, url = csv_server()
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
     destination = f"file://{tmp_path}/dest"
     counting_fs = write_counting_fs(open_filesystem(destination))
 
@@ -66,7 +66,7 @@ def test_two_passes_zero_writes_pass2(tmp_path, csv_server, make_resource, inmem
 def test_changed_content_rewrites(tmp_path, csv_server, make_resource, inmemory_state) -> None:
     server, url = csv_server()
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
     destination = f"file://{tmp_path}/dest"
     counting_fs = write_counting_fs(open_filesystem(destination))
 
@@ -167,7 +167,7 @@ def test_raw_passthrough() -> None:
 def test_destination_uri_is_uri_not_path(tmp_path, csv_server, make_resource) -> None:
     _server, url = csv_server(body=CSV_BYTES)
     resource = make_resource(url)
-    transport = HttpxTransport()
+    transport = HttpxCatalogTransport()
 
     record = materialize(
         resource,

@@ -11,7 +11,17 @@ import datasluice
 import datasluice.contracts as contracts
 import datasluice.contracts.catalog as catalog
 from datasluice.domain.catalog import CatalogPlatform
-from datasluice.errors.catalog import CatalogRateLimitError, NativeCatalogError, map_catalog_error
+from datasluice.errors.catalog import (
+    CatalogConflictError,
+    CatalogNotFoundError,
+    CatalogRateLimitError,
+    CatalogUnavailableError,
+    CatalogValidationError,
+    ForbiddenError,
+    NativeCatalogError,
+    UnauthenticatedError,
+    map_catalog_error,
+)
 
 
 def test_catalog_contract_package_exports_only_the_documented_contract_surface() -> None:
@@ -125,6 +135,43 @@ def test_rate_limit_mapping_forwards_native_retry_after() -> None:
 
     assert isinstance(error, CatalogRateLimitError)
     assert error.retry_after == 7.0
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_type", "capability_state", "safe_action"),
+    [
+        (401, UnauthenticatedError, "unauthorized", "Provide valid credentials and retry the operation."),
+        (403, ForbiddenError, "forbidden", "Use credentials with the required scope or role."),
+        (404, CatalogNotFoundError, None, "Confirm the target identifier and deployment."),
+        (409, CatalogConflictError, None, "Refresh the target version token before retrying."),
+        (422, CatalogValidationError, None, "Correct the request according to the platform validation details."),
+        (429, CatalogRateLimitError, None, "Wait for Retry-After before retrying a safe operation."),
+        (400, CatalogValidationError, None, "Correct the request before retrying."),
+        (405, CatalogValidationError, None, "Correct the request before retrying."),
+        (500, CatalogUnavailableError, "unavailable", "Retry after the deployment is available."),
+        (503, CatalogUnavailableError, "unavailable", "Retry after the deployment is available."),
+        (None, CatalogUnavailableError, "unavailable", "Retry after the deployment is available."),
+    ],
+)
+def test_catalog_error_mapping_covers_each_normalized_status_branch(
+    status_code: int | None,
+    error_type: type[Exception],
+    capability_state: str | None,
+    safe_action: str,
+) -> None:
+    """Every native status branch maps to one typed safe error."""
+    native = NativeCatalogError(
+        "request failed",
+        operation="datasets.get",
+        platform=CatalogPlatform.CKAN,
+        status_code=status_code,
+    )
+
+    error = map_catalog_error(native)
+
+    assert isinstance(error, error_type)
+    assert error.capability_state == capability_state
+    assert error.safe_action == safe_action
 
 
 def test_native_error_messages_are_redacted_and_bounded() -> None:

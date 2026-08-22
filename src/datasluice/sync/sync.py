@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from collections.abc import Iterable, Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
+from datasluice.ports import ResponseAwareReader
+from datasluice.runtime.transport.base import RuntimeRequest
 from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
 
 if TYPE_CHECKING:
@@ -62,7 +65,19 @@ def sync_resources(
     transport: Any | None = None,
     resume: bool = False,
 ) -> Iterator[SyncOutcome]:
-    """Synchronize resources and emit each outcome after its state checkpoint."""
+    """Synchronize resources and emit each outcome after its state checkpoint.
+
+    Note:
+        For HTTP resources whose reader does not implement
+        :class:`~datasluice.ports.ResponseAwareReader`, the conditional GET
+        buffers the response body only to decide the fresh watermark and then
+        discards it; materialization re-fetches the URL through the reader's
+        own ``open`` path. Handing the buffered bytes to such readers would
+        change receipt identity (compression and format sniffing run on a
+        transport source, not on caller bytes), so this double fetch is kept
+        deliberately; ``ResponseAwareReader`` implementations consume the
+        buffered response directly and pay no second download.
+    """
     from datasluice.domain import Artifact
     from datasluice.sync.materialize import (
         cleanup_checkpointed,
@@ -143,15 +158,23 @@ def sync_resources(
             url = getattr(access, "url", None) or resource.url
 
             if kind == "http_download" and url is not None:
-                from datasluice.ports import ConditionalTransport
-
                 should_fetch_conditionally = watermark is None or not _looks_like_sha256(watermark)
-                if transport is not None and isinstance(transport, ConditionalTransport) and should_fetch_conditionally:
+                if transport is not None and should_fetch_conditionally:
                     etag, last_modified = _conditional_validators(watermark)
-                    result = transport.conditional_fetch(
-                        url,
-                        if_none_match=etag,
-                        if_modified_since=last_modified,
+                    headers = {
+                        key: value
+                        for key, value in {
+                            "If-None-Match": etag,
+                            "If-Modified-Since": last_modified,
+                        }.items()
+                        if value is not None
+                    }
+                    result = transport.send(
+                        RuntimeRequest(
+                            method="GET",
+                            url=url,
+                            headers=headers,
+                        )
                     )
                     if result.status_code == 304:
                         completed_record = _completed_artifact_record(prior, resource, destination_uri)
@@ -165,23 +188,21 @@ def sync_resources(
                                 state_key=key,
                             )
                             continue
-                    fresh_watermark = _preferred_watermark(result.headers)
-                    if result.stream is not None:
-                        from datasluice.ports import ResponseAwareReader
-
-                        if isinstance(reader, ResponseAwareReader):
-                            materialize_reader = _SingleStreamReader(
-                                reader.open_response(resource, result.stream, headers=result.headers)
+                    if 200 <= result.status_code < 300 and isinstance(reader, ResponseAwareReader):
+                        response_stream = _BufferedResponseStream(result.body)
+                        try:
+                            handed_stream = reader.open_response(
+                                resource,
+                                response_stream,
+                                headers=result.headers,
                             )
-                        else:
-                            with result.stream as response:
-                                for _chunk in response:
-                                    pass
-                            logger.warning(
-                                "Reader %s cannot consume a conditional response; closing it and re-fetching "
-                                "through ordinary open",
-                                type(reader).__name__,
-                            )
+                        except BaseException as exc:
+                            response_stream.__exit__(type(exc), exc, exc.__traceback__)
+                            raise
+                        materialize_reader = _SingleStreamReader(handed_stream)
+                        fresh_watermark = _preferred_watermark(result.headers)
+                    else:
+                        fresh_watermark = None
 
             # Capture the prior CAS version atomically with the state read above so
             # every state transition chains through the conditional-write path
@@ -508,6 +529,37 @@ class _SingleStreamReader:
         self.close()
 
 
+class _BufferedResponseStream:
+    def __init__(self, body: bytes) -> None:
+        self._stream = io.BytesIO(body)
+        self._closed = False
+        self._entered = False
+        self._exited = False
+        self.enter_count = 0
+        self.exit_count = 0
+
+    def __enter__(self) -> io.BytesIO:
+        if self._closed:
+            raise RuntimeError("Buffered response stream was already closed")
+        if not self._entered:
+            self._entered = True
+            self.enter_count += 1
+        return self._stream
+
+    def __exit__(self, *exc: object) -> None:
+        if self._exited:
+            return
+        self._exited = True
+        self.exit_count += 1
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stream.close()
+
+
 def _conditional_validators(watermark: str | None) -> tuple[str | None, str | None]:
     if watermark is None:
         return None, None
@@ -523,10 +575,11 @@ def _looks_like_sha256(value: str) -> bool:
 def _preferred_watermark(headers: Any) -> str | None:
     if headers is None:
         return None
-    etag = headers.get("ETag") or headers.get("etag")
+    normalized = {str(name).lower(): value for name, value in headers.items()}
+    etag = normalized.get("etag")
     if etag is not None:
         return str(etag)
-    last_modified = headers.get("Last-Modified") or headers.get("last-modified")
+    last_modified = normalized.get("last-modified")
     return str(last_modified) if last_modified is not None else None
 
 

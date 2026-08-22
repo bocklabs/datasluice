@@ -96,3 +96,21 @@ def test_report_rejects_unversioned_or_non_strict_payloads() -> None:
     """Report decoding requires a complete schema-versioned envelope."""
     with pytest.raises(ValueError):
         ComplianceReport.from_dict({"schema_version": 1})
+
+
+def test_report_rejects_payload_missing_its_schema_version_key() -> None:
+    """Strict report decoding refuses otherwise-complete unversioned payloads."""
+    payload = ComplianceReport(outcomes=(_outcome(),)).to_dict()
+    del payload["schema_version"]
+
+    with pytest.raises(ValueError, match="Invalid catalog contract report at report"):
+        ComplianceReport.from_dict(payload)
+
+
+def test_report_rejects_payload_with_unknown_extra_field() -> None:
+    """Strict report decoding refuses fields outside the versioned envelope."""
+    payload = ComplianceReport(outcomes=(_outcome(),)).to_dict()
+    payload["unexpected"] = "value"
+
+    with pytest.raises(ValueError, match="Invalid catalog contract report at report"):
+        ComplianceReport.from_dict(payload)

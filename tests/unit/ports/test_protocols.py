@@ -8,7 +8,7 @@ from datasluice.ports import (
     AtomicStateStore,
     CachePort,
     CatalogPort,
-    CredentialProvider,
+    CheckpointableResourceReader,
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
@@ -16,14 +16,13 @@ from datasluice.ports import (
     SearchableCatalog,
     StateStore,
     StoragePort,
-    Transport,
 )
 
 ALL_PROTOCOLS = [
     AtomicStateStore,
     CachePort,
     CatalogPort,
-    CredentialProvider,
+    CheckpointableResourceReader,
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
@@ -31,13 +30,34 @@ ALL_PROTOCOLS = [
     SearchableCatalog,
     StateStore,
     StoragePort,
-    Transport,
 ]
+
+ALL_PORT_NAMES = frozenset(
+    {
+        "AtomicStateStore",
+        "CachePort",
+        "CatalogPort",
+        "CheckpointableResourceReader",
+        "OrganizationCatalog",
+        "PortalDetector",
+        "ResourceReader",
+        "ResponseAwareReader",
+        "SearchableCatalog",
+        "StateStore",
+        "StoragePort",
+    }
+)
 
 
 def test_all_protocols_are_runtime_checkable() -> None:
     for protocol in ALL_PROTOCOLS:
         assert getattr(protocol, "_is_runtime_protocol", False) is True, f"{protocol.__name__} is not runtime_checkable"
+
+
+def test_protocol_name_index_and_class_roster_cannot_drift() -> None:
+    """ALL_PORT_NAMES and ALL_PROTOCOLS describe exactly the same protocol set."""
+    assert set(ALL_PORT_NAMES) == {protocol.__name__ for protocol in ALL_PROTOCOLS}
+    assert len(ALL_PORT_NAMES) == len(ALL_PROTOCOLS)
 
 
 def test_all_protocols_subclass_typing_protocol() -> None:
@@ -73,9 +93,6 @@ def test_all_protocols_importable_individually() -> None:
         "CachePort",
         "CatalogPort",
         "CheckpointableResourceReader",
-        "ConditionalFetchResult",
-        "ConditionalTransport",
-        "CredentialProvider",
         "OrganizationCatalog",
         "PortalDetector",
         "ResourceReader",
@@ -83,27 +100,21 @@ def test_all_protocols_importable_individually() -> None:
         "SearchableCatalog",
         "StateStore",
         "StoragePort",
-        "StreamingTransport",
-        "Transport",
     ]:
         import datasluice.ports as ports
 
         assert hasattr(ports, name), f"{name} missing from datasluice.ports"
 
 
-def test_ports_all_contains_sixteen_names() -> None:
+def test_ports_all_exposes_exactly_the_documented_protocols() -> None:
     import datasluice.ports as ports
 
-    assert len(ports.__all__) == 16
+    assert set(ports.__all__) == ALL_PORT_NAMES
+    assert list(ports.__all__) == sorted(ports.__all__)
 
 
-def test_transport_declares_request_get_json_download() -> None:
-    for method in ("request", "get_json", "download"):
-        assert hasattr(Transport, method), f"Transport missing {method}"
-
-
-def test_credential_provider_declares_resolve() -> None:
-    assert hasattr(CredentialProvider, "resolve")
+def test_checkpointable_resource_reader_declares_open_from_cursor() -> None:
+    assert hasattr(CheckpointableResourceReader, "open_from_cursor")
 
 
 def test_portal_detector_declares_detect() -> None:
