@@ -1,8 +1,8 @@
-"""fsspec-backed storage adapter satisfying :class:`StoragePort`.
+"""fsspec-backed storage wrapper satisfying :class:`StoragePort`.
 
 Closes by returning URI strings (never ``pathlib.Path``) from every
 write. Wraps an :class:`fsspec.AbstractFileSystem` instance so local, S3, GCS,
-Azure and HTTP backends share one adapter. All paths are URI strings.
+Azure and HTTP backends share one wrapper. All paths are URI strings.
 """
 
 from typing import Any
@@ -16,7 +16,7 @@ _ABSOLUTE_URI_PREFIXES = ("s3://", "gs://", "az://", "abfs://", "file://", "http
 
 
 class FsspecStorage:
-    """Adapter wrapping an fsspec ``AbstractFileSystem`` to satisfy ``StoragePort``.
+    """Wrapper around an fsspec ``AbstractFileSystem`` satisfying ``StoragePort``.
 
     All paths are URI strings (never ``pathlib.Path``). Absolute URIs
     (``s3://bucket/key``, ``gs://bucket/obj``) pass through ``_resolve``

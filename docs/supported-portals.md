@@ -16,7 +16,7 @@ endpoint evidence is recorded against each pinned profile.
   deployment-unavailable.
 
 ```python
-from datasluice.connectors.catalog.ckan import CKANAdapter, create_ckan_connector
+from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connector
 ```
 
 ## uData
@@ -28,7 +28,7 @@ from datasluice.connectors.catalog.ckan import CKANAdapter, create_ckan_connecto
   features, with the same per-operation capability classification.
 
 ```python
-from datasluice.connectors.catalog.udata import UDataAdapter, create_udata_connector
+from datasluice.connectors.catalog.udata import UDataConnector, create_udata_connector
 ```
 
 uData is the open-source platform software behind data.gouv.fr;
@@ -45,7 +45,7 @@ deployment.
   verification, and a reviewed release.
 
 ```python
-from datasluice.connectors.catalog.socrata import SocrataAdapter, create_socrata_connector
+from datasluice.connectors.catalog.socrata import SocrataConnector, create_socrata_connector
 ```
 
 ## Profile coverage and locked behavior

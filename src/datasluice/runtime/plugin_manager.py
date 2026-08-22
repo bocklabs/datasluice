@@ -1,6 +1,6 @@
 """Plugin manager for entry-point-based connector discovery.
 
-The :class:`PluginManager` replaces the former module-level ``AdapterRegistry``
+The :class:`PluginManager` replaces the former module-level registry
 singleton. Discovery is eager (performed in ``__init__``) and per-entry
 isolated: a broken third-party plugin is recorded as a :class:`PluginFailure`
 and never crashes session creation.
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Any
 
-from datasluice.exceptions import AdapterNotFoundError
+from datasluice.exceptions import ConnectorNotFoundError
 from datasluice.logging import get_logger
 
 logger = get_logger("runtime.plugin_manager")
@@ -77,13 +77,13 @@ class PluginManager:
         """Return the factory callable for *name*.
 
         Raises:
-            AdapterNotFoundError: If no connector is registered for *name*.
+            ConnectorNotFoundError: If no connector is registered for *name*.
         """
         try:
             return self._factories[name]
         except KeyError:
             available = ", ".join(sorted(self._factories)) or "(none)"
-            raise AdapterNotFoundError(f"No connector registered for {name!r}. Available: {available}") from None
+            raise ConnectorNotFoundError(f"No connector registered for {name!r}. Available: {available}") from None
 
     def list_connectors(self) -> list[str]:
         """Return a sorted list of all registered connector names."""

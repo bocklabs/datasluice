@@ -102,20 +102,20 @@ def _context(*, profile: EffectiveCapabilityProfile | None = None) -> CatalogCon
     )
 
 
-def test_udata_package_exports_only_its_adapter_and_factory() -> None:
+def test_udata_package_exports_only_its_connector_and_factory() -> None:
     """The platform package is the sole canonical uData publication point."""
     import datasluice.connectors.catalog.udata as udata
 
-    assert udata.__all__ == ["UDataAdapter", "create_udata_connector"]
+    assert udata.__all__ == ["UDataConnector", "create_udata_connector"]
 
 
 def test_factory_accepts_canonical_context_and_validates_profile_identity() -> None:
     """The factory rejects non-uData profile evidence before exposing services."""
-    from datasluice.connectors.catalog.udata import UDataAdapter, create_udata_connector
+    from datasluice.connectors.catalog.udata import UDataConnector, create_udata_connector
 
-    adapter = create_udata_connector(_context())
+    connector = create_udata_connector(_context())
 
-    assert isinstance(adapter, UDataAdapter)
+    assert isinstance(connector, UDataConnector)
 
     wrong_operation = OperationSpec(
         id=OperationId(platform="ckan", service="datasets", method="get"),
@@ -173,25 +173,25 @@ def test_factory_requires_both_typed_executor_modes() -> None:
         create_udata_connector(context)
 
 
-def test_adapter_exposes_injected_normalized_native_services_and_effective_profile() -> None:
+def test_connector_exposes_injected_normalized_native_services_and_effective_profile() -> None:
     """The façade retains explicit projections for both execution modes."""
     from datasluice.connectors.catalog.udata import create_udata_connector
 
     context = _context()
-    adapter = create_udata_connector(context)
+    connector = create_udata_connector(context)
 
-    assert adapter.normalized_sync is context.normalized_sync
-    assert adapter.normalized_async is context.normalized_async
-    assert adapter.native_sync is context.native_sync
-    assert adapter.native_async is context.native_async
-    assert adapter.effective_profile is context.effective_profile
+    assert connector.normalized_sync is context.normalized_sync
+    assert connector.normalized_async is context.normalized_async
+    assert connector.native_sync is context.native_sync
+    assert connector.native_async is context.native_async
+    assert connector.effective_profile is context.effective_profile
 
 
-def test_adapter_has_no_legacy_or_raw_request_escape_hatch() -> None:
+def test_connector_has_no_legacy_or_raw_request_escape_hatch() -> None:
     """The façade cannot expose legacy compatibility or untyped HTTP helpers."""
-    from datasluice.connectors.catalog.udata import UDataAdapter
+    from datasluice.connectors.catalog.udata import UDataConnector
 
     forbidden = {"DataGouvAdapter", "create_datagouv_connector", "transport", "request", "get_json", "raw_request"}
 
-    assert forbidden.isdisjoint(UDataAdapter.__dict__)
-    assert "transport" not in inspect.signature(UDataAdapter).parameters
+    assert forbidden.isdisjoint(UDataConnector.__dict__)
+    assert "transport" not in inspect.signature(UDataConnector).parameters

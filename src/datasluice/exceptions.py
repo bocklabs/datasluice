@@ -19,7 +19,7 @@ class PortalError(DataSluiceError):
     """Raised when a portal returns an error or is unreachable."""
 
 
-class AdapterNotFoundError(DataSluiceError):
+class ConnectorNotFoundError(DataSluiceError):
     """Raised when no connector is registered for a requested name."""
 
 

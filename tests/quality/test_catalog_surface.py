@@ -61,9 +61,9 @@ ZENSICAL = REPO_ROOT / "zensical.toml"
 PLATFORMS = ("ckan", "udata", "socrata")
 
 CANONICAL_PLATFORM_EXPORTS: dict[str, tuple[str, str]] = {
-    "ckan": ("CKANAdapter", "create_ckan_connector"),
-    "udata": ("UDataAdapter", "create_udata_connector"),
-    "socrata": ("SocrataAdapter", "create_socrata_connector"),
+    "ckan": ("CKANConnector", "create_ckan_connector"),
+    "udata": ("UDataConnector", "create_udata_connector"),
+    "socrata": ("SocrataConnector", "create_socrata_connector"),
 }
 
 EXPECTED_ENTRY_POINTS: dict[str, str] = {
@@ -574,13 +574,15 @@ def _certificate_parts(platform: str):
 
 
 def test_canonical_platform_packages_export_exactly_the_typed_surface() -> None:
-    """Test 1: each platform package exports only its adapter and factory."""
-    for platform, (adapter_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
+    """Test 1: each platform package exports only its connector and factory."""
+    for platform, (connector_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
         module = importlib.import_module(f"datasluice.connectors.catalog.{platform}")
-        assert sorted(module.__all__) == sorted((adapter_name, factory_name))
-        adapter = getattr(module, adapter_name)
+        assert sorted(module.__all__) == sorted((connector_name, factory_name))
+        connector = getattr(module, connector_name)
         factory = getattr(module, factory_name)
-        assert inspect.isclass(adapter) and adapter.__module__.startswith(f"datasluice.connectors.catalog.{platform}.")
+        assert inspect.isclass(connector) and connector.__module__.startswith(
+            f"datasluice.connectors.catalog.{platform}."
+        )
         assert inspect.isfunction(factory) and factory.__module__.startswith(
             f"datasluice.connectors.catalog.{platform}."
         )
@@ -612,15 +614,15 @@ def test_namespaced_entry_points_declare_and_install_the_canonical_factories() -
 def test_catalog_root_packages_do_not_re_export_platform_apis(package: str) -> None:
     """Test 1: the package root and catalog roots stay free of platform symbols."""
     module = importlib.import_module(package)
-    for _, (adapter_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
-        assert not hasattr(module, adapter_name), f"{package} re-exports {adapter_name}"
+    for _, (connector_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
+        assert not hasattr(module, connector_name), f"{package} re-exports {connector_name}"
         assert not hasattr(module, factory_name), f"{package} re-exports {factory_name}"
     contracts = importlib.import_module("datasluice.contracts.catalog")
     errors = importlib.import_module("datasluice.errors.catalog")
     domain = importlib.import_module("datasluice.domain.catalog")
     for public_module in (contracts, errors, domain):
-        for _, (adapter_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
-            assert not hasattr(public_module, adapter_name)
+        for _, (connector_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
+            assert not hasattr(public_module, connector_name)
             assert not hasattr(public_module, factory_name)
 
 

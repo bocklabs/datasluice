@@ -10,7 +10,7 @@ generations are out of scope until a new capability profile ships.
 ## Import the platform package
 
 ```python
-from datasluice.connectors.catalog.socrata import SocrataAdapter, create_socrata_connector
+from datasluice.connectors.catalog.socrata import SocrataConnector, create_socrata_connector
 ```
 
 `create_socrata_connector` accepts one `CatalogConnectorContext` carrying

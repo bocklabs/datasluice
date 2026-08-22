@@ -15,7 +15,7 @@ from datasluice.contracts.catalog.protocols import (
 from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 
-class CKANAdapter:
+class CKANConnector:
     """Expose injected CKAN service projections without a transport implementation."""
 
     def __init__(
@@ -40,7 +40,7 @@ class CKANAdapter:
         """Release the synchronous executor only when the context owns it."""
         self._sync_executor.close()
 
-    def __enter__(self) -> CKANAdapter:
+    def __enter__(self) -> CKANConnector:
         """Enter the synchronous façade context."""
         return self
 
@@ -57,7 +57,7 @@ class CKANAdapter:
         """Release the asynchronous executor only when the context owns it."""
         await self._async_executor.aclose()
 
-    async def __aenter__(self) -> CKANAdapter:
+    async def __aenter__(self) -> CKANConnector:
         """Enter the asynchronous façade context."""
         return self
 

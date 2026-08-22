@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from datasluice.connectors.catalog.socrata.adapter import SocrataAdapter
+from datasluice.connectors.catalog.socrata.connector import SocrataConnector
 from datasluice.contracts.catalog.native.socrata import AsyncSocrataServices, SyncSocrataServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
@@ -20,7 +20,7 @@ _SOCRATA_API_VERSION = "SODA 3"
 _SOCRATA_PLATFORM = "socrata"
 
 
-def create_socrata_connector(ctx: CatalogConnectorContext) -> SocrataAdapter:
+def create_socrata_connector(ctx: CatalogConnectorContext) -> SocrataConnector:
     """Construct a Socrata façade from explicit typed service projections."""
     if not isinstance(ctx, CatalogConnectorContext):
         raise TypeError("Socrata connectors require a CatalogConnectorContext.")
@@ -35,7 +35,7 @@ def create_socrata_connector(ctx: CatalogConnectorContext) -> SocrataAdapter:
     if ctx.native_sync is None or ctx.native_async is None:
         raise ValueError("Socrata connectors require Socrata-native sync and async service projections.")
     profile = _require_socrata_profile(ctx.effective_profile)
-    return SocrataAdapter(
+    return SocrataConnector(
         context=ctx,
         normalized_sync=cast(SyncCatalogClient, ctx.normalized_sync),
         normalized_async=cast(AsyncCatalogClient, ctx.normalized_async),

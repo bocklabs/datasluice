@@ -9,7 +9,7 @@ against the pinned profile.
 ## Import the platform package
 
 ```python
-from datasluice.connectors.catalog.ckan import CKANAdapter, create_ckan_connector
+from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connector
 ```
 
 `create_ckan_connector` accepts one `CatalogConnectorContext` carrying the

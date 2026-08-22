@@ -1,10 +1,10 @@
-"""Transport-free Socrata catalog contract façade."""
+"""Transport-free uData catalog contract façade."""
 
 from __future__ import annotations
 
 from types import TracebackType
 
-from datasluice.contracts.catalog.native.socrata import AsyncSocrataServices, SyncSocrataServices
+from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     AsyncManagedExecutor,
@@ -15,8 +15,8 @@ from datasluice.contracts.catalog.protocols import (
 from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 
-class SocrataAdapter:
-    """Expose injected Socrata service projections without a transport implementation."""
+class UDataConnector:
+    """Expose injected uData service projections without a transport implementation."""
 
     def __init__(
         self,
@@ -24,8 +24,8 @@ class SocrataAdapter:
         context: CatalogConnectorContext,
         normalized_sync: SyncCatalogClient,
         normalized_async: AsyncCatalogClient,
-        native_sync: SyncSocrataServices,
-        native_async: AsyncSocrataServices,
+        native_sync: SyncUDataServices,
+        native_async: AsyncUDataServices,
         effective_profile: EffectiveCapabilityProfile,
     ) -> None:
         self._sync_executor = SyncManagedExecutor(context)
@@ -40,7 +40,7 @@ class SocrataAdapter:
         """Release the synchronous executor only when the context owns it."""
         self._sync_executor.close()
 
-    def __enter__(self) -> SocrataAdapter:
+    def __enter__(self) -> UDataConnector:
         """Enter the synchronous façade context."""
         return self
 
@@ -57,7 +57,7 @@ class SocrataAdapter:
         """Release the asynchronous executor only when the context owns it."""
         await self._async_executor.aclose()
 
-    async def __aenter__(self) -> SocrataAdapter:
+    async def __aenter__(self) -> UDataConnector:
         """Enter the asynchronous façade context."""
         return self
 
