@@ -77,6 +77,6 @@ rather than configuration-by-default:
 The public compliance runner in `datasluice.contracts.catalog` executes
 pinned fixture cases against any sync/async client pair and emits a
 machine-readable `ComplianceReport`. Built-in and third-party connectors
-certify through the same runner — see [Connectors](adapters.md) for
+certify through the same runner — see [Connectors](connectors.md) for
 factory construction and third-party manifests, and the
 [API Reference](api.md) for the full contract surface.

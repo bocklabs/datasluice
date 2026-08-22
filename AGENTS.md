@@ -44,8 +44,8 @@ Pre-commit includes **local hooks** for `ty check` and `pytest` (see `.pre-commi
 
 - **Entry point**: `datasluice.cli.app:app` (Typer app). Not `datasluice.cli:app`.
 - **Version**: source of truth is `version` in `pyproject.toml` (bumped by **Release Please** via `release-please-config.json`); `datasluice/_version.py` exposes it at runtime via `importlib.metadata` (no second copy to sync). `_version.py` stays a separate module to break a circular import with `transport/user_agent.py` — do NOT move it into `__init__.py`.
-- **Adapters auto-register**: importing `datasluice.adapters` triggers side-effect registration of all built-in adapters (CKAN, data.gouv, Socrata, custom) into the module-level `registry`.
-- **Adapter pattern**: each adapter subpackage has `adapter.py`, `mapper.py`, `pagination.py`, `errors.py`. Mappers translate portal-native JSON into `datasluice.domain` models.
+- **Connectors are entry-point discovered**: built-in connectors register factories in the `datasluice.connectors` entry-point group in `pyproject.toml`; discovery runs through an injected `PluginManager`, never a module-level registry.
+- **Connector pattern**: each platform connector subpackage has `connector.py` (the typed façade), `factory.py` (validated construction), and `live.py` (live-client stubs until implemented). Native service projections live in `datasluice.contracts.catalog`.
 - **Lazy imports**: `formats/` and `integrations/` import heavy optional deps (pyarrow, openpyxl, pandas, etc.) inside functions, not at module top-level. Keep it that way.
 
 ## Style conventions

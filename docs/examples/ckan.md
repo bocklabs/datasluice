@@ -63,6 +63,6 @@ summary claims from the connector itself are never trusted.
 - **Phase 3:** the live CKAN Action API client behind the same factory
   and contract surface, once endpoint evidence is recorded.
 
-See [Connectors](../adapters.md) for factory construction details and
+See [Connectors](../connectors.md) for factory construction details and
 [Platform Contracts](../supported-portals.md) for the pinned CKAN
 profile.

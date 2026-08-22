@@ -47,7 +47,7 @@ from datasluice.connectors.catalog.socrata import create_socrata_connector
 from datasluice.connectors.catalog.udata import create_udata_connector
 ```
 
-With a context assembled (see [Connectors](../adapters.md)), a facade
+With a context assembled (see [Connectors](../connectors.md)), a facade
 opens exactly one caller-selected connector:
 
 ```python

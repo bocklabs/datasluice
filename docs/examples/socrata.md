@@ -62,6 +62,6 @@ async modes. Third-party connectors certify through the same runner.
 - **Phase 5:** the live Socrata SODA 3 client behind the same factory
   and contract surface, once endpoint evidence is recorded.
 
-See [Connectors](../adapters.md) for factory construction details and
+See [Connectors](../connectors.md) for factory construction details and
 [Platform Contracts](../supported-portals.md) for the pinned Socrata
 profile.
