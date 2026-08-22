@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
-from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import NativeCatalogError
 
-type CKANResult = ResultEnvelope[NativeRecord]
+type CKANResultItem = NativeRecord | ValueRecord | MappingRecord
+type CKANResult = ResultEnvelope[CKANResultItem]
 
 
 @runtime_checkable

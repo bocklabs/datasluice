@@ -10,7 +10,9 @@ import pytest
 import datasluice
 import datasluice.contracts as contracts
 import datasluice.contracts.catalog as catalog
+from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog import CatalogPlatform
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import (
     CatalogConflictError,
     CatalogNotFoundError,
@@ -183,3 +185,13 @@ def test_native_error_messages_are_redacted_and_bounded() -> None:
     assert "abc123" not in str(native)
     assert "apikey=***" in str(native)
     assert len(str(native)) <= 256
+
+
+def test_ckan_result_union_alias_admits_value_and_mapping_record_items() -> None:
+    """The broadened CKANResult alias treats scalars and mappings as legal envelope items."""
+    assert CKANResultItem.__value__ == (NativeRecord | ValueRecord | MappingRecord)
+
+    envelope = ResultEnvelope(items=(ValueRecord(value=None), MappingRecord(payload={"success": True})))
+
+    assert all(hasattr(item, "to_dict") for item in envelope.items)
+    assert [item.to_dict()["kind"] for item in envelope.items] == ["value_record", "mapping_record"]
