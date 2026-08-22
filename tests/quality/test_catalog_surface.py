@@ -211,15 +211,24 @@ LOCKED_INTEGRATE_ROWS: tuple[str, ...] = (
     "ckan.action-api-v3.discovery-help-and-status",
     "ckan.action-api-v3.dataset-list-show-search",
     "ckan.action-api-v3.dataset-create-update-patch-delete-purge",
+    "ckan.action-api-v3.dataset-collaborators",
     "ckan.action-api-v3.resource-list-show-create-update-patch-delete-upload",
-    "ckan.action-api-v3.organization-list-show-create-update-delete-members",
-    "ckan.action-api-v3.group-list-show-create-update-delete-members",
-    "ckan.action-api-v3.user-list-show-create-update-delete-token-management",
-    "ckan.action-api-v3.tags-vocabularies-and-licenses",
-    "ckan.action-api-v3.relationships-followers-and-activity",
+    "ckan.action-api-v3.organization-list-show-search",
+    "ckan.action-api-v3.organization-create-update-delete-members",
+    "ckan.action-api-v3.group-list-show-search",
+    "ckan.action-api-v3.group-create-update-delete-members",
+    "ckan.action-api-v3.user-list-show",
+    "ckan.action-api-v3.user-create-update-delete-token-management",
+    "ckan.action-api-v3.tags-vocabularies-licenses-list-show",
+    "ckan.action-api-v3.tags-vocabularies-licenses-create-update-delete",
+    "ckan.action-api-v3.relationships-follows",
+    "ckan.action-api-v3.activity",
     "ckan.action-api-v3.resource-views",
     "ckan.datastore-extension.query-and-record-crud",
+    "ckan.datastore-extension.sql-search",
     "ckan.filestore.upload-and-resource-file-replacement",
+    "ckan.action-api-v3.jobs-and-task-status",
+    "ckan.action-api-v3.config-options",
     "ckan.plugin-provided-action-and-extension-probes",
     "udata.api-v1.root-and-effective-profile-probe",
     "udata.api-v1.dataset-list-search-show-create-update-delete",
@@ -260,32 +269,62 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "AsyncCKANDatasetService",
             "create_update_patch_delete_purge",
         ),
+        "ckan/action-api-v3.dataset-collaborators": (
+            "SyncCKANDatasetService",
+            "AsyncCKANDatasetService",
+            "create_update_patch_delete_purge",
+        ),
         "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload": (
             "SyncCKANResourceService",
             "AsyncCKANResourceService",
             "list_show_create_update_patch_delete_upload",
         ),
-        "ckan/action-api-v3.organization-list-show-create-update-delete-members": (
+        "ckan/action-api-v3.organization-list-show-search": (
             "SyncCKANOrganizationService",
             "AsyncCKANOrganizationService",
             "list_show_create_update_delete_members",
         ),
-        "ckan/action-api-v3.group-list-show-create-update-delete-members": (
+        "ckan/action-api-v3.organization-create-update-delete-members": (
+            "SyncCKANOrganizationService",
+            "AsyncCKANOrganizationService",
+            "list_show_create_update_delete_members",
+        ),
+        "ckan/action-api-v3.group-list-show-search": (
             "SyncCKANGroupService",
             "AsyncCKANGroupService",
             "list_show_create_update_delete_members",
         ),
-        "ckan/action-api-v3.user-list-show-create-update-delete-token-management": (
+        "ckan/action-api-v3.group-create-update-delete-members": (
+            "SyncCKANGroupService",
+            "AsyncCKANGroupService",
+            "list_show_create_update_delete_members",
+        ),
+        "ckan/action-api-v3.user-list-show": (
             "SyncCKANUserService",
             "AsyncCKANUserService",
             "list_show_create_update_delete_token_management",
         ),
-        "ckan/action-api-v3.tags-vocabularies-and-licenses": (
+        "ckan/action-api-v3.user-create-update-delete-token-management": (
+            "SyncCKANUserService",
+            "AsyncCKANUserService",
+            "list_show_create_update_delete_token_management",
+        ),
+        "ckan/action-api-v3.tags-vocabularies-licenses-list-show": (
             "SyncCKANVocabularyLicenseService",
             "AsyncCKANVocabularyLicenseService",
             "tags_vocabularies_and_licenses",
         ),
-        "ckan/action-api-v3.relationships-followers-and-activity": (
+        "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete": (
+            "SyncCKANVocabularyLicenseService",
+            "AsyncCKANVocabularyLicenseService",
+            "tags_vocabularies_and_licenses",
+        ),
+        "ckan/action-api-v3.relationships-follows": (
+            "SyncCKANRelationshipActivityService",
+            "AsyncCKANRelationshipActivityService",
+            "relationships_followers_and_activity",
+        ),
+        "ckan/action-api-v3.activity": (
             "SyncCKANRelationshipActivityService",
             "AsyncCKANRelationshipActivityService",
             "relationships_followers_and_activity",
@@ -296,10 +335,25 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "AsyncCKANDatastoreService",
             "query_and_record_crud",
         ),
+        "ckan/datastore-extension.sql-search": (
+            "SyncCKANDatastoreService",
+            "AsyncCKANDatastoreService",
+            "query_and_record_crud",
+        ),
         "ckan/filestore.upload-and-resource-file-replacement": (
             "SyncCKANFilestoreService",
             "AsyncCKANFilestoreService",
             "upload_and_resource_file_replacement",
+        ),
+        "ckan/action-api-v3.jobs-and-task-status": (
+            "SyncCKANExtensionService",
+            "AsyncCKANExtensionService",
+            "extension_probes",
+        ),
+        "ckan/action-api-v3.config-options": (
+            "SyncCKANExtensionService",
+            "AsyncCKANExtensionService",
+            "extension_probes",
         ),
         "ckan/plugin-provided-action-and-extension-probes": (
             "SyncCKANExtensionService",
