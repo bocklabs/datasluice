@@ -68,4 +68,4 @@ def test_runtime_module_exports_exactly_the_composition_surface() -> None:
 def test_session_public_callable_surface_is_exactly_the_retained_operations() -> None:
     s = DataSluiceSession()
     public_callables = {name for name in dir(s) if not name.startswith("_") and callable(getattr(s, name))}
-    assert public_callables == {"async_client", "open_catalog", "sync_client", "sync_resources"}
+    assert public_callables == {"async_client", "open_catalog", "sync_client", "sync_resources", "close", "aclose"}

@@ -114,6 +114,32 @@ def test_vault_double_nested_secret_discovers_secret_values() -> None:
     assert credential.password.reveal() == "vault-password"
 
 
+def test_vault_provider_passes_configured_url_token_and_requested_path() -> None:
+    """The provider forwards its configured url/token and requested path/mount to the client."""
+    calls: list[tuple[str, object]] = []
+
+    def client_factory(url: str, token: str) -> _VaultClient:
+        calls.append(("client", (url, token)))
+        return _VaultClient({"data": {"data": {"api_token": "vault-app-token"}}}, calls)
+
+    discovered = VaultCredentialProvider(
+        url="https://vault.example",
+        token="vault-token",
+        mount_point="secret",
+        path="datasluice/ckan",
+        client_factory=cast(VaultClientFactory, client_factory),
+    ).discover(CatalogPlatform.CKAN, {})
+
+    credential = discovered[CredentialSource.SECRET_MANAGER]
+    assert isinstance(credential, CKANCredential)
+    assert isinstance(credential.api_token, SecretValue)
+    assert credential.api_token.reveal() == "vault-app-token"
+    assert calls == [
+        ("client", ("https://vault.example", "vault-token")),
+        ("read_secret_version", {"path": "datasluice/ckan", "mount_point": "secret"}),
+    ]
+
+
 @pytest.mark.parametrize(
     ("source", "secret"),
     [
@@ -147,10 +173,15 @@ class _AwsClient:
 
 
 class _VaultClient:
-    def __init__(self, response: dict[str, object]) -> None:
-        self.secrets = SimpleNamespace(
-            kv=SimpleNamespace(v2=SimpleNamespace(read_secret_version=lambda **kwargs: response))
-        )
+    def __init__(self, response: dict[str, object], calls: list[tuple[str, object]] | None = None) -> None:
+        self._response = response
+        self._calls = calls
+        self.secrets = SimpleNamespace(kv=SimpleNamespace(v2=SimpleNamespace(read_secret_version=self._read)))
+
+    def _read(self, **kwargs: object) -> dict[str, object]:
+        if self._calls is not None:
+            self._calls.append(("read_secret_version", kwargs))
+        return self._response
 
 
 class _FailingAwsClient:

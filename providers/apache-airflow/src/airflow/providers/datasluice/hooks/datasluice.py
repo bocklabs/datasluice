@@ -27,6 +27,12 @@ from datasluice.runtime.credentials import credential_from_fields
 
 _PLATFORMS = frozenset({"ckan", "udata", "socrata"})
 
+_TOKEN_FIELDS = {
+    CatalogPlatform.CKAN: "api_token",
+    CatalogPlatform.UDATA: "api_key",
+    CatalogPlatform.SOCRATA: "app_token",
+}
+
 
 class DatasluiceHook(BaseHook):
     """Build a sync catalog client from connection-defined explicit credentials.
@@ -47,7 +53,7 @@ class DatasluiceHook(BaseHook):
         connection = self.get_connection(self.airflow_conn_id)
         extras = _connection_extras(connection)
         platform = _platform(extras)
-        credential = credential_from_fields(platform, extras)
+        credential = credential_from_fields(platform, _credential_fields(connection, extras, platform))
         facade = DataSluice(credentials=CredentialResolver(explicit=credential))
         return facade.sync_client(_deferred_profile(platform))
 
@@ -64,6 +70,22 @@ def _platform(extras: Mapping[str, object]) -> CatalogPlatform:
     if not isinstance(value, str) or value not in _PLATFORMS:
         raise ValueError("DataSluice connection extras require platform: ckan, udata, or socrata.")
     return CatalogPlatform(value)
+
+
+def _credential_fields(
+    connection: object,
+    extras: Mapping[str, object],
+    platform: CatalogPlatform,
+) -> Mapping[str, object]:
+    """Return connection credential fields with the password fallback applied."""
+    fields = dict(extras)
+    token_field = _TOKEN_FIELDS[platform]
+    token = fields.get(token_field)
+    if not isinstance(token, str) or not token:
+        password = getattr(connection, "password", None)
+        if isinstance(password, str) and password:
+            fields[token_field] = password
+    return fields
 
 
 def _deferred_profile(platform: CatalogPlatform) -> DeclaredCapabilityProfile:

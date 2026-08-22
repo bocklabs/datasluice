@@ -14,6 +14,12 @@ from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError, map_catalog_error
 from datasluice.logging import get_logger
+from datasluice.runtime.constants import (
+    DEFAULT_CONNECT_BUDGET_SECONDS,
+    DEFAULT_OPERATION_TOTAL_BUDGET_SECONDS,
+    DEFAULT_READ_BUDGET_SECONDS,
+    DEFAULT_WRITE_BUDGET_SECONDS,
+)
 from datasluice.runtime.redaction import redact_event_metadata
 from datasluice.runtime.resilience import DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import RuntimeResponse
@@ -49,7 +55,12 @@ class MutationEnforcer:
         if budget is not None and not isinstance(budget, TimeBudget):
             raise TypeError("Mutation enforcement budgets must use TimeBudget.")
         self._send = send
-        self._budget = budget or TimeBudget(connect=10, read=30, write=30, total=60)
+        self._budget = budget or TimeBudget(
+            connect=DEFAULT_CONNECT_BUDGET_SECONDS,
+            read=DEFAULT_READ_BUDGET_SECONDS,
+            write=DEFAULT_WRITE_BUDGET_SECONDS,
+            total=DEFAULT_OPERATION_TOTAL_BUDGET_SECONDS,
+        )
         self._max_attempts = max_attempts
         self._clock = clock
         self._sleep = sleep

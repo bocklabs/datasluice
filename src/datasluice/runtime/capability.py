@@ -93,6 +93,11 @@ class EffectiveCapabilityCache:
         """Return the immutable declared baseline used before effective probing."""
         return self._baseline
 
+    @property
+    def probe_runner(self) -> ProbeRunner | None:
+        """Return the caller-owned synchronous probe runner, or ``None``."""
+        return self._probe_runner
+
     def resolve(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
         """Resolve one operation, probing it once per fresh cache interval."""
         self._validate_operation_id(operation_id)

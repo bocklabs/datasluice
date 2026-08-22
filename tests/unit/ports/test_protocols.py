@@ -54,6 +54,12 @@ def test_all_protocols_are_runtime_checkable() -> None:
         assert getattr(protocol, "_is_runtime_protocol", False) is True, f"{protocol.__name__} is not runtime_checkable"
 
 
+def test_protocol_name_index_and_class_roster_cannot_drift() -> None:
+    """ALL_PORT_NAMES and ALL_PROTOCOLS describe exactly the same protocol set."""
+    assert set(ALL_PORT_NAMES) == {protocol.__name__ for protocol in ALL_PROTOCOLS}
+    assert len(ALL_PORT_NAMES) == len(ALL_PROTOCOLS)
+
+
 def test_all_protocols_subclass_typing_protocol() -> None:
     for protocol in ALL_PROTOCOLS:
         assert issubclass(protocol, Protocol), f"{protocol.__name__} is not a Protocol subclass"

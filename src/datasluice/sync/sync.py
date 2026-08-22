@@ -65,7 +65,19 @@ def sync_resources(
     transport: Any | None = None,
     resume: bool = False,
 ) -> Iterator[SyncOutcome]:
-    """Synchronize resources and emit each outcome after its state checkpoint."""
+    """Synchronize resources and emit each outcome after its state checkpoint.
+
+    Note:
+        For HTTP resources whose reader does not implement
+        :class:`~datasluice.ports.ResponseAwareReader`, the conditional GET
+        buffers the response body only to decide the fresh watermark and then
+        discards it; materialization re-fetches the URL through the reader's
+        own ``open`` path. Handing the buffered bytes to such readers would
+        change receipt identity (compression and format sniffing run on a
+        transport source, not on caller bytes), so this double fetch is kept
+        deliberately; ``ResponseAwareReader`` implementations consume the
+        buffered response directly and pay no second download.
+    """
     from datasluice.domain import Artifact
     from datasluice.sync.materialize import (
         cleanup_checkpointed,
@@ -563,10 +575,11 @@ def _looks_like_sha256(value: str) -> bool:
 def _preferred_watermark(headers: Any) -> str | None:
     if headers is None:
         return None
-    etag = headers.get("ETag") or headers.get("etag")
+    normalized = {str(name).lower(): value for name, value in headers.items()}
+    etag = normalized.get("etag")
     if etag is not None:
         return str(etag)
-    last_modified = headers.get("Last-Modified") or headers.get("last-modified")
+    last_modified = normalized.get("last-modified")
     return str(last_modified) if last_modified is not None else None
 
 

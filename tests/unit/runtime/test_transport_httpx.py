@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
+from typing import cast
 
 import pytest
 
@@ -35,6 +38,40 @@ def test_httpx_transport_maps_injected_response() -> None:
     assert response.body == b"fixture"
     assert response.retry_after == 2
     assert seen[0].headers["X-Test"] == "yes"
+
+
+def test_httpx_transport_parses_retry_after_http_date_form() -> None:
+    """An RFC 9110 HTTP-date Retry-After maps to non-negative seconds from now."""
+    retry_at = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(429, headers={"Retry-After": retry_at}, content=b"")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        response = transport.send(RuntimeRequest("GET", "https://example.test/"))
+    finally:
+        transport.close()
+
+    assert response.retry_after is not None
+    assert 0 <= response.retry_after <= 120
+
+
+def test_httpx_transport_absent_retry_after_header_maps_to_none() -> None:
+    """A response without Retry-After carries a None delay."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(200, content=b"no-delay")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        response = transport.send(RuntimeRequest("GET", "https://example.test/"))
+    finally:
+        transport.close()
+
+    assert response.retry_after is None
 
 
 def test_httpx_transport_maps_transport_failure() -> None:
@@ -296,7 +333,8 @@ def test_httpx_credential_scope_strips_authorization_without_send_on_redirect() 
     assert "authorization" not in seen[1].headers
 
 
-def test_httpx_credential_scope_blocks_scheme_downgrade() -> None:
+def test_httpx_credential_scope_follows_downgraded_redirect_and_strips_authorization() -> None:
+    """An http-scheme redirect hop is still followed; the scope strips Authorization for it."""
     scope = CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True)
     seen: list[httpx.Request] = []
 
@@ -313,6 +351,9 @@ def test_httpx_credential_scope_blocks_scheme_downgrade() -> None:
         transport.close()
 
     assert response.status_code == 200
+    assert len(seen) == 2
+    assert seen[1].url.scheme == "http"
+    assert seen[1].url.host == "other.test"
     assert "authorization" not in seen[1].headers
 
 
@@ -423,3 +464,71 @@ def test_async_httpx_redirect_preserves_method_and_body(status: int) -> None:
 
     assert method == "POST"
     assert body == b'{"key": "v"}'
+
+
+def test_async_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(302, headers={"Location": f"https://example.test/loop/{len(seen)}"})
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler), max_redirects=3)
+        try:
+            with pytest.raises(TransportFailure, match="redirect limit"):
+                await transport.send(RuntimeRequest("GET", "https://example.test/start"))
+        finally:
+            await transport.aclose()
+
+    asyncio.run(send())
+
+    assert len(seen) == 4
+
+
+def test_async_httpx_malformed_redirect_location_closes_response_before_failing() -> None:
+    closed: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        response = httpx.Response(302, headers={"Location": "https://example.test:abc/next"})
+        original_aclose = response.aclose
+
+        async def tracking_aclose() -> None:
+            closed.append(True)
+            await original_aclose()
+
+        response.aclose = tracking_aclose
+        return response
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(TransportFailure):
+                await transport.send(RuntimeRequest("GET", "https://example.test/start"))
+        finally:
+            await transport.aclose()
+
+    asyncio.run(send())
+
+    assert closed == [True]
+
+
+def test_async_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(302, headers={"Location": "file:///etc/passwd?token=topsecret&keep=value"})
+
+    async def send() -> object:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(TransportFailure, match="file:///etc/passwd") as excinfo:
+                await transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
+            return excinfo.value
+        finally:
+            await transport.aclose()
+
+    failure = cast("TransportFailure", asyncio.run(send()))
+
+    assert "topsecret" not in str(failure)
+    assert "keep=value" in str(failure)

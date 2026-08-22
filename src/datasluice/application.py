@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Coroutine, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -166,6 +167,27 @@ def materialize(
 _OBJECT_STORAGE_SCHEMES = frozenset({"s3", "gs", "gcs", "az", "azure", "abfs"})
 
 
+def _drain_owned_close(candidate: Any) -> None:
+    closer = getattr(candidate, "close", None)
+    if callable(closer):
+        closer()
+        return
+    awaitable_closer = getattr(candidate, "aclose", None)
+    if callable(awaitable_closer):
+        _drain_awaitable(awaitable_closer())
+
+
+def _drain_awaitable(action: Coroutine[Any, Any, None]) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(action)
+        return
+    raise RuntimeError(
+        "DataSluice cannot synchronously drain an owned asynchronous dependency inside a running event loop."
+    )
+
+
 def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
     parts = urlsplit(locator.uri)
     identity_source = str(locator.to_dict()["uri"])
@@ -255,7 +277,8 @@ class DataSluice:
         self._session = session if session is not None else DataSluiceSession(**session_kwargs)
         self._reader = reader if reader is not None else DataPlaneResourceReader(transport=self._session._transport)
         self._services = _ApplicationServices(self._session, self._reader)
-        self._owned_closeables = self._collect_owned_closeables(session_kwargs)
+        self._session_kwargs = dict(session_kwargs)
+        self._owned_closeables = self._collect_owned_closeables(self._session_kwargs)
         self._closed = False
 
     def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
@@ -311,9 +334,9 @@ class DataSluice:
             return
         self._closed = True
         first_error: BaseException | None = None
-        for closeable in self._owned_closeables:
+        for closeable in self._collect_owned_closeables(self._session_kwargs):
             try:
-                closeable.close()
+                _drain_owned_close(closeable)
             except BaseException as exc:
                 if first_error is None:
                     first_error = exc
@@ -338,6 +361,8 @@ class DataSluice:
         if self._owns_session_dependencies:
             if session_kwargs.get("transport") is None:
                 candidates.append(self._session._transport)
+            if session_kwargs.get("async_transport") is None:
+                candidates.append(getattr(self._session, "_async_transport", None))
             if session_kwargs.get("cache") is None:
                 candidates.append(self._session._cache)
             if session_kwargs.get("storage") is None:
@@ -349,7 +374,11 @@ class DataSluice:
         closeables: list[Any] = []
         seen: set[int] = set()
         for candidate in candidates:
-            if candidate is None or not hasattr(candidate, "close") or id(candidate) in seen:
+            if (
+                candidate is None
+                or not (hasattr(candidate, "close") or hasattr(candidate, "aclose"))
+                or id(candidate) in seen
+            ):
                 continue
             seen.add(id(candidate))
             closeables.append(candidate)

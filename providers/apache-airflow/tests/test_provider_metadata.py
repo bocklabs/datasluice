@@ -43,33 +43,51 @@ def _provider_yaml() -> dict[str, object]:
     return yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
 
 
+def _metadata_value(mapping: dict[str, object], key: str, source: str) -> object:
+    """Return *key* from *mapping*, failing with a message naming the source and key."""
+    if key not in mapping:
+        pytest.fail(f"{source} metadata is missing required key {key!r}")
+    return mapping[key]
+
+
 def _descriptions() -> dict[str, object]:
     info = _provider_info()
     data = _provider_yaml()
     return {
-        "get-provider-info": info["description"],
-        "provider-yaml": data["description"],
-        "provider-pyproject": _PROVIDER_PROJECT["description"],
+        "get-provider-info": _metadata_value(info, "description", "get-provider-info"),
+        "provider-yaml": _metadata_value(data, "description", "provider-yaml"),
+        "provider-pyproject": _metadata_value(_PROVIDER_PROJECT, "description", "provider-pyproject"),
     }
 
 
 def test_get_provider_info_returns_locked_identity() -> None:
     """get_provider_info returns the locked package identity and current version."""
     info = _provider_info()
-    assert info["package-name"] == _PROVIDER_PACKAGE
-    assert isinstance(info["name"], str) and info["name"]
-    assert isinstance(info["description"], str) and info["description"]
-    assert info["versions"] == [_PROVIDER_VERSION]
+    assert _metadata_value(info, "package-name", "get-provider-info") == _PROVIDER_PACKAGE
+    name = _metadata_value(info, "name", "get-provider-info")
+    assert isinstance(name, str) and name, f"get-provider-info 'name' must be non-empty text, got {name!r}"
+    description = _metadata_value(info, "description", "get-provider-info")
+    assert isinstance(description, str) and description, (
+        f"get-provider-info 'description' must be non-empty text, got {description!r}"
+    )
+    assert _metadata_value(info, "versions", "get-provider-info") == [_PROVIDER_VERSION]
 
 
 def test_yaml_carries_no_pinned_version_and_python_metadata_owns_it() -> None:
     """provider.yaml declares identity only; get_provider_info derives the version."""
     info = _provider_info()
     data = _provider_yaml()
-    assert data["package-name"] == info["package-name"] == _PROVIDER_PACKAGE
-    assert data["name"] == info["name"]
-    assert "versions" not in data
-    assert info["versions"] == [_PROVIDER_VERSION]
+    info_package_name = _metadata_value(info, "package-name", "get-provider-info")
+    data_package_name = _metadata_value(data, "package-name", "provider-yaml")
+    assert data_package_name == info_package_name == _PROVIDER_PACKAGE, (
+        f"'package-name' drifted: get_provider_info={info_package_name!r} vs provider.yaml={data_package_name!r} "
+        f"(expected {_PROVIDER_PACKAGE!r})"
+    )
+    info_name = _metadata_value(info, "name", "get-provider-info")
+    data_name = _metadata_value(data, "name", "provider-yaml")
+    assert data_name == info_name, f"'name' drifted: get_provider_info={info_name!r} vs provider.yaml={data_name!r}"
+    assert "versions" not in data, "provider.yaml must not pin a 'versions' key"
+    assert _metadata_value(info, "versions", "get-provider-info") == [_PROVIDER_VERSION]
 
 
 def test_metadata_declares_runtime_hook_operator_but_no_connection_registration() -> None:
@@ -77,11 +95,15 @@ def test_metadata_declares_runtime_hook_operator_but_no_connection_registration(
     info = _provider_info()
     data = _provider_yaml()
     for key in _RUNTIME_DECLARATION_KEYS:
-        assert info[key] == data[key]
-        assert info[key]
+        info_value = _metadata_value(info, key, "get-provider-info")
+        data_value = _metadata_value(data, key, "provider-yaml")
+        assert info_value == data_value, (
+            f"{key!r} drifted between sources: get_provider_info={info_value!r} vs provider.yaml={data_value!r}"
+        )
+        assert info_value, f"get_provider_info declares an empty {key!r}; provider.yaml declares {data_value!r}"
     for key in _FORBIDDEN_DECLARATION_KEYS:
-        assert key not in info, f"get_provider_info declares {key!r}"
-        assert key not in data, f"provider.yaml declares {key!r}"
+        assert key not in info, f"get_provider_info declares forbidden key {key!r}"
+        assert key not in data, f"provider.yaml declares forbidden key {key!r}"
 
 
 def test_descriptions_make_no_execution_claims() -> None:
@@ -160,8 +182,8 @@ def test_hook_injects_connection_credential_into_runtime_client(monkeypatch: pyt
     client = DatasluiceHook(airflow_conn_id="loopback").get_conn()
 
     assert isinstance(client, SyncCatalogClient)
-    assert isinstance(client._credentials, CredentialResolver)
-    assert isinstance(client._credentials.explicit, CKANCredential)
+    assert isinstance(client.credentials, CredentialResolver)
+    assert isinstance(client.credentials.explicit, CKANCredential)
 
 
 def test_provider_distribution_metadata_matches_contract() -> None:

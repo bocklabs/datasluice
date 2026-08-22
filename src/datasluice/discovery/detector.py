@@ -55,7 +55,7 @@ def _require_probe_runners(installed: frozenset[str], probe_engines: Mapping[str
         engine = probe_engines.get(connector_id)
         if connector_id not in installed or engine is None:
             continue
-        if getattr(engine, "_probe_runner", None) is None:
+        if engine.probe_runner is None:
             raise CatalogValidationError(
                 f"The capability cache wired for {connector_id} has no synchronous probe runner.",
                 operation=f"{connector_id}/capability.resolve",
@@ -87,7 +87,10 @@ def detect(
 
     Raises:
         CatalogValidationError: If an installed connector's wired cache has no
-            synchronous probe runner and could never produce evidence.
+            synchronous probe runner and could never produce evidence, or if a
+            probed operation completes without probe evidence.
+        ValueError: If the detection URL is not a sanitized HTTPS origin, or if
+            probe evidence targets a deployment URL on a foreign origin.
     """
     normalized_origin = _normalize_base_url(url)
     installed = frozenset(plugin_manager.list_connectors())

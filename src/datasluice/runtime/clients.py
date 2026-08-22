@@ -274,6 +274,11 @@ class SyncCatalogClient:
         return self._transport
 
     @property
+    def credentials(self) -> object | None:
+        """Expose the injected caller-owned credential resolver or provider."""
+        return self._credentials
+
+    @property
     def datasets(self) -> _SyncService[DatasetRecord]:
         """Return the synchronous dataset service projection."""
         return _SyncService(self, DatasetRecord.from_dict)
@@ -460,6 +465,11 @@ class AsyncCatalogClient:
     def transport(self) -> AsyncCatalogTransport:
         """Expose the underlying caller-owned transport as an introspection seam."""
         return self._transport
+
+    @property
+    def credentials(self) -> object | None:
+        """Expose the injected caller-owned credential resolver or provider."""
+        return self._credentials
 
     @property
     def datasets(self) -> _AsyncService[DatasetRecord]:

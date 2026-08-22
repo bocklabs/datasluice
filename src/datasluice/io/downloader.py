@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from datasluice._uri import sanitize_uri
 from datasluice.exceptions import DownloadError
 from datasluice.io.cache import FileCache
 from datasluice.io.local import ensure_dir, safe_filename, save_bytes
 from datasluice.io.storage import Storage
 from datasluice.logging import get_logger
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, TransportFailure
+from datasluice.runtime.transport.user_agent import build_user_agent
 
 if TYPE_CHECKING:
     from datasluice.domain.resource import Resource
@@ -63,7 +65,7 @@ class Downloader:
         if not resource.url:
             raise DownloadError(f"Resource {resource.id!r} has no URL")
 
-        logger.info("Downloading %s -> %s", resource.url, dest or "(memory)")
+        logger.info("Downloading %s -> %s", sanitize_uri(resource.url), dest or "(memory)")
 
         cache_key = resource.url
         if self.cache:
@@ -84,7 +86,7 @@ class Downloader:
                 from datasluice.exceptions import ChecksumMismatchError
 
                 raise ChecksumMismatchError(
-                    f"Checksum mismatch for {resource.url}",
+                    f"Checksum mismatch for {sanitize_uri(resource.url)}",
                     expected=verify_hash,
                     actual=actual,
                 )
@@ -99,11 +101,13 @@ class Downloader:
     def _fetch(self, url: str) -> bytes:
         """Fetch bytes through the runtime transport and validate the HTTP outcome."""
         try:
-            response = self.transport.send(RuntimeRequest(method="GET", url=url))
+            response = self.transport.send(
+                RuntimeRequest(method="GET", url=url, headers={"User-Agent": build_user_agent()})
+            )
         except TransportFailure as exc:
-            raise DownloadError(f"Download for {url!r} failed: {exc}") from exc
+            raise DownloadError(f"Download for {sanitize_uri(url)!r} failed: {exc}") from exc
         if not 200 <= response.status_code < 300:
-            raise DownloadError(f"Download for {url!r} returned HTTP {response.status_code}")
+            raise DownloadError(f"Download for {sanitize_uri(url)!r} returned HTTP {response.status_code}")
         return response.body
 
     def download_many(

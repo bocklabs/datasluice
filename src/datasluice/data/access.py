@@ -171,12 +171,15 @@ class DataPlaneResourceReader:
 
             magic = source.read(6)
             source.seek(0)
-            if _detect_format(magic, content_encoding) == "none":
+            header_hint = content_encoding
+            if header_hint not in (None, "identity") and _detect_format(magic, None) == "none":
+                header_hint = None
+            if _detect_format(magic, header_hint) == "none":
                 return self._build_batch_stream(resource, source, effective_batch_size)
             import io
 
             try:
-                decompressed = apply_compression(source, content_encoding)
+                decompressed = apply_compression(source, header_hint)
             except BaseException:
                 _close_source(source)
                 raise

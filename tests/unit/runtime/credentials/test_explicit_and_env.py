@@ -75,6 +75,20 @@ def test_empty_environment_variable_is_treated_as_unset(monkeypatch: pytest.Monk
     assert discovered == {}
 
 
+def test_unmapped_platform_environment_discovery_returns_no_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Platforms outside the fixed allowlist discover nothing, even with mapped variables set."""
+    monkeypatch.setenv("DATASLUICE_CKAN_API_TOKEN", "orphan-secret")
+
+    discovered = discover_enabled(
+        {CredentialSource.ENVIRONMENT: EnvironmentCredentialProvider()},
+        platform=CatalogPlatform("other"),
+        context={},
+        policy=CredentialResolutionPolicy(enabled_sources=frozenset({CredentialSource.ENVIRONMENT})),
+    )
+
+    assert discovered == {}
+
+
 def _discover_ckan_environment() -> Mapping[CredentialSource, CatalogCredential]:
     return discover_enabled(
         {CredentialSource.ENVIRONMENT: EnvironmentCredentialProvider()},

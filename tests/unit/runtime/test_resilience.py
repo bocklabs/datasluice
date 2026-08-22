@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from typing import cast
+from urllib.parse import urlsplit
 
 import pytest
 
+from datasluice.domain.catalog.auth import CredentialResolver
 from datasluice.domain.catalog.resilience import CircuitKey, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
 from datasluice.errors.catalog import BudgetExhaustedError, CatalogUnavailableError
-from datasluice.runtime.clients import SyncCatalogClient
+from datasluice.runtime.capability import EffectiveCapabilityCache, ProbeRunner
+from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
 from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
@@ -24,7 +28,9 @@ class _Clock:
 
 
 def _key() -> CircuitKey:
-    return CircuitKey(origin="https://catalog.example", credential_scope="reference")
+    """Derive one circuit key from the shared request fixture's origin and no-credential scope."""
+    parsed = urlsplit(str(_request().payload["url"]))
+    return CircuitKey(origin=f"{parsed.scheme}://{parsed.netloc}", credential_scope="anonymous")
 
 
 def _registry(clock: _Clock | None = None) -> BreakerRegistry:
@@ -176,6 +182,46 @@ def test_client_pipeline_retries_503_then_returns_successful_envelope() -> None:
     assert len(transport.requests) == 2
 
 
+def test_runtime_clients_expose_their_credential_resolvers_read_only() -> None:
+    """Both clients surface the injected credential resolver through a read-only property."""
+    resolver = CredentialResolver()
+
+    class _AsyncTransport:
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            return RuntimeResponse(200, {}, b"{}")
+
+        async def aclose(self) -> None:
+            return None
+
+    sync_client = SyncCatalogClient(
+        _SequenceTransport([RuntimeResponse(200, {}, _envelope())]),
+        _profile(),
+        credentials=resolver,
+    )
+    async_client = AsyncCatalogClient(_AsyncTransport(), _profile(), credentials=resolver)
+
+    assert sync_client.credentials is resolver
+    assert async_client.credentials is resolver
+    with pytest.raises(AttributeError):
+        setattr(sync_client, "credentials", CredentialResolver())  # noqa: B010
+    with pytest.raises(AttributeError):
+        setattr(async_client, "credentials", CredentialResolver())  # noqa: B010
+
+
+def test_capability_cache_exposes_its_probe_runner_read_only() -> None:
+    """The capability cache surfaces its probe runner seam without private access."""
+
+    class _Runner:
+        def probe(self, operation_id: object) -> object:
+            raise AssertionError("probing is not expected in this test")
+
+    runner = cast(ProbeRunner, _Runner())
+    cache = EffectiveCapabilityCache(_profile(), runner)
+
+    assert cache.probe_runner is runner
+    assert EffectiveCapabilityCache(_profile()).probe_runner is None
+
+
 def test_client_pipeline_exhausts_tiny_total_budget_between_attempts() -> None:
     clock = _Clock()
     transport = _SequenceTransport([RuntimeResponse(503, {}, b"")] * 3, clock)
@@ -205,11 +251,10 @@ def test_client_rejects_open_breaker_until_explicit_reset() -> None:
 
     with pytest.raises(CatalogUnavailableError):
         client.get(_request(), _guard())
-    key = CircuitKey(origin="http://127.0.0.1:8000", credential_scope="anonymous")
-    assert registry.inspect(key).failure_count == 1
+    assert registry.inspect(_key()).failure_count == 1
     with pytest.raises(CatalogUnavailableError) as raised:
         client.get(_request(), _guard())
     assert "cool-down" in raised.value.safe_action
 
-    registry.reset(key)
+    registry.reset(_key())
     assert client.get(_request(), _guard()).items[0].name == "Fixture dataset"

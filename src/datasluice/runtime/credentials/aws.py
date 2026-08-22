@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from threading import RLock
 from typing import Protocol, cast
 
 from datasluice.domain.catalog.auth import CatalogCredential, CredentialSource
@@ -30,6 +31,14 @@ class AwsSecretsManagerProvider:
         self._secret_id = secret_id
         self._region = region
         self._client_factory = client_factory
+        self._lock = RLock()
+        self._client: AwsSecretsManagerClient | None = None
+
+    def _resolved_client(self) -> AwsSecretsManagerClient:
+        with self._lock:
+            if self._client is None:
+                self._client = (self._client_factory or _aws_client_factory())(self._region)
+            return self._client
 
     def discover(
         self,
@@ -39,9 +48,7 @@ class AwsSecretsManagerProvider:
         """Read the configured string secret through an injectable synchronous client."""
         del context
         try:
-            response = (self._client_factory or _aws_client_factory())(self._region).get_secret_value(
-                SecretId=self._secret_id
-            )
+            response = self._resolved_client().get_secret_value(SecretId=self._secret_id)
             secret = _secret_string(response)
             credential = _credential_from_aws_secret(platform, secret)
         except ImportError:

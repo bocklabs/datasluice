@@ -92,6 +92,35 @@ def test_retry_decision_declines_unsafe_or_unavailable_retries(
     assert decision.reason == reason
 
 
+@pytest.mark.parametrize(
+    ("retry_after", "expected_retry", "expected_delay"),
+    [
+        (8, True, 8.0),
+        (8.000001, False, None),
+    ],
+    ids=["retry-after-equals-total-budget", "retry-after-exceeds-total-budget"],
+)
+def test_retry_after_total_budget_boundary_is_guarded_strictly(
+    retry_after: float,
+    expected_retry: bool,
+    expected_delay: float | None,
+) -> None:
+    """Retry-After equal to the total budget is accepted; only strictly greater declines."""
+    decision = RetryDecision.for_response(
+        attempt=1,
+        max_attempts=3,
+        status_code=429,
+        retry_after=retry_after,
+        idempotency=IdempotencyPolicy(safe=True),
+        budget=TimeBudget(connect=1, read=2, write=3, total=8),
+    )
+
+    assert decision.retry is expected_retry
+    assert decision.delay == expected_delay
+    if not expected_retry:
+        assert decision.reason == "Retry-After exceeds the total time budget."
+
+
 def test_tls_diagnostics_events_and_telemetry_have_secure_defaults() -> None:
     assert TLSPolicy().verify
     with pytest.raises(ValueError):

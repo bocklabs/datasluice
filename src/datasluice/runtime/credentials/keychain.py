@@ -39,7 +39,8 @@ class KeychainCredentialProvider:
         except ImportError:
             raise
         except Exception as exc:
-            raise _resolution_error("the OS keychain", platform, exc) from exc
+            cause = RuntimeError(f"{type(exc).__name__} during keychain backend lookup")
+            raise _resolution_error("the OS keychain", platform, exc) from cause
         if not password:
             return {}
         return {CredentialSource.KEYCHAIN: credential_from_secret(platform, password)}

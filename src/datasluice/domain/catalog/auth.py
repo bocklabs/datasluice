@@ -139,9 +139,9 @@ class OAuthFlow:
     authorization_url: str
     token_url: str
     client_id: str
-    redirect_uri: str | None = None
     scopes: frozenset[str] = frozenset()
     supports_refresh: bool = True
+    redirect_uri: str | None = None
 
     def __post_init__(self) -> None:
         for name, url in (("authorization", self.authorization_url), ("token", self.token_url)):

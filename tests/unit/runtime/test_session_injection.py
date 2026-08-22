@@ -8,6 +8,7 @@ Covers the ``transport=``, ``credentials=``, ``storage=``, ``cache=``, and
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from collections.abc import Callable
 from datetime import date
@@ -36,7 +37,7 @@ from datasluice.domain.catalog.operations import (
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.session import DataSluiceSession
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
 from datasluice.sync import InMemoryStateStore
 
 
@@ -213,17 +214,91 @@ def test_async_client_reuses_one_cached_transport() -> None:
     assert second.transport is spy
     assert session._async_transport is spy
 
+    asyncio.run(first.aclose())
+
+    assert spy.closed is False
+
 
 def test_session_caches_the_lazily_created_default_async_transport() -> None:
-    """The default async transport is created once and reused across calls."""
+    """The default async transport is created once, reused across calls, and disposed by the session."""
     if importlib.util.find_spec("httpx") is None:
         pytest.skip("the default async transport requires the http extra")
     session = DataSluiceSession()
-    first = session.async_client(_minimal_profile())
-    second = session.async_client(_minimal_profile())
+    try:
+        first = session.async_client(_minimal_profile())
+        second = session.async_client(_minimal_profile())
 
-    assert first.transport is second.transport
-    assert session._async_transport is not None
+        assert first.transport is second.transport
+        assert session._async_transport is not None
+
+        async def dispose() -> None:
+            await second.aclose()
+
+        asyncio.run(dispose())
+    finally:
+
+        async def teardown() -> None:
+            await session.aclose()
+            await session.aclose()
+
+        asyncio.run(teardown())
+
+
+def test_session_aclose_disposes_owned_default_transports_idempotently() -> None:
+    """Repeated aclose/close calls dispose owned default transports exactly once."""
+    if importlib.util.find_spec("httpx") is None:
+        pytest.skip("the default transports require the http extra")
+    session = DataSluiceSession()
+    _ = session.sync_client(_minimal_profile())
+    _ = session.async_client(_minimal_profile())
+
+    async def dispose_twice() -> None:
+        await session.aclose()
+        await session.aclose()
+
+    asyncio.run(dispose_twice())
+
+    with pytest.raises(TransportFailure, match="closed"):
+        session._transport.send(RuntimeRequest("GET", "https://example.test/"))
+    if session._async_transport is not None:
+        with pytest.raises(TransportFailure, match="closed"):
+            asyncio.run(session._async_transport.send(RuntimeRequest("GET", "https://example.test/")))
+    session.close()
+    session.close()
+
+
+def test_session_close_directs_to_aclose_when_owned_async_transport_is_open() -> None:
+    """Sync close never bridges into async execution; it directs to aclose instead."""
+    if importlib.util.find_spec("httpx") is None:
+        pytest.skip("the default transports require the http extra")
+    session = DataSluiceSession()
+    _ = session.async_client(_minimal_profile())
+
+    with pytest.raises(RuntimeError, match="await aclose"):
+        session.close()
+
+    async def dispose() -> None:
+        await session.aclose()
+
+    asyncio.run(dispose())
+    session.close()
+    session.close()
+
+
+def test_session_aclose_leaves_injected_transports_open() -> None:
+    """Injected transports stay borrowed: aclose never closes caller-owned dependencies."""
+    sync_spy = _ClosingSpyTransport()
+    async_spy = _AsyncClosingSpyTransport()
+    session = DataSluiceSession(transport=sync_spy, async_transport=async_spy)
+
+    async def dispose_twice() -> None:
+        await session.aclose()
+        await session.aclose()
+
+    asyncio.run(dispose_twice())
+
+    assert sync_spy.closed is False
+    assert async_spy.closed is False
 
 
 def test_storage_injectable() -> None:

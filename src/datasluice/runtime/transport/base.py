@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
+from datasluice.domain.catalog.redaction import redact_string
+
 SENSITIVE_REDIRECT_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token"})
 
 _HOP_BODYLESS_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding"})
@@ -43,7 +45,10 @@ class RuntimeRequest:
     """Immutable HTTP request supplied by a catalog client.
 
     Headers and bodies are excluded from ``repr`` so accidental logging or
-    debugging of requests cannot expose credentials.
+    debugging of requests cannot expose credentials, and the URL renders
+    through the shared redaction helper. ``__hash__`` projects over the
+    hashable ``method`` and ``url`` fields only; equality remains full-field
+    via the generated ``eq`` and still compares headers and body.
     """
 
     method: str
@@ -65,10 +70,23 @@ class RuntimeRequest:
             raise ValueError("Runtime request headers must contain non-empty string names and string values.")
         object.__setattr__(self, "headers", MappingProxyType(headers))
 
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(method={self.method!r}, url={redact_string(self.url)!r})"
+
+    def __hash__(self) -> int:
+        return hash((self.method, self.url))
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeResponse:
-    """Fully buffered HTTP response returned by a catalog transport."""
+    """Fully buffered HTTP response returned by a catalog transport.
+
+    The custom ``repr`` masks the body (rendering only its byte length) and
+    omits headers, so debugging cannot expose credential-bearing payloads.
+    ``__hash__`` projects over the hashable ``status_code`` and ``retry_after``
+    fields; equality remains full-field via the generated ``eq`` and still
+    compares headers and body.
+    """
 
     status_code: int
     headers: Mapping[str, str] = field(repr=False)
@@ -91,6 +109,15 @@ class RuntimeResponse:
         object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
         if self.retry_after is not None:
             object.__setattr__(self, "retry_after", float(self.retry_after))
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(status_code={self.status_code!r}, "
+            f"body=<{len(self.body)} masked bytes>, retry_after={self.retry_after!r})"
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.status_code, self.retry_after))
 
 
 class TransportFailure(RuntimeError):

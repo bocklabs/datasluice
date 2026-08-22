@@ -54,6 +54,7 @@ class DataSluiceSession:
     The session owns every transport it constructs and remains their sole
     closer; clients created through :meth:`sync_client` and
     :meth:`async_client` borrow the shared transports without closing them.
+    Injected transports stay caller-owned and are never closed by the session.
     """
 
     def __init__(
@@ -93,6 +94,10 @@ class DataSluiceSession:
         )
         self.emitter = emitter or EventEmitter(sinks=sinks)
         self.tls_policy = tls_policy or TLSPolicy()
+        self._owns_sync_transport = transport is None
+        self._owns_async_transport = async_transport is None
+        self._sync_transport_closed = False
+        self._async_transport_closed = False
         self._transport = transport or create_default_sync_transport(tls_policy=self.tls_policy, budget=self.budget)
         self._async_transport = async_transport
         self.storage = storage
@@ -159,6 +164,39 @@ class DataSluiceSession:
             emitter=self.emitter,
             owns_transport=False,
         )
+
+    def close(self) -> None:
+        """Close the session-owned synchronous transport idempotently, exactly once.
+
+        An owned default async transport is never drained here: sync and async
+        modes stay independently executed. When one exists, this method raises
+        a directing error; await :meth:`aclose` (or close the owning facade) to
+        release it.
+        """
+        self._close_owned_sync_transport()
+        if self._owns_async_transport and not self._async_transport_closed and self._async_transport is not None:
+            raise RuntimeError(
+                "DataSluiceSession.close() found an owned asynchronous transport; "
+                "await aclose() (or close the owning facade) to release it."
+            )
+
+    async def aclose(self) -> None:
+        """Close every session-owned transport idempotently inside an event loop."""
+        self._close_owned_sync_transport()
+        transport = self._claim_owned_async_transport()
+        if transport is not None:
+            await transport.aclose()
+
+    def _close_owned_sync_transport(self) -> None:
+        if self._owns_sync_transport and not self._sync_transport_closed:
+            self._sync_transport_closed = True
+            self._transport.close()
+
+    def _claim_owned_async_transport(self) -> AsyncCatalogTransport | None:
+        if self._owns_async_transport and not self._async_transport_closed and self._async_transport is not None:
+            self._async_transport_closed = True
+            return self._async_transport
+        return None
 
     def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
         """Construct one canonical catalog connector from caller-owned inputs."""

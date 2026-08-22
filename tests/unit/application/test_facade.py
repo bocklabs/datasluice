@@ -20,6 +20,7 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogOperationExecutor,
 )
 from datasluice.domain.catalog.auth import CredentialResolver
+from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.exceptions import StreamClosedError
 from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
@@ -222,6 +223,20 @@ def test_closed_facade_rejects_catalog_and_data_plane_work(monkeypatch: pytest.M
 
     assert service.calls == []
     assert reader.opened == []
+
+
+def test_closed_facade_rejects_credential_and_client_surfaces() -> None:
+    """Closed-state guards raise the same typed error on credentials and both clients."""
+    data_sluice = DataSluice(session=_MinimalSession())
+    profile = cast(DeclaredCapabilityProfile, object())
+    data_sluice.close()
+
+    with pytest.raises(StreamClosedError, match="DataSluice is closed"):
+        _ = data_sluice.credentials
+    with pytest.raises(StreamClosedError, match="DataSluice is closed"):
+        data_sluice.sync_client(profile)
+    with pytest.raises(StreamClosedError, match="DataSluice is closed"):
+        data_sluice.async_client(profile)
 
 
 def test_facade_exposes_no_portal_surface() -> None:

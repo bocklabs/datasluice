@@ -21,6 +21,13 @@ runner = CliRunner()
 
 _RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _flat(text: str) -> str:
+    """Render Rich-formatted CLI output as single-line text for stable assertions."""
+    return " ".join(_ANSI_RE.sub("", text).split())
+
 
 @pytest.mark.parametrize(
     "locator",
@@ -93,6 +100,14 @@ def test_resource_commands_have_no_catalog_resolution_surface() -> None:
         assert not {"portal", "dataset", "resource"}.intersection(inspect.signature(command).parameters)
 
 
+def test_capabilities_show_rejects_unknown_platform() -> None:
+    """An unsupported platform argument fails parameter validation before profile loading."""
+    result = runner.invoke(app, ["capabilities", "show", "jira"])
+
+    assert result.exit_code == 2
+    assert "platform must be one of: ckan, udata, socrata" in _flat(result.output)
+
+
 def test_capabilities_list_and_show_declared_states_without_network() -> None:
     """Canonical packaged profiles render their baseline state through the CLI."""
     listing = runner.invoke(app, ["capabilities", "list", "--output", "json"])
@@ -152,7 +167,7 @@ def test_validate_requires_exactly_one_credential_source() -> None:
     assert both.exit_code == 2, both.output
     assert neither.exit_code == 2, neither.output
     for result in (both, neither):
-        assert "exactly one of --credential-json or --credential-file" in result.output
+        assert "exactly one of --credential-json or --credential-file" in _flat(result.output)
 
 
 def test_validate_rejects_unknown_platform() -> None:
@@ -163,7 +178,7 @@ def test_validate_rejects_unknown_platform() -> None:
     )
 
     assert result.exit_code == 2
-    assert "--platform must be one of: ckan, udata, socrata" in result.output
+    assert "--platform must be one of: ckan, udata, socrata" in _flat(result.output)
 
 
 def test_validate_reports_missing_credential_file(tmp_path: Path) -> None:
@@ -172,7 +187,7 @@ def test_validate_reports_missing_credential_file(tmp_path: Path) -> None:
     result = runner.invoke(app, ["credentials", "validate", "--platform", "ckan", "--credential-file", str(missing)])
 
     assert result.exit_code == 2
-    assert "Credential input is invalid; secret values were not rendered." in result.output
+    assert "Credential input is invalid; secret values were not rendered." in _flat(result.output)
 
 
 @pytest.mark.parametrize(
@@ -193,7 +208,7 @@ def test_validate_rejects_invalid_credential_json(platform: str, credential_json
     )
 
     assert result.exit_code == 2, result.output
-    assert "Credential input is invalid; secret values were not rendered." in result.output
+    assert "Credential input is invalid; secret values were not rendered." in _flat(result.output)
     assert "orphan-secret" not in result.output
 
 
