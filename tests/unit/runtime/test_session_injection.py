@@ -1,6 +1,6 @@
 """Session injection tests for non-catalog ownership and canonical catalog handoff.
 
-Covers the ``transport=``/``storage=``/``cache=``/``credential_provider=``/
+Covers the ``transport=``, ``credentials=``, ``storage=``, ``cache=``, and
 ``state_store=`` injectables the session owns directly, plus the canonical
 ``open_catalog`` handoff where a caller-selected factory receives one exact
 :class:`CatalogConnectorContext`.
@@ -8,7 +8,9 @@ Covers the ``transport=``/``storage=``/``cache=``/``credential_provider=``/
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Callable
+from datetime import date
 from typing import cast
 
 import pytest
@@ -18,7 +20,21 @@ from datasluice.contracts.catalog.protocols import (
     CatalogConnectorContext,
     SyncCatalogOperationExecutor,
 )
-from datasluice.domain.catalog.auth import CredentialResolver
+from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver, CredentialSource, SecretValue
+from datasluice.domain.catalog.observability import TLSPolicy
+from datasluice.domain.catalog.operations import (
+    Atomicity,
+    AuthClass,
+    CapabilityClass,
+    ConcurrencyRequirement,
+    Idempotency,
+    MutationClass,
+    OperationId,
+    OperationSpec,
+    OperationTier,
+)
+from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
+from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.session import DataSluiceSession
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 from datasluice.sync import InMemoryStateStore
@@ -63,6 +79,29 @@ class _StubCache:
         self.store.pop(key, None)
 
 
+class _ClosingSpyTransport(_StubTransport):
+    """Stub recording whether close() was invoked."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _AsyncClosingSpyTransport:
+    """Async stub recording whether aclose() was invoked."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return RuntimeResponse(200, {}, b"{}")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class _SyncExecutor:
     """Structural sync executor double for canonical context construction."""
 
@@ -91,6 +130,32 @@ def _catalog_context() -> CatalogConnectorContext:
     )
 
 
+def _minimal_profile() -> DeclaredCapabilityProfile:
+    """Build one minimal declared profile for client construction."""
+    operation_id = OperationId(platform="ckan", service="api", method="package_list")
+    spec = OperationSpec(
+        id=operation_id,
+        tier=OperationTier.NATIVE,
+        request_type="catalog-request",
+        response_type="catalog-response",
+        auth_class=AuthClass.PUBLIC,
+        mutation_class=MutationClass.READ,
+        idempotency=Idempotency.SAFE,
+        concurrency=ConcurrencyRequirement.NONE,
+        atomicity=Atomicity.NONE,
+        capability_class=CapabilityClass.CORE,
+    )
+    return DeclaredCapabilityProfile(
+        profile_version="1.0.0",
+        schema_version="1.0",
+        platform_api_version="1.0",
+        official_source_uri="https://data.example.test/api",
+        source_accessed_at=date(2026, 1, 1),
+        fixture_fingerprint="sha256:deadbeef",
+        operations={operation_id: spec},
+    )
+
+
 def test_custom_transport_injection() -> None:
     """A user-supplied catalog transport is wired without code modification."""
     stub = _StubTransport()
@@ -99,16 +164,66 @@ def test_custom_transport_injection() -> None:
 
 
 def test_runtime_options_do_not_replace_an_injected_transport() -> None:
-    """When transport= is injected, runtime options do not construct another transport."""
+    """When transport= is injected, runtime knobs do not construct another transport."""
     stub = _StubTransport()
-    session = DataSluiceSession(transport=stub)
+    session = DataSluiceSession(
+        transport=stub,
+        budget=TimeBudget(connect=1.0, read=2.0, write=3.0, total=4.0),
+        tls_policy=TLSPolicy(verify=False, override_scope="development"),
+    )
     assert session._transport is stub
 
 
 def test_credential_resolver_is_explicit_only_by_default() -> None:
-    """The default resolver carries no credential discovery sources."""
+    """The default resolver carries no explicit credential and discovers nothing."""
     session = DataSluiceSession()
-    assert session.credentials == CredentialResolver()
+    resolver = session.credentials
+    assert resolver.explicit is None
+    discovered = {CredentialSource.ENVIRONMENT: CKANCredential(api_token=SecretValue("discovered-secret"))}
+    assert resolver.resolve(discovered) is None
+
+
+def test_credentials_injection_identity() -> None:
+    """An injected CredentialResolver is retained by identity."""
+    resolver = CredentialResolver()
+    session = DataSluiceSession(credentials=resolver)
+    assert session.credentials is resolver
+
+
+def test_session_created_client_close_keeps_session_transport_open() -> None:
+    """Session-created clients borrow the transport; closing them never closes it."""
+    stub = _ClosingSpyTransport()
+    session = DataSluiceSession(transport=stub)
+    client = session.sync_client(_minimal_profile())
+
+    assert client.transport is stub
+    client.close()
+    assert stub.closed is False
+    assert session._transport is stub
+
+
+def test_async_client_reuses_one_cached_transport() -> None:
+    """Repeated async_client() calls share a single session-owned transport."""
+    spy = _AsyncClosingSpyTransport()
+    session = DataSluiceSession(async_transport=spy)
+    first = session.async_client(_minimal_profile())
+    second = session.async_client(_minimal_profile())
+
+    assert first.transport is spy
+    assert second.transport is spy
+    assert session._async_transport is spy
+
+
+def test_session_caches_the_lazily_created_default_async_transport() -> None:
+    """The default async transport is created once and reused across calls."""
+    if importlib.util.find_spec("httpx") is None:
+        pytest.skip("the default async transport requires the http extra")
+    session = DataSluiceSession()
+    first = session.async_client(_minimal_profile())
+    second = session.async_client(_minimal_profile())
+
+    assert first.transport is second.transport
+    assert session._async_transport is not None
 
 
 def test_storage_injectable() -> None:

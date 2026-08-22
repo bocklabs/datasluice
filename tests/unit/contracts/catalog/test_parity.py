@@ -97,9 +97,10 @@ def test_native_service_projections_are_signature_equivalent(
 
 def test_opted_out_legacy_surfaces_are_absent_from_native_contracts() -> None:
     """Locked legacy CKAN and SODA 2 APIs cannot return as Protocol members."""
-    retired_members = {"legacy", "soda_v2", "ckan_api_v2"}
+    retired_members = ("legacy", "soda_v2", "ckan_api_v2")
 
     for protocol in (SyncCKANServices, AsyncCKANServices, SyncSocrataServices, AsyncSocrataServices):
-        public_members = {member.lower() for member in protocol.__dict__ if not member.startswith("_")}
-
-        assert retired_members.isdisjoint(public_members)
+        public_members = [member.lower() for member in protocol.__dict__ if not member.startswith("_")]
+        for retired in retired_members:
+            offenders = [member for member in public_members if retired in member]
+            assert not offenders, f"{protocol.__name__} reintroduces {retired!r}: {offenders}"

@@ -21,7 +21,7 @@ def main() -> int:
     info = get_provider_info()
     assert info["package-name"] == "apache-airflow-providers-datasluice", info
     for key in _RUNTIME_DECLARATION_KEYS:
-        assert info[key], f"provider metadata omits {key}"
+        assert info.get(key), f"provider metadata omits {key}"
     for key in _FORBIDDEN_DECLARATION_KEYS:
         assert key not in info, f"provider metadata declares {key}"
     return 0

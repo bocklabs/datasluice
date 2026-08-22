@@ -23,6 +23,7 @@ from datasluice.domain.catalog.profiles import (
 )
 from datasluice.errors.catalog import (
     CatalogError,
+    CatalogUnavailableError,
     CatalogValidationError,
     ForbiddenError,
     UnauthenticatedError,
@@ -72,8 +73,8 @@ class EffectiveCapabilityCache:
         ttl_seconds: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         clock: Callable[[], float] = monotonic,
     ) -> None:
-        if type(ttl_seconds) not in (int, float) or ttl_seconds < 0:
-            raise ValueError("Capability cache TTL must be a non-negative number.")
+        if type(ttl_seconds) not in (int, float) or ttl_seconds != ttl_seconds or ttl_seconds < 0:
+            raise ValueError("Capability cache TTL must be a finite non-negative number.")
         self._declared_profile = (
             profile.declared_profile if isinstance(profile, EffectiveCapabilityProfile) else profile
         )
@@ -118,14 +119,15 @@ class EffectiveCapabilityCache:
 
         try:
             effective = self._resolve_from_runner(operation_id)
+            completed_at = self._clock()
         except BaseException as exc:
             with self._lock:
-                flight.error = exc
+                flight.error = self._follower_failure(operation_id, exc)
                 self._sync_flights.pop(operation_id, None)
                 flight.event.set()
             raise
         with self._lock:
-            self._entries[operation_id] = _CacheEntry(profile=effective, timestamp=self._clock())
+            self._entries[operation_id] = _CacheEntry(profile=effective, timestamp=completed_at)
             flight.profile = effective
             self._sync_flights.pop(operation_id, None)
             flight.event.set()
@@ -153,15 +155,16 @@ class EffectiveCapabilityCache:
 
         try:
             effective = await self._resolve_from_async_runner(operation_id)
+            completed_at = self._clock()
         except BaseException as exc:
             with self._lock:
                 self._async_flights.pop(operation_id, None)
                 if not flight.done():
-                    flight.set_exception(exc)
+                    flight.set_exception(self._follower_failure(operation_id, exc))
                     flight.exception()
             raise
         with self._lock:
-            self._entries[operation_id] = _CacheEntry(profile=effective, timestamp=self._clock())
+            self._entries[operation_id] = _CacheEntry(profile=effective, timestamp=completed_at)
             self._async_flights.pop(operation_id, None)
             if not flight.done():
                 flight.set_result(effective)
@@ -213,6 +216,18 @@ class EffectiveCapabilityCache:
                 self._entries.clear()
             else:
                 self._entries.pop(operation_id, None)
+
+    def _follower_failure(self, operation_id: OperationId, exc: BaseException) -> BaseException:
+        """Convert leader cancellation into a typed failure shared with waiting followers."""
+        if isinstance(exc, asyncio.CancelledError):
+            return CatalogUnavailableError(
+                "The capability probe was cancelled before it completed.",
+                operation=str(operation_id),
+                platform=operation_id.platform,
+                capability_state="unavailable",
+                safe_action="Retry the operation once the catalog deployment is reachable.",
+            )
+        return exc
 
     def _fresh_entry(self, operation_id: OperationId) -> _CacheEntry | None:
         entry = self._entries.get(operation_id)

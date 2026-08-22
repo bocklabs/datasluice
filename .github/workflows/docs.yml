@@ -37,7 +37,7 @@ jobs:
           grep -q 'apache-airflow-providers-datasluice' docs/install.md
 
       - name: Run executable public documentation examples
-        run: uv run --group docs --extra pandas --extra streaming --extra storage --extra http pytest tests/e2e/test_docs_examples.py tests/e2e/test_cli_bare.py -x
+        run: uv run --group docs --extra pandas --extra parquet --extra storage --extra http pytest tests/e2e/test_docs_examples.py tests/e2e/test_cli_bare.py -x
 
       - name: Smoke provider metadata from installed wheels
         run: |

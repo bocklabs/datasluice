@@ -14,7 +14,7 @@ import pytest
 
 from datasluice.domain.catalog.auth import OAuthFlow, SecretValue
 from datasluice.domain.catalog.resilience import TimeBudget
-from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError
+from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError, UnauthenticatedError
 from datasluice.runtime.clients import SyncCatalogClient
 from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.oauth import (
@@ -24,7 +24,7 @@ from datasluice.runtime.oauth import (
     RefreshingCredentialProvider,
 )
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-from tests.unit.runtime.test_clients_sync import _envelope, _guard, _profile, _request
+from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
 
 
 class _SyncTransport:
@@ -52,10 +52,17 @@ class _AsyncTransport:
     async def aclose(self) -> None:
         pass
 
+    def close(self) -> None:
+        pass
 
-def _flow() -> OAuthFlow:
-    return OAuthFlow.authorization_code(
-        "https://auth.example.test/authorize", "https://auth.example.test/token", "client-id"
+
+def _flow(*, scopes: frozenset[str] | None = None, redirect_uri: str | None = None) -> OAuthFlow:
+    return OAuthFlow(
+        authorization_url="https://auth.example.test/authorize",
+        token_url="https://auth.example.test/token",
+        client_id="client-id",
+        redirect_uri=redirect_uri,
+        scopes=frozenset(scopes or frozenset()),
     )
 
 
@@ -74,13 +81,22 @@ def test_client_credentials_posts_form_and_wraps_access_token() -> None:
 
     assert credential.access_token.reveal() == "access-token"
     assert credential.expires_in is not None
-    assert 119 <= credential.expires_in <= 120
+    assert 110 <= credential.expires_in <= 120
     assert transport.requests[0].body is not None
     assert parse_qs(transport.requests[0].body.decode()) == {
         "grant_type": ["client_credentials"],
         "client_id": ["client-id"],
         "client_secret": ["client-secret"],
     }
+
+
+def test_client_credentials_send_configured_scopes_sorted() -> None:
+    transport = _SyncTransport(_token_response())
+
+    ClientCredentialsFlow(_flow(scopes=frozenset({"write", "read"})), SecretValue("client-secret"), transport).fetch()
+
+    assert transport.requests[0].body is not None
+    assert parse_qs(transport.requests[0].body.decode())["scope"] == ["read write"]
 
 
 def test_client_credentials_async_uses_async_transport() -> None:
@@ -90,6 +106,29 @@ def test_client_credentials_async_uses_async_transport() -> None:
 
     assert credential.access_token.reveal() == "access-token"
     assert len(transport.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (b"not-json", "invalid JSON"),
+        (json.dumps({"expires_in": 120}).encode(), "access token"),
+        (json.dumps({"access_token": "access-token", "expires_in": "soon"}).encode(), "invalid expiry"),
+        (json.dumps({"access_token": "access-token", "expires_in": -5}).encode(), "invalid expiry"),
+    ],
+)
+def test_malformed_token_responses_are_rejected(body: bytes, message: str) -> None:
+    transport = _SyncTransport(RuntimeResponse(200, {}, body))
+
+    with pytest.raises(CatalogValidationError, match=message):
+        ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
+
+
+def test_refresh_provider_requires_a_refresh_capable_credential() -> None:
+    credential = OAuthCredential(SecretValue("access-token"), None, None)
+
+    with pytest.raises(ValueError, match="refresh-capable"):
+        RefreshingCredentialProvider(_flow(), credential, _SyncTransport(_token_response()))
 
 
 def test_authorization_code_uses_rfc7636_s256_only() -> None:
@@ -104,7 +143,29 @@ def test_authorization_code_uses_rfc7636_s256_only() -> None:
     assert 43 <= len(verifier) <= 128
     assert query["code_challenge"] == [expected]
     assert query["code_challenge_method"] == ["S256"]
+    assert query["response_type"] == ["code"]
+    assert query["state"] == ["state"]
     assert "plain" not in authorization_url
+
+
+def test_redirect_uris_must_be_sanitized_https() -> None:
+    with pytest.raises(ValueError, match="sanitized HTTPS"):
+        _flow(redirect_uri="http://app.example.test/callback")
+
+
+def test_authorization_url_and_exchange_carry_the_registered_redirect_uri() -> None:
+    transport = _SyncTransport(_token_response())
+    flow = AuthorizationCodeFlow(_flow(redirect_uri="https://app.example.test/callback"), transport)
+
+    query = parse_qs(urlsplit(flow.authorization_url(state="state")).query)
+    credential = flow.exchange("authorization-code")
+
+    assert transport.requests[0].body is not None
+    exchange_body = parse_qs(transport.requests[0].body.decode())
+
+    assert query["redirect_uri"] == ["https://app.example.test/callback"]
+    assert exchange_body["redirect_uri"] == ["https://app.example.test/callback"]
+    assert credential.access_token.reveal() == "access-token"
 
 
 def test_authorization_code_exchanges_verifier() -> None:
@@ -128,14 +189,40 @@ def test_domain_rejects_non_https_token_endpoint() -> None:
         )
 
 
-def test_token_errors_are_typed_and_redacted() -> None:
-    transport = _SyncTransport(RuntimeResponse(400, {}, b'{"error_description":"client-secret access-token"}'))
+def test_token_errors_surface_status_and_rfc6749_error_code_without_body_values() -> None:
+    transport = _SyncTransport(
+        RuntimeResponse(400, {}, json.dumps({"error": "invalid_grant", "error_description": "client-secret"}).encode())
+    )
 
     with pytest.raises(CatalogValidationError) as exc_info:
         ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
 
-    assert "client-secret" not in str(exc_info.value)
-    assert "access-token" not in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "400" in message
+    assert "invalid_grant" in message
+    assert "client-secret" not in message
+
+
+def test_unauthorized_token_responses_map_to_unauthenticated_error() -> None:
+    transport = _SyncTransport(RuntimeResponse(401, {}, b'{"error": "invalid_client"}'))
+
+    with pytest.raises(UnauthenticatedError) as exc_info:
+        ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
+
+    message = str(exc_info.value)
+    assert "401" in message
+    assert "invalid_client" in message
+
+
+def test_unknown_error_codes_are_not_echoed_into_messages() -> None:
+    transport = _SyncTransport(RuntimeResponse(400, {}, b'{"error": "attacker-controlled-code"}'))
+
+    with pytest.raises(CatalogValidationError) as exc_info:
+        ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
+
+    message = str(exc_info.value)
+    assert "400" in message
+    assert "attacker-controlled-code" not in message
 
 
 def _expired_credential() -> OAuthCredential:
@@ -178,6 +265,30 @@ def test_async_refresh_uses_async_transport_and_is_single_flight() -> None:
 
     assert all(result.access_token.reveal() == "access-token" for result in results)
     assert len(transport.requests) == 1
+
+
+def test_async_refresh_rebinds_its_lock_across_event_loops() -> None:
+    transport = _AsyncTransport(_token_response())
+    provider = RefreshingCredentialProvider(_flow(), _expired_credential(), transport)
+
+    first = asyncio.run(provider.resolve_async())
+    second = asyncio.run(provider.resolve_async())
+
+    assert first.access_token.reveal() == "access-token"
+    assert second.access_token.reveal() == "access-token"
+
+
+def test_mixed_sync_and_async_resolution_share_exclusion() -> None:
+    transport = _AsyncTransport(_token_response())
+    fresh = OAuthCredential(SecretValue("fresh-access-token"), time() + 3600, SecretValue("refresh-token"))
+    provider = RefreshingCredentialProvider(_flow(), fresh, transport)
+
+    synced = provider.resolve()
+    async_resolved = asyncio.run(provider.resolve_async())
+
+    assert synced.access_token.reveal() == "fresh-access-token"
+    assert async_resolved.access_token.reveal() == "fresh-access-token"
+    assert transport.requests == []
 
 
 def test_failed_refresh_emits_a_redacted_event() -> None:

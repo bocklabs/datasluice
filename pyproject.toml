@@ -49,6 +49,7 @@ docs = [
 ]
 
 [project.optional-dependencies]
+all = ["datasluice[all-connectors,compression,dlt,duckdb,http,keychain,oauth,pandas,parquet,polars,secrets-aws,secrets-vault,storage,telemetry,xlsx]"]
 all-connectors = ["datasluice[ckan,udata,socrata]"]
 ckan = ["datasluice[http]"]
 compression = ["zstandard>=0.23"]

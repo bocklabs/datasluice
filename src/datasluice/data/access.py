@@ -8,11 +8,10 @@ reader, and wraps the resulting ``RecordBatch`` iterator in a
 Dispatch by ``resource.access.kind``:
 
 * ``http_download`` (default when ``resource.access`` is None — every resource has
-  a URL today): probe ``isinstance(transport, StreamingTransport)`` per the
-  capability-check pattern. Streaming path wraps
-  ``StreamResponse`` in :class:`IterableBytesIO` (non-seekable). Buffered path
-  (urllib ``HttpClient``) reads the full body into :class:`io.BytesIO` and logs
-  a WARNING recommending ``pip install datasluice[http]``.
+  a URL today): fetch through the injected :class:`~datasluice.runtime.transport.base.CatalogTransport`
+  in one request. Both runtime transports return the complete body inside
+  ``RuntimeResponse.body``, so HTTP downloads are fully buffered in memory and
+  wrapped in :class:`io.BytesIO`; no chunk-streaming seam exists today.
 * ``object_storage``: ``open_filesystem(uri).open(path)`` returning a seekable
   BinaryIO.
 * ``local_file``: ``open(path, 'rb')``.
@@ -167,8 +166,27 @@ class DataPlaneResourceReader:
                 source.close()
                 raise UnsupportedAccessError(f"Checkpointable Parquet resource {resource.id!r} must not be compressed")
             return self._build_parquet_cursor_stream(source, start_row_group_index=0, start_batch_index=0)
-        if (resource.format or "").upper() == "PARQUET" and kind == "http_download" and content_encoding is None:
-            return self._build_batch_stream(resource, source, effective_batch_size)
+        if (resource.format or "").upper() == "PARQUET" and kind == "http_download":
+            from datasluice.data.compression import _detect_format
+
+            magic = source.read(6)
+            source.seek(0)
+            if _detect_format(magic, content_encoding) == "none":
+                return self._build_batch_stream(resource, source, effective_batch_size)
+            import io
+
+            try:
+                decompressed = apply_compression(source, content_encoding)
+            except BaseException:
+                _close_source(source)
+                raise
+            try:
+                body = decompressed.read()
+            except BaseException:
+                _close_source(decompressed)
+                raise
+            decompressed.close()
+            return self._build_batch_stream(resource, io.BytesIO(body), effective_batch_size)
         try:
             decompressed = apply_compression(source, content_encoding)
         except BaseException:

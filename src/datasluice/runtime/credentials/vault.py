@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from threading import RLock
 from typing import Protocol, cast
 
 from datasluice.domain.catalog.auth import CatalogCredential, CredentialSource
@@ -55,6 +56,14 @@ class VaultCredentialProvider:
         self._mount_point = mount_point
         self._path = path
         self._client_factory = client_factory
+        self._lock = RLock()
+        self._client: VaultClient | None = None
+
+    def _resolved_client(self) -> VaultClient:
+        with self._lock:
+            if self._client is None:
+                self._client = (self._client_factory or _vault_client_factory())(self._url, self._token)
+            return self._client
 
     def discover(
         self,
@@ -64,8 +73,9 @@ class VaultCredentialProvider:
         """Read one KV v2 secret through an injectable synchronous client."""
         del context
         try:
-            client = (self._client_factory or _vault_client_factory())(self._url, self._token)
-            response = client.secrets.kv.v2.read_secret_version(path=self._path, mount_point=self._mount_point)
+            response = self._resolved_client().secrets.kv.v2.read_secret_version(
+                path=self._path, mount_point=self._mount_point
+            )
             credential = credential_from_fields(platform, _vault_fields(response))
         except ImportError:
             raise

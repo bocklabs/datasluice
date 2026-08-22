@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from collections.abc import AsyncGenerator, Generator
 from threading import Event, Lock
 from time import sleep
+from typing import cast
 
 import pytest
 
@@ -83,7 +86,155 @@ def test_duplicate_ids_fail_before_any_dispatch() -> None:
     assert "ckan/dataset/same" in str(raised.value)
     assert raised.value.operation == plan.operation
     assert raised.value.platform == "ckan"
-    assert raised.value.safe_action
+    assert "duplicate" in raised.value.safe_action.lower()
+
+
+@pytest.mark.parametrize("platform_max_parallelism", [0, 33])
+def test_platform_parallelism_bounds_are_enforced(platform_max_parallelism: int) -> None:
+    with pytest.raises(ValueError):
+        BulkExecutor(
+            lambda item: _receipt(item),
+            platform_max_parallelism=platform_max_parallelism,
+            checkpoint_sink=lambda checkpoint: None,
+        )
+
+
+def test_resume_rejects_a_checkpoint_created_for_a_different_plan() -> None:
+    plan = _plan("one", "two")
+    other = _plan("one", "three")
+    checkpoint = BulkCheckpoint(
+        plan=other,
+        item_receipts=(BulkItemReceipt(index=0, receipt=_receipt(other.items[0])),),
+    )
+    calls: list[str] = []
+
+    with pytest.raises(CatalogValidationError) as raised:
+        list(
+            BulkExecutor(
+                lambda item: calls.append(item.value) or _receipt(item),
+                checkpoint=checkpoint,
+                checkpoint_sink=lambda checkpoint: None,
+            ).stream(plan)
+        )
+
+    assert calls == []
+    assert "does not belong" in str(raised.value)
+
+
+def test_sync_item_failures_convert_to_failed_receipts_and_counted() -> None:
+    plan = _plan("explodes", "wrong-type", "succeeds")
+
+    def execute(item: CatalogId) -> MutationReceipt:
+        if item.value == "explodes":
+            raise RuntimeError("dispatch failed")
+        if item.value == "wrong-type":
+            return cast(MutationReceipt, object())
+        return _receipt(item)
+
+    outcomes = list(BulkExecutor(execute, checkpoint_sink=lambda checkpoint: None).stream(plan))
+    receipts = [outcome for outcome in outcomes if isinstance(outcome, BulkItemReceipt)]
+    summary = outcomes[-1]
+
+    assert [item.receipt.outcome for item in receipts] == ["failed", "failed", "succeeded"]
+    assert isinstance(summary, BulkSummary)
+    assert summary.failed == 2
+    assert summary.succeeded == 1
+    assert summary.settled == 3
+
+
+def test_async_item_failures_convert_to_failed_receipts_and_counted() -> None:
+    async def run() -> list[BulkItemReceipt | BulkSummary]:
+        plan = _plan("explodes", "wrong-type", "succeeds")
+
+        async def execute(item: CatalogId) -> MutationReceipt:
+            if item.value == "explodes":
+                raise RuntimeError("dispatch failed")
+            if item.value == "wrong-type":
+                return cast(MutationReceipt, object())
+            return _receipt(item)
+
+        return [
+            outcome
+            async for outcome in AsyncBulkExecutor(execute, checkpoint_sink=lambda checkpoint: None).stream(plan)
+        ]
+
+    outcomes = asyncio.run(run())
+    receipts = [outcome for outcome in outcomes if isinstance(outcome, BulkItemReceipt)]
+    summary = outcomes[-1]
+
+    assert [item.receipt.outcome for item in receipts] == ["failed", "failed", "succeeded"]
+    assert isinstance(summary, BulkSummary)
+    assert summary.failed == 2
+    assert summary.succeeded == 1
+
+
+def test_sync_post_execution_budget_expiry_keeps_the_authoritative_receipt() -> None:
+    plan = _plan("one")
+    checkpoints: list[BulkCheckpoint] = []
+    ticks = {"value": 0.0}
+
+    def clock() -> float:
+        return ticks["value"]
+
+    def execute(item: CatalogId) -> MutationReceipt:
+        ticks["value"] += 5.0
+        return _receipt(item)
+
+    outcomes = list(
+        BulkExecutor(
+            execute,
+            per_item_budget=TimeBudget(connect=1.0, read=1.0, write=1.0, total=1.0),
+            clock=clock,
+            checkpoint_sink=checkpoints.append,
+        ).stream(plan)
+    )
+    receipts = [outcome for outcome in outcomes if isinstance(outcome, BulkItemReceipt)]
+    summary = outcomes[-1]
+
+    assert receipts[0].receipt.outcome == "succeeded"
+    assert receipts[0].receipt.target == plan.items[0]
+    assert checkpoints[-1].item_receipts[0].receipt.outcome == "succeeded"
+    assert isinstance(summary, BulkSummary)
+    assert summary.budget_exhausted
+    assert summary.succeeded == 1
+    assert summary.failed == 0
+
+
+def test_async_post_execution_budget_expiry_keeps_the_authoritative_receipt() -> None:
+    async def run() -> tuple[list[BulkCheckpoint], list[BulkItemReceipt | BulkSummary]]:
+        plan = _plan("one")
+        checkpoints: list[BulkCheckpoint] = []
+        ticks = {"value": 0.0}
+
+        def clock() -> float:
+            return ticks["value"]
+
+        async def execute(item: CatalogId) -> MutationReceipt:
+            ticks["value"] += 5.0
+            await asyncio.sleep(0)
+            return _receipt(item)
+
+        outcomes = [
+            outcome
+            async for outcome in AsyncBulkExecutor(
+                execute,
+                per_item_budget=TimeBudget(connect=1.0, read=1.0, write=1.0, total=1.0),
+                clock=clock,
+                checkpoint_sink=checkpoints.append,
+            ).stream(plan)
+        ]
+        return checkpoints, outcomes
+
+    checkpoints, outcomes = asyncio.run(run())
+    receipts = [outcome for outcome in outcomes if isinstance(outcome, BulkItemReceipt)]
+    summary = outcomes[-1]
+
+    assert receipts[0].receipt.outcome == "succeeded"
+    assert checkpoints[-1].item_receipts[0].receipt.outcome == "succeeded"
+    assert isinstance(summary, BulkSummary)
+    assert summary.budget_exhausted
+    assert summary.succeeded == 1
+    assert summary.failed == 0
 
 
 def test_parallelism_is_clamped_to_platform_bound() -> None:
@@ -275,7 +426,7 @@ def test_async_task_cancellation_drains_in_flight_items_and_persists_the_final_c
     assert peak == 2
     assert active == 0
     assert len(calls) == 2
-    assert len(checkpoints) == 2
+    assert len(checkpoints) == 1
     assert checkpoints[-1].cancellation_requested
     assert [item.index for item in checkpoints[-1].item_receipts] == [0, 1]
 
@@ -311,3 +462,77 @@ def test_async_run_budget_drains_in_flight_items_and_surfaces_budget_state() -> 
     assert summary.reason and "exhausted" in summary.reason
     assert len(checkpoints) == 2
     assert not checkpoints[-1].cancellation_requested
+
+
+def test_abandoned_sync_stream_drains_in_flight_items_and_persists_the_final_checkpoint() -> None:
+    plan = _plan("one", "two", "three", "four")
+    checkpoints: list[BulkCheckpoint] = []
+    calls: list[str] = []
+    blocker = Event()
+
+    def execute(item: CatalogId) -> MutationReceipt:
+        calls.append(item.value)
+        if item.value == "two":
+            blocker.wait(timeout=2.0)
+        sleep(0.01)
+        return _receipt(item)
+
+    releaser = threading.Timer(0.2, blocker.set)
+    releaser.start()
+    generator = cast(
+        "Generator[BulkItemReceipt | BulkSummary, None, None]",
+        BulkExecutor(
+            execute,
+            policy=BulkExecutionPolicy(max_parallelism=2),
+            checkpoint_sink=checkpoints.append,
+        ).stream(plan),
+    )
+
+    first = next(generator)
+    generator.close()
+    releaser.cancel()
+
+    assert isinstance(first, BulkItemReceipt)
+    assert first.index == 0
+    assert set(calls) == {"one", "two"}
+    assert len(checkpoints) == 2
+    final = checkpoints[-1]
+    assert final.cancellation_requested
+    assert [item.index for item in final.item_receipts] == [0, 1]
+    assert all(item.receipt.outcome == "succeeded" for item in final.item_receipts)
+
+
+def test_async_aclose_drains_in_flight_tasks_and_persists_the_final_checkpoint_once() -> None:
+    plan = _plan("one", "two", "three", "four")
+    checkpoints: list[BulkCheckpoint] = []
+    calls: list[str] = []
+
+    async def exercise() -> BulkItemReceipt | BulkSummary:
+        async def execute(item: CatalogId) -> MutationReceipt:
+            calls.append(item.value)
+            await asyncio.sleep(0.25 if item.value == "two" else 0.01)
+            return _receipt(item)
+
+        stream = cast(
+            "AsyncGenerator[BulkItemReceipt | BulkSummary, None]",
+            AsyncBulkExecutor(
+                execute,
+                policy=BulkExecutionPolicy(max_parallelism=2),
+                checkpoint_sink=checkpoints.append,
+            ).stream(plan),
+        )
+        first = await asyncio.wait_for(stream.__anext__(), timeout=1.0)
+        await asyncio.wait_for(stream.aclose(), timeout=1.0)
+        return first
+
+    first = asyncio.run(exercise())
+
+    assert isinstance(first, BulkItemReceipt)
+    assert first.index == 0
+    assert set(calls) == {"one", "two"}
+    assert len(checkpoints) == 2
+    assert not checkpoints[0].cancellation_requested
+    final = checkpoints[-1]
+    assert final.cancellation_requested
+    assert [item.index for item in final.item_receipts] == [0, 1]
+    assert all(item.receipt.outcome == "succeeded" for item in final.item_receipts)

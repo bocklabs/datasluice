@@ -47,6 +47,53 @@ def test_missing_hvac_names_the_vault_extra(monkeypatch: pytest.MonkeyPatch) -> 
         _vault_provider().discover(CatalogPlatform.CKAN, {})
 
 
+def test_aws_numeric_scalar_secret_falls_back_to_plain_text() -> None:
+    discovered = AwsSecretsManagerProvider(
+        "datasluice/ckan", client_factory=lambda region: _AwsClient("123456789", [])
+    ).discover(CatalogPlatform.CKAN, {})
+
+    credential = discovered[CredentialSource.SECRET_MANAGER]
+    assert isinstance(credential, CKANCredential)
+    assert isinstance(credential.api_token, SecretValue)
+    assert credential.api_token.reveal() == "123456789"
+
+
+def test_aws_boolean_scalar_secret_falls_back_to_plain_text() -> None:
+    discovered = AwsSecretsManagerProvider(
+        "datasluice/ckan", client_factory=lambda region: _AwsClient("true", [])
+    ).discover(CatalogPlatform.CKAN, {})
+
+    credential = discovered[CredentialSource.SECRET_MANAGER]
+    assert isinstance(credential, CKANCredential)
+    assert isinstance(credential.api_token, SecretValue)
+    assert credential.api_token.reveal() == "true"
+
+
+def test_aws_secret_binary_only_responses_are_rejected() -> None:
+    class _BinaryOnlyClient:
+        def get_secret_value(self, *, SecretId: str) -> dict[str, bytes]:
+            return {"SecretBinary": b"aws-secret"}
+
+    with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*"):
+        AwsSecretsManagerProvider("datasluice/ckan", client_factory=lambda region: _BinaryOnlyClient()).discover(
+            CatalogPlatform.CKAN, {}
+        )
+
+
+def test_aws_json_secrets_missing_required_fields_are_rejected() -> None:
+    with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*"):
+        AwsSecretsManagerProvider(
+            "datasluice/ckan", client_factory=lambda region: _AwsClient('{"username": "someone"}', [])
+        ).discover(CatalogPlatform.CKAN, {})
+
+
+def test_vault_kv_v1_envelopes_are_rejected() -> None:
+    client_factory = cast(VaultClientFactory, lambda url, token: _VaultClient({"data": {"app_token": "vault-token"}}))
+
+    with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*"):
+        _vault_provider(client_factory=client_factory).discover(CatalogPlatform.CKAN, {})
+
+
 def test_vault_double_nested_secret_discovers_secret_values() -> None:
     def client_factory(url: str, token: str) -> object:
         return _VaultClient(

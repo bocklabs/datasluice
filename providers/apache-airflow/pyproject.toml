@@ -31,6 +31,9 @@ dev = [
     "pytest>=8,<10",
 ]
 
+[tool.uv.sources]
+datasluice = { path = "../..", editable = true }
+
 [project.entry-points."apache_airflow_provider"]
 provider_info = "airflow.providers.datasluice.get_provider_info:get_provider_info"
 

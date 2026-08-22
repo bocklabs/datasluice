@@ -12,6 +12,10 @@ from typing import Protocol, cast
 from datasluice.domain.catalog.models import _freeze_json, _object_dict, _thaw_json
 from datasluice.runtime.redaction import redact_event_metadata
 
+_LOGGER = logging.getLogger(__name__)
+
+_MAX_BOUNDED_RETRY_COUNT = 16
+
 _EVENT_KEYS = frozenset(
     {"schema_version", "kind", "operation_id", "platform", "outcome", "correlation_ids", "metadata"}
 )
@@ -110,8 +114,9 @@ class LoggingSink:
         self._logger = logger or logging.getLogger("datasluice.runtime.events")
 
     def record(self, event: EventEnvelope) -> None:
-        """Log one redacted event envelope."""
-        self._logger.info("%s", event.to_dict())
+        """Log one redacted event envelope when INFO logging is enabled."""
+        if self._logger.isEnabledFor(logging.INFO):
+            self._logger.info("%s", event.to_dict())
 
 
 class EventEmitter:
@@ -137,19 +142,23 @@ class EventEmitter:
     ) -> EventEnvelope:
         """Redact metadata once, then send the resulting envelope to every sink."""
         active_correlation_ids = self._correlation_id_provider() if self._correlation_id_provider is not None else {}
+        merged_correlation_ids = {**active_correlation_ids, **(correlation_ids or {})}
         envelope = EventEnvelope(
             operation_id=operation_id,
             platform=platform,
             outcome=outcome,
-            correlation_ids=MappingProxyType({**active_correlation_ids, **(correlation_ids or {})}),
+            correlation_ids=MappingProxyType(dict(redact_event_metadata(merged_correlation_ids))),
             metadata=redact_event_metadata(metadata or {}),
         )
         for sink in self._sinks:
-            if callable(sink):
-                hook = cast(Callable[[EventEnvelope], None], sink)
-                hook(envelope)
-            else:
-                sink.record(envelope)
+            try:
+                if callable(sink):
+                    hook = cast(Callable[[EventEnvelope], None], sink)
+                    hook(envelope)
+                else:
+                    sink.record(envelope)
+            except Exception:
+                _LOGGER.exception("Runtime event sink %r failed; continuing event dispatch.", sink)
         return envelope
 
 
@@ -181,14 +190,13 @@ class OtelBridge:
 
     def record(self, event: EventEnvelope) -> None:
         """Record one redacted envelope as a short-lived span and optional metrics."""
-        attributes = self._attributes(event)
         span_type = event.metadata.get("span_type", "request")
         name = f"catalog.{span_type}" if isinstance(span_type, str) else "catalog.request"
-        with self._tracer.start_as_current_span(name, attributes=attributes):
+        with self._tracer.start_as_current_span(name, attributes=self._span_attributes(event)):
             pass
-        self._record_metrics(event, attributes)
+        self._record_metrics(event)
 
-    def _attributes(self, event: EventEnvelope) -> dict[str, str | int | float | bool]:
+    def _span_attributes(self, event: EventEnvelope) -> dict[str, str | int | float | bool]:
         attributes: dict[str, str | int | float | bool] = {
             "datasluice.operation_id": event.operation_id,
             "datasluice.platform": event.platform,
@@ -199,12 +207,24 @@ class OtelBridge:
                 attributes[f"datasluice.correlation.{key}"] = value
         return attributes
 
-    def _record_metrics(self, event: EventEnvelope, attributes: Mapping[str, str | int | float | bool]) -> None:
+    def _metric_attributes(self, event: EventEnvelope) -> dict[str, str | int]:
+        attributes: dict[str, str | int] = {
+            "datasluice.operation_id": event.operation_id,
+            "datasluice.platform": event.platform,
+            "datasluice.outcome": event.outcome,
+        }
         retry_count = event.metadata.get("retry_count")
-        if isinstance(retry_count, int) and retry_count > 0:
+        if type(retry_count) is int and 0 < retry_count <= _MAX_BOUNDED_RETRY_COUNT:
+            attributes["datasluice.retry_count"] = retry_count
+        return attributes
+
+    def _record_metrics(self, event: EventEnvelope) -> None:
+        attributes = self._metric_attributes(event)
+        retry_count = event.metadata.get("retry_count")
+        if type(retry_count) is int and retry_count > 0:
             self._retry_counter.add(retry_count, attributes=attributes)
         if event.outcome == "breaker_state_change":
             self._breaker_counter.add(1, attributes=attributes)
         budget_usage = event.metadata.get("budget_usage")
-        if isinstance(budget_usage, int | float) and budget_usage >= 0:
+        if (type(budget_usage) is int or type(budget_usage) is float) and budget_usage >= 0:
             self._budget_histogram.record(float(budget_usage), attributes=attributes)

@@ -8,6 +8,7 @@ from datasluice.ports import (
     AtomicStateStore,
     CachePort,
     CatalogPort,
+    CheckpointableResourceReader,
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
@@ -21,6 +22,7 @@ ALL_PROTOCOLS = [
     AtomicStateStore,
     CachePort,
     CatalogPort,
+    CheckpointableResourceReader,
     OrganizationCatalog,
     PortalDetector,
     ResourceReader,
@@ -29,6 +31,22 @@ ALL_PROTOCOLS = [
     StateStore,
     StoragePort,
 ]
+
+ALL_PORT_NAMES = frozenset(
+    {
+        "AtomicStateStore",
+        "CachePort",
+        "CatalogPort",
+        "CheckpointableResourceReader",
+        "OrganizationCatalog",
+        "PortalDetector",
+        "ResourceReader",
+        "ResponseAwareReader",
+        "SearchableCatalog",
+        "StateStore",
+        "StoragePort",
+    }
+)
 
 
 def test_all_protocols_are_runtime_checkable() -> None:
@@ -82,10 +100,15 @@ def test_all_protocols_importable_individually() -> None:
         assert hasattr(ports, name), f"{name} missing from datasluice.ports"
 
 
-def test_ports_all_contains_eleven_names() -> None:
+def test_ports_all_exposes_exactly_the_documented_protocols() -> None:
     import datasluice.ports as ports
 
-    assert len(ports.__all__) == 11
+    assert set(ports.__all__) == ALL_PORT_NAMES
+    assert list(ports.__all__) == sorted(ports.__all__)
+
+
+def test_checkpointable_resource_reader_declares_open_from_cursor() -> None:
+    assert hasattr(CheckpointableResourceReader, "open_from_cursor")
 
 
 def test_portal_detector_declares_detect() -> None:

@@ -1,8 +1,9 @@
 """Unit tests for the DataSluiceSession composition root.
 
-Covers zero-config construction, explicit auth, page_size wiring, transport
-Protocol conformance, PluginManager injection, repr safety, and the absence of
-retired catalog-resolution members on the session surface.
+Covers zero-config construction, backend-gated default transport selection,
+PluginManager injection, repr safety, the absence of retired catalog-resolution
+members on the session surface, and the pinned runtime export and public
+callable surfaces.
 """
 
 from __future__ import annotations

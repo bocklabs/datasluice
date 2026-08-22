@@ -31,7 +31,6 @@ _RETIRED_TEST_FILES = (
     _PROVIDER_TESTS / "test_search_operator.py",
     _PROVIDER_TESTS / "test_materialize_operator.py",
 )
-_EXECUTION_PACKAGES = ("hooks", "operators")
 _RETIRED_IDENTIFIERS = (
     *_RETIRED_RUNTIME_MODULES,
     "DataSluiceSearchOperator",
@@ -55,10 +54,7 @@ _PUBLIC_CORE_MODULES = frozenset(
         "datasluice.runtime.credentials",
     }
 )
-_NEGATIVE_ASSERTION_ALLOWLIST = (
-    _PROVIDER_TESTS / "test_provider_metadata.py",
-    _PROVIDER_TESTS / "test_public_boundary.py",
-)
+_NEGATIVE_ASSERTION_ALLOWLIST = (_PROVIDER_TESTS / "test_public_boundary.py",)
 
 
 def _provider_python_files() -> list[Path]:
@@ -86,7 +82,7 @@ def test_provider_python_files_use_only_public_core_imports_and_attributes() -> 
                 for alias in node.names:
                     if alias.name.startswith("datasluice."):
                         assert alias.name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {alias.name!r}"
-                        core_names.add(alias.asname or alias.name)
+                        core_names.add(alias.asname or "datasluice")
                     if alias.name == "datasluice":
                         core_names.add(alias.asname or alias.name)
 
@@ -117,7 +113,7 @@ def test_runtime_packages_import_only_new_core_runtime_surfaces() -> None:
                     if alias.name.startswith("datasluice"):
                         assert alias.name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {alias.name!r}"
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                if node.module.startswith("datasluice"):
+                if node.module.startswith("datasluice") and node.module != "datasluice":
                     assert node.module in _PUBLIC_CORE_MODULES, f"{path} imports private core module {node.module!r}"
 
 
@@ -188,7 +184,7 @@ def test_provider_metadata_declares_runtime_modules_without_connection_registrat
 
     info = get_provider_info()
     for key in _RUNTIME_DECLARATION_KEYS:
-        assert info[key], f"installed provider metadata omits {key!r}"
+        assert info.get(key), f"installed provider metadata omits {key!r}"
     yaml_text = (_PROVIDER_PACKAGE / "provider.yaml").read_text(encoding="utf-8")
     for key in _RUNTIME_DECLARATION_KEYS:
         assert f"{key}:" in yaml_text, f"provider.yaml omits {key!r}"

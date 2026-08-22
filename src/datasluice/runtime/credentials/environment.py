@@ -27,6 +27,9 @@ class EnvironmentCredentialProvider:
         """Read the one documented variable for platform, if it is present."""
         del context
         name = _ENVIRONMENT_NAMES.get(platform)
-        if name is None or (secret := os.environ.get(name)) is None:
+        if name is None or (secret := os.environ.get(name) or None) is None:
             return {}
         return {CredentialSource.ENVIRONMENT: credential_from_secret(platform, secret)}
+
+
+__all__ = ("EnvironmentCredentialProvider",)

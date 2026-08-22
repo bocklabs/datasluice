@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import re
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -105,8 +106,9 @@ def test_capabilities_list_and_show_declared_states_without_network() -> None:
     assert '"probe_status":"not-probed"' in showing.output
 
 
-def test_credentials_availability_and_validation_redact_explicit_secrets() -> None:
+def test_credentials_availability_and_validation_redact_explicit_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Credential output advertises extras while rejecting secret disclosure."""
+    monkeypatch.delenv("DATASLUICE_NO_REDACT", raising=False)
     availability = runner.invoke(app, ["credentials", "availability", "--output", "json"])
     validation = runner.invoke(
         app,
@@ -128,6 +130,94 @@ def test_credentials_availability_and_validation_redact_explicit_secrets() -> No
     assert validation.exit_code == 0, validation.output
     assert "cli-secret-value" not in validation.output
     assert "***" in validation.output
+
+
+def test_validate_requires_exactly_one_credential_source() -> None:
+    """Supplying both or neither credential option fails option parsing."""
+    both = runner.invoke(
+        app,
+        [
+            "credentials",
+            "validate",
+            "--platform",
+            "ckan",
+            "--credential-json",
+            '{"api_token":"cli-secret-value"}',
+            "--credential-file",
+            "credentials.json",
+        ],
+    )
+    neither = runner.invoke(app, ["credentials", "validate", "--platform", "ckan"])
+
+    assert both.exit_code == 2, both.output
+    assert neither.exit_code == 2, neither.output
+    for result in (both, neither):
+        assert "exactly one of --credential-json or --credential-file" in result.output
+
+
+def test_validate_rejects_unknown_platform() -> None:
+    """An unsupported --platform value is rejected before any credential work."""
+    result = runner.invoke(
+        app,
+        ["credentials", "validate", "--platform", "jira", "--credential-json", '{"api_token":"cli-secret-value"}'],
+    )
+
+    assert result.exit_code == 2
+    assert "--platform must be one of: ckan, udata, socrata" in result.output
+
+
+def test_validate_reports_missing_credential_file(tmp_path: Path) -> None:
+    """An unreadable --credential-file degrades to a safe BadParameter error."""
+    missing = tmp_path / "absent-credentials.json"
+    result = runner.invoke(app, ["credentials", "validate", "--platform", "ckan", "--credential-file", str(missing)])
+
+    assert result.exit_code == 2
+    assert "Credential input is invalid; secret values were not rendered." in result.output
+
+
+@pytest.mark.parametrize(
+    ("platform", "credential_json"),
+    [
+        ("ckan", '{"api_token": '),
+        ("udata", '["api_key"]'),
+        ("socrata", '{"password": "orphan-secret"}'),
+        ("socrata", '{"app_token": ""}'),
+    ],
+    ids=["malformed-json", "non-object-json", "missing-required-field", "empty-required-field"],
+)
+def test_validate_rejects_invalid_credential_json(platform: str, credential_json: str) -> None:
+    """Malformed or non-conforming --credential-json payloads fail without rendering secrets."""
+    result = runner.invoke(
+        app,
+        ["credentials", "validate", "--platform", platform, "--credential-json", credential_json],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "Credential input is invalid; secret values were not rendered." in result.output
+    assert "orphan-secret" not in result.output
+
+
+def test_validate_redacts_socrata_multi_field_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The socrata multi-field path redacts every secret-bearing field."""
+    monkeypatch.delenv("DATASLUICE_NO_REDACT", raising=False)
+    result = runner.invoke(
+        app,
+        [
+            "credentials",
+            "validate",
+            "--platform",
+            "socrata",
+            "--credential-json",
+            '{"app_token":"socrata-app-token","username":"field-user","password":"socrata-pass"}',
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "socrata-app-token" not in result.output
+    assert "socrata-pass" not in result.output
+    assert "***" in result.output
 
 
 def test_new_command_options_use_annotated_parameters() -> None:

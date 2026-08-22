@@ -38,11 +38,12 @@ def test_deadline_exhaustion_identifies_operation_platform_and_safe_remedy() -> 
     clock.value = DEFAULT_OPERATION_TOTAL_BUDGET_SECONDS
 
     with pytest.raises(BudgetExhaustedError) as raised:
-        monitor.assert_dispatchable("reference/datasets.get", "reference")
+        monitor.assert_dispatchable("reference/datasets.get", "ckan")
 
     error = raised.value
     assert "reference/datasets.get" in str(error)
-    assert "reference" in str(error)
+    assert "ckan" in str(error)
+    assert error.platform == "ckan"
     assert error.safe_action
     assert error.elapsed_seconds == DEFAULT_OPERATION_TOTAL_BUDGET_SECONDS
     assert error.budget_seconds == DEFAULT_OPERATION_TOTAL_BUDGET_SECONDS
@@ -55,6 +56,7 @@ def test_retry_wait_compares_against_remaining_budget_not_total() -> None:
     clock.value = 25.0
 
     monitor.check_wait(14.0)
+    monitor.check_wait(15.0)
     with pytest.raises(BudgetExhaustedError):
         monitor.check_wait(16.0)
 

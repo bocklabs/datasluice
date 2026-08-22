@@ -27,6 +27,10 @@ from datasluice.runtime.capability import EffectiveCapabilityCache
 app = typer.Typer(help="Inspect declared and effective catalog operation capabilities.")
 
 _PLATFORMS = ("ckan", "udata", "socrata")
+_AUTH_CLASS_LABELS = {
+    **{item.value: item for item in AuthClass},
+    "application-token-or-authenticated": AuthClass.AUTHENTICATED,
+}
 
 
 @app.command("list")
@@ -50,9 +54,8 @@ def show_profile(
 ) -> None:
     """Show declared fallback states for every operation of one platform."""
     _validate_output(output)
-    profile = _declared_profile(platform)
+    profile, entries = _load_profile(platform)
     cache = EffectiveCapabilityCache(profile)
-    entries = _profile_entries(platform)
     operations = [
         {
             "operation_id": entry["id"],
@@ -88,23 +91,28 @@ def _profile_summary(platform: str) -> dict[str, str]:
 
 def _declared_profile(platform: str) -> DeclaredCapabilityProfile:
     """Load one immutable declared profile without probing a deployment."""
+    return _load_profile(platform)[0]
+
+
+def _load_profile(platform: str) -> tuple[DeclaredCapabilityProfile, list[dict[str, str]]]:
+    """Parse the packaged profile document once and build the runtime profile."""
     if platform not in _PLATFORMS:
         raise typer.BadParameter("platform must be one of: ckan, udata, socrata")
     document = _profile_document(platform)
-    entries = _profile_entries(platform)
-    operations = {
-        operation_id: _operation_spec(entry)
-        for entry in entries
-        if (operation_id := _operation_id(entry["id"])) is not None
-    }
-    return DeclaredCapabilityProfile(
-        profile_version=document["profile_version"],
-        schema_version=document["schema_version"],
-        platform_api_version=document["platform_api_version"],
-        official_source_uri=document["official_source_uri"],
-        source_accessed_at=date.fromisoformat(document["source_accessed_at"]),
-        fixture_fingerprint=document["fixture_fingerprint"],
-        operations=operations,
+    entries = _profile_entries(document)
+    specs = [_operation_spec(entry) for entry in entries]
+    operations = {spec.id: spec for spec in specs}
+    return (
+        DeclaredCapabilityProfile(
+            profile_version=document["profile_version"],
+            schema_version=document["schema_version"],
+            platform_api_version=document["platform_api_version"],
+            official_source_uri=document["official_source_uri"],
+            source_accessed_at=date.fromisoformat(document["source_accessed_at"]),
+            fixture_fingerprint=document["fixture_fingerprint"],
+            operations=operations,
+        ),
+        entries,
     )
 
 
@@ -128,9 +136,9 @@ def _profile_document(platform: str) -> dict[str, Any]:
     return cast(dict[str, Any], document)
 
 
-def _profile_entries(platform: str) -> list[dict[str, str]]:
-    """Return the typed operation entries from one packaged profile."""
-    entries = _profile_document(platform).get("operations")
+def _profile_entries(document: dict[str, Any]) -> list[dict[str, str]]:
+    """Return the typed operation entries from one parsed profile document."""
+    entries = document.get("operations")
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
         raise ValueError("Packaged capability profiles must declare operations.")
     return [cast(dict[str, str], entry) for entry in entries]
@@ -138,20 +146,25 @@ def _profile_entries(platform: str) -> list[dict[str, str]]:
 
 def _operation_spec(entry: dict[str, str]) -> OperationSpec:
     """Build the runtime operation shape required by the probe engine."""
-    operation_id = _operation_id(entry["id"])
+    try:
+        auth_class = _AUTH_CLASS_LABELS[entry["authentication"]]
+        mutation_class = MutationClass(entry["mutation"])
+        capability_class = CapabilityClass(entry["capability"])
+    except KeyError as exc:
+        raise ValueError(
+            f"Packaged operation {entry.get('id', '<unknown>')!r} declares unsupported value for {exc.args[0]!r}."
+        ) from exc
     return OperationSpec(
-        id=operation_id,
+        id=_operation_id(entry["id"]),
         tier=OperationTier.NATIVE,
         request_type="catalog-request",
         response_type="catalog-response",
-        auth_class=AuthClass(entry["authentication"])
-        if entry["authentication"] in {item.value for item in AuthClass}
-        else AuthClass.AUTHENTICATED,
-        mutation_class=MutationClass(entry["mutation"]),
+        auth_class=auth_class,
+        mutation_class=mutation_class,
         idempotency=Idempotency.SAFE,
         concurrency=ConcurrencyRequirement.NONE,
         atomicity=Atomicity.NONE,
-        capability_class=CapabilityClass(entry["capability"]),
+        capability_class=capability_class,
     )
 
 

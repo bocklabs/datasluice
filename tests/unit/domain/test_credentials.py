@@ -1,4 +1,12 @@
-"""Unit tests for the CredentialScope model and credential-aware redirect handling."""
+"""Unit tests for the CredentialScope dataclass model.
+
+CredentialScope redirect-policy enforcement now lives inside the runtime
+transports (``credential_scope=`` on both catalog transports); the behavioral
+coverage for it is in ``tests/unit/runtime/test_transport_urllib.py`` and
+``tests/unit/runtime/test_transport_httpx.py``. This module pins only the
+model's defaults, freezing, and custom values, plus unrelated exception
+contracts that historically shared this file.
+"""
 
 from __future__ import annotations
 

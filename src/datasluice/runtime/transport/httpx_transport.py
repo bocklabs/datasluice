@@ -3,46 +3,30 @@
 from __future__ import annotations
 
 from typing import Any, cast
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit
 
+from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     TransportFailure,
+    drop_body_transfer_headers,
+    redirect_method_and_body,
     strip_sensitive_redirect_headers,
 )
-from datasluice.runtime.transport.urllib_transport import _retry_after
+from datasluice.runtime.transport.urllib_transport import _origin, _redacted_redirect_url, _retry_after
 
-_CREDENTIAL_PARTS = (
-    "api_key",
-    "apikey",
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "credential",
-    "authorization",
-    "signature",
-)
+_ALLOWED_REDIRECT_SCHEMES = frozenset({"http", "https"})
 
 
-def _origin(url: str) -> tuple[str, str, int | None]:
+def _require_plain_http_target(url: str) -> None:
+    """Reject redirect targets outside plain HTTP(S) or with malformed ports."""
     parsed = urlsplit(url)
-    return parsed.scheme.lower(), parsed.hostname or "", parsed.port or (443 if parsed.scheme == "https" else 80)
-
-
-def _redacted_redirect_url(url: str) -> str:
-    parsed = urlsplit(url)
-    query = urlencode(
-        [
-            (key, value)
-            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-            if not any(part in key.lower() for part in _CREDENTIAL_PARTS)
-        ]
-    )
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
+    if parsed.scheme.lower() not in _ALLOWED_REDIRECT_SCHEMES:
+        raise ValueError(f"non-HTTP redirect target scheme {parsed.scheme!r}")
+    _ = parsed.port
 
 
 class HttpxCatalogTransport:
@@ -55,9 +39,11 @@ class HttpxCatalogTransport:
         budget: TimeBudget | None = None,
         transport: object | None = None,
         max_redirects: int = 10,
+        credential_scope: CredentialScope | None = None,
     ) -> None:
         import httpx
 
+        self._httpx = httpx
         policy = tls_policy or TLSPolicy()
         budget = budget or TimeBudget()
         self._client: Any = httpx.Client(
@@ -68,6 +54,7 @@ class HttpxCatalogTransport:
             follow_redirects=False,
         )
         self._max_redirects = max_redirects
+        self._credential_scope = credential_scope
         self._closed = False
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
@@ -84,10 +71,8 @@ class HttpxCatalogTransport:
                     content=current.body,
                     follow_redirects=False,
                 )
-            except Exception as exc:
-                if exc.__class__.__module__.startswith("httpx"):
-                    raise TransportFailure("httpx could not complete the catalog request.") from exc
-                raise
+            except self._httpx.HTTPError as exc:
+                raise TransportFailure("httpx could not complete the catalog request.") from exc
             location = response.headers.get("location")
             if not response.is_redirect or location is None:
                 return RuntimeResponse(
@@ -96,13 +81,22 @@ class HttpxCatalogTransport:
                     response.content,
                     _retry_after(response.headers.get("retry-after")),
                 )
-            next_url = urljoin(current.url, location)
-            headers = dict(current.headers)
-            if _origin(current.url) != _origin(next_url):
-                headers = strip_sensitive_redirect_headers(headers)
-                next_url = _redacted_redirect_url(next_url)
+            try:
+                next_url = urljoin(current.url, location)
+                _require_plain_http_target(next_url)
+            except ValueError as exc:
+                response.close()
+                raise TransportFailure(
+                    f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
+                ) from exc
             response.close()
-            current = RuntimeRequest(current.method, next_url, headers, current.body)
+            headers = dict(current.headers)
+            if not _retains_credentials(self._credential_scope, current.url, next_url):
+                headers = strip_sensitive_redirect_headers(headers)
+            next_method, next_body = redirect_method_and_body(current.method, response.status_code, current.body)
+            if next_body is None:
+                headers = drop_body_transfer_headers(headers)
+            current = RuntimeRequest(next_method, next_url, headers, next_body)
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     def close(self) -> None:
@@ -122,9 +116,11 @@ class AsyncHttpxCatalogTransport:
         budget: TimeBudget | None = None,
         transport: object | None = None,
         max_redirects: int = 10,
+        credential_scope: CredentialScope | None = None,
     ) -> None:
         import httpx
 
+        self._httpx = httpx
         policy = tls_policy or TLSPolicy()
         budget = budget or TimeBudget()
         self._client: Any = httpx.AsyncClient(
@@ -135,6 +131,7 @@ class AsyncHttpxCatalogTransport:
             follow_redirects=False,
         )
         self._max_redirects = max_redirects
+        self._credential_scope = credential_scope
         self._closed = False
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
@@ -151,10 +148,8 @@ class AsyncHttpxCatalogTransport:
                     content=current.body,
                     follow_redirects=False,
                 )
-            except Exception as exc:
-                if exc.__class__.__module__.startswith("httpx"):
-                    raise TransportFailure("httpx could not complete the catalog request.") from exc
-                raise
+            except self._httpx.HTTPError as exc:
+                raise TransportFailure("httpx could not complete the catalog request.") from exc
             location = response.headers.get("location")
             if not response.is_redirect or location is None:
                 return RuntimeResponse(
@@ -163,13 +158,22 @@ class AsyncHttpxCatalogTransport:
                     response.content,
                     _retry_after(response.headers.get("retry-after")),
                 )
-            next_url = urljoin(current.url, location)
-            headers = dict(current.headers)
-            if _origin(current.url) != _origin(next_url):
-                headers = strip_sensitive_redirect_headers(headers)
-                next_url = _redacted_redirect_url(next_url)
+            try:
+                next_url = urljoin(current.url, location)
+                _require_plain_http_target(next_url)
+            except ValueError as exc:
+                await response.aclose()
+                raise TransportFailure(
+                    f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
+                ) from exc
             await response.aclose()
-            current = RuntimeRequest(current.method, next_url, headers, current.body)
+            headers = dict(current.headers)
+            if not _retains_credentials(self._credential_scope, current.url, next_url):
+                headers = strip_sensitive_redirect_headers(headers)
+            next_method, next_body = redirect_method_and_body(current.method, response.status_code, current.body)
+            if next_body is None:
+                headers = drop_body_transfer_headers(headers)
+            current = RuntimeRequest(next_method, next_url, headers, next_body)
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     async def aclose(self) -> None:
@@ -177,3 +181,11 @@ class AsyncHttpxCatalogTransport:
         if not self._closed:
             self._closed = True
             await self._client.aclose()
+
+
+def _retains_credentials(scope: CredentialScope | None, current_url: str, next_url: str) -> bool:
+    """Decide whether credential-bearing headers survive this hop."""
+    if scope is None:
+        return _origin(current_url) == _origin(next_url)
+    scheme, host, _ = _origin(next_url)
+    return scope.send_on_redirect and scheme in scope.allowed_schemes and host in scope.allowed_hosts

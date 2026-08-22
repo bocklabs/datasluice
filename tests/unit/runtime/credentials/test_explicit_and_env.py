@@ -45,6 +45,45 @@ def test_default_policy_does_not_call_any_provider() -> None:
     assert provider.calls == 0
 
 
+def test_empty_enabled_sources_policy_does_not_call_any_provider() -> None:
+    provider = _CountingProvider()
+
+    discovered = discover_enabled(
+        {CredentialSource.ENVIRONMENT: provider},
+        platform=CatalogPlatform.CKAN,
+        context={},
+        policy=CredentialResolutionPolicy(enabled_sources=frozenset()),
+    )
+
+    assert discovered == {}
+    assert provider.calls == 0
+
+
+def test_unset_environment_variable_discovers_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATASLUICE_CKAN_API_TOKEN", raising=False)
+
+    discovered = _discover_ckan_environment()
+
+    assert discovered == {}
+
+
+def test_empty_environment_variable_is_treated_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATASLUICE_CKAN_API_TOKEN", "")
+
+    discovered = _discover_ckan_environment()
+
+    assert discovered == {}
+
+
+def _discover_ckan_environment() -> Mapping[CredentialSource, CatalogCredential]:
+    return discover_enabled(
+        {CredentialSource.ENVIRONMENT: EnvironmentCredentialProvider()},
+        platform=CatalogPlatform.CKAN,
+        context={},
+        policy=CredentialResolutionPolicy(enabled_sources=frozenset({CredentialSource.ENVIRONMENT})),
+    )
+
+
 @pytest.mark.parametrize(
     ("platform", "name", "secret", "credential_type", "attribute"),
     [

@@ -30,6 +30,7 @@ from datasluice.domain.catalog.profiles import (
 )
 from datasluice.errors.catalog import (
     CatalogError,
+    CatalogUnavailableError,
     CatalogValidationError,
     ForbiddenError,
     UnauthenticatedError,
@@ -138,6 +139,13 @@ def test_first_resolve_probes_once_and_caches_the_effective_state() -> None:
     assert runner.calls == 1
 
 
+def test_nan_ttl_is_rejected() -> None:
+    operation = _operation()
+
+    with pytest.raises(ValueError, match="finite non-negative"):
+        EffectiveCapabilityCache(_profile(operation), ttl_seconds=float("nan"))
+
+
 def test_ttl_expiry_reprobes_using_an_injected_clock() -> None:
     operation = _operation()
     runner = _CountingRunner(_evidence(operation))
@@ -188,10 +196,13 @@ def test_threads_share_one_in_flight_probe_and_result() -> None:
     threads = [threading.Thread(target=resolve) for _ in range(8)]
     for thread in threads:
         thread.start()
-    assert runner.entered.wait(timeout=1.0)
-    runner.release.set()
-    for thread in threads:
-        thread.join(timeout=1.0)
+    try:
+        assert runner.entered.wait(timeout=1.0)
+        runner.release.set()
+    finally:
+        runner.release.set()
+        for thread in threads:
+            thread.join(timeout=1.0)
 
     assert runner.calls == 1
     assert results == [EffectiveCapabilityState.CORE] * 8
@@ -204,7 +215,7 @@ def test_async_tasks_share_one_in_flight_probe_and_result() -> None:
         runner = _AsyncCountingRunner(_evidence(operation))
         cache = EffectiveCapabilityCache(_profile(operation), async_probe_runner=runner)
         tasks = [asyncio.create_task(cache.resolve_async(operation.id)) for _ in range(8)]
-        await runner.entered.wait()
+        await asyncio.wait_for(runner.entered.wait(), timeout=5.0)
         runner.release.set()
         profiles = await asyncio.gather(*tasks)
 
@@ -250,18 +261,52 @@ def test_denied_probe_states_create_typed_guard_rejections(
     assert raised.value.safe_action
 
 
-def test_probe_evidence_with_an_unsanitized_url_is_rejected_as_a_typed_error() -> None:
-    operation = _operation()
+@pytest.mark.parametrize(
+    ("response_class", "expected_state", "expected_error"),
+    [
+        (ProbeResponseClass.UNAUTHORIZED, EffectiveCapabilityState.UNAUTHORIZED, UnauthenticatedError),
+        (ProbeResponseClass.FORBIDDEN, EffectiveCapabilityState.FORBIDDEN, ForbiddenError),
+    ],
+)
+def test_async_denied_probe_states_create_typed_guard_rejections(
+    response_class: ProbeResponseClass,
+    expected_state: EffectiveCapabilityState,
+    expected_error: type[CatalogError],
+) -> None:
+    async def exercise() -> None:
+        operation = _operation()
+        runner = _AsyncCountingRunner(_evidence(operation, response_class))
+        runner.release.set()
+        cache = EffectiveCapabilityCache(_profile(operation), async_probe_runner=runner)
+        profile = await asyncio.wait_for(cache.resolve_async(operation.id), timeout=5.0)
+        guard = build_catalog_operation_guard(operation.id, profile)
+
+        with pytest.raises(expected_error) as raised:
+            guard.require_allowed()
+
+        assert raised.value.capability_state == expected_state.value
+        assert raised.value.operation == str(operation.id)
+        assert raised.value.platform == operation.id.platform
+
+    asyncio.run(exercise())
+
+
+def _unsanitized_evidence(operation: OperationSpec) -> ProbeEvidence:
     evidence = object.__new__(ProbeEvidence)
     object.__setattr__(evidence, "operation_id", operation.id)
     object.__setattr__(evidence, "deployment_url", "https://catalog.example.test/api?api_key=secret")
     object.__setattr__(evidence, "credential_classification", CredentialClassification.ANONYMOUS)
     object.__setattr__(evidence, "role_classification", RoleClassification.ANONYMOUS)
     object.__setattr__(evidence, "observed_response_class", ProbeResponseClass.SUCCESS)
+    return evidence
+
+
+def test_probe_evidence_with_an_unsanitized_url_is_rejected_as_a_typed_error() -> None:
+    operation = _operation()
 
     class _UnsafeRunner:
         def probe(self, operation_id: OperationId) -> ProbeEvidence:
-            return evidence
+            return _unsanitized_evidence(operation)
 
     with pytest.raises(CatalogValidationError) as raised:
         EffectiveCapabilityCache(_profile(operation), _UnsafeRunner()).resolve(operation.id)
@@ -271,9 +316,37 @@ def test_probe_evidence_with_an_unsanitized_url_is_rejected_as_a_typed_error() -
     assert raised.value.safe_action
 
 
-def test_default_ttl_is_named_and_positive() -> None:
+def test_async_invalid_probe_evidence_is_rejected_as_a_typed_error() -> None:
+    async def exercise() -> None:
+        operation = _operation()
+
+        class _UnsafeAsyncRunner:
+            async def probe(self, operation_id: OperationId) -> ProbeEvidence:
+                return _unsanitized_evidence(operation)
+
+        cache = EffectiveCapabilityCache(_profile(operation), async_probe_runner=_UnsafeAsyncRunner())
+
+        with pytest.raises(CatalogValidationError) as raised:
+            await asyncio.wait_for(cache.resolve_async(operation.id), timeout=5.0)
+
+        assert raised.value.capability_state == "invalid-probe-evidence"
+
+    asyncio.run(exercise())
+
+
+def test_default_ttl_is_pinned_and_expires_the_cache_behaviorally() -> None:
     assert DEFAULT_CAPABILITY_CACHE_TTL_SECONDS == 300.0
-    assert DEFAULT_CAPABILITY_CACHE_TTL_SECONDS > 0
+    operation = _operation()
+    runner = _CountingRunner(_evidence(operation))
+    runner.release.set()
+    clock = _Clock()
+    cache = EffectiveCapabilityCache(_profile(operation), runner, clock=clock)
+
+    cache.resolve(operation.id)
+    clock.value += DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
+    cache.resolve(operation.id)
+
+    assert runner.calls == 2
 
 
 def test_guard_factory_returns_a_catalog_operation_guard() -> None:
@@ -408,14 +481,84 @@ def test_sync_client_retains_post_dispatch_forbidden_state_without_probe_runner(
     assert len(transport.requests) == 1
 
 
-def test_sync_client_capability_reports_deployment_disabled_without_transport_send() -> None:
+class _ArmingClock:
+    def __init__(self) -> None:
+        self.armed = False
+
+    def __call__(self) -> float:
+        if self.armed:
+            raise RuntimeError("injected clock failure")
+        return 0.0
+
+
+def test_injected_clock_failure_releases_sync_followers() -> None:
     operation = _operation()
-    runner = _SequenceRunner(operation, [ProbeResponseClass.DEPLOYMENT_DISABLED])
-    transport = _SyncTransport([])
+    clock = _ArmingClock()
+    runner = _CountingRunner(_evidence(operation))
+    cache = EffectiveCapabilityCache(_profile(operation), runner, clock=clock)
+    errors: list[BaseException] = []
+
+    def resolve() -> None:
+        try:
+            cache.resolve(operation.id)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=resolve) for _ in range(2)]
+    threads[0].start()
+    assert runner.entered.wait(timeout=1.0)
+    clock.armed = True
+    threads[1].start()
+    try:
+        runner.release.set()
+    finally:
+        runner.release.set()
+        for thread in threads:
+            thread.join(timeout=2.0)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert runner.calls == 1
+    assert len(errors) == 2
+    assert all(isinstance(error, RuntimeError) for error in errors)
+
+
+def test_cancelled_async_leader_gives_followers_a_typed_unavailable_error() -> None:
+    async def exercise() -> None:
+        operation = _operation()
+        runner = _AsyncCountingRunner(_evidence(operation))
+        cache = EffectiveCapabilityCache(_profile(operation), async_probe_runner=runner)
+        leader = asyncio.create_task(cache.resolve_async(operation.id))
+        await asyncio.wait_for(runner.entered.wait(), timeout=5.0)
+        follower = asyncio.create_task(cache.resolve_async(operation.id))
+        await asyncio.sleep(0)
+
+        leader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await leader
+        with pytest.raises(CatalogUnavailableError) as raised:
+            await asyncio.wait_for(follower, timeout=5.0)
+
+        assert raised.value.capability_state == "unavailable"
+        assert raised.value.operation == str(operation.id)
+
+    asyncio.run(exercise())
+
+
+def test_sync_client_capability_reports_cached_only_state_until_a_dispatch_populates_evidence() -> None:
+    operation = _operation()
+    runner = _SequenceRunner(operation, [ProbeResponseClass.SUCCESS])
+    transport = _SyncTransport([RuntimeResponse(200, {}, _envelope())])
     client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
 
-    assert client.capability(str(operation.id)) == "deployment-disabled"
+    assert client.capability(str(operation.id)) == "available"
+    assert runner.calls == []
     assert transport.requests == []
+
+    client.get(_request(operation.id), _guard(operation.id))
+
+    assert client.capability(str(operation.id)) == "available"
+    assert runner.calls == [operation.id]
+    assert len(transport.requests) == 1
 
 
 def test_sync_client_invalidate_causes_a_new_probe() -> None:

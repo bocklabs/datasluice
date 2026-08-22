@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from datasluice.domain.catalog.ids import CatalogId
 from datasluice.domain.catalog.models import _contract_error, _freeze_json, _object_dict, _thaw_json
-from datasluice.domain.catalog.redaction import contains_credential_content
+from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 
 _ATOMICITIES = frozenset({"atomic", "independent"})
 _OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "skipped"})
@@ -45,7 +45,7 @@ def _optional_text(value: object, path: str) -> str | None:
 
 
 def _validate_redacted_metadata(value: object, path: str) -> object:
-    if isinstance(value, str) and contains_credential_content(value):
+    if isinstance(value, str) and contains_credential_content(value) and redact_string(value) != value:
         raise _contract_error(path)
     if isinstance(value, Mapping):
         for key, nested in value.items():

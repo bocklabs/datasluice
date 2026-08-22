@@ -77,6 +77,11 @@ def datasluice_source(
         raise TypeError("datasluice_source requires a typed CatalogOperationRequest query")
     if (query.operation_id.service, query.operation_id.method) != ("resources", "list"):
         raise ValueError("datasluice_source requires a resources.list catalog operation")
+    transport = getattr(client, "transport", None)
+    if transport is None:
+        raise TypeError(
+            "datasluice_source requires a SyncCatalogClient exposing the public transport accessor for extraction"
+        )
 
     records = client.resources.list(query, CatalogOperationGuard(operation_id=query.operation_id)).items
 
@@ -115,22 +120,18 @@ def datasluice_source(
                 from datasluice.integrations.arrow import to_arrow
                 from datasluice.sync._hashing import logical_sha256
 
-                transport = cast(CatalogTransport, cast(Any, client)._transport)
-                reader = DataPlaneResourceReader(transport=transport)
-                try:
-                    state: dict[str, Any] = {"identity": identity, "watermark": None}
-                    if state_store is not None:
-                        prior = state_store.get(identity)
-                        state["watermark"] = prior.cursor.get(identity) if prior is not None else None
-                    dlt.current.resource_state()["datasluice"] = state
+                reader = DataPlaneResourceReader(transport=cast(CatalogTransport, transport))
+                state: dict[str, Any] = {"identity": identity, "watermark": None}
+                if state_store is not None:
+                    prior = state_store.get(identity)
+                    state["watermark"] = prior.cursor.get(identity) if prior is not None else None
+                dlt.current.resource_state()["datasluice"] = state
 
-                    with reader.open(resource) as stream:
-                        table = to_arrow(stream)
-                    yield table
+                with reader.open(resource) as stream:
+                    table = to_arrow(stream)
+                yield table
 
-                    dlt.current.resource_state()["datasluice"]["watermark"] = logical_sha256(table)
-                finally:
-                    pass
+                dlt.current.resource_state()["datasluice"]["watermark"] = logical_sha256(table)
 
             yield _resource_body
 

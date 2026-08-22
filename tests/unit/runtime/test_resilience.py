@@ -12,7 +12,7 @@ from datasluice.errors.catalog import BudgetExhaustedError, CatalogUnavailableEr
 from datasluice.runtime.clients import SyncCatalogClient
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
-from tests.unit.runtime.test_clients_sync import _envelope, _guard, _profile, _request
+from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
 
 
 class _Clock:
@@ -75,6 +75,36 @@ def test_half_open_admits_one_trial_then_closes_or_reopens() -> None:
     assert registry.admit(_key())
     assert registry.record_transport_failure(_key()).open
     assert not registry.admit(_key())
+
+
+def test_half_open_trial_marker_is_discarded_after_a_4xx_response() -> None:
+    clock = _Clock()
+    registry = _registry(clock)
+    for _ in range(5):
+        registry.record_response(_key(), 503)
+    assert not registry.admit(_key())
+
+    clock.value = 30.0
+    assert registry.admit(_key())
+    assert registry.record_response(_key(), 404).open
+
+    clock.value = 61.0
+    assert registry.admit(_key())
+
+
+def test_half_open_trial_marker_is_discarded_after_a_4xx_trial_while_circuit_stays_open() -> None:
+    clock = _Clock()
+    registry = _registry(clock)
+    for _ in range(5):
+        registry.record_transport_failure(_key())
+    assert not registry.admit(_key())
+
+    clock.value = 30.0
+    assert registry.admit(_key())
+    state = registry.record_response(_key(), 404)
+
+    assert state.open
+    assert state.failure_count == 5
 
 
 def test_concurrent_failure_records_are_consistent() -> None:

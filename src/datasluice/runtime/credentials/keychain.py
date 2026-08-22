@@ -40,7 +40,7 @@ class KeychainCredentialProvider:
             raise
         except Exception as exc:
             raise _resolution_error("the OS keychain", platform, exc) from exc
-        if password is None:
+        if not password:
             return {}
         return {CredentialSource.KEYCHAIN: credential_from_secret(platform, password)}
 

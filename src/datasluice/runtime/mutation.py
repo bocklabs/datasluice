@@ -13,9 +13,12 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError, map_catalog_error
+from datasluice.logging import get_logger
 from datasluice.runtime.redaction import redact_event_metadata
 from datasluice.runtime.resilience import DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import RuntimeResponse
+
+logger = get_logger("runtime.mutation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +98,24 @@ class MutationEnforcer:
                     )
                 )
         except Exception:
-            self._receipt(operation_id, target, policy, "failed", metadata)
+            try:
+                self._receipt(operation_id, target, policy, "failed", metadata)
+            except Exception as receipt_error:
+                logger.error(
+                    "Failed mutation receipt for %s could not be built: %s",
+                    operation_id,
+                    receipt_error,
+                )
             raise
-        return self._receipt(operation_id, target, policy, "succeeded", metadata)
+        try:
+            return self._receipt(operation_id, target, policy, "succeeded", metadata)
+        except Exception as receipt_error:
+            logger.error(
+                "Succeeded mutation receipt for %s could not be built after the dispatch was applied: %s",
+                operation_id,
+                receipt_error,
+            )
+            raise
 
     def _validate(self, operation_id: OperationId, target: CatalogId, policy: MutationPolicy | None) -> None:
         if not isinstance(operation_id, OperationId) or not isinstance(target, CatalogId):

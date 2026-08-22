@@ -99,45 +99,53 @@ class RetryLoop:
         self._max_attempts = max_attempts
         self._sleep = sleep
 
+    def _settle_attempt(
+        self,
+        attempt: int,
+        response: RuntimeResponse | None,
+        failure: TransportFailure | None,
+    ) -> RuntimeResponse | float:
+        """Compute one attempt's verdict: terminal response, validated retry delay, or raised failure."""
+        decision = RetryDecision.for_response(
+            attempt=attempt,
+            max_attempts=self._max_attempts,
+            status_code=None if response is None else response.status_code,
+            retry_after=None if response is None else response.retry_after,
+            idempotency=self._idempotency,
+            budget=self._budget,
+        )
+        if not decision.retry:
+            if response is not None:
+                return response
+            assert failure is not None
+            raise failure
+        delay = decision.delay or 0.0
+        self._deadline.check_wait(
+            delay,
+            retry_state={"attempt": attempt, "max_attempts": self._max_attempts, "reason": decision.reason},
+        )
+        logger.warning(
+            "Attempt %d/%d received retryable runtime outcome — retrying in %.1fs",
+            attempt,
+            self._max_attempts,
+            delay,
+        )
+        return delay
+
     def run(self, send: Callable[[], RuntimeResponse]) -> RuntimeResponse:
         """Send until a terminal response or transport failure is reached."""
-        last_failure: TransportFailure | None = None
         for attempt in range(1, self._max_attempts + 1):
             self._deadline.assert_dispatchable()
+            response: RuntimeResponse | None = None
+            failure: TransportFailure | None = None
             try:
                 response = send()
-                status_code = response.status_code
-                retry_after = response.retry_after
             except TransportFailure as exc:
-                last_failure = exc
-                response = None
-                status_code = None
-                retry_after = None
-            decision = RetryDecision.for_response(
-                attempt=attempt,
-                max_attempts=self._max_attempts,
-                status_code=status_code,
-                retry_after=retry_after,
-                idempotency=self._idempotency,
-                budget=self._budget,
-            )
-            if not decision.retry:
-                if response is not None:
-                    return response
-                assert last_failure is not None
-                raise last_failure
-            delay = decision.delay or 0.0
-            self._deadline.check_wait(
-                delay,
-                retry_state={"attempt": attempt, "max_attempts": self._max_attempts, "reason": decision.reason},
-            )
-            logger.warning(
-                "Attempt %d/%d received retryable runtime outcome — retrying in %.1fs",
-                attempt,
-                self._max_attempts,
-                delay,
-            )
-            self._sleep(delay)
+                failure = exc
+            outcome = self._settle_attempt(attempt, response, failure)
+            if isinstance(outcome, RuntimeResponse):
+                return outcome
+            self._sleep(outcome)
         raise RuntimeError("Retry loop exhausted without a terminal runtime outcome.")
 
     async def run_async(
@@ -147,43 +155,18 @@ class RetryLoop:
         sleep: Callable[[float], Awaitable[None]],
     ) -> RuntimeResponse:
         """Asynchronously send until a terminal response or transport failure is reached."""
-        last_failure: TransportFailure | None = None
         for attempt in range(1, self._max_attempts + 1):
             self._deadline.assert_dispatchable()
+            response: RuntimeResponse | None = None
+            failure: TransportFailure | None = None
             try:
                 response = await send()
-                status_code = response.status_code
-                retry_after = response.retry_after
             except TransportFailure as exc:
-                last_failure = exc
-                response = None
-                status_code = None
-                retry_after = None
-            decision = RetryDecision.for_response(
-                attempt=attempt,
-                max_attempts=self._max_attempts,
-                status_code=status_code,
-                retry_after=retry_after,
-                idempotency=self._idempotency,
-                budget=self._budget,
-            )
-            if not decision.retry:
-                if response is not None:
-                    return response
-                assert last_failure is not None
-                raise last_failure
-            delay = decision.delay or 0.0
-            self._deadline.check_wait(
-                delay,
-                retry_state={"attempt": attempt, "max_attempts": self._max_attempts, "reason": decision.reason},
-            )
-            logger.warning(
-                "Attempt %d/%d received retryable runtime outcome — retrying in %.1fs",
-                attempt,
-                self._max_attempts,
-                delay,
-            )
-            await sleep(delay)
+                failure = exc
+            outcome = self._settle_attempt(attempt, response, failure)
+            if isinstance(outcome, RuntimeResponse):
+                return outcome
+            await sleep(outcome)
         raise RuntimeError("Retry loop exhausted without a terminal runtime outcome.")
 
 
@@ -244,7 +227,9 @@ class BreakerRegistry:
             return self.record_transport_failure(key)
         if 200 <= status_code < 400:
             return self.record_success(key)
-        return self.inspect(key)
+        with self._lock:
+            self._trial_in_flight.discard(key)
+            return self._state_for(key)
 
     def inspect(self, key: CircuitKey) -> CircuitState:
         """Return the immutable circuit snapshot for one identity."""

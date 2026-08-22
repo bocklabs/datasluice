@@ -30,6 +30,6 @@ def to_arrow(stream: BatchStream) -> Any:
     try:
         import pyarrow as pa
     except ImportError as exc:
-        raise ImportError("to_arrow requires 'pyarrow'. Install with: pip install datasluice[streaming]") from exc
+        raise ImportError("to_arrow requires 'pyarrow'. Install with: pip install datasluice[parquet]") from exc
 
     return pa.Table.from_batches(stream.iter_batches(), schema=stream.schema)

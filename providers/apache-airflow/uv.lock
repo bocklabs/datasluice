@@ -227,7 +227,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "apache-airflow", specifier = ">=3.2,<4" },
-    { name = "datasluice", extras = ["http"], specifier = ">=0.2,<1" },
+    { name = "datasluice", extras = ["http"], editable = "../../" },
 ]
 
 [package.metadata.requires-dev]
@@ -705,21 +705,63 @@ wheels = [
 
 [[package]]
 name = "datasluice"
-version = "0.2.2"
-source = { registry = "https://pypi.org/simple" }
+version = "0.2.3"
+source = { editable = "../../" }
 dependencies = [
     { name = "rich" },
     { name = "typer" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/5a/7f7d733cfff6d4a59d3d62d313faa3ff35f3b7a3046e442df4bd0eafa889/datasluice-0.2.2.tar.gz", hash = "sha256:79e54ca2575bfdcc52e33aeb229b544e4f983340e56d95c98496ecb9287e8831", size = 3128529, upload-time = "2026-08-10T04:51:38.566Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/38/ba7aad9996b700faebf541a6506bef5d841f86ff2763275362c4611eff85/datasluice-0.2.2-py3-none-any.whl", hash = "sha256:d4a63e27dba9cca0746566580077984cca475c0e73bad29780bf9c1d71585f47", size = 178406, upload-time = "2026-08-10T04:51:36.99Z" },
 ]
 
 [package.optional-dependencies]
 http = [
     { name = "httpx" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", marker = "extra == 'secrets-aws'", specifier = ">=1.43" },
+    { name = "datasluice", extras = ["all-connectors", "compression", "dlt", "duckdb", "http", "keychain", "oauth", "pandas", "parquet", "polars", "secrets-aws", "secrets-vault", "storage", "telemetry", "xlsx"], marker = "extra == 'all'" },
+    { name = "datasluice", extras = ["ckan", "udata", "socrata"], marker = "extra == 'all-connectors'" },
+    { name = "datasluice", extras = ["http"], marker = "extra == 'ckan'" },
+    { name = "datasluice", extras = ["http"], marker = "extra == 'socrata'" },
+    { name = "datasluice", extras = ["http"], marker = "extra == 'udata'" },
+    { name = "dlt", marker = "extra == 'dlt'" },
+    { name = "duckdb", marker = "extra == 'duckdb'" },
+    { name = "fsspec", marker = "extra == 'storage'", specifier = ">=2025.1" },
+    { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27" },
+    { name = "hvac", marker = "extra == 'secrets-vault'", specifier = ">=2.4" },
+    { name = "keyring", marker = "extra == 'keychain'", specifier = ">=25.7" },
+    { name = "openpyxl", marker = "extra == 'xlsx'" },
+    { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.44" },
+    { name = "pandas", marker = "extra == 'pandas'" },
+    { name = "polars", marker = "extra == 'polars'" },
+    { name = "pyarrow", marker = "extra == 'parquet'" },
+    { name = "rich" },
+    { name = "typer" },
+    { name = "zstandard", marker = "extra == 'compression'", specifier = ">=0.23" },
+]
+provides-extras = ["all", "all-connectors", "ckan", "compression", "dlt", "duckdb", "http", "keychain", "oauth", "pandas", "parquet", "polars", "secrets-aws", "secrets-vault", "socrata", "storage", "telemetry", "udata", "xlsx"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "coverage" },
+    { name = "opentelemetry-sdk", specifier = ">=1.44" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+docs = [
+    { name = "mkdocstrings-python" },
+    { name = "zensical" },
+]
+lint = [{ name = "ruff" }]
+test = [
+    { name = "coverage" },
+    { name = "opentelemetry-sdk", specifier = ">=1.44" },
+    { name = "pytest" },
+]
+typecheck = [{ name = "ty" }]
 
 [[package]]
 name = "deprecated"

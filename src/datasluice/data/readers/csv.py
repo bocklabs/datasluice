@@ -48,7 +48,7 @@ class CSVReader(BaseFormatReader):
             import pyarrow.csv as pacsv
         except ImportError as exc:
             raise FormatError(
-                "Streaming reads require 'pyarrow'. Install with: pip install datasluice[streaming]"
+                "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
         read_options = pacsv.ReadOptions(block_size=1 << 20, encoding=self.encoding)

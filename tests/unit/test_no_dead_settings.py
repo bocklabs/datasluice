@@ -4,10 +4,12 @@ Scans every ``.py`` file under ``src/datasluice/`` for the string
 ``DATASLUICE_`` (environment variable references) and verifies that
 ``Settings`` and ``load_settings`` are no longer importable.
 
-The single legitimate ``DATASLUICE_``-prefixed env var in v1 is
-``DATASLUICE_NO_REDACT``;
-it is allowlisted here so the scan still flags any other ``DATASLUICE_``
-substring while permitting this one.
+Four legitimate ``DATASLUICE_``-prefixed env vars exist: the opt-out
+redaction switch ``DATASLUICE_NO_REDACT`` plus the three platform
+credential variables (``DATASLUICE_CKAN_API_TOKEN``,
+``DATASLUICE_SOCRATA_APP_TOKEN``, ``DATASLUICE_UDATA_API_KEY``).
+They are allowlisted here so the scan still flags any other
+``DATASLUICE_`` substring while permitting exactly these four.
 """
 
 from __future__ import annotations

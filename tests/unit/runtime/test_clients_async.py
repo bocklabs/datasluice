@@ -8,7 +8,12 @@ import pytest
 
 from datasluice.contracts.catalog.protocols import AsyncCatalogClient as AsyncCatalogClientProtocol
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard
-from datasluice.domain.catalog.auth import EffectivePermissions
+from datasluice.domain.catalog.auth import (
+    CredentialResolver,
+    EffectivePermissions,
+    SocrataCredential,
+    UDataCredential,
+)
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
@@ -20,7 +25,7 @@ from datasluice.domain.catalog.profiles import (
 from datasluice.errors.catalog import CatalogNotFoundError, ForbiddenError, UnsupportedCapabilityError
 from datasluice.runtime.clients import AsyncCatalogClient
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-from tests.unit.runtime.test_clients_sync import _envelope, _guard, _profile, _request
+from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
 
 
 class _AsyncTransport:
@@ -143,3 +148,62 @@ def test_async_client_allowed_caller_guard_does_not_bypass_denied_effective_capa
         assert transport.requests == []
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("credentials", "header", "value"),
+    [
+        (SocrataCredential(app_token="async-app"), "X-App-Token", "async-app"),
+        (CredentialResolver(explicit=UDataCredential(api_key="async-key")), "X-API-KEY", "async-key"),
+    ],
+)
+def test_async_client_honors_static_and_resolver_credentials_without_resolve_async(
+    credentials: object, header: str, value: str
+) -> None:
+    async def exercise() -> RuntimeRequest:
+        transport = _AsyncTransport()
+        client = AsyncCatalogClient(transport, _profile(), credentials=credentials)
+
+        await client.datasets.get(_request(), _guard())
+
+        return transport.requests[0]
+
+    assert asyncio.run(exercise()).headers[header] == value
+
+
+def test_async_client_exposes_its_transport_seam() -> None:
+    async def exercise() -> bool:
+        transport = _AsyncTransport()
+        client = AsyncCatalogClient(transport, _profile())
+        return client.transport is transport
+
+    assert asyncio.run(exercise())
+
+
+def test_async_client_aclose_marks_closed_without_closing_borrowed_transport() -> None:
+    async def exercise() -> int:
+        transport = _AsyncTransport()
+        client = AsyncCatalogClient(transport, _profile(), owns_transport=False)
+
+        await client.datasets.get(_request(), _guard())
+        await client.aclose()
+        await client.aclose()
+        with pytest.raises(RuntimeError, match="closed"):
+            await client.datasets.get(_request(), _guard())
+        return transport.close_count
+
+    assert asyncio.run(exercise()) == 0
+
+
+def test_async_client_context_exit_keeps_borrowed_transport_open() -> None:
+    async def exercise() -> tuple[int, int]:
+        transport = _AsyncTransport()
+
+        async with AsyncCatalogClient(transport, _profile(), owns_transport=False) as client:
+            await client.datasets.get(_request(), _guard())
+
+        return transport.close_count, len(transport.requests)
+
+    close_count, dispatches = asyncio.run(exercise())
+    assert close_count == 0
+    assert dispatches == 1

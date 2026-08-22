@@ -12,14 +12,18 @@ from datasluice.sync._identity import canonical_identity
 def test_sync_one_resource(tmp_path, csv_server, make_resource, inmemory_state) -> None:
     _server, url = csv_server()
     resource = make_resource(url)
-    outcomes = list(
-        sync_resources(
-            [resource],
-            state_store=inmemory_state,
-            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
-            destination_uri=f"file://{tmp_path}/dest",
+    transport = HttpxCatalogTransport()
+    try:
+        outcomes = list(
+            sync_resources(
+                [resource],
+                state_store=inmemory_state,
+                reader=DataPlaneResourceReader(transport=transport),
+                destination_uri=f"file://{tmp_path}/dest",
+            )
         )
-    )
+    finally:
+        transport.close()
 
     assert len(outcomes) == 1
     assert outcomes[0].action == "materialized"
@@ -61,17 +65,21 @@ def test_outcome_stream_is_generator(tmp_path, csv_server, make_resource, inmemo
         make_resource(url, resource_id="resource-1"),
         make_resource(url, resource_id="resource-2"),
     ]
+    transport = HttpxCatalogTransport()
 
-    result = sync_resources(
-        resources,
-        state_store=inmemory_state,
-        reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
-        destination_uri=f"file://{tmp_path}/dest",
-    )
+    try:
+        result = sync_resources(
+            resources,
+            state_store=inmemory_state,
+            reader=DataPlaneResourceReader(transport=transport),
+            destination_uri=f"file://{tmp_path}/dest",
+        )
 
-    assert hasattr(result, "__next__")
-    first = next(result)
-    assert first.resource.id == "resource-1"
-    assert inmemory_state.get(canonical_identity(resources[0])) is not None
-    assert inmemory_state.get(canonical_identity(resources[1])) is None
-    assert server.captured_paths == ["/data.csv"]
+        assert hasattr(result, "__next__")
+        first = next(result)
+        assert first.resource.id == "resource-1"
+        assert inmemory_state.get(canonical_identity(resources[0])) is not None
+        assert inmemory_state.get(canonical_identity(resources[1])) is None
+        assert server.captured_paths == ["/data.csv"]
+    finally:
+        transport.close()

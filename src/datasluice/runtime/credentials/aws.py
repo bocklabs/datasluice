@@ -75,11 +75,13 @@ def _credential_from_aws_secret(platform: CatalogPlatform, secret: str) -> Catal
         parsed = json.loads(secret)
     except json.JSONDecodeError:
         return credential_from_secret(platform, secret)
-    if isinstance(parsed, str):
-        return credential_from_secret(platform, parsed)
     if isinstance(parsed, Mapping):
         return credential_from_fields(platform, cast(Mapping[str, object], parsed))
-    raise ValueError("AWS Secrets Manager JSON secrets must be an object or string.")
+    if isinstance(parsed, str):
+        return credential_from_secret(platform, parsed)
+    if parsed is None or isinstance(parsed, bool | int | float):
+        return credential_from_secret(platform, secret)
+    raise ValueError("AWS Secrets Manager JSON secrets must be an object, string, or scalar.")
 
 
 __all__ = ("AwsSecretsManagerProvider",)

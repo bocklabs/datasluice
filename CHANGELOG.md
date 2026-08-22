@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking Changes
+
+This milestone is a clean break: removed surfaces get no shims, aliases, or deprecation wrappers.
+
+- **Ports re-exports removed.** The `datasluice.ports` exports `Transport`, `StreamingTransport`,
+  `ConditionalTransport`, `ConditionalFetchResult`, and `CredentialProvider` are gone together with
+  the deleted `ports.transport` / `ports.credentials` modules. Use their replacements under
+  `datasluice.runtime.transport` (`CatalogTransport`, `AsyncCatalogTransport`, `RuntimeRequest`,
+  `RuntimeResponse`, …) and `datasluice.runtime.credentials`. These are renamed and reshaped
+  contracts, not drop-in aliases.
+- **`DataSluiceSession` legacy kwargs removed.** The constructor no longer accepts `auth`,
+  `page_size`, `timeout`, `retries`, `rate_limit`, or `credential_provider`; passing them raises
+  `TypeError`. Configure transports, budgets, TLS policy, breakers, and credential resolvers
+  explicitly through the current runtime parameters.
+- **`detect()` takes injected probe engines.** `datasluice.discovery.detect()` no longer builds its
+  probe engines implicitly; callers pass the probe engines to run.
+- **`DEFAULT_RATE_LIMIT` deleted.** Proactive client-side rate limiting was removed along with the
+  constant in `datasluice.config`; reactive Retry-After / 429 handling remains in the runtime layer.
+
 ## [0.2.3](https://github.com/bocklabs/datasluice/compare/datasluice-v0.2.2...datasluice-v0.2.3) (2026-08-10)
 
 
@@ -40,8 +61,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * enhance release workflow by adding GitHub app token generation ([#39](https://github.com/bocklabs/datasluice/issues/39)) ([fcaea5b](https://github.com/bocklabs/datasluice/commit/fcaea5bd4642b8881aedfb9298b179df5d51d419))
 * update documentation workflow and enhance renovate configuration ([#37](https://github.com/bocklabs/datasluice/issues/37)) ([4bd5bfc](https://github.com/bocklabs/datasluice/commit/4bd5bfc4b6e7f026165229b9bdfc4e60f76e61fb))
 * update documentation workflow to include extra dependencies ([#35](https://github.com/bocklabs/datasluice/issues/35)) ([e33cb3d](https://github.com/bocklabs/datasluice/commit/e33cb3dd659db22e1ca963994a242c326368e8dd))
-
-## [Unreleased]
 
 ## [0.1.0] - 2026-06-21
 

@@ -7,20 +7,8 @@ from types import MappingProxyType
 from typing import Never
 
 from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.redaction import (
-    AUTH_SCHEME_RE,
-    CREDENTIAL_QUERY_RE,
-    MAX_TEXT_LENGTH,
-    redact_mapping,
-    redact_value,
-)
+from datasluice.domain.catalog.redaction import MAX_TEXT_LENGTH, redact_mapping, redact_string
 from datasluice.exceptions import DataSluiceError
-
-
-def _redact_message(message: str) -> str:
-    scrubbed = CREDENTIAL_QUERY_RE.sub(r"\1=***", message)
-    scrubbed = AUTH_SCHEME_RE.sub(r"\1 ***", scrubbed)
-    return scrubbed[:MAX_TEXT_LENGTH]
 
 
 def _platform_value(platform: CatalogPlatform | str) -> str:
@@ -35,10 +23,6 @@ def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) ->
         return MappingProxyType({})
     redacted = redact_mapping(value, _depth=_depth)
     return MappingProxyType(redacted)
-
-
-def _bounded_value(value: object, *, _depth: int = 0) -> object:
-    return redact_value(value, _depth=_depth)
 
 
 class CatalogError(DataSluiceError):
@@ -92,7 +76,7 @@ class NativeCatalogError(DataSluiceError):
             (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
         ):
             raise ValueError("Native catalog error Retry-After must be a non-negative number.")
-        super().__init__(_redact_message(message))
+        super().__init__(redact_string(message))
         self.operation = operation
         self.platform = _platform_value(platform)
         self.status_code = status_code

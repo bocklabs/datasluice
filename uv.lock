@@ -440,6 +440,21 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "boto3" },
+    { name = "dlt" },
+    { name = "duckdb" },
+    { name = "fsspec" },
+    { name = "httpx" },
+    { name = "hvac" },
+    { name = "keyring" },
+    { name = "openpyxl" },
+    { name = "opentelemetry-api" },
+    { name = "pandas" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "zstandard" },
+]
 all-connectors = [
     { name = "httpx" },
 ]
@@ -520,6 +535,7 @@ typecheck = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", marker = "extra == 'secrets-aws'", specifier = ">=1.43" },
+    { name = "datasluice", extras = ["all-connectors", "compression", "dlt", "duckdb", "http", "keychain", "oauth", "pandas", "parquet", "polars", "secrets-aws", "secrets-vault", "storage", "telemetry", "xlsx"], marker = "extra == 'all'" },
     { name = "datasluice", extras = ["ckan", "udata", "socrata"], marker = "extra == 'all-connectors'" },
     { name = "datasluice", extras = ["http"], marker = "extra == 'ckan'" },
     { name = "datasluice", extras = ["http"], marker = "extra == 'socrata'" },
@@ -539,7 +555,7 @@ requires-dist = [
     { name = "typer" },
     { name = "zstandard", marker = "extra == 'compression'", specifier = ">=0.23" },
 ]
-provides-extras = ["all-connectors", "ckan", "compression", "dlt", "duckdb", "http", "keychain", "oauth", "pandas", "parquet", "polars", "secrets-aws", "secrets-vault", "socrata", "storage", "telemetry", "udata", "xlsx"]
+provides-extras = ["all", "all-connectors", "ckan", "compression", "dlt", "duckdb", "http", "keychain", "oauth", "pandas", "parquet", "polars", "secrets-aws", "secrets-vault", "socrata", "storage", "telemetry", "udata", "xlsx"]
 
 [package.metadata.requires-dev]
 dev = [

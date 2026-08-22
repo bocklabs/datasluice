@@ -13,6 +13,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 from packaging.requirements import Requirement
 
@@ -145,7 +146,7 @@ def test_import_namespace_resolves() -> None:
     assert pkg.__name__ == _IMPORT_NS
 
 
-def test_hook_injects_connection_credential_into_runtime_client(monkeypatch: object) -> None:
+def test_hook_injects_connection_credential_into_runtime_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """The hook constructs a sync client from a connection-defined explicit credential."""
     from airflow.providers.datasluice.hooks.datasluice import DatasluiceHook
 

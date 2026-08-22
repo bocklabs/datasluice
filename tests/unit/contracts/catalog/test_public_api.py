@@ -146,6 +146,8 @@ def test_rate_limit_mapping_forwards_native_retry_after() -> None:
         (409, CatalogConflictError, None, "Refresh the target version token before retrying."),
         (422, CatalogValidationError, None, "Correct the request according to the platform validation details."),
         (429, CatalogRateLimitError, None, "Wait for Retry-After before retrying a safe operation."),
+        (400, CatalogValidationError, None, "Correct the request before retrying."),
+        (405, CatalogValidationError, None, "Correct the request before retrying."),
         (500, CatalogUnavailableError, "unavailable", "Retry after the deployment is available."),
         (503, CatalogUnavailableError, "unavailable", "Retry after the deployment is available."),
         (None, CatalogUnavailableError, "unavailable", "Retry after the deployment is available."),

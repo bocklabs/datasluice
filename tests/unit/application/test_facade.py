@@ -19,6 +19,7 @@ from datasluice.contracts.catalog.protocols import (
     CatalogConnectorContext,
     SyncCatalogOperationExecutor,
 )
+from datasluice.domain.catalog.auth import CredentialResolver
 from datasluice.exceptions import StreamClosedError
 from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
@@ -236,7 +237,7 @@ def test_facade_module_exposes_new_runtime_client_and_credential_surfaces() -> N
     """The public facade module imports the canonical runtime construction surface."""
     assert application_module.SyncCatalogClient is SyncCatalogClient
     assert application_module.AsyncCatalogClient is AsyncCatalogClient
-    assert application_module.CredentialResolver is not None
+    assert application_module.CredentialResolver is CredentialResolver
 
 
 class _CloseSpy:

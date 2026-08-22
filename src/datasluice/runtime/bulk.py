@@ -23,7 +23,7 @@ from datasluice.runtime.resilience import DeadlineMonitor
 class CheckpointSink(Protocol):
     """Persist a caller-owned bulk checkpoint at each item boundary."""
 
-    def __call__(self, checkpoint: BulkCheckpoint, /) -> object:
+    def __call__(self, checkpoint: BulkCheckpoint, /) -> Awaitable[object] | object:
         """Store one complete immutable checkpoint snapshot."""
 
 
@@ -226,6 +226,33 @@ def _summary(
     )
 
 
+def _validated_dependencies(
+    execute_item: Callable[[CatalogId], object],
+    checkpoint_sink: CheckpointSink,
+    policy: BulkExecutionPolicy | None,
+    checkpoint: BulkCheckpoint | None,
+    item_budget: TimeBudget | None,
+    per_item_budget: TimeBudget | None,
+    whole_run_budget: TimeBudget | None,
+    clock: Callable[[], float],
+) -> tuple[BulkExecutionPolicy, TimeBudget | None, TimeBudget | None]:
+    if not callable(execute_item) or not callable(checkpoint_sink) or not callable(clock):
+        raise TypeError("Bulk execution requires callable dispatch, checkpoint sink, and clock dependencies.")
+    if policy is not None and not isinstance(policy, BulkExecutionPolicy):
+        raise TypeError("Bulk execution policy must use BulkExecutionPolicy.")
+    if checkpoint is not None and not isinstance(checkpoint, BulkCheckpoint):
+        raise TypeError("Bulk resumption requires a BulkCheckpoint.")
+    if item_budget is not None and per_item_budget is not None and item_budget != per_item_budget:
+        raise ValueError("Item budgets must agree when both budget names are supplied.")
+    selected_item_budget = item_budget or per_item_budget
+    if selected_item_budget is not None and not isinstance(selected_item_budget, TimeBudget):
+        raise TypeError("Bulk item budgets must use TimeBudget.")
+    if whole_run_budget is not None and not isinstance(whole_run_budget, TimeBudget):
+        raise TypeError("Bulk run budgets must use TimeBudget.")
+    selected_policy = policy or BulkExecutionPolicy(max_parallelism=DEFAULT_BULK_MAX_PARALLELISM)
+    return selected_policy, selected_item_budget, whole_run_budget
+
+
 class BulkExecutor:
     """Execute a synchronous bulk plan with bounded concurrent dispatch."""
 
@@ -243,26 +270,13 @@ class BulkExecutor:
         clock: Callable[[], float] = monotonic,
         cancel_event: Event | None = None,
     ) -> None:
-        if not callable(execute_item) or not callable(checkpoint_sink) or not callable(clock):
-            raise TypeError("Bulk execution requires callable dispatch, checkpoint sink, and clock dependencies.")
-        if policy is not None and not isinstance(policy, BulkExecutionPolicy):
-            raise TypeError("Bulk execution policy must use BulkExecutionPolicy.")
-        if checkpoint is not None and not isinstance(checkpoint, BulkCheckpoint):
-            raise TypeError("Bulk resumption requires a BulkCheckpoint.")
-        if item_budget is not None and per_item_budget is not None and item_budget != per_item_budget:
-            raise ValueError("Item budgets must agree when both budget names are supplied.")
-        selected_item_budget = item_budget or per_item_budget
-        if selected_item_budget is not None and not isinstance(selected_item_budget, TimeBudget):
-            raise TypeError("Bulk item budgets must use TimeBudget.")
-        if whole_run_budget is not None and not isinstance(whole_run_budget, TimeBudget):
-            raise TypeError("Bulk run budgets must use TimeBudget.")
+        self._policy, self._item_budget, self._whole_run_budget = _validated_dependencies(
+            execute_item, checkpoint_sink, policy, checkpoint, item_budget, per_item_budget, whole_run_budget, clock
+        )
         self._execute_item = execute_item
-        self._policy = policy or BulkExecutionPolicy(max_parallelism=DEFAULT_BULK_MAX_PARALLELISM)
         self._sink = checkpoint_sink
         self._checkpoint = checkpoint
         self._parallelism = _parallelism(self._policy, platform_max_parallelism)
-        self._item_budget = selected_item_budget
-        self._whole_run_budget = whole_run_budget
         self._clock = clock
         self._cancel_event = cancel_event if cancel_event is not None else Event()
 
@@ -291,24 +305,53 @@ class BulkExecutor:
             next_emit += 1
 
         with ThreadPoolExecutor(max_workers=self._parallelism) as workers:
-            while pending or in_flight:
-                while pending and len(in_flight) < self._parallelism and stop_reason is None:
-                    stop_reason, budget_error = _stop_state(
-                        monitor,
-                        plan,
-                        self._cancel_event,
-                        self._policy.cancellation_requested,
-                        check_budget=True,
-                    )
-                    if stop_reason is not None:
+            try:
+                while pending or in_flight:
+                    while pending and len(in_flight) < self._parallelism and stop_reason is None:
+                        stop_reason, budget_error = _stop_state(
+                            monitor,
+                            plan,
+                            self._cancel_event,
+                            self._policy.cancellation_requested,
+                            check_budget=True,
+                        )
+                        if stop_reason is not None:
+                            break
+                        index = pending.pop(0)
+                        in_flight[workers.submit(self._execute_sync_item, plan, plan.items[index])] = index
+                        dispatches += 1
+                    if not in_flight:
                         break
-                    index = pending.pop(0)
-                    in_flight[workers.submit(self._execute_sync_item, plan, plan.items[index])] = index
-                    dispatches += 1
-                if not in_flight:
-                    break
-                done, _ = wait(in_flight, return_when="FIRST_COMPLETED")
-                for future in done:
+                    done, _ = wait(in_flight, return_when="FIRST_COMPLETED")
+                    for future in done:
+                        index = in_flight.pop(future)
+                        try:
+                            result = future.result()
+                        except Exception:
+                            result = _ItemResult(_failure_receipt(plan, plan.items[index]))
+                        completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
+                        if result.budget_error is not None and item_budget_error is None:
+                            item_budget_error = result.budget_error
+                        if stop_reason is None:
+                            stop_reason, budget_error = _stop_state(
+                                monitor,
+                                plan,
+                                self._cancel_event,
+                                self._policy.cancellation_requested,
+                                check_budget=bool(pending),
+                            )
+                        self._persist(
+                            plan,
+                            completed,
+                            cancellation_requested=stop_reason == "cancelled",
+                        )
+                        last_persisted_count = len(completed)
+                        while next_emit in completed:
+                            yield completed[next_emit]
+                            next_emit += 1
+            except GeneratorExit:
+                wait(in_flight)
+                for future in tuple(in_flight):
                     index = in_flight.pop(future)
                     try:
                         result = future.result()
@@ -317,23 +360,8 @@ class BulkExecutor:
                     completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
                     if result.budget_error is not None and item_budget_error is None:
                         item_budget_error = result.budget_error
-                    if stop_reason is None:
-                        stop_reason, budget_error = _stop_state(
-                            monitor,
-                            plan,
-                            self._cancel_event,
-                            self._policy.cancellation_requested,
-                            check_budget=bool(pending),
-                        )
-                    self._persist(
-                        plan,
-                        completed,
-                        cancellation_requested=stop_reason == "cancelled",
-                    )
-                    last_persisted_count = len(completed)
-                    while next_emit in completed:
-                        yield completed[next_emit]
-                        next_emit += 1
+                self._persist(plan, completed, cancellation_requested=True)
+                raise
 
         if stop_reason is None:
             stop_reason, budget_error = _stop_state(
@@ -387,7 +415,7 @@ class BulkExecutor:
             try:
                 monitor.assert_dispatchable()
             except BudgetExhaustedError as exc:
-                return _ItemResult(_failure_receipt(plan, item, budget_exhausted=True), exc)
+                return _ItemResult(receipt, exc)
         return _ItemResult(receipt)
 
     def _persist(self, plan: BulkPlan, completed: dict[int, BulkItemReceipt], *, cancellation_requested: bool) -> None:
@@ -421,26 +449,13 @@ class AsyncBulkExecutor:
         clock: Callable[[], float] = monotonic,
         cancel_event: object | None = None,
     ) -> None:
-        if not callable(execute_item) or not callable(checkpoint_sink) or not callable(clock):
-            raise TypeError("Bulk execution requires callable dispatch, checkpoint sink, and clock dependencies.")
-        if policy is not None and not isinstance(policy, BulkExecutionPolicy):
-            raise TypeError("Bulk execution policy must use BulkExecutionPolicy.")
-        if checkpoint is not None and not isinstance(checkpoint, BulkCheckpoint):
-            raise TypeError("Bulk resumption requires a BulkCheckpoint.")
-        if item_budget is not None and per_item_budget is not None and item_budget != per_item_budget:
-            raise ValueError("Item budgets must agree when both budget names are supplied.")
-        selected_item_budget = item_budget or per_item_budget
-        if selected_item_budget is not None and not isinstance(selected_item_budget, TimeBudget):
-            raise TypeError("Bulk item budgets must use TimeBudget.")
-        if whole_run_budget is not None and not isinstance(whole_run_budget, TimeBudget):
-            raise TypeError("Bulk run budgets must use TimeBudget.")
+        self._policy, self._item_budget, self._whole_run_budget = _validated_dependencies(
+            execute_item, checkpoint_sink, policy, checkpoint, item_budget, per_item_budget, whole_run_budget, clock
+        )
         self._execute_item = execute_item
-        self._policy = policy or BulkExecutionPolicy(max_parallelism=DEFAULT_BULK_MAX_PARALLELISM)
         self._sink = checkpoint_sink
         self._checkpoint = checkpoint
         self._parallelism = _parallelism(self._policy, platform_max_parallelism)
-        self._item_budget = selected_item_budget
-        self._whole_run_budget = whole_run_budget
         self._clock = clock
         self._cancel_event = cancel_event if cancel_event is not None else asyncio.Event()
 
@@ -512,24 +527,15 @@ class AsyncBulkExecutor:
                         next_emit += 1
         except asyncio.CancelledError:
             stop_reason = "cancelled"
-            for task, index in tuple(in_flight.items()):
-                try:
-                    result = await asyncio.shield(task)
-                except asyncio.CancelledError:
-                    result = _ItemResult(_failure_receipt(plan, plan.items[index]))
-                except Exception:
-                    result = _ItemResult(_failure_receipt(plan, plan.items[index]))
-                completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
-                if result.budget_error is not None and item_budget_error is None:
-                    item_budget_error = result.budget_error
-                await asyncio.shield(
-                    self._persist(
-                        plan,
-                        completed,
-                        cancellation_requested=True,
-                    )
-                )
-                last_persisted_count = len(completed)
+            item_budget_error = await self._drain_in_flight(plan, in_flight, completed, item_budget_error)
+            last_persisted_count = len(completed)
+            await self._persist_final_checkpoint(plan, completed)
+        except GeneratorExit:
+            stop_reason = "cancelled"
+            item_budget_error = await self._drain_in_flight(plan, in_flight, completed, item_budget_error)
+            last_persisted_count = len(completed)
+            await self._persist_final_checkpoint(plan, completed)
+            raise
 
         if stop_reason is None:
             stop_reason, budget_error = _stop_state(
@@ -585,8 +591,45 @@ class AsyncBulkExecutor:
             try:
                 monitor.assert_dispatchable()
             except BudgetExhaustedError as exc:
-                return _ItemResult(_failure_receipt(plan, item, budget_exhausted=True), exc)
+                return _ItemResult(receipt, exc)
         return _ItemResult(receipt)
+
+    async def _drain_in_flight(
+        self,
+        plan: BulkPlan,
+        in_flight: dict[asyncio.Future[_ItemResult], int],
+        completed: dict[int, BulkItemReceipt],
+        item_budget_error: BudgetExhaustedError | None,
+    ) -> BudgetExhaustedError | None:
+        """Settle every in-flight task once and record its authoritative receipt."""
+        for task, index in tuple(in_flight.items()):
+            result = await self._settled_task(task, plan, plan.items[index])
+            completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
+            if result.budget_error is not None and item_budget_error is None:
+                item_budget_error = result.budget_error
+        in_flight.clear()
+        return item_budget_error
+
+    @staticmethod
+    async def _settled_task(task: asyncio.Future[_ItemResult], plan: BulkPlan, item: CatalogId) -> _ItemResult:
+        """Collect one task outcome, cancelling it only when collection itself is interrupted."""
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.done():
+                task.cancel()
+            try:
+                await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+            except asyncio.CancelledError:
+                pass
+            return AsyncBulkExecutor._task_result(task, plan, item)
+
+    async def _persist_final_checkpoint(self, plan: BulkPlan, completed: dict[int, BulkItemReceipt]) -> None:
+        """Persist the terminal cancellation checkpoint exactly once, surviving repeated cancellation."""
+        try:
+            await asyncio.shield(self._persist(plan, completed, cancellation_requested=True))
+        except asyncio.CancelledError:
+            pass
 
     @staticmethod
     def _task_result(task: asyncio.Future[_ItemResult], plan: BulkPlan, item: CatalogId) -> _ItemResult:

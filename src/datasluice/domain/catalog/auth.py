@@ -139,6 +139,7 @@ class OAuthFlow:
     authorization_url: str
     token_url: str
     client_id: str
+    redirect_uri: str | None = None
     scopes: frozenset[str] = frozenset()
     supports_refresh: bool = True
 
@@ -147,6 +148,10 @@ class OAuthFlow:
             parsed = urlsplit(url)
             if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
                 raise ValueError(f"OAuth {name} URL must be a sanitized HTTPS URI.")
+        if self.redirect_uri is not None:
+            parsed = urlsplit(self.redirect_uri)
+            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError("OAuth redirect URI must be a sanitized HTTPS URI.")
         if not isinstance(self.client_id, str) or not self.client_id:
             raise ValueError("OAuth client IDs must be non-empty strings.")
         if not isinstance(self.scopes, frozenset) or not all(isinstance(scope, str) and scope for scope in self.scopes):
@@ -155,9 +160,16 @@ class OAuthFlow:
             raise ValueError("OAuth refresh support must be a boolean.")
 
     @classmethod
-    def authorization_code(cls, authorization_url: str, token_url: str, client_id: str) -> OAuthFlow:
+    def authorization_code(
+        cls, authorization_url: str, token_url: str, client_id: str, redirect_uri: str | None = None
+    ) -> OAuthFlow:
         """Create a standard authorization-code OAuth flow descriptor."""
-        return cls(authorization_url=authorization_url, token_url=token_url, client_id=client_id)
+        return cls(
+            authorization_url=authorization_url,
+            token_url=token_url,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+        )
 
 
 @dataclass(frozen=True, slots=True)

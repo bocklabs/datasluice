@@ -1053,7 +1053,7 @@ def _dependency_distribution(requirement: str) -> str:
 
 def _annotation_base_name(annotation: object) -> str:
     """Return the unparameterized lower-case type name for an annotation."""
-    rendered = str(annotation).strip().split("|")[0].split("[")[0]
+    rendered = str(annotation).strip().split("[")[0].split("|")[0].strip()
     return rendered.removeprefix("typing.").lower()
 
 
@@ -1203,6 +1203,7 @@ def test_base_installation_stays_lean_without_connector_extras() -> None:
     optional = project["optional-dependencies"]
     assert isinstance(optional, dict)
     assert set(optional) == {
+        "all",
         "all-connectors",
         "ckan",
         "compression",

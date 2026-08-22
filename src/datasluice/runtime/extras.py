@@ -6,6 +6,7 @@ import importlib.util
 
 _EXTRA_IMPORTS = {
     "ckan": "httpx",
+    "http": "httpx",
     "socrata": "httpx",
     "udata": "httpx",
 }

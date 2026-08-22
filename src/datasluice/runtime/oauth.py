@@ -17,7 +17,13 @@ from urllib.parse import urlencode, urlsplit
 from datasluice.domain.catalog.auth import OAuthFlow, SecretValue
 from datasluice.domain.catalog.resilience import CircuitKey, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
-from datasluice.errors.catalog import BudgetExhaustedError, CatalogUnavailableError, CatalogValidationError
+from datasluice.errors.catalog import (
+    BudgetExhaustedError,
+    CatalogError,
+    CatalogUnavailableError,
+    CatalogValidationError,
+    UnauthenticatedError,
+)
 from datasluice.runtime.constants import (
     DEFAULT_BREAKER_COOLDOWN_SECONDS,
     DEFAULT_BREAKER_FAILURE_THRESHOLD,
@@ -33,6 +39,16 @@ from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, 
 PKCE_CHALLENGE_METHOD = "S256"
 PKCE_VERIFIER_BYTES = 48
 DEFAULT_REFRESH_SKEW_SECONDS = 30
+_RFC6749_ERROR_CODES = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+    }
+)
 
 
 class AsyncTokenTransport(Protocol):
@@ -40,6 +56,9 @@ class AsyncTokenTransport(Protocol):
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
         """Send one token-endpoint request."""
+
+    async def aclose(self) -> None:
+        """Release asynchronous resources."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,9 +88,30 @@ def _token_request(flow: OAuthFlow, values: Mapping[str, str]) -> RuntimeRequest
     )
 
 
-def _token_error(response: RuntimeResponse) -> CatalogValidationError:
+def _rfc6749_error(response: RuntimeResponse) -> str | None:
+    try:
+        payload = json.loads(response.body)
+    except (TypeError, ValueError):
+        return None
+    code = payload.get("error") if isinstance(payload, dict) else None
+    return code if isinstance(code, str) and code in _RFC6749_ERROR_CODES else None
+
+
+def _token_error(response: RuntimeResponse) -> CatalogError:
+    code = _rfc6749_error(response)
+    detail = f"OAuth token endpoint rejected the request with status {response.status_code}."
+    if code is not None:
+        detail = f"OAuth token endpoint rejected the request ({code}) with status {response.status_code}."
+    if response.status_code == 401:
+        return UnauthenticatedError(
+            detail,
+            operation="oauth.token",
+            platform="runtime",
+            capability_state="unauthorized",
+            safe_action="Confirm the OAuth client credentials and retry.",
+        )
     return CatalogValidationError(
-        "OAuth token endpoint rejected the request.",
+        detail,
         operation="oauth.token",
         platform="runtime",
         safe_action="Confirm the OAuth client configuration and retry.",
@@ -133,14 +173,14 @@ class ClientCredentialsFlow:
         self._transport = transport
 
     def _request(self) -> RuntimeRequest:
-        return _token_request(
-            self._flow,
-            {
-                "grant_type": "client_credentials",
-                "client_id": self._flow.client_id,
-                "client_secret": self._client_secret.reveal(),
-            },
-        )
+        values: dict[str, str] = {
+            "grant_type": "client_credentials",
+            "client_id": self._flow.client_id,
+            "client_secret": self._client_secret.reveal(),
+        }
+        if self._flow.scopes:
+            values["scope"] = " ".join(sorted(self._flow.scopes))
+        return _token_request(self._flow, values)
 
     def fetch(self) -> OAuthCredential:
         """Synchronously exchange client credentials through the runtime transport."""
@@ -181,7 +221,7 @@ class AuthorizationCodeFlow:
             {
                 "response_type": "code",
                 "client_id": self._flow.client_id,
-                "redirect_uri": self._flow.authorization_url,
+                **({"redirect_uri": self._flow.redirect_uri} if self._flow.redirect_uri is not None else {}),
                 "state": state,
                 "code_challenge": challenge,
                 "code_challenge_method": PKCE_CHALLENGE_METHOD,
@@ -193,15 +233,15 @@ class AuthorizationCodeFlow:
     def _request(self, code: str) -> RuntimeRequest:
         if not isinstance(code, str) or not code:
             raise ValueError("OAuth authorization codes must be non-empty strings.")
-        return _token_request(
-            self._flow,
-            {
-                "grant_type": "authorization_code",
-                "client_id": self._flow.client_id,
-                "code": code,
-                "code_verifier": self._verifier,
-            },
-        )
+        values: dict[str, str] = {
+            "grant_type": "authorization_code",
+            "client_id": self._flow.client_id,
+            "code": code,
+            "code_verifier": self._verifier,
+        }
+        if self._flow.redirect_uri is not None:
+            values["redirect_uri"] = self._flow.redirect_uri
+        return _token_request(self._flow, values)
 
     def exchange(self, code: str) -> OAuthCredential:
         """Synchronously exchange an authorization code through the runtime transport."""
@@ -274,12 +314,22 @@ class RefreshingCredentialProvider:
         self._monotonic_clock = monotonic_clock
         self._sync_lock = RLock()
         self._async_lock: asyncio.Lock | None = None
+        self._async_lock_loop: asyncio.AbstractEventLoop | None = None
 
     def _needs_refresh(self) -> bool:
         return (
             self._credential.expires_at is not None
             and self._credential.expires_at <= self._clock() + self._skew_seconds
         )
+
+    def _async_lock_for(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._async_lock
+        if lock is None or self._async_lock_loop is not loop:
+            lock = asyncio.Lock()
+            self._async_lock = lock
+            self._async_lock_loop = loop
+        return lock
 
     def _request(self) -> RuntimeRequest:
         refresh_token = self._credential.refresh_token
@@ -405,9 +455,8 @@ class RefreshingCredentialProvider:
         """Asynchronously return the current credential, refreshing only on the async transport."""
         if not hasattr(self._transport, "aclose"):
             raise TypeError("The asynchronous refresh provider requires an asynchronous runtime transport.")
-        if self._async_lock is None:
-            self._async_lock = asyncio.Lock()
-        async with self._async_lock:
-            if self._needs_refresh():
-                self._credential = await self._refresh_async()
-            return self._credential
+        async with self._async_lock_for():
+            with self._sync_lock:
+                if self._needs_refresh():
+                    self._credential = await self._refresh_async()
+                return self._credential

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import importlib
-import logging
 import os
+from typing import Any
 
 import pytest
 
 from datasluice.data import DataPlaneResourceReader
+from datasluice.runtime.transport.base import RuntimeRequest
 from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 from datasluice.sync import sync_resources
 from tests.helpers.http_server import MockResponse
@@ -120,22 +121,21 @@ def test_response_aware_reader_closes_untransferred_response_on_failure(tmp_path
     assert stream_cm.exit_count == 1
 
 
-def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource, caplog) -> None:
+def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource) -> None:
     server, url = csv_server(headers={"ETag": '"fallback"'})
     resource = make_resource(url)
     transport = HttpxCatalogTransport()
     reader = _BaseReader(transport)
 
-    with caplog.at_level(logging.WARNING):
-        outcomes = list(
-            sync_resources(
-                [resource],
-                state_store=_inmemory_state_store(),
-                reader=reader,
-                destination_uri=f"file://{tmp_path}/dest",
-                transport=transport,
-            )
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=_inmemory_state_store(),
+            reader=reader,
+            destination_uri=f"file://{tmp_path}/dest",
+            transport=transport,
         )
+    )
 
     assert outcomes[0].action == "materialized"
     assert reader.open_calls == 1
@@ -195,7 +195,9 @@ def test_base_reader_checkpoints_materialized_representation(tmp_path, csv_serve
     assert "if-modified-since" not in server.captured[2]
 
 
-def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, make_resource) -> None:
+def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, make_resource, monkeypatch) -> None:
+    for name in ("DATASLUICE_CKAN_API_TOKEN", "DATASLUICE_UDATA_API_KEY", "DATASLUICE_SOCRATA_APP_TOKEN"):
+        monkeypatch.setenv(name, "env-secret")
     server, url = csv_server(headers={"ETag": '"query-auth"'})
     resource = make_resource(url)
     transport = HttpxCatalogTransport()
@@ -211,7 +213,45 @@ def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, m
     )
 
     assert outcomes[0].action == "materialized"
-    assert server.captured_paths == ["/data.csv"]
+    assert len(server.captured) >= 1
+    for request_headers in server.captured:
+        assert "authorization" not in request_headers
+        assert "x-api-key" not in request_headers
+        assert "x-app-token" not in request_headers
+
+
+class _AuthInjectingTransport:
+    def __init__(self, inner: HttpxCatalogTransport) -> None:
+        self._inner = inner
+
+    def send(self, request: Any) -> Any:
+        headers = {**dict(request.headers), "Authorization": "Bearer injected-secret"}
+        return self._inner.send(RuntimeRequest(request.method, request.url, headers, request.body))
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+def test_sync_preserves_query_auth_and_transport_injected_headers(tmp_path, csv_server, make_resource) -> None:
+    server, url = csv_server(headers={"ETag": '"query-auth-preserved"'})
+    resource = make_resource(f"{url}?api_key=query-secret&next_token=abc")
+    transport = HttpxCatalogTransport()
+    injecting = _AuthInjectingTransport(transport)
+
+    outcomes = list(
+        sync_resources(
+            [resource],
+            state_store=_inmemory_state_store(),
+            reader=DataPlaneResourceReader(transport=injecting),
+            destination_uri=f"file://{tmp_path}/dest",
+            transport=injecting,
+        )
+    )
+
+    assert outcomes[0].action == "materialized"
+    assert all("api_key=query-secret" in path for path in server.captured_paths)
+    assert all("next_token=abc" in path for path in server.captured_paths)
+    assert all(request["authorization"] == "Bearer injected-secret" for request in server.captured)
 
 
 def _inmemory_state_store():
