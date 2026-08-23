@@ -954,6 +954,153 @@
       "owning_operation_id": "ckan/action-api-v3.resource-views",
       "mutation_class": "standard",
       "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_search",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_info",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_create",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_upsert",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_delete",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "destructive",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_records_delete",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_function_create",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_function_delete",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "datastore_run_triggers",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_search_sql",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.sql-search",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "job_list",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "job_show",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "job_cancel",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "job_clear",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "task_status_show",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "task_status_update",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "task_status_update_many",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "task_status_delete",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "config_option_show",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.config-options",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "config_option_list",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.config-options",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "config_option_update",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.config-options",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
     }
   ]
 }

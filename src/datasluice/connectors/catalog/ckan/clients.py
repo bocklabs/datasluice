@@ -83,6 +83,8 @@ from datasluice.runtime.transport.base import (
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.ckan.services.datastore import AsyncDatastoreService, SyncDatastoreService
+    from datasluice.connectors.catalog.ckan.services.extensions import AsyncExtensionsService, SyncExtensionsService
     from datasluice.connectors.catalog.ckan.services.filestore import AsyncFilestoreService, SyncFilestoreService
     from datasluice.connectors.catalog.ckan.services.groups import AsyncGroupsService, SyncGroupsService
     from datasluice.connectors.catalog.ckan.services.organizations import (
@@ -322,9 +324,11 @@ class SyncCKANClient:
         return SyncViewsService(self)
 
     @property
-    def datastore(self) -> _SyncNativeService:
+    def datastore(self) -> SyncDatastoreService:
         """Return the synchronous datastore group."""
-        return _SyncNativeService(self, "datastore")
+        from datasluice.connectors.catalog.ckan.services.datastore import SyncDatastoreService
+
+        return SyncDatastoreService(self)
 
     @property
     def filestore(self) -> SyncFilestoreService:
@@ -334,9 +338,11 @@ class SyncCKANClient:
         return SyncFilestoreService(self)
 
     @property
-    def extensions(self) -> _SyncNativeService:
+    def extensions(self) -> SyncExtensionsService:
         """Return the synchronous extension-probe group."""
-        return _SyncNativeService(self, "extensions")
+        from datasluice.connectors.catalog.ckan.services.extensions import SyncExtensionsService
+
+        return SyncExtensionsService(self)
 
     def _require_optional_evidence(self, owning_id: OperationId) -> None:
         if self._probe_policy != "auto":
@@ -681,9 +687,11 @@ class AsyncCKANClient:
         return AsyncViewsService(self)
 
     @property
-    def datastore(self) -> _AsyncNativeService:
+    def datastore(self) -> AsyncDatastoreService:
         """Return the asynchronous datastore group."""
-        return _AsyncNativeService(self, "datastore")
+        from datasluice.connectors.catalog.ckan.services.datastore import AsyncDatastoreService
+
+        return AsyncDatastoreService(self)
 
     @property
     def filestore(self) -> AsyncFilestoreService:
@@ -693,9 +701,11 @@ class AsyncCKANClient:
         return AsyncFilestoreService(self)
 
     @property
-    def extensions(self) -> _AsyncNativeService:
+    def extensions(self) -> AsyncExtensionsService:
         """Return the asynchronous extension-probe group."""
-        return _AsyncNativeService(self, "extensions")
+        from datasluice.connectors.catalog.ckan.services.extensions import AsyncExtensionsService
+
+        return AsyncExtensionsService(self)
 
     def _require_optional_evidence(self, owning_id: OperationId) -> None:
         if self._probe_policy != "auto":

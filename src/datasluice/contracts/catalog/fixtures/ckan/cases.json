@@ -101,6 +101,10 @@
     },
     {
       "operation": "ckan/action-api-v3.jobs-and-task-status",
+      "outcome": "core"
+    },
+    {
+      "operation": "ckan/action-api-v3.jobs-and-task-status",
       "outcome": "authenticated-success"
     },
     {
