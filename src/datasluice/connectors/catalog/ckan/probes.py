@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import threading
@@ -243,6 +244,7 @@ class StatusSnapshotCache:
         self._ttl_seconds = float(ttl_seconds)
         self._clock = clock
         self._lock = threading.Lock()
+        self._async_lock = asyncio.Lock()
         self._snapshot: _Snapshot | None = None
 
     @property
@@ -258,21 +260,21 @@ class StatusSnapshotCache:
             current = self._snapshot
             if current is not None and self._clock() - current.fetched_at < self._ttl_seconds:
                 return current
-        snapshot = _decode_snapshot(self._reader(self._request()), fetched_at=self._clock())
-        with self._lock:
+            snapshot = _decode_snapshot(self._reader(self._request()), fetched_at=self._clock())
             self._snapshot = snapshot
-        return snapshot
+            return snapshot
 
     async def snapshot_async(self, send: Callable[[RuntimeRequest], Awaitable[RuntimeResponse]]) -> _Snapshot:
         """Return the fresh snapshot, refreshing through one asynchronous read when stale."""
-        with self._lock:
-            current = self._snapshot
-            if current is not None and self._clock() - current.fetched_at < self._ttl_seconds:
-                return current
-        snapshot = _decode_snapshot(await send(self._request()), fetched_at=self._clock())
-        with self._lock:
-            self._snapshot = snapshot
-        return snapshot
+        async with self._async_lock:
+            with self._lock:
+                current = self._snapshot
+                if current is not None and self._clock() - current.fetched_at < self._ttl_seconds:
+                    return current
+            snapshot = _decode_snapshot(await send(self._request()), fetched_at=self._clock())
+            with self._lock:
+                self._snapshot = snapshot
+            return snapshot
 
     def _request(self) -> RuntimeRequest:
         return RuntimeRequest(
@@ -315,7 +317,7 @@ def maybe_emit_line_advisory(
 class _EvidenceCore:
     """Shared classification core keeping sync and async runner behavior identical."""
 
-    __slots__ = ("_clock", "_emitter", "_last_advised_at", "_last_state", "_ttl_seconds")
+    __slots__ = ("_clock", "_emitter", "_last_advised_at", "_last_state", "_lock", "_ttl_seconds")
 
     def __init__(self, *, emitter: EventEmitter | None, clock: Callable[[], float], ttl_seconds: float) -> None:
         self._emitter = emitter
@@ -323,6 +325,7 @@ class _EvidenceCore:
         self._ttl_seconds = float(ttl_seconds)
         self._last_state: LineState | None = None
         self._last_advised_at = float("-inf")
+        self._lock = threading.Lock()
 
     def evidence_from(self, snapshot: _Snapshot, operation_id: OperationId, deployment_url: str) -> ProbeEvidence:
         self._advise(operation_id, snapshot)
@@ -343,21 +346,22 @@ class _EvidenceCore:
     def _advise(self, operation_id: OperationId, snapshot: _Snapshot) -> None:
         if self._emitter is None:
             return
-        state = snapshot.line_state
-        previous = self._last_state
-        self._last_state = state
-        if state is LineState.PINNED_LINE:
-            return
-        now = self._clock()
-        if state is previous and (now - self._last_advised_at) < self._ttl_seconds:
-            return
+        with self._lock:
+            state = snapshot.line_state
+            previous = self._last_state
+            self._last_state = state
+            if state is LineState.PINNED_LINE:
+                return
+            now = self._clock()
+            if state is previous and (now - self._last_advised_at) < self._ttl_seconds:
+                return
+            self._last_advised_at = now
         maybe_emit_line_advisory(
             self._emitter,
             operation_id=operation_id,
             line_state=state,
             observed_version_present=snapshot.version_present,
         )
-        self._last_advised_at = now
 
 
 class CKANProbeRunner:
