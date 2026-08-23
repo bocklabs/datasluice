@@ -226,3 +226,33 @@ def test_ckan_manifest_datasets_group_holds_exactly_the_documented_twenty_action
         assert outcome == entry.result_kind
         if family is not None:
             assert family in RECORD_KINDS
+
+
+def test_relationships_follows_manifest_holds_exactly_the_thirty_one_core_actions() -> None:
+    """Staged completeness gate: the core relationships-follows id owns exactly 31 entries."""
+    from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
+    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
+
+    entries = [
+        entry
+        for entry in CKAN_ACTIONS.entries
+        if entry.owning_operation_id == "ckan/action-api-v3.relationships-follows"
+    ]
+    assert len(entries) == 31
+    assert {entry.group for entry in entries} == {"relationships_activity"}
+    reads = [entry for entry in entries if entry.mutation_class == "read"]
+    mutations = [entry for entry in entries if entry.mutation_class != "read"]
+    assert len(reads) == 22
+    assert len(mutations) == 9
+    assert all(entry.mutation_class == "standard" for entry in mutations)
+    assert sum(1 for entry in entries if entry.name.startswith("package_relationship")) == 4
+    assert sum(1 for entry in entries if entry.result_kind == "value") == 13
+    assert sum(1 for entry in entries if entry.result_kind == "record-list") == 9
+    assert sum(1 for entry in entries if entry.result_kind == "mapping") == 9
+    for entry in entries:
+        spec = RESULT_KINDS.get(entry.name)
+        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
+        outcome, family = spec
+        assert outcome == entry.result_kind
+        if family is not None:
+            assert family in RECORD_KINDS

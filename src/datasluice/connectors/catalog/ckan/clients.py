@@ -89,6 +89,10 @@ if TYPE_CHECKING:
         AsyncOrganizationsService,
         SyncOrganizationsService,
     )
+    from datasluice.connectors.catalog.ckan.services.relationships_activity import (
+        AsyncRelationshipsActivityService,
+        SyncRelationshipsActivityService,
+    )
     from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
     from datasluice.connectors.catalog.ckan.services.users import AsyncUsersService, SyncUsersService
     from datasluice.connectors.catalog.ckan.services.vocabularies_licenses import (
@@ -303,9 +307,11 @@ class SyncCKANClient:
         return SyncVocabulariesLicensesService(self)
 
     @property
-    def relationships_activity(self) -> _SyncNativeService:
+    def relationships_activity(self) -> SyncRelationshipsActivityService:
         """Return the synchronous relationship and activity group."""
-        return _SyncNativeService(self, "relationships_activity")
+        from datasluice.connectors.catalog.ckan.services.relationships_activity import SyncRelationshipsActivityService
+
+        return SyncRelationshipsActivityService(self)
 
     @property
     def views(self) -> _SyncNativeService:
@@ -656,9 +662,13 @@ class AsyncCKANClient:
         return AsyncVocabulariesLicensesService(self)
 
     @property
-    def relationships_activity(self) -> _AsyncNativeService:
+    def relationships_activity(self) -> AsyncRelationshipsActivityService:
         """Return the asynchronous relationship and activity group."""
-        return _AsyncNativeService(self, "relationships_activity")
+        from datasluice.connectors.catalog.ckan.services.relationships_activity import (
+            AsyncRelationshipsActivityService,
+        )
+
+        return AsyncRelationshipsActivityService(self)
 
     @property
     def views(self) -> _AsyncNativeService:

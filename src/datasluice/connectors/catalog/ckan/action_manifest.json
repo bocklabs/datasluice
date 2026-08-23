@@ -583,6 +583,223 @@
       "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
       "mutation_class": "standard",
       "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationships_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationship_create",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationship_update",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationship_delete",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "follow_dataset",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "unfollow_dataset",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "am_following_dataset",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "follow_group",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "unfollow_group",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "am_following_group",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "follow_user",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "unfollow_user",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "am_following_user",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dataset_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dataset_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "user_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "dataset_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dataset_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "user_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
     }
   ]
 }
