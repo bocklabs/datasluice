@@ -590,3 +590,43 @@ def test_async_client_uses_async_probe_runner_and_invalidate() -> None:
         assert len(transport.requests) == 2
 
     asyncio.run(exercise())
+
+
+def _sync_capability_peek_result(scenario: str) -> tuple[str, str, int, int]:
+    operation = _operation()
+    runner = _SequenceRunner(operation, [ProbeResponseClass.SUCCESS])
+    transport = _SyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
+    client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
+    if scenario == "seeded-cache":
+        client.get(_request(operation.id), _guard(operation.id))
+    first = client.capability(str(operation.id))
+    second = client.capability(str(operation.id))
+    return (first, second, len(runner.calls), len(transport.requests))
+
+
+async def _async_capability_peek_result(scenario: str) -> tuple[str, str, int, int]:
+    operation = _operation()
+    runner = _AsyncSequenceRunner(operation)
+    transport = _AsyncTransport([RuntimeResponse(200, {}, _envelope()), RuntimeResponse(200, {}, _envelope())])
+    client = AsyncCatalogClient(transport, _profile(operation), probe_runner=runner)
+    if scenario == "seeded-cache":
+        await client.get(_request(operation.id), _guard(operation.id))
+    first = client.capability(str(operation.id))
+    second = client.capability(str(operation.id))
+    return (first, second, len(runner.calls), len(transport.requests))
+
+
+@pytest.mark.parametrize("scenario", ["seeded-cache", "empty-baseline"])
+def test_capability_cached_peek_maintains_strict_sync_async_parity(scenario: str) -> None:
+    """Cached-peek reporting returns identical state strings with identical probe/read counts per mode."""
+    expected_probes = 1 if scenario == "seeded-cache" else 0
+    expected_reads = 1 if scenario == "seeded-cache" else 0
+
+    sync_result = _sync_capability_peek_result(scenario)
+    async_result = asyncio.run(_async_capability_peek_result(scenario))
+
+    assert sync_result[2] == expected_probes
+    assert sync_result[3] == expected_reads
+    assert async_result[2] == expected_probes
+    assert async_result[3] == expected_reads
+    assert async_result == sync_result
