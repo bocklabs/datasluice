@@ -226,6 +226,16 @@ def test_absent_plugins_are_unsupported_only_on_their_own_families() -> None:
     assert classes[FILESTORE_OPERATION_ID] is ProbeResponseClass.SUCCESS
 
 
+def test_extension_probe_classification_uses_operation_id_value_equality() -> None:
+    """A profile-derived extension-probe id follows the same unsupported rule as the module constant."""
+    operation_id = next(
+        candidate for candidate in declared_ckan_profile().operations if candidate == EXTENSION_PROBES_OPERATION_ID
+    )
+
+    assert operation_id is not EXTENSION_PROBES_OPERATION_ID
+    assert classify_probe_response(operation_id, {"extensions": []}) is ProbeResponseClass.UNSUPPORTED
+
+
 def test_authorization_and_forbidden_envelopes_classify_through_the_shared_core() -> None:
     """Envelope-level authorization failures keep their bounded response classes."""
     unauthenticated = _CannedTransport(_failure_body({"__type": "Authorization Error", "message": "bad token"}))

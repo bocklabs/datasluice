@@ -174,7 +174,7 @@ def classify_probe_response(operation_id: OperationId, payload: object) -> Probe
         return ProbeResponseClass.DEPLOYMENT_DISABLED
     if extensions is None:
         return ProbeResponseClass.SUCCESS
-    if operation_id is EXTENSION_PROBES_OPERATION_ID:
+    if operation_id == EXTENSION_PROBES_OPERATION_ID:
         return ProbeResponseClass.SUCCESS if extensions else ProbeResponseClass.UNSUPPORTED
     enabled = map_extensions_to_operations(extensions)
     if operation_id in _PLUGIN_MAPPED_OPERATION_IDS and operation_id not in enabled:
