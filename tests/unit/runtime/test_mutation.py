@@ -16,7 +16,7 @@ from datasluice.domain.catalog.safety import (
 )
 from datasluice.errors.catalog import CatalogConflictError, CatalogUnavailableError, CatalogValidationError
 from datasluice.exceptions import DataSluiceError
-from datasluice.runtime.mutation import MutationDispatchRequest, MutationEnforcer
+from datasluice.runtime.mutation import MutationDispatchRequest, MutationEnforcer, build_mutation_receipt
 from datasluice.runtime.transport.base import RuntimeResponse
 
 
@@ -185,3 +185,19 @@ def test_succeeded_receipt_construction_failure_surfaces_after_the_dispatch() ->
         )
 
     assert len(sent) == 1
+
+
+def test_build_mutation_receipt_matches_enforcer_receipt() -> None:
+    enforcer = MutationEnforcer(lambda request: RuntimeResponse(200, {}, b""))
+    operation = OperationId("ckan", "datasets", "update")
+    policy = _policy()
+    receipt = enforcer.execute(operation, _target(), policy, audit_metadata={"dataset": "weather", "attempt": 1})
+    equivalent = build_mutation_receipt(
+        operation,
+        _target(),
+        policy,
+        "succeeded",
+        {"dataset": "weather", "attempt": 1},
+    )
+
+    assert receipt == equivalent

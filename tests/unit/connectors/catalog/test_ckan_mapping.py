@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import cast
 
 import pytest
@@ -17,9 +18,16 @@ from datasluice.connectors.catalog.ckan.mapping import (
     parse_action_envelope,
     shape_result_envelope,
 )
-from datasluice.connectors.catalog.ckan.results import CKANTokenResult
-from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
+from datasluice.connectors.catalog.ckan.results import (
+    CKANMutationResult,
+    CKANTokenResult,
+    default_standard_policy,
+    require_mutation_tier,
+)
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
+from datasluice.domain.catalog.operations import OperationId
+from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     CatalogConflictError,
     CatalogNotFoundError,
@@ -29,6 +37,7 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
     UnauthenticatedError,
 )
+from datasluice.runtime.mutation import build_mutation_receipt
 
 _OPERATION = "ckan/action-api-v3.dataset-list-show-search"
 _UNIQUE_PAYLOAD_TOKEN = "raw-envelope-secret-9f8e7d6c5b4a"
@@ -273,3 +282,71 @@ def test_unknown_actions_shape_losslessly_through_the_mapping_fallback() -> None
     item = envelope.items[0]
     assert isinstance(item, MappingRecord)
     assert item.to_dict()["payload"] == {"anything": ["goes", 1]}
+
+
+def test_destructive_tier_refusal_names_operation_and_never_touches_transport() -> None:
+    sends: list[object] = []
+
+    def send(request: object) -> object:
+        sends.append(request)
+        raise AssertionError("transport I/O attempted")
+
+    operation = OperationId("ckan", "datasets", "purge")
+
+    with pytest.raises(CatalogValidationError) as raised:
+        require_mutation_tier("destructive", operation, MutationPolicy(destructive=False))
+        send("unused")
+
+    assert "purge" in str(raised.value)
+    assert "confirmation" in raised.value.safe_action.lower()
+    assert sends == []
+
+
+def test_confirmed_destructive_policy_passes_the_gate() -> None:
+    policy = MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(confirmed=True),
+        concurrency=ConcurrencyPolicy(token="v1"),
+    )
+    operation = OperationId("ckan", "datasets", "purge")
+
+    assert require_mutation_tier("destructive", operation, policy) is policy
+
+
+def test_standard_tier_without_caller_policy_uses_spine_default() -> None:
+    effective = require_mutation_tier("standard", OperationId("ckan", "datasets", "create"), None)
+
+    assert isinstance(effective, MutationPolicy)
+    assert not effective.destructive
+    assert effective.concurrency is not None
+    assert effective.concurrency.allows_execution()
+
+
+def test_read_entries_never_engage_the_gate() -> None:
+    operation = OperationId("ckan", "datasets", "show")
+    policy = default_standard_policy()
+
+    assert require_mutation_tier("read", operation, None) is None
+    assert require_mutation_tier("read", operation, policy) is policy
+
+
+def test_mutation_result_serialization_carries_no_credentials() -> None:
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+
+    envelope = cast(
+        "ResultEnvelope[CKANResultItem]",
+        ResultEnvelope(items=(CKANTokenResult.from_token_result({"token": _TOKEN_LITERAL}),)),
+    )
+    receipt = build_mutation_receipt(
+        OperationId("ckan", "datasets", "create"),
+        CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+        default_standard_policy(),
+        "succeeded",
+        {"dataset": "weather", "attempt": 1},
+    )
+
+    payload = CKANMutationResult(result=envelope, receipt=receipt).to_dict()
+    serialized = json.dumps(payload, default=str)
+
+    assert _TOKEN_LITERAL not in serialized
+    assert "aBcDeFgH12345678" not in serialized
