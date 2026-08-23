@@ -189,12 +189,14 @@ print(f"peak_rss_kb={peak_rss_kb}")
 
 def test_all_jsonl_peak_memory_stays_bounded() -> None:
     """Large streamed JSONL output does not retain every emitted row in process memory."""
+    environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")}
     result = subprocess.run(
         [sys.executable, "-c", _SUBPROCESS_CODE],
         capture_output=True,
         text=True,
         check=True,
         timeout=90,
+        env=environment,
     )
     peak_line = next(line for line in result.stdout.splitlines() if line.startswith("peak_rss_kb="))
     peak_rss_kb = int(peak_line.partition("=")[2])

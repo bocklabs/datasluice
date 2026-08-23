@@ -211,16 +211,19 @@ def test_cases_reference_only_v2_operation_ids_and_cover_each_one() -> None:
 
 
 def test_regenerated_fingerprint_script_is_idempotent() -> None:
+    import os
     import subprocess
     import sys
 
     before = _PROFILE_PATH.read_bytes()
+    environment = {**os.environ, "PYTHONPATH": str(_ROOT / "src")}
     result = subprocess.run(
         [sys.executable, "scripts/regenerate_fixture_fingerprint.py", "--platform", "ckan"],
         cwd=_ROOT,
         capture_output=True,
         text=True,
         check=False,
+        env=environment,
     )
     assert result.returncode == 0, result.stderr
     first_pass = _PROFILE_PATH.read_bytes()
@@ -230,6 +233,7 @@ def test_regenerated_fingerprint_script_is_idempotent() -> None:
         capture_output=True,
         text=True,
         check=True,
+        env=environment,
     )
     assert _PROFILE_PATH.read_bytes() == first_pass
     assert hashlib.sha256(_CASES_PATH.read_bytes()).hexdigest() in result.stdout

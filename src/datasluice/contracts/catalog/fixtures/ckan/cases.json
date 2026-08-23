@@ -77,7 +77,11 @@
     },
     {
       "operation": "ckan/action-api-v3.organization-create-update-delete-members",
-      "outcome": "authenticated-success"
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-sysadmin"
+      }
     },
     {
       "operation": "ckan/action-api-v3.organization-create-update-delete-members",
@@ -85,7 +89,11 @@
     },
     {
       "operation": "ckan/action-api-v3.group-create-update-delete-members",
-      "outcome": "authenticated-success"
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-sysadmin"
+      }
     },
     {
       "operation": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",

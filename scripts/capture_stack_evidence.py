@@ -156,7 +156,7 @@ def _docker_image_digest(reference: str) -> dict[str, str]:
     except (OSError, subprocess.SubprocessError):
         return {"reference": reference, "digest": "unavailable"}
     digest = completed.stdout.strip()
-    if not digest.startswith("sha256:"):
+    if "@sha256:" not in digest:
         return {"reference": reference, "digest": "unavailable"}
     return {"reference": reference, "digest": digest}
 
@@ -228,6 +228,14 @@ def _forbidden_artifact(
     }
 
 
+def _purge_quietly(client: SyncCKANClient, name: str) -> None:
+    """Purge one leftover entity from a prior aborted run, ignoring failures."""
+    try:
+        client.datasets.dataset_purge(id=name, policy=confirmed_destructive_policy())
+    except Exception:
+        pass
+
+
 def capture_identity_presence(client: SyncCKANClient) -> dict[str, bool]:
     """Assert the three seeded identities by presence, never by user counts."""
     presence: dict[str, bool] = {}
@@ -251,8 +259,9 @@ def capture_sysadmin_receipts(client: SyncCKANClient, out_dir: Path, provenance:
     )
     paths: list[Path] = []
     for action, scratch, purge in flows:
+        _purge_quietly(client, scratch)
         if action == "dataset_purge":
-            client.datasets.package_create(name=scratch)
+            client.datasets.package_create(name=scratch, owner_org=EVIDENCE_ORG)
         elif action == "organization_purge":
             client.organizations.organization_create(name=scratch)
         else:
@@ -326,7 +335,7 @@ def bulk_execute_item(
     if mode == "create":
 
         def create_item(item: CatalogId) -> MutationReceipt:
-            result = client.datasets.package_create(name=item.value, policy=policy_factory())
+            result = client.datasets.package_create(name=item.value, owner_org=EVIDENCE_ORG, policy=policy_factory())
             return result.receipt
 
         return create_item
@@ -418,6 +427,8 @@ def run_bulk_capture(client: SyncCKANClient, bulk_count: int, out_dir: Path, pro
         CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, f"{BULK_PREFIX}-{index:03d}")
         for index in range(bulk_count)
     )
+    for item in items:
+        _purge_quietly(client, item.value)
     phases = [_run_bulk_phase(client, items, mode) for mode in ("create", "delete")]
     document = {"schema_version": 1, "kind": "bulk_run_evidence", "bulk_count": bulk_count, "phases": phases}
     document.update(provenance)
@@ -456,6 +467,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for role, credential in credentials.items()
         }
         record_provenance(clients["sysadmin"], provenance)
+        _purge_quietly(clients["sysadmin"], ORG_ADMIN_DATASET)
         presence = capture_identity_presence(clients["sysadmin"])
         missing = [identity for identity, present in presence.items() if not present]
         if missing:

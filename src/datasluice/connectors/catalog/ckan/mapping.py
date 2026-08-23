@@ -62,7 +62,7 @@ RESULT_KINDS: Mapping[str, tuple[str, str | None]] = MappingProxyType(
         "package_revise": (_RECORD, "package"),
         "package_resource_reorder": (_MAPPING, None),
         "package_owner_org_update": (_MAPPING, None),
-        "package_delete": (_RECORD, "package"),
+        "package_delete": (_VALUE, None),
         "dataset_purge": (_VALUE, None),
         "bulk_update_private": (_RECORD_LIST, "task_status"),
         "bulk_update_public": (_RECORD_LIST, "task_status"),

@@ -8,9 +8,15 @@ IDENTITIES="datasluice-sysadmin datasluice-org-admin datasluice-user"
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
+# ckan user show exits 0 even for missing users, so presence is checked in the DB.
+identity_exists() {
+  local name="$1"
+  [ "$(compose exec -T db psql -U ckan -d ckan -tAc "SELECT count(*) FROM \"user\" WHERE name = '${name}'")" = "1" ]
+}
+
 ensure_user() {
   local name="$1"
-  if compose exec -T ckan ckan user show "$name" >/dev/null 2>&1; then
+  if identity_exists "$name"; then
     echo "identity present: ${name}"
     return 0
   fi
@@ -21,7 +27,9 @@ ensure_user() {
 issue_token() {
   local name="$1" token_name="$2" token
   compose exec -T ckan ckan user token revoke "$name" "$token_name" >/dev/null 2>&1 || true
-  token="$(compose exec -T ckan ckan user token add "$name" "$token_name" 2>/dev/null | tail -n 1)"
+  # Token output goes to stdout; container log lines go to stderr under -T only
+  # sometimes, so take the last line that looks like a JWT.
+  token="$(compose exec -T ckan ckan user token add "$name" "$token_name" 2>/dev/null | grep -Eo 'eyJ[A-Za-z0-9_.-]+' | tail -n 1)"
   if [ -z "$token" ]; then
     echo "failed to issue token for ${name}" >&2
     exit 1
@@ -33,7 +41,7 @@ for identity in $IDENTITIES; do
   ensure_user "$identity"
 done
 
-compose exec -T ckan ckan sysadmin add datasluice-sysadmin >/dev/null
+compose exec -T db psql -U ckan -d ckan -c "UPDATE \"user\" SET sysadmin = true WHERE name = 'datasluice-sysadmin' AND sysadmin = false;" >/dev/null
 echo "sysadmin role granted: datasluice-sysadmin"
 
 SYSADMIN_TOKEN="$(issue_token datasluice-sysadmin datasluice-evidence-capture)"

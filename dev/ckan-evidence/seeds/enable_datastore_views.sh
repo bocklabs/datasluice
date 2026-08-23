@@ -16,7 +16,7 @@ fi
 compose exec -T ckan ckan datastore set-permissions | compose exec -T db psql -U "$POSTGRES_USER" -d datastore
 echo "datastore read/write permissions applied"
 
-compose exec -T ckan ckan config-tool /etc/ckan/default/ckan.ini "ckan.views.default_views = image_view text_view datatables_view"
+compose exec -T ckan ckan config-tool /srv/app/ckan.ini "ckan.views.default_views = image_view text_view datatables_view"
 echo "default resource views configured (image_view text_view datatables_view)"
 
 echo "datastore and resource-view enablement complete (sqlsearch left at its server-side default: OFF)"

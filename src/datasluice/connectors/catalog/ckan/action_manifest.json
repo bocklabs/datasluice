@@ -99,7 +99,7 @@
       "group": "datasets",
       "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
       "mutation_class": "standard",
-      "result_kind": "record"
+      "result_kind": "value"
     },
     {
       "name": "dataset_purge",

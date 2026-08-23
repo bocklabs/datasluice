@@ -72,3 +72,4 @@ graphify-out/*
 !graphify-out/graph.html
 !graphify-out/graph.json
 !graphify-out/manifest.json
+dev/ckan-evidence/.env

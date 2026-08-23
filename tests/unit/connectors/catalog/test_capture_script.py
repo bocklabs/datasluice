@@ -172,7 +172,7 @@ def test_record_provenance_embeds_version_and_image_references() -> None:
     assert stack["ckan_version"] == "2.11.5"
     images = stack["images"]
     assert [image["reference"] for image in images] == list(capture.EVIDENCE_IMAGES)
-    assert all(image["digest"].startswith("sha256:") or image["digest"] == "unavailable" for image in images)
+    assert all("@sha256:" in image["digest"] or image["digest"] == "unavailable" for image in images)
 
 
 def test_sysadmin_flow_collects_one_confirmed_receipt_per_purge_family(tmp_path: Path) -> None:
@@ -299,7 +299,7 @@ def test_bulk_execute_item_maps_typed_create_and_delete_to_receipts() -> None:
     assert create_receipt.target == item
     assert delete_receipt.target == item
     bodies = [json.loads(request.body or b"{}") for request in transport.requests]
-    assert bodies[0] == {"name": "datasluice-capture-bulk-000"}
+    assert bodies[0] == {"name": "datasluice-capture-bulk-000", "owner_org": capture.EVIDENCE_ORG}
     assert bodies[1] == {"id": "datasluice-capture-bulk-000"}
 
 

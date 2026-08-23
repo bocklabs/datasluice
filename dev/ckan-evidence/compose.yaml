@@ -3,6 +3,7 @@ name: ckan-evidence
 services:
   ckan:
     image: ckan/ckan-base:2.11.5
+    platform: linux/amd64
     restart: unless-stopped
     ports:
       - "127.0.0.1:5500:5000"
@@ -12,11 +13,14 @@ services:
       - CKAN_STORAGE_PATH=/var/lib/ckan
       - CKAN_SQLALCHEMY_URL=postgresql://ckan:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD per README before up}@db/ckan
       - CKAN_DATASTORE_WRITE_URL=postgresql://ckan:${POSTGRES_PASSWORD}@db/datastore
-      - CKAN_DATASTORE_READ_URL=postgresql://ckan:${POSTGRES_PASSWORD}@db/datastore
+      - CKAN_DATASTORE_READ_URL=postgresql://datastore_ro:${DATASTORE_RO_PASSWORD}@db/datastore
       - CKAN_SOLR_URL=http://solr:8983/solr/ckan
       - CKAN_REDIS_URL=redis://redis:6379/1
       - CKAN_PLUGINS=envvars image_view text_view datatables_view datastore activity
+      - CKAN__AUTH__USER_CREATE_ORGANIZATIONS=false
+      - CKAN__AUTH__USER_CREATE_GROUPS=false
       - CKAN_BEAKER_SESSION_SECRET=${CKAN_BEAKER_SESSION_SECRET:?set CKAN_BEAKER_SESSION_SECRET per README before up}
+      - DATASTORE_RO_PASSWORD=${DATASTORE_RO_PASSWORD:?set DATASTORE_RO_PASSWORD per README before up}
       - CKAN_WTF_CSRF_SECRET_KEY=${CKAN_WTF_CSRF_SECRET_KEY:?set CKAN_WTF_CSRF_SECRET_KEY per README before up}
     volumes:
       - ckan_storage:/var/lib/ckan
@@ -41,8 +45,10 @@ services:
       - POSTGRES_USER=ckan
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD per README before up}
       - POSTGRES_DB=ckan
+      - DATASTORE_RO_PASSWORD=${DATASTORE_RO_PASSWORD:?set DATASTORE_RO_PASSWORD per README before up}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "ckan"]
       interval: 10s
@@ -51,6 +57,7 @@ services:
 
   solr:
     image: ckan/ckan-solr:2.11-solr9
+    platform: linux/amd64
     restart: unless-stopped
     volumes:
       - solr_data:/var/solr
