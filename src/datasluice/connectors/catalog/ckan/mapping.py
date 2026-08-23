@@ -269,7 +269,11 @@ def shape_result_envelope(
     outcome, family = spec if spec is not None else _fallback_outcome(action)
     items: tuple[CKANResultItem, ...]
     if outcome == _TOKEN_SECRET:
-        items = cast("tuple[CKANResultItem, ...]", (CKANTokenResult.from_token_result(result),))
+        try:
+            item = CKANTokenResult.from_token_result(result)
+        except ValueError as exc:
+            raise _shaping_error(action, str(exc)) from exc
+        items = cast("tuple[CKANResultItem, ...]", (item,))
     elif outcome == _MAPPING:
         items = _mapping_items(action, result)
     elif outcome == _VALUE:
