@@ -82,6 +82,10 @@ def _reject_deprecated(action: str, payload: Mapping[str, object]) -> None:
 
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
+    if action == "package_revise":
+        match = params.get("match")
+        target = match.get("id") or match.get("name") if isinstance(match, Mapping) else None
+        return CatalogId(PLATFORM, ResourceKind.DATASET, str(target) if target else "package-revise")
     if action in _ORG_TARGET_ACTIONS:
         return CatalogId(PLATFORM, ResourceKind.ORGANIZATION, str(params["org_id"]))
     key = "name" if action == "package_create" else "id"
