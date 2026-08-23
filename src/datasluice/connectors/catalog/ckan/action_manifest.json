@@ -212,6 +212,181 @@
       "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
       "mutation_class": "read",
       "result_kind": "record-list"
+    },
+    {
+      "name": "organization_list",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "organization_autocomplete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "member_list",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "member_roles_list",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "organization_create",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_update",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_patch",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_delete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_purge",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_member_create",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_member_delete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "member_create",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "member_delete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_list",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "group_list_authz",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "group_show",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_package_show",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_autocomplete",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_create",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_update",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_patch",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_delete",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_purge",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_member_create",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_member_delete",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
     }
   ]
 }

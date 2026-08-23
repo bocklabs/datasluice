@@ -98,6 +98,8 @@ RESULT_KINDS: Mapping[str, tuple[str, str | None]] = MappingProxyType(
         "group_patch": (_RECORD, "group"),
         "group_delete": (_RECORD, "group"),
         "group_purge": (_VALUE, None),
+        "group_member_create": (_RECORD, "member"),
+        "group_member_delete": (_VALUE, None),
         "member_create": (_RECORD, "member"),
         "member_delete": (_VALUE, None),
         "member_list": (_RECORD_LIST, "member"),

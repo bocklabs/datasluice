@@ -83,6 +83,11 @@ from datasluice.runtime.transport.base import (
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.services.datasets import AsyncDatasetsService, SyncDatasetsService
     from datasluice.connectors.catalog.ckan.services.filestore import AsyncFilestoreService, SyncFilestoreService
+    from datasluice.connectors.catalog.ckan.services.groups import AsyncGroupsService, SyncGroupsService
+    from datasluice.connectors.catalog.ckan.services.organizations import (
+        AsyncOrganizationsService,
+        SyncOrganizationsService,
+    )
     from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
 
 PLATFORM = CatalogPlatform.CKAN
@@ -259,9 +264,11 @@ class SyncCKANClient:
         return SyncResourcesService(self, "resources", ResourceRecord.from_dict)
 
     @property
-    def organizations(self) -> _SyncOrganizationService:
+    def organizations(self) -> SyncOrganizationsService:
         """Return the synchronous organization projection carrying both surfaces."""
-        return _SyncOrganizationService(self, "organizations", OrganizationRecord.from_dict)
+        from datasluice.connectors.catalog.ckan.services.organizations import SyncOrganizationsService
+
+        return SyncOrganizationsService(self, "organizations", OrganizationRecord.from_dict)
 
     @property
     def action_discovery(self) -> _SyncDiscoveryService:
@@ -269,9 +276,11 @@ class SyncCKANClient:
         return _SyncDiscoveryService(self, "action_discovery")
 
     @property
-    def groups(self) -> _SyncNativeService:
+    def groups(self) -> SyncGroupsService:
         """Return the synchronous native group group."""
-        return _SyncNativeService(self, "groups")
+        from datasluice.connectors.catalog.ckan.services.groups import SyncGroupsService
+
+        return SyncGroupsService(self)
 
     @property
     def users(self) -> _SyncNativeService:
@@ -602,9 +611,11 @@ class AsyncCKANClient:
         return AsyncResourcesService(self, "resources", ResourceRecord.from_dict)
 
     @property
-    def organizations(self) -> _AsyncOrganizationService:
+    def organizations(self) -> AsyncOrganizationsService:
         """Return the asynchronous organization projection carrying both surfaces."""
-        return _AsyncOrganizationService(self, "organizations", OrganizationRecord.from_dict)
+        from datasluice.connectors.catalog.ckan.services.organizations import AsyncOrganizationsService
+
+        return AsyncOrganizationsService(self, "organizations", OrganizationRecord.from_dict)
 
     @property
     def action_discovery(self) -> _AsyncDiscoveryService:
@@ -612,9 +623,11 @@ class AsyncCKANClient:
         return _AsyncDiscoveryService(self, "action_discovery")
 
     @property
-    def groups(self) -> _AsyncNativeService:
+    def groups(self) -> AsyncGroupsService:
         """Return the asynchronous native group group."""
-        return _AsyncNativeService(self, "groups")
+        from datasluice.connectors.catalog.ckan.services.groups import AsyncGroupsService
+
+        return AsyncGroupsService(self)
 
     @property
     def users(self) -> _AsyncNativeService:
