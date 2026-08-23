@@ -14,6 +14,7 @@ from typing import Self, cast
 
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEntry, ActionInventory
 from datasluice.connectors.catalog.ckan.mapping import parse_action_envelope, shape_result_envelope
+from datasluice.connectors.catalog.ckan.rate_limits import resolve_rate_policy
 from datasluice.connectors.catalog.ckan.results import require_mutation_tier
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings, normalize_origin
 from datasluice.contracts.catalog.native.ckan import CKANResultItem
@@ -1405,7 +1406,7 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
         probe_runner=settings.probe_runner,
         capability_cache_ttl=settings.capability_cache_ttl,
         owns_transport=owns_transport,
-        rate_policy=settings.rate_policy,
+        rate_policy=resolve_rate_policy(settings),
         probe_policy=settings.probe_policy,
     )
 
@@ -1436,6 +1437,6 @@ def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
         probe_runner=settings.async_probe_runner,
         capability_cache_ttl=settings.capability_cache_ttl,
         owns_transport=owns_transport,
-        rate_policy=settings.rate_policy,
+        rate_policy=resolve_rate_policy(settings),
         probe_policy=settings.probe_policy,
     )

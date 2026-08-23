@@ -18,6 +18,11 @@ from datasluice.connectors.catalog.ckan.clients import (
     declared_ckan_profile,
 )
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEntry, ActionInventory
+from datasluice.connectors.catalog.ckan.rate_limits import (
+    DocumentedPortalLimit,
+    UnlimitedRatePolicy,
+    resolve_rate_policy,
+)
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.native.ckan import SyncCKANServices
 from datasluice.contracts.catalog.protocols import (
@@ -120,16 +125,20 @@ def _direct_client(
     probe_policy: str = "auto",
     probe_runner: StubProbeRunner | None = None,
     owns_transport: bool = True,
+    rate_policy: object | None = None,
+    retry_sleep: object | None = None,
 ) -> SyncCKANClient:
-    return SyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        inventory=inventory,
-        probe_policy=probe_policy,
-        probe_runner=probe_runner,
-        owns_transport=owns_transport,
-    )
+    client_kwargs: dict[str, object] = {
+        "origin": LOOPBACK_ORIGIN,
+        "inventory": inventory,
+        "probe_policy": probe_policy,
+        "probe_runner": probe_runner,
+        "owns_transport": owns_transport,
+        "rate_policy": rate_policy,
+    }
+    if retry_sleep is not None:
+        client_kwargs["retry_sleep"] = retry_sleep
+    return SyncCKANClient(transport, declared_ckan_profile(), **client_kwargs)  # ty: ignore[invalid-argument-type]
 
 
 def _datastore_inventory() -> ActionInventory:
@@ -457,3 +466,50 @@ def test_async_owned_transport_acloses_exactly_once() -> None:
     asyncio.run(client.aclose())
 
     assert holder["transport"].close_count == 1
+
+
+class CallerRatePolicy:
+    """A caller-supplied policy record standing in for an explicit override."""
+
+    def __init__(self) -> None:
+        self.source_note = "caller override wins verbatim"
+
+
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
+def test_default_settings_attach_the_none_documented_unlimited_rate_policy() -> None:
+    """Construction attaches the unlimited default for undocumented origins."""
+    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    client = create_sync_client(_settings(transport))
+
+    assert isinstance(client.rate_policy, UnlimitedRatePolicy)
+    assert client.rate_policy.source_note
+
+    documented = resolve_rate_policy(CKANClientSettings(base_url="https://demo.ckan.org", sync_transport=transport))
+    assert isinstance(documented, DocumentedPortalLimit)
+    assert documented.requests_per_window is None
+    assert "no documented" in documented.source_note
+
+
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
+def test_explicit_caller_rate_policy_replaces_the_resolution_verbatim() -> None:
+    """An explicit caller policy attaches unmodified, overriding table and default."""
+    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    policy = CallerRatePolicy()
+    explicit = CKANClientSettings(base_url="https://demo.ckan.org", sync_transport=transport, rate_policy=policy)
+
+    assert resolve_rate_policy(explicit) is policy
+    client = create_sync_client(explicit)
+    assert client.rate_policy is policy
+
+
+def test_rate_policy_loopback_dispatch_completes_with_zero_throttle_or_sleep_invocations() -> None:
+    """The metadata-only policy never injects waits into loopback dispatches."""
+    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    sleeps: list[float] = []
+    client = _direct_client(transport, rate_policy=UnlimitedRatePolicy(), retry_sleep=sleeps.append)
+
+    client.action_discovery.status_show()
+    client.action_discovery.help_show()
+
+    assert len(transport.requests) == 2
+    assert sleeps == []

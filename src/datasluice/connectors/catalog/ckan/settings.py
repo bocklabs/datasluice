@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
+from datasluice.connectors.catalog.ckan.rate_limits import PortalRatePolicy
 from datasluice.domain.catalog.auth import (
     CatalogCredential,
     CKANCredential,
@@ -29,13 +30,6 @@ PROBE_POLICIES = ("auto", "declared-baseline")
 
 type SyncTransportOverride = CatalogTransport | Callable[[], CatalogTransport]
 type AsyncTransportOverride = AsyncCatalogTransport | Callable[[], AsyncCatalogTransport]
-
-
-@runtime_checkable
-class PortalRatePolicy(Protocol):
-    """Structural contract satisfied by connector rate-policy records."""
-
-    source_note: str
 
 
 def normalize_origin(value: str) -> str:
