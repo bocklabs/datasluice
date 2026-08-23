@@ -406,48 +406,40 @@ class SyncCKANClient:
             )
 
         attempts = 0
-        recorded = False
 
         def send() -> RuntimeResponse:
-            nonlocal attempts, recorded
+            nonlocal attempts
             attempts += 1
-            recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = self._transport.send(request)
             except TransportFailure:
                 after = self._breakers.record_transport_failure(key)
-                recorded = True
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
             after = self._breakers.record_response(key, response.status_code)
-            recorded = True
             self._emit_breaker_change(owning_id, before.open, after.open)
             return response
 
         try:
-            try:
-                response = RetryLoop(
-                    budget=self._budget,
-                    idempotency=idempotency,
-                    deadline=deadline,
-                    max_attempts=self._max_attempts,
-                    sleep=self._retry_sleep,
-                ).run(send)
-                result = self._decode(owning_id, entry, response)
-            except BudgetExhaustedError:
-                self._emit(
-                    owning_id,
-                    "budget_exhausted",
-                    budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-                )
-                raise
-            except Exception:
-                self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
-                raise
-        finally:
-            if not recorded:
-                self._breakers.record_transport_failure(key)
+            response = RetryLoop(
+                budget=self._budget,
+                idempotency=idempotency,
+                deadline=deadline,
+                max_attempts=self._max_attempts,
+                sleep=self._retry_sleep,
+            ).run(send)
+            result = self._decode(owning_id, entry, response)
+        except BudgetExhaustedError:
+            self._emit(
+                owning_id,
+                "budget_exhausted",
+                budget_usage=max(0.0, self._budget.total - deadline.remaining()),
+            )
+            raise
+        except Exception:
+            self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
+            raise
         self._emit(
             owning_id,
             "succeeded",
@@ -769,48 +761,40 @@ class AsyncCKANClient:
             )
 
         attempts = 0
-        recorded = False
 
         async def send() -> RuntimeResponse:
-            nonlocal attempts, recorded
+            nonlocal attempts
             attempts += 1
-            recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = await self._transport.send(request)
             except TransportFailure:
                 after = self._breakers.record_transport_failure(key)
-                recorded = True
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
             after = self._breakers.record_response(key, response.status_code)
-            recorded = True
             self._emit_breaker_change(owning_id, before.open, after.open)
             return response
 
         try:
-            try:
-                response = await RetryLoop(
-                    budget=self._budget,
-                    idempotency=idempotency,
-                    deadline=deadline,
-                    max_attempts=self._max_attempts,
-                    sleep=lambda _: None,
-                ).run_async(send, sleep=self._retry_sleep)
-                result = self._decode(owning_id, entry, response)
-            except BudgetExhaustedError:
-                self._emit(
-                    owning_id,
-                    "budget_exhausted",
-                    budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-                )
-                raise
-            except Exception:
-                self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
-                raise
-        finally:
-            if not recorded:
-                self._breakers.record_transport_failure(key)
+            response = await RetryLoop(
+                budget=self._budget,
+                idempotency=idempotency,
+                deadline=deadline,
+                max_attempts=self._max_attempts,
+                sleep=lambda _: None,
+            ).run_async(send, sleep=self._retry_sleep)
+            result = self._decode(owning_id, entry, response)
+        except BudgetExhaustedError:
+            self._emit(
+                owning_id,
+                "budget_exhausted",
+                budget_usage=max(0.0, self._budget.total - deadline.remaining()),
+            )
+            raise
+        except Exception:
+            self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
+            raise
         self._emit(
             owning_id,
             "succeeded",
