@@ -13,9 +13,9 @@ def test_connector_contract_imports_without_its_extra(platform: str) -> None:
     importlib.import_module(f"datasluice.connectors.catalog.{platform}")
 
 
-@pytest.mark.parametrize("platform", ("ckan", "udata", "socrata"))
+@pytest.mark.parametrize("platform", ("udata", "socrata"))
 def test_live_client_requires_its_connector_extra(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
-    """Live construction reports the exact missing platform extra."""
+    """Stubbed live construction reports the exact missing platform extra."""
     live = importlib.import_module(f"datasluice.connectors.catalog.{platform}.live")
     monkeypatch.setattr("datasluice.runtime.extras.importlib.util.find_spec", lambda _: None)
 
@@ -23,7 +23,7 @@ def test_live_client_requires_its_connector_extra(monkeypatch: pytest.MonkeyPatc
         live.create_live_client()
 
 
-@pytest.mark.parametrize("platform", ("ckan", "udata", "socrata"))
+@pytest.mark.parametrize("platform", ("udata", "socrata"))
 def test_live_client_reaches_future_implementation_after_extra_gate(
     monkeypatch: pytest.MonkeyPatch, platform: str
 ) -> None:
@@ -33,3 +33,26 @@ def test_live_client_reaches_future_implementation_after_extra_gate(
 
     with pytest.raises(NotImplementedError, match="not implemented"):
         live.create_live_client()
+
+
+def test_ckan_live_construction_requires_the_connector_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both real CKAN factories enforce the published datasluice[ckan] gate."""
+    from datasluice.connectors.catalog.ckan import CKANClientSettings, create_async_client, create_sync_client
+
+    monkeypatch.setattr("datasluice.runtime.extras.importlib.util.find_spec", lambda _: None)
+    settings = CKANClientSettings(base_url="https://demo.ckan.org")
+
+    with pytest.raises(ImportError, match=r"datasluice\[ckan\]"):
+        create_sync_client(settings)
+    with pytest.raises(ImportError, match=r"datasluice\[ckan\]"):
+        create_async_client(settings)
+
+
+def test_ckan_live_construction_reaches_the_real_client_after_the_gate() -> None:
+    """A satisfied extra constructs the real transport-backed CKAN client."""
+    from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_client
+
+    client = create_sync_client(CKANClientSettings(base_url="https://demo.ckan.org"))
+
+    assert client.transport is not None
+    client.close()

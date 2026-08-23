@@ -66,6 +66,16 @@ CANONICAL_PLATFORM_EXPORTS: dict[str, tuple[str, str]] = {
     "socrata": ("SocrataConnector", "create_socrata_connector"),
 }
 
+CANONICAL_LIVE_CLIENT_EXPORTS: dict[str, tuple[str, ...]] = {
+    "ckan": (
+        "CKANClientSettings",
+        "CKANConnector",
+        "create_async_client",
+        "create_ckan_connector",
+        "create_sync_client",
+    ),
+}
+
 CONNECTOR_MODULE_PATHS: dict[str, str] = {
     "ckan": "src/datasluice/connectors/catalog/ckan/connector.py",
     "udata": "src/datasluice/connectors/catalog/udata/connector.py",
@@ -708,10 +718,11 @@ def _certificate_parts(platform: str):
 
 
 def test_canonical_platform_packages_export_exactly_the_typed_surface() -> None:
-    """Test 1: each platform package exports only its connector and factory."""
+    """Test 1: each platform package exports only its canonical published surface."""
     for platform, (connector_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
         module = importlib.import_module(f"datasluice.connectors.catalog.{platform}")
-        assert sorted(module.__all__) == sorted((connector_name, factory_name))
+        expected = CANONICAL_LIVE_CLIENT_EXPORTS.get(platform, (connector_name, factory_name))
+        assert sorted(module.__all__) == sorted(expected)
         connector = getattr(module, connector_name)
         factory = getattr(module, factory_name)
         assert inspect.isclass(connector) and connector.__module__.startswith(
@@ -720,6 +731,8 @@ def test_canonical_platform_packages_export_exactly_the_typed_surface() -> None:
         assert inspect.isfunction(factory) and factory.__module__.startswith(
             f"datasluice.connectors.catalog.{platform}."
         )
+        for extra in set(expected) - {connector_name, factory_name}:
+            assert getattr(module, extra).__module__.startswith(f"datasluice.connectors.catalog.{platform}.")
 
 
 def test_namespaced_entry_points_declare_and_install_the_canonical_factories() -> None:

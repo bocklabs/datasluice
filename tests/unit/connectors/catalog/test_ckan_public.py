@@ -103,11 +103,17 @@ def _context(*, profile: EffectiveCapabilityProfile | None = None) -> CatalogCon
     )
 
 
-def test_ckan_package_exports_only_its_connector_and_factory() -> None:
+def test_ckan_package_exports_the_canonical_connector_factory_and_live_clients() -> None:
     """The platform package is the sole canonical CKAN publication point."""
     import datasluice.connectors.catalog.ckan as ckan
 
-    assert ckan.__all__ == ["CKANConnector", "create_ckan_connector"]
+    assert ckan.__all__ == [
+        "CKANClientSettings",
+        "CKANConnector",
+        "create_async_client",
+        "create_ckan_connector",
+        "create_sync_client",
+    ]
 
 
 def test_factory_accepts_canonical_context_and_validates_profile_identity() -> None:

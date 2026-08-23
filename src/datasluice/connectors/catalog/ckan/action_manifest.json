@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "platform": "ckan",
+  "profile_version": "2.11.5",
+  "actions": [
+    {
+      "name": "help_show",
+      "group": "action_discovery",
+      "owning_operation_id": "ckan/action-api-v3.discovery-help-and-status",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "status_show",
+      "group": "action_discovery",
+      "owning_operation_id": "ckan/action-api-v3.discovery-help-and-status",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_show",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "current_package_list_with_resources",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "resource_show",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_search",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_show",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_list_for_user",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    }
+  ]
+}
