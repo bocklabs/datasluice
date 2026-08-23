@@ -41,10 +41,6 @@
     },
     {
       "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
       "outcome": "missing-credentials"
     },
     {
@@ -52,8 +48,32 @@
       "outcome": "invalid-credentials"
     },
     {
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-editor"
+      }
+    },
+    {
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "ckan/action-api-v3.dataset-collaborators",
+      "outcome": "deployment-disabled"
+    },
+    {
       "operation": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
-      "outcome": "authenticated-success"
+      "outcome": "core"
+    },
+    {
+      "operation": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-editor"
+      }
     },
     {
       "operation": "ckan/action-api-v3.organization-create-update-delete-members",

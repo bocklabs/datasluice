@@ -5,7 +5,7 @@
   "platform_api_version": "Action API v3",
   "official_source_uri": "https://docs.ckan.org/en/2.11/api/",
   "source_accessed_at": "2026-08-15",
-  "fixture_fingerprint": "b38166a09f69046d18d7392f55fd071f84dc39ce2911a6daea050b613cc0ed9b",
+  "fixture_fingerprint": "23fdff40ab2fef81a0b604b86e9f83e3a0be248b0ebd656eca00a863f2fe73fd",
   "operations": [
     {
       "id": "ckan/action-api-v3.discovery-help-and-status",

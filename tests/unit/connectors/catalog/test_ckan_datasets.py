@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from importlib import resources
+from typing import cast
 
 import pytest
 
@@ -358,3 +360,60 @@ def test_dataset_service_surfaces_stay_in_structural_lockstep_across_modes() -> 
     for name in public:
         assert inspect.iscoroutinefunction(getattr(AsyncDatasetsService, name)), name
         assert not inspect.iscoroutinefunction(getattr(SyncDatasetsService, name)), name
+
+
+def _cases_document() -> dict[str, object]:
+    raw = (
+        resources.files("datasluice.contracts.catalog.fixtures")
+        .joinpath("ckan")
+        .joinpath("cases.json")
+        .read_text(encoding="utf-8")
+    )
+    return cast("dict[str, object]", json.loads(raw))
+
+
+_DATASET_PREFIX = "action-api-v3.dataset-"
+_RESOURCE_UMBRELLA = "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload"
+
+
+def _dataset_or_resource_rows() -> list[dict[str, object]]:
+    document = _cases_document()
+    cases = cast("list[object]", document.get("cases", []))
+    rows = [row for row in cases if isinstance(row, dict)]
+    return [
+        row
+        for row in rows
+        if str(row.get("operation", "")).split("/", 1)[-1].startswith(_DATASET_PREFIX)
+        or row.get("operation") == _RESOURCE_UMBRELLA
+    ]
+
+
+def test_corpus_dataset_and_resource_rows_resolve_to_manifest_actions() -> None:
+    """Every corpus row of these families names a manifest-owned v2 operation id."""
+    from datasluice.contracts.catalog.fixtures import load_reference_fixture_set
+
+    fixture_set = load_reference_fixture_set("ckan")
+    owners = {entry.owning_operation_id for entry in CKAN_ACTIONS.entries}
+    rows = _dataset_or_resource_rows()
+    assert rows
+    for row in rows:
+        assert str(row["operation"]) in owners, f"corpus row outside the manifest: {row}"
+
+    pairs = {(str(case.operation_id), case.outcome) for case in fixture_set.cases}
+    assert ("ckan/action-api-v3.dataset-list-show-search", "core") in pairs
+    assert ("ckan/action-api-v3.dataset-create-update-patch-delete-purge", "authenticated-success") in pairs
+    assert ("ckan/action-api-v3.dataset-create-update-patch-delete-purge", "forbidden") in pairs
+    assert ("ckan/action-api-v3.dataset-collaborators", "deployment-disabled") in pairs
+    assert ("ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload", "core") in pairs
+
+
+def test_corpus_receipt_metadata_is_bounded_and_token_free() -> None:
+    """Purge/receipt evidence rides allowlisted metadata carrying no token shapes."""
+    rows = [row for row in _dataset_or_resource_rows() if isinstance(row.get("receipt_metadata"), dict)]
+    assert rows
+    blob = json.dumps([row["receipt_metadata"] for row in rows]).lower()
+    for forbidden in ("token", "authorization", "bearer", "secret", "password", "api_key"):
+        assert forbidden not in blob, f"receipt metadata leaks credential shape: {forbidden}"
+    for row in rows:
+        metadata = cast("dict[str, object]", row["receipt_metadata"])
+        assert set(metadata) <= {"receipt_id_shape", "actor_role_class"}
