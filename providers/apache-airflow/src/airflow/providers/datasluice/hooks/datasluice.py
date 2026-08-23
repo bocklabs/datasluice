@@ -93,10 +93,16 @@ def _ckan_sync_client(
     credential = credential_from_fields(
         CatalogPlatform.CKAN, _credential_fields(connection, extras, CatalogPlatform.CKAN)
     )
+    probe_policy = "declared-baseline" if base_url.startswith("http://") else "auto"
     if sync_transport is None:
-        settings = CKANClientSettings(base_url=base_url, credential=credential)
+        settings = CKANClientSettings(base_url=base_url, credential=credential, probe_policy=probe_policy)
     else:
-        settings = CKANClientSettings(base_url=base_url, credential=credential, sync_transport=sync_transport)
+        settings = CKANClientSettings(
+            base_url=base_url,
+            credential=credential,
+            probe_policy=probe_policy,
+            sync_transport=sync_transport,
+        )
     return create_sync_client(settings)
 
 
