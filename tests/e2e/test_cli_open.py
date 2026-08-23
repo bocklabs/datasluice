@@ -143,7 +143,6 @@ import sys
 
 import pyarrow as pa
 
-sys.path.insert(0, "src")
 import datasluice.cli.open as open_command
 from datasluice.domain import HttpDownload, Resource
 

@@ -13,8 +13,8 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.transforms.protocol import TransformContext  # noqa: E402
-from datasluice.transforms.steps import SelectColumns  # noqa: E402
+from datasluice.transforms.protocol import TransformContext
+from datasluice.transforms.steps import SelectColumns
 
 
 def _ctx(schema: Any) -> TransformContext:

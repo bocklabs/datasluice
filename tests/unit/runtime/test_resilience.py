@@ -202,10 +202,11 @@ def test_runtime_clients_expose_their_credential_resolvers_read_only() -> None:
 
     assert sync_client.credentials is resolver
     assert async_client.credentials is resolver
+    field = "credentials"
     with pytest.raises(AttributeError):
-        setattr(sync_client, "credentials", CredentialResolver())  # noqa: B010
+        setattr(sync_client, field, CredentialResolver())
     with pytest.raises(AttributeError):
-        setattr(async_client, "credentials", CredentialResolver())  # noqa: B010
+        setattr(async_client, field, CredentialResolver())
 
 
 def test_capability_cache_exposes_its_probe_runner_read_only() -> None:

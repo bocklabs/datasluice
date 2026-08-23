@@ -108,6 +108,16 @@ select = [
     "UP",  # pyupgrade
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Skip-guarded suites import optional dependencies after pytest.importorskip
+# guards, so imports legitimately follow executable statements there.
+"tests/unit/integrations/*" = ["E402"]
+"tests/unit/data/*" = ["E402"]
+"tests/unit/io/*" = ["E402"]
+"tests/unit/runtime/transport/*" = ["E402"]
+"tests/unit/runtime/test_transport_httpx.py" = ["E402"]
+"tests/unit/transforms/*" = ["E402"]
+
 [tool.coverage.run]
 branch = true
 parallel = true

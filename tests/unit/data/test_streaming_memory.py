@@ -18,10 +18,10 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.data.access import DataPlaneResourceReader  # noqa: E402
-from datasluice.domain import HttpDownload, Resource  # noqa: E402
-from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport  # noqa: E402
-from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
+from datasluice.data.access import DataPlaneResourceReader
+from datasluice.domain import HttpDownload, Resource
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
+from tests.helpers.http_server import MockResponse, start_test_server
 
 
 def _csv_text(rows: int) -> bytes:

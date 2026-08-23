@@ -33,7 +33,7 @@ class SyncLoopbackTransport:
         if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"} or parsed.port is None:
             raise ValueError("Catalog test transports only connect to explicit loopback HTTP URLs.")
         request = Request(url, headers=dict(headers or {}), method="GET")
-        with urlopen(request, timeout=2) as response:  # noqa: S310
+        with urlopen(request, timeout=2) as response:
             return LoopbackResponse(
                 status=response.status,
                 headers=dict(response.headers.items()),

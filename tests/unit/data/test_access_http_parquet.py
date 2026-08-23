@@ -17,15 +17,15 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("httpx")
 
-import pyarrow as pa  # noqa: E402
-import pyarrow.parquet as pq  # noqa: E402
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-from datasluice.data.access import DataPlaneResourceReader  # noqa: E402
-from datasluice.domain import HttpDownload, Resource  # noqa: E402
-from datasluice.runtime.transport.base import RuntimeResponse  # noqa: E402
-from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport  # noqa: E402
-from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport  # noqa: E402
-from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
+from datasluice.data.access import DataPlaneResourceReader
+from datasluice.domain import HttpDownload, Resource
+from datasluice.runtime.transport.base import RuntimeResponse
+from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
+from tests.helpers.http_server import MockResponse, start_test_server
 
 
 def _parquet_bytes() -> bytes:

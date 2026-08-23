@@ -11,12 +11,12 @@ import pytest
 
 httpx = pytest.importorskip("httpx")
 
-from datasluice.domain import CredentialScope  # noqa: E402
-from datasluice.runtime.transport.base import (  # noqa: E402
+from datasluice.domain import CredentialScope
+from datasluice.runtime.transport.base import (
     RuntimeRequest,
     TransportFailure,
 )
-from datasluice.runtime.transport.httpx_transport import (  # noqa: E402
+from datasluice.runtime.transport.httpx_transport import (
     AsyncHttpxCatalogTransport,
     HttpxCatalogTransport,
 )

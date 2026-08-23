@@ -14,13 +14,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "src"))
+from datasluice.contracts.catalog.fixtures import load_reference_fixture_set
 
-from datasluice.contracts.catalog.fixtures import load_reference_fixture_set  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PLATFORMS = ("ckan", "udata", "socrata")
 PROFILES_DIR = REPO_ROOT / "src" / "datasluice" / "contracts" / "catalog" / "profiles"

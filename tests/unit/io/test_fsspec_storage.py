@@ -27,9 +27,9 @@ except ImportError:
         allow_module_level=True,
     )
 
-from datasluice.exceptions import DownloadError  # noqa: E402
-from datasluice.io.filesystem import open_filesystem  # noqa: E402
-from datasluice.ports.storage import StoragePort  # noqa: E402
+from datasluice.exceptions import DownloadError
+from datasluice.io.filesystem import open_filesystem
+from datasluice.ports.storage import StoragePort
 
 FsspecStorage = _fsspec_storage_module.FsspecStorage
 

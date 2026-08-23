@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.data.batch_stream import BatchStream  # noqa: E402
-from datasluice.transforms import Pipeline, compose  # noqa: E402
+from datasluice.data.batch_stream import BatchStream
+from datasluice.transforms import Pipeline, compose
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator

@@ -14,7 +14,9 @@ They are allowlisted here so the scan still flags any other
 
 from __future__ import annotations
 
+import importlib
 import re
+from operator import attrgetter
 from pathlib import Path
 
 import pytest
@@ -45,9 +47,9 @@ def test_no_datasluice_env_vars_in_source() -> None:
 
 def test_settings_module_removed() -> None:
     with pytest.raises(ImportError):
-        from datasluice.config.settings import Settings  # ty: ignore[unresolved-import]  # noqa: F401
+        importlib.import_module("datasluice.config.settings")
 
 
 def test_load_settings_removed() -> None:
-    with pytest.raises(ImportError):
-        from datasluice.config import load_settings  # ty: ignore[unresolved-import]  # noqa: F401
+    with pytest.raises(AttributeError):
+        _ = attrgetter("load_settings")(importlib.import_module("datasluice.config"))

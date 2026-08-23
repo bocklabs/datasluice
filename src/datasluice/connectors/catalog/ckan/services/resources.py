@@ -66,7 +66,7 @@ def _buffer_upload(source: str | os.PathLike[str] | BinaryIO, *, max_bytes: int 
         CatalogValidationError: If the source exceeds the ceiling before any
             transport work begins.
     """
-    handle = open(source, "rb") if isinstance(source, str | os.PathLike) else source  # noqa: SIM115
+    handle = open(source, "rb") if isinstance(source, str | os.PathLike) else source
     try:
         chunks: list[bytes] = []
         total = 0

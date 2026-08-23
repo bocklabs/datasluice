@@ -7,6 +7,7 @@ on it without pulling heavy optional deps into the import graph.
 
 from __future__ import annotations
 
+import importlib
 import sys
 
 _FORBIDDEN_OPTIONAL_MODULES = ("pyarrow", "pandas", "polars", "dlt", "duckdb", "openpyxl", "airflow")
@@ -18,7 +19,7 @@ def test_domain_imports_zero_optional_deps() -> None:
         if name.split(".")[0] in _FORBIDDEN_OPTIONAL_MODULES:
             del sys.modules[name]
 
-    import datasluice.domain  # noqa: F401
+    importlib.import_module("datasluice.domain")
 
     present = [name for name in _FORBIDDEN_OPTIONAL_MODULES if name in sys.modules]
     assert present == [], f"datasluice.domain pulled optional deps: {present}"
@@ -37,7 +38,7 @@ def test_domain_import_does_not_load_platform_or_legacy_connector_modules() -> N
         if name.startswith(_FORBIDDEN_DOMAIN_IMPORTS):
             del sys.modules[name]
 
-    import datasluice.domain  # noqa: F401
+    importlib.import_module("datasluice.domain")
 
     present = [name for name in _FORBIDDEN_DOMAIN_IMPORTS if name in sys.modules]
     assert present == [], f"datasluice.domain pulled connector modules: {present}"

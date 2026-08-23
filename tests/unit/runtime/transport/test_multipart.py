@@ -9,15 +9,15 @@ import pytest
 
 httpx = pytest.importorskip("httpx")
 
-from datasluice.runtime.transport.base import (  # noqa: E402
+from datasluice.runtime.transport.base import (
     RuntimeRequest,
     UploadPart,
 )
-from datasluice.runtime.transport.httpx_transport import (  # noqa: E402
+from datasluice.runtime.transport.httpx_transport import (
     AsyncHttpxCatalogTransport,
     HttpxCatalogTransport,
 )
-from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport  # noqa: E402
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 
 _PARTS = (
     UploadPart(field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"),

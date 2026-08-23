@@ -8,7 +8,7 @@ import io
 import pytest
 
 pytest.importorskip("pyarrow")
-import pyarrow as pa  # noqa: E402
+import pyarrow as pa
 
 try:
     _readers_mod = importlib.import_module("datasluice.data.readers")
