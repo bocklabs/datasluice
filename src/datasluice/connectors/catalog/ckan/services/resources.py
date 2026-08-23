@@ -115,6 +115,7 @@ def _receipt_target(action: str, params: Mapping[str, object], envelope: ResultE
         record = next((item for item in envelope.items if isinstance(item, NativeRecord)), None)
         if record is not None:
             return record.id
+        return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params.get("package_id", "resource-create")))
     return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params["id"]))
 
 
