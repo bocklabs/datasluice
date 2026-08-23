@@ -891,12 +891,15 @@ def test_provider_metadata_and_dependency_table_stay_locked() -> None:
     assert runtime_sources, "provider runtime source must exist"
     allowed_modules = {
         "datasluice.application",
+        "datasluice.connectors.catalog.ckan",
+        "datasluice.contracts.catalog.protocols",
         "datasluice.domain.catalog.auth",
         "datasluice.domain.catalog.ids",
         "datasluice.domain.catalog.operations",
         "datasluice.domain.catalog.profiles",
         "datasluice.runtime.clients",
         "datasluice.runtime.credentials",
+        "datasluice.runtime.transport.base",
     }
     for source in runtime_sources:
         tree = ast.parse(source.read_text(encoding="utf-8"))
