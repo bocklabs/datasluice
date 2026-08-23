@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
+import inspect
 import json
 from collections.abc import Mapping
 
 import pytest
 
 from datasluice.connectors.catalog.ckan.clients import (
+    AsyncCKANClient,
     SyncCKANClient,
+    create_async_client,
     create_sync_client,
     declared_ckan_profile,
 )
@@ -328,3 +332,128 @@ def test_runner_conformance_holds_for_the_stub() -> None:
     """The stub probe runner satisfies the published ProbeRunner protocol."""
     runner: ProbeRunner = StubProbeRunner()
     assert isinstance(runner, ProbeRunner)
+
+
+class AsyncCaptureTransport:
+    """A deterministic async loopback capture transport recording every sent request."""
+
+    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
+        self.status_code = status_code
+        self.body = body
+        self.requests: list[RuntimeRequest] = []
+        self.close_count = 0
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        self.requests.append(request)
+        return RuntimeResponse(
+            status_code=self.status_code,
+            headers={"Content-Type": "application/json"},
+            body=self.body,
+        )
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+
+
+def _async_client(transport: AsyncCaptureTransport, *, owns_transport: bool = True) -> AsyncCKANClient:
+    return AsyncCKANClient(
+        transport,
+        declared_ckan_profile(),
+        origin=LOOPBACK_ORIGIN,
+        owns_transport=owns_transport,
+    )
+
+
+def _async_settings(transport: AsyncCaptureTransport) -> CKANClientSettings:
+    return CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=transport)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
+def test_async_status_show_flows_end_to_end_over_the_loopback_twin() -> None:
+    """The async twin decodes the same authentic CKAN envelope through its own pipeline."""
+    transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    client = create_async_client(_async_settings(transport))
+
+    envelope = asyncio.run(client.action_discovery.status_show())
+
+    assert len(transport.requests) == 1
+    assert transport.requests[0].url == f"{LOOPBACK_ORIGIN}/api/3/action/status_show"
+    item = envelope.items[0]
+    assert isinstance(item, MappingRecord)
+    assert dict(item.payload) == STATUS_PAYLOAD_FROZEN
+
+
+def test_sync_async_clients_maintain_strict_structural_parity() -> None:
+    """Client members mirror one-to-one modulo only the documented constructor deltas."""
+    lifecycle = {"close": "aclose", "__enter__": "__aenter__", "__exit__": "__aexit__"}
+    sync_members = {
+        lifecycle.get(name, name)
+        for name, value in vars(SyncCKANClient).items()
+        if callable(value) or isinstance(value, property)
+    }
+    async_members = {
+        name for name, value in vars(AsyncCKANClient).items() if callable(value) or isinstance(value, property)
+    }
+    assert sync_members == async_members
+
+    assert set(inspect.signature(SyncCKANClient.__init__).parameters) == set(
+        inspect.signature(AsyncCKANClient.__init__).parameters
+    )
+    sync_annotation = inspect.signature(SyncCKANClient.__init__).parameters["retry_sleep"].annotation
+    async_annotation = inspect.signature(AsyncCKANClient.__init__).parameters["retry_sleep"].annotation
+    assert "Awaitable" in str(async_annotation)
+    assert "Awaitable" not in str(sync_annotation)
+
+    families = (
+        "datasets",
+        "resources",
+        "organizations",
+        "action_discovery",
+        "groups",
+        "users",
+        "vocabularies_licenses",
+        "relationships_activity",
+        "views",
+        "datastore",
+        "filestore",
+        "extensions",
+    )
+    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    async_transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    sync_client = _direct_client(transport)
+    async_client = _async_client(async_transport)
+    for family in families:
+        sync_service = getattr(sync_client, family)
+        async_service = getattr(async_client, family)
+        sync_surface = {name for name in dir(sync_service) if not name.startswith("__")}
+        async_surface = {name for name in dir(async_service) if not name.startswith("__")}
+        assert sync_surface == async_surface, family
+
+
+def test_async_borrowed_transport_is_never_drained_by_the_client() -> None:
+    """An injected async transport stays caller-owned across aclose()."""
+    transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    client = _async_client(transport, owns_transport=False)
+
+    asyncio.run(client.aclose())
+    asyncio.run(client.aclose())
+
+    assert transport.close_count == 0
+
+
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
+def test_async_owned_transport_acloses_exactly_once() -> None:
+    """A factory-produced async transport is client-owned and drains exactly once."""
+    holder: dict[str, AsyncCaptureTransport] = {}
+
+    def factory() -> AsyncCaptureTransport:
+        holder["transport"] = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+        return holder["transport"]
+
+    client = create_async_client(CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=factory))
+    assert client.transport is holder["transport"]
+
+    asyncio.run(client.aclose())
+    asyncio.run(client.aclose())
+
+    assert holder["transport"].close_count == 1
