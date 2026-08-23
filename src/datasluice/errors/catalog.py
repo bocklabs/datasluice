@@ -36,6 +36,7 @@ class CatalogError(DataSluiceError):
         platform: CatalogPlatform | str,
         capability_state: str | None = None,
         safe_action: str,
+        metadata: Mapping[str, object] | None = None,
     ) -> None:
         if not isinstance(message, str) or not message:
             raise ValueError("Catalog error messages must be non-empty strings.")
@@ -48,6 +49,7 @@ class CatalogError(DataSluiceError):
         self.platform = _platform_value(platform)
         self.capability_state = capability_state
         self.safe_action = safe_action
+        self.metadata = _bounded_metadata(metadata)
 
 
 class NativeCatalogError(DataSluiceError):
