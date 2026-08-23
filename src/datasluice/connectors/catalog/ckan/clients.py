@@ -1483,8 +1483,8 @@ def _default_probe_runners(
     """Select default concrete probe runners for HTTPS origins when settings supply none.
 
     Explicit settings overrides always win. Non-HTTPS origins refuse under the
-    auto policy: controlled loopback stacks opt into evidence through their own
-    runners or the declared-baseline policy, never a silent validator bypass
+    auto policy: controlled loopback stacks use the declared-baseline policy,
+    never a silent validator bypass.
     (D-07 completion; review Plan 06 MEDIUM closed). Construction performs no
     network I/O — runners share the factory-owned transport lazily.
     """
@@ -1500,8 +1500,8 @@ def _default_probe_runners(
             platform=PLATFORM.value,
             capability_state="optional",
             safe_action=(
-                "Attach explicit probe runners for the controlled stack or select "
-                "CKANClientSettings(probe_policy='declared-baseline') to consume the declared profile trustingly."
+                "Select CKANClientSettings(probe_policy='declared-baseline') to consume the declared profile "
+                "trustingly for the controlled stack."
             ),
         )
     from datasluice.connectors.catalog.ckan.probes import CKANAsyncProbeRunner, CKANProbeRunner
