@@ -115,7 +115,12 @@ def _settings(
     *,
     credential: CKANCredential | None = None,
 ) -> CKANClientSettings:
-    return CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=transport, credential=credential)
+    return CKANClientSettings(
+        base_url=LOOPBACK_ORIGIN,
+        sync_transport=transport,
+        credential=credential,
+        probe_policy="declared-baseline",
+    )
 
 
 def _direct_client(
@@ -306,7 +311,9 @@ def test_owned_factory_transport_closes_exactly_once() -> None:
         holder["transport"] = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
         return holder["transport"]
 
-    client = create_sync_client(CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=factory))
+    client = create_sync_client(
+        CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=factory, probe_policy="declared-baseline")
+    )
     assert client.transport is holder["transport"]
 
     client.close()
@@ -374,7 +381,11 @@ def _async_client(transport: AsyncCaptureTransport, *, owns_transport: bool = Tr
 
 
 def _async_settings(transport: AsyncCaptureTransport) -> CKANClientSettings:
-    return CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=transport)
+    return CKANClientSettings(
+        base_url=LOOPBACK_ORIGIN,
+        async_transport=transport,
+        probe_policy="declared-baseline",
+    )
 
 
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
@@ -459,7 +470,9 @@ def test_async_owned_transport_acloses_exactly_once() -> None:
         holder["transport"] = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
         return holder["transport"]
 
-    client = create_async_client(CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=factory))
+    client = create_async_client(
+        CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=factory, probe_policy="declared-baseline")
+    )
     assert client.transport is holder["transport"]
 
     asyncio.run(client.aclose())
@@ -513,3 +526,113 @@ def test_rate_policy_loopback_dispatch_completes_with_zero_throttle_or_sleep_inv
 
     assert len(transport.requests) == 2
     assert sleeps == []
+
+
+DEMO_HTTPS_ORIGIN = "https://demo.ckan.org"
+COLLABORATOR_OPERATION = OperationId(platform="ckan", service="action-api-v3", method="dataset-collaborators")
+
+
+def _collaborator_dispatch() -> tuple[CatalogOperationRequest, CatalogOperationGuard]:
+    operation = CatalogOperationRequest(
+        operation_id=COLLABORATOR_OPERATION,
+        payload={"action": "package_collaborator_list", "id": "pkg-1"},
+    )
+    guard = CatalogOperationGuard(operation_id=operation.operation_id)
+    return operation, guard
+
+
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
+def test_https_origins_attach_default_probe_runners_with_zero_construction_network() -> None:
+    """D-07 completion: HTTPS factories probe zero-config after exactly one status read."""
+    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    settings = CKANClientSettings(base_url=DEMO_HTTPS_ORIGIN, sync_transport=transport)
+    client = create_sync_client(settings)
+    assert len(transport.requests) == 0
+
+    operation, guard = _collaborator_dispatch()
+    with pytest.raises(UnsupportedCapabilityError):
+        client.datasets.list_show_search(operation, guard)
+
+    status_reads = [request for request in transport.requests if request.url.endswith("/api/3/action/status_show")]
+    assert len(status_reads) == 1
+    assert transport.requests == status_reads
+
+
+def test_explicit_runner_settings_win_over_the_https_default_attachment() -> None:
+    """Override precedence: caller-supplied runners replace the factory default."""
+    transport = SyncCaptureTransport(body=_success_body({"pkg-1": ()}))
+    runner = StubProbeRunner()
+    settings = CKANClientSettings(
+        base_url=DEMO_HTTPS_ORIGIN,
+        sync_transport=transport,
+        probe_runner=runner,
+    )
+    client = create_sync_client(settings)
+    assert len(transport.requests) == 0
+
+    operation, guard = _collaborator_dispatch()
+    envelope = client.datasets.list_show_search(operation, guard)
+
+    assert runner.probed
+    assert len(transport.requests) == 1
+    assert transport.requests[0].url.endswith("/api/3/action/package_collaborator_list")
+    assert envelope.items
+
+
+def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None:
+    """The controlled-stack posture is an explicit choice, never a silent bypass."""
+    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+
+    with pytest.raises(UnsupportedCapabilityError) as excinfo:
+        create_sync_client(CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=transport))
+
+    assert transport.requests == []
+    assert "declared-baseline" in excinfo.value.safe_action
+
+    async_transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    with pytest.raises(UnsupportedCapabilityError):
+        create_async_client(CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=async_transport))
+    assert async_transport.requests == []
+
+
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
+def test_async_https_factories_attach_the_default_async_probe_runner() -> None:
+    """The async twin shares the factory-owned transport for its default probes."""
+    from datasluice.connectors.catalog.ckan.probes import CKANAsyncProbeRunner
+
+    transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    client = create_async_client(CKANClientSettings(base_url=DEMO_HTTPS_ORIGIN, async_transport=transport))
+
+    assert len(transport.requests) == 0
+    assert isinstance(client._probe_runner, CKANAsyncProbeRunner)
+    assert client._probe_runner._transport is transport
+
+
+def test_admin_corpus_rows_resolve_to_manifest_actions_with_regenerated_fingerprint() -> None:
+    """Corpus-vs-manifest growth: admin-class rows carry the new outcome pairs."""
+    from datasluice.contracts.catalog.fixtures import load_reference_fixture_set
+
+    fixture_set = load_reference_fixture_set("ckan")
+    owners = {entry.owning_operation_id for entry in CKAN_ACTIONS.entries}
+    admin_prefixes = (
+        "organization-",
+        "group-",
+        "user-",
+        "tags-vocabularies-licenses-",
+    )
+    rows = [
+        case
+        for case in fixture_set.cases
+        if str(case.operation_id).split("/", 1)[-1].partition(".")[2].startswith(admin_prefixes)
+    ]
+    assert rows
+    for row in rows:
+        assert str(row.operation_id) in owners, f"corpus row outside the manifest: {row}"
+
+    pairs = {(str(case.operation_id), case.outcome) for case in fixture_set.cases}
+    assert ("ckan/action-api-v3.organization-list-show-search", "core") in pairs
+    assert ("ckan/action-api-v3.organization-create-update-delete-members", "authenticated-success") in pairs
+    assert ("ckan/action-api-v3.organization-create-update-delete-members", "forbidden") in pairs
+    assert ("ckan/action-api-v3.group-list-show-search", "core") in pairs
+    assert ("ckan/action-api-v3.user-create-update-delete-token-management", "authenticated-success") in pairs
+    assert ("ckan/action-api-v3.tags-vocabularies-licenses-list-show", "core") in pairs

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import date
@@ -1466,6 +1467,42 @@ def _capability_value(state: object) -> str:
     return "available" if text in available_states else str(text)
 
 
+def _default_probe_runners(
+    settings: CKANClientSettings,
+    transport: CatalogTransport | AsyncCatalogTransport,
+) -> tuple[ProbeRunner | None, AsyncProbeRunner | None]:
+    """Select default concrete probe runners for HTTPS origins when settings supply none.
+
+    Explicit settings overrides always win. Non-HTTPS origins refuse under the
+    auto policy: controlled loopback stacks opt into evidence through their own
+    runners or the declared-baseline policy, never a silent validator bypass
+    (D-07 completion; review Plan 06 MEDIUM closed). Construction performs no
+    network I/O — runners share the factory-owned transport lazily.
+    """
+    if settings.probe_runner is not None or settings.async_probe_runner is not None:
+        return settings.probe_runner, settings.async_probe_runner
+    if settings.probe_policy != "auto":
+        return None, None
+    origin = normalize_origin(settings.base_url)
+    if not origin.startswith("https://"):
+        raise UnsupportedCapabilityError(
+            f"The non-HTTPS origin {origin} receives no default probe runners.",
+            operation=f"{PLATFORM.value}/probes",
+            platform=PLATFORM.value,
+            capability_state="optional",
+            safe_action=(
+                "Attach explicit probe runners for the controlled stack or select "
+                "CKANClientSettings(probe_policy='declared-baseline') to consume the declared profile trustingly."
+            ),
+        )
+    from datasluice.connectors.catalog.ckan.probes import CKANAsyncProbeRunner, CKANProbeRunner
+
+    profile = declared_ckan_profile()
+    if inspect.iscoroutinefunction(getattr(transport, "send", None)):
+        return None, CKANAsyncProbeRunner(transport, origin, profile)  # ty: ignore[invalid-argument-type]
+    return CKANProbeRunner(transport, origin, profile), None  # ty: ignore[invalid-argument-type]
+
+
 def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
     """Construct one synchronous CKAN client from immutable settings."""
     require_extra("ckan")
@@ -1480,6 +1517,7 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
         factory = cast("Callable[[], CatalogTransport]", override)
         transport = factory()
         owns_transport = True
+    sync_probe_runner, _ = _default_probe_runners(settings, transport)
     return SyncCKANClient(
         transport,
         declared_ckan_profile(),
@@ -1489,7 +1527,7 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
         breakers=settings.breakers,
         max_attempts=settings.max_attempts,
         retry_sleep=settings.retry_sleep if settings.retry_sleep is not None else sleep,
-        probe_runner=settings.probe_runner,
+        probe_runner=sync_probe_runner,
         capability_cache_ttl=settings.capability_cache_ttl,
         owns_transport=owns_transport,
         rate_policy=resolve_rate_policy(settings),
@@ -1512,6 +1550,7 @@ def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
         factory = cast("Callable[[], AsyncCatalogTransport]", override)
         transport = factory()
         owns_transport = True
+    _, async_probe_runner = _default_probe_runners(settings, transport)
     return AsyncCKANClient(
         transport,
         declared_ckan_profile(),
@@ -1521,7 +1560,7 @@ def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
         breakers=settings.breakers,
         max_attempts=settings.max_attempts,
         retry_sleep=settings.async_retry_sleep if settings.async_retry_sleep is not None else asyncio.sleep,
-        probe_runner=settings.async_probe_runner,
+        probe_runner=async_probe_runner,
         capability_cache_ttl=settings.capability_cache_ttl,
         owns_transport=owns_transport,
         rate_policy=resolve_rate_policy(settings),

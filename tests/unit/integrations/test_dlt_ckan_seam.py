@@ -112,7 +112,11 @@ def _ckan_query() -> CatalogOperationRequest:
 
 def _loopback_client(base_url: str) -> tuple[Any, UrllibCatalogTransport]:
     transport = UrllibCatalogTransport()
-    settings = CKANClientSettings(base_url=base_url, sync_transport=transport)
+    settings = CKANClientSettings(
+        base_url=base_url,
+        sync_transport=transport,
+        probe_policy="declared-baseline",
+    )
     return create_sync_client(settings), transport
 
 

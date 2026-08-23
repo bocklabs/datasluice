@@ -80,6 +80,10 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "ckan/action-api-v3.organization-create-update-delete-members",
+      "outcome": "forbidden"
+    },
+    {
       "operation": "ckan/action-api-v3.group-create-update-delete-members",
       "outcome": "authenticated-success"
     },
@@ -102,6 +106,14 @@
     {
       "operation": "ckan/action-api-v3.user-create-update-delete-token-management",
       "outcome": "forbidden"
+    },
+    {
+      "operation": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-admin"
+      }
     },
     {
       "operation": "ckan/action-api-v3.config-options",
