@@ -387,6 +387,202 @@
       "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
       "mutation_class": "standard",
       "result_kind": "value"
+    },
+    {
+      "name": "user_list",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_show",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-list-show",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_autocomplete",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_create",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_invite",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_update",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_patch",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_delete",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "get_site_user",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "api_token_create",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "token-secret"
+    },
+    {
+      "name": "api_token_list",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "api_token_revoke",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "tag_list",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "tag_show",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "tag_search",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "tag_autocomplete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "vocabulary_list",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "vocabulary_show",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "license_list",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "format_autocomplete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "term_translation_show",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "tag_create",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "tag_delete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "vocabulary_create",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "vocabulary_update",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "vocabulary_delete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "term_translation_update",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "term_translation_update_many",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
     }
   ]
 }

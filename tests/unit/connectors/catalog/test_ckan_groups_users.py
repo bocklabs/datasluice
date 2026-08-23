@@ -11,18 +11,23 @@ import pytest
 from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient, declared_ckan_profile
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+from datasluice.connectors.catalog.ckan.results import CKANMutationResult, CKANTokenResult
 from datasluice.connectors.catalog.ckan.services.groups import AsyncGroupsService, SyncGroupsService
+from datasluice.connectors.catalog.ckan.services.users import AsyncUsersService, SyncUsersService
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
-from datasluice.domain.catalog.models import NativeRecord, ValueRecord
+from datasluice.domain.catalog.auth import CKANCredential
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
+from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError
+from datasluice.errors.catalog import CatalogValidationError, UnauthenticatedError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 GROUP_READ_ID = "ckan/action-api-v3.group-list-show-search"
 GROUP_WRITE_ID = "ckan/action-api-v3.group-create-update-delete-members"
+USER_READ_ID = "ckan/action-api-v3.user-list-show"
+USER_WRITE_ID = "ckan/action-api-v3.user-create-update-delete-token-management"
 
 EXPECTED_GROUP_ACTIONS = frozenset(
     {
@@ -38,6 +43,23 @@ EXPECTED_GROUP_ACTIONS = frozenset(
         "group_purge",
         "group_member_create",
         "group_member_delete",
+    }
+)
+
+EXPECTED_USER_ACTIONS = frozenset(
+    {
+        "user_list",
+        "user_show",
+        "user_autocomplete",
+        "user_create",
+        "user_invite",
+        "user_update",
+        "user_patch",
+        "user_delete",
+        "get_site_user",
+        "api_token_create",
+        "api_token_list",
+        "api_token_revoke",
     }
 )
 
@@ -275,3 +297,134 @@ def test_group_projection_rejects_foreign_group_actions_before_dispatch() -> Non
         client.groups.list_show_search(operation, guard)
 
     assert transport.requests == []
+
+
+def test_user_manifest_holds_exactly_the_documented_twelve_actions() -> None:
+    """Manifest-driven completeness: exact name set across the split user ids."""
+    entries = [entry for entry in CKAN_ACTIONS.entries if entry.group == "users"]
+    assert {entry.name for entry in entries} == EXPECTED_USER_ACTIONS
+    assert len(entries) == 12
+    assert {entry.owning_operation_id for entry in entries} == {USER_READ_ID, USER_WRITE_ID}
+    reads = [entry for entry in entries if entry.mutation_class == "read"]
+    standards = [entry for entry in entries if entry.mutation_class == "standard"]
+    destructive = [entry for entry in entries if entry.mutation_class == "destructive"]
+    assert len(reads) == 4
+    assert len(standards) == 8
+    assert len(destructive) == 0
+    token_create = next(entry for entry in entries if entry.name == "api_token_create")
+    assert token_create.result_kind == "token-secret"
+    for entry in entries:
+        spec = RESULT_KINDS.get(entry.name)
+        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
+        outcome, family = spec
+        assert outcome == entry.result_kind
+        if family is not None:
+            assert family in RECORD_KINDS
+
+
+def test_every_manifest_user_action_exposes_a_typed_method_on_both_mode_services() -> None:
+    """Each registered user action names a callable member on both projections."""
+    sync_surface = {name for name in dir(SyncUsersService) if not name.startswith("_")}
+    async_surface = {name for name in dir(AsyncUsersService) if not name.startswith("_")}
+    for action in EXPECTED_USER_ACTIONS:
+        assert action in sync_surface, f"sync surface misses {action}"
+        assert action in async_surface, f"async surface misses {action}"
+
+
+def test_user_surfaces_stay_in_structural_lockstep_across_modes() -> None:
+    """Sync/async user projections expose identical members, mode-correct dispatch."""
+    sync_members = {name for name in dir(SyncUsersService) if not name.startswith("__")}
+    async_members = {name for name in dir(AsyncUsersService) if not name.startswith("__")}
+    assert sync_members == async_members
+    public = {name for name in vars(SyncUsersService) if not name.startswith("_")}
+    for name in public:
+        assert inspect.iscoroutinefunction(getattr(AsyncUsersService, name)), name
+        assert not inspect.iscoroutinefunction(getattr(SyncUsersService, name)), name
+
+
+def test_api_token_trio_captures_documented_routes_and_stays_secret_safe() -> None:
+    """D-05/T-03-08-02: created tokens ride reveal-only wrappers, never payloads."""
+    create_transport = SyncCaptureTransport(
+        body=_success_body({"token": "issued-secret-123", "jti": "jti-9", "user": "u-1"})
+    )
+    credential = CKANCredential(api_token="secret-token-123")
+    client = SyncCKANClient(
+        create_transport,
+        declared_ckan_profile(),
+        origin=LOOPBACK_ORIGIN,
+        credentials=credential,
+        owns_transport=False,
+    )
+
+    wrapper = client.users.api_token_create(user="u-1", name="ci-token")
+
+    request = create_transport.requests[0]
+    assert request.url.endswith("/api/3/action/api_token_create")
+    assert json.loads(request.body or b"{}") == {"user": "u-1", "name": "ci-token"}
+    assert isinstance(wrapper, CKANTokenResult)
+    assert wrapper.reveal() == "issued-secret-123"
+    assert wrapper.to_dict()["token"] == REDACTED
+    assert set(dict(wrapper.result_metadata)) == {"jti", "user"}
+
+    list_transport = SyncCaptureTransport(body=_success_body([{"id": "t-1", "last_access": None}, {"id": "t-2"}]))
+    list_client = _client(list_transport)
+    listing = list_client.users.api_token_list(user="u-1")
+    assert list_transport.requests[0].url.endswith("/api/3/action/api_token_list")
+    assert json.loads(list_transport.requests[0].body or b"{}") == {"user": "u-1"}
+    items = [item for item in listing.items if isinstance(item, MappingRecord)]
+    assert [dict(item.payload)["id"] for item in items] == ["t-1", "t-2"]
+
+    revoke_transport = SyncCaptureTransport(body=_success_body(None))
+    revoke_client = _client(revoke_transport)
+    revoked = revoke_client.users.api_token_revoke(token_id="t-1")
+    assert revoke_transport.requests[0].url.endswith("/api/3/action/api_token_revoke")
+    assert json.loads(revoke_transport.requests[0].body or b"{}") == {"token_id": "t-1"}
+    assert revoked.receipt.outcome == "succeeded"
+
+    serialized = json.dumps(wrapper.to_dict())
+    assert "issued-secret-123" not in serialized
+    assert repr(wrapper) == repr(wrapper)
+    assert "issued-secret-123" not in repr(wrapper)
+
+
+def test_api_token_revoke_requires_the_token_id_at_the_call_boundary() -> None:
+    """Revocation cannot be engaged without the token identifier keyword."""
+    transport = SyncCaptureTransport(body=_success_body(None))
+    client = _client(transport)
+
+    with pytest.raises(TypeError):
+        client.users.api_token_revoke()  # ty: ignore[missing-argument]
+
+    assert transport.requests == []
+
+
+def test_get_site_user_passes_no_parameters_and_maps_authorization_envelopes() -> None:
+    """The site-user fetch sends an empty verbatim body; rejections map to typed errors."""
+    transport = SyncCaptureTransport(body=_success_body({"id": "site-uid", "name": "default"}))
+    client = _client(transport)
+
+    result = client.users.get_site_user()
+
+    request = transport.requests[0]
+    assert request.url.endswith("/api/3/action/get_site_user")
+    assert json.loads(request.body or b"{}") == {}
+    record = next(item for item in result.result.items if isinstance(item, NativeRecord))
+    assert record.resource_kind.value == "user"
+
+    rejected = SyncCaptureTransport(status_code=401, body=_success_body(None))
+    rejected_client = _client(rejected)
+    with pytest.raises(UnauthenticatedError) as excinfo:
+        rejected_client.users.get_site_user()
+    assert excinfo.value.capability_state == "unauthorized"
+
+
+def test_async_token_creation_mirrors_the_sync_semantics() -> None:
+    """The async twin extracts the same reveal-only wrapper from its own pipeline."""
+    transport = AsyncCaptureTransport(body=_success_body({"token": "async-secret-456", "user": "u-1", "jti": "jti-10"}))
+    client = _async_client(transport)
+
+    wrapper = asyncio.run(client.users.api_token_create(user="u-1", name="nightly"))
+
+    assert transport.requests[0].url.endswith("/api/3/action/api_token_create")
+    assert wrapper.reveal() == "async-secret-456"
+    assert wrapper.to_dict()["token"] == REDACTED

@@ -89,6 +89,11 @@ if TYPE_CHECKING:
         SyncOrganizationsService,
     )
     from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
+    from datasluice.connectors.catalog.ckan.services.users import AsyncUsersService, SyncUsersService
+    from datasluice.connectors.catalog.ckan.services.vocabularies_licenses import (
+        AsyncVocabulariesLicensesService,
+        SyncVocabulariesLicensesService,
+    )
 
 PLATFORM = CatalogPlatform.CKAN
 _ACTION_PATH = "/api/3/action/"
@@ -283,14 +288,18 @@ class SyncCKANClient:
         return SyncGroupsService(self)
 
     @property
-    def users(self) -> _SyncNativeService:
+    def users(self) -> SyncUsersService:
         """Return the synchronous user group."""
-        return _SyncNativeService(self, "users")
+        from datasluice.connectors.catalog.ckan.services.users import SyncUsersService
+
+        return SyncUsersService(self)
 
     @property
-    def vocabularies_licenses(self) -> _SyncNativeService:
+    def vocabularies_licenses(self) -> SyncVocabulariesLicensesService:
         """Return the synchronous vocabulary and license group."""
-        return _SyncNativeService(self, "vocabularies_licenses")
+        from datasluice.connectors.catalog.ckan.services.vocabularies_licenses import SyncVocabulariesLicensesService
+
+        return SyncVocabulariesLicensesService(self)
 
     @property
     def relationships_activity(self) -> _SyncNativeService:
@@ -630,14 +639,20 @@ class AsyncCKANClient:
         return AsyncGroupsService(self)
 
     @property
-    def users(self) -> _AsyncNativeService:
+    def users(self) -> AsyncUsersService:
         """Return the asynchronous user group."""
-        return _AsyncNativeService(self, "users")
+        from datasluice.connectors.catalog.ckan.services.users import AsyncUsersService
+
+        return AsyncUsersService(self)
 
     @property
-    def vocabularies_licenses(self) -> _AsyncNativeService:
+    def vocabularies_licenses(self) -> AsyncVocabulariesLicensesService:
         """Return the asynchronous vocabulary and license group."""
-        return _AsyncNativeService(self, "vocabularies_licenses")
+        from datasluice.connectors.catalog.ckan.services.vocabularies_licenses import (
+            AsyncVocabulariesLicensesService,
+        )
+
+        return AsyncVocabulariesLicensesService(self)
 
     @property
     def relationships_activity(self) -> _AsyncNativeService:
