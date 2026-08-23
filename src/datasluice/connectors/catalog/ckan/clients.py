@@ -72,10 +72,18 @@ from datasluice.runtime.defaults import create_default_async_transport, create_d
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.extras import require_extra
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import (
+    CatalogTransport,
+    RuntimeRequest,
+    RuntimeResponse,
+    TransportFailure,
+    UploadPart,
+)
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.ckan.services.filestore import AsyncFilestoreService, SyncFilestoreService
+    from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
 
 PLATFORM = CatalogPlatform.CKAN
 _ACTION_PATH = "/api/3/action/"
@@ -92,6 +100,33 @@ _NORMALIZED_BACKING: Mapping[tuple[str, str], str] = MappingProxyType(
         ("organizations", "list"): "organization_list_for_user",
     }
 )
+
+
+def _dispatch_request(
+    *,
+    origin: str,
+    entry: ActionEntry,
+    params: Mapping[str, object],
+    credential: object,
+    files: tuple[UploadPart, ...],
+) -> RuntimeRequest:
+    """Build one JSON or multipart Action API request for the dispatch pipeline."""
+    url = f"{origin}{_ACTION_PATH}{entry.name}"
+    headers = _auth_headers(credential)
+    if files:
+        return RuntimeRequest(
+            method="POST",
+            url=url,
+            headers={"Content-Type": "multipart/form-data", **headers},
+            body=None,
+            files=files,
+        )
+    return RuntimeRequest(
+        method="POST",
+        url=url,
+        headers={"Content-Type": "application/json", **headers},
+        body=json.dumps(dict(params)).encode("utf-8"),
+    )
 
 
 def _operation_id_from(value: str) -> OperationId:
@@ -166,6 +201,7 @@ class SyncCKANClient:
         inventory: ActionInventory = CKAN_ACTIONS,
         probe_policy: str = "auto",
         rate_policy: object | None = None,
+        max_upload_bytes: int | None = None,
     ) -> None:
         self._transport = transport
         self._owns_transport = owns_transport
@@ -190,6 +226,7 @@ class SyncCKANClient:
         self._emitter = emitter or EventEmitter()
         self._inventory = inventory
         self._rate_policy = rate_policy
+        self._max_upload_bytes = max_upload_bytes
         self._closed = False
 
     @property
@@ -215,9 +252,11 @@ class SyncCKANClient:
         return SyncDatasetsService(self, "datasets", DatasetRecord.from_dict)
 
     @property
-    def resources(self) -> _SyncResourceService:
+    def resources(self) -> SyncResourcesService:
         """Return the synchronous resource projection carrying both surfaces."""
-        return _SyncResourceService(self, "resources", ResourceRecord.from_dict)
+        from datasluice.connectors.catalog.ckan.services.resources import SyncResourcesService
+
+        return SyncResourcesService(self, "resources", ResourceRecord.from_dict)
 
     @property
     def organizations(self) -> _SyncOrganizationService:
@@ -260,9 +299,11 @@ class SyncCKANClient:
         return _SyncNativeService(self, "datastore")
 
     @property
-    def filestore(self) -> _SyncNativeService:
-        """Return the synchronous filestore group."""
-        return _SyncNativeService(self, "filestore")
+    def filestore(self) -> SyncFilestoreService:
+        """Return the synchronous filestore projection routing to the resource paths."""
+        from datasluice.connectors.catalog.ckan.services.filestore import SyncFilestoreService
+
+        return SyncFilestoreService(self)
 
     @property
     def extensions(self) -> _SyncNativeService:
@@ -295,6 +336,7 @@ class SyncCKANClient:
         *,
         entry: ActionEntry,
         decoder: Callable[[CKANResultItem], object] | None = None,
+        files: tuple[UploadPart, ...] = (),
     ) -> ResultEnvelope[object]:
         if self._closed:
             raise RuntimeError("The synchronous CKAN client is closed.")
@@ -309,11 +351,12 @@ class SyncCKANClient:
         )
         credential = _refreshed_credential(self._credentials)
         params = {key: value for key, value in operation.payload.items() if key != "action"}
-        request = RuntimeRequest(
-            method="POST",
-            url=f"{self._origin}{_ACTION_PATH}{entry.name}",
-            headers={"Content-Type": "application/json", **_auth_headers(credential)},
-            body=json.dumps(params).encode("utf-8"),
+        request = _dispatch_request(
+            origin=self._origin,
+            entry=entry,
+            params=params,
+            credential=credential,
+            files=files,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -501,6 +544,7 @@ class AsyncCKANClient:
         inventory: ActionInventory = CKAN_ACTIONS,
         probe_policy: str = "auto",
         rate_policy: object | None = None,
+        max_upload_bytes: int | None = None,
     ) -> None:
         self._transport = transport
         self._owns_transport = owns_transport
@@ -525,6 +569,7 @@ class AsyncCKANClient:
         self._emitter = emitter or EventEmitter()
         self._inventory = inventory
         self._rate_policy = rate_policy
+        self._max_upload_bytes = max_upload_bytes
         self._closed = False
 
     @property
@@ -550,9 +595,11 @@ class AsyncCKANClient:
         return AsyncDatasetsService(self, "datasets", DatasetRecord.from_dict)
 
     @property
-    def resources(self) -> _AsyncResourceService:
+    def resources(self) -> AsyncResourcesService:
         """Return the asynchronous resource projection carrying both surfaces."""
-        return _AsyncResourceService(self, "resources", ResourceRecord.from_dict)
+        from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService
+
+        return AsyncResourcesService(self, "resources", ResourceRecord.from_dict)
 
     @property
     def organizations(self) -> _AsyncOrganizationService:
@@ -595,9 +642,11 @@ class AsyncCKANClient:
         return _AsyncNativeService(self, "datastore")
 
     @property
-    def filestore(self) -> _AsyncNativeService:
-        """Return the asynchronous filestore group."""
-        return _AsyncNativeService(self, "filestore")
+    def filestore(self) -> AsyncFilestoreService:
+        """Return the asynchronous filestore projection routing to the resource paths."""
+        from datasluice.connectors.catalog.ckan.services.filestore import AsyncFilestoreService
+
+        return AsyncFilestoreService(self)
 
     @property
     def extensions(self) -> _AsyncNativeService:
@@ -630,6 +679,7 @@ class AsyncCKANClient:
         *,
         entry: ActionEntry,
         decoder: Callable[[CKANResultItem], object] | None = None,
+        files: tuple[UploadPart, ...] = (),
     ) -> ResultEnvelope[object]:
         if self._closed:
             raise RuntimeError("The asynchronous CKAN client is closed.")
@@ -644,11 +694,12 @@ class AsyncCKANClient:
         )
         credential = await _refreshed_credential_async(self._credentials)
         params = {key: value for key, value in operation.payload.items() if key != "action"}
-        request = RuntimeRequest(
-            method="POST",
-            url=f"{self._origin}{_ACTION_PATH}{entry.name}",
-            headers={"Content-Type": "application/json", **_auth_headers(credential)},
-            body=json.dumps(params).encode("utf-8"),
+        request = _dispatch_request(
+            origin=self._origin,
+            entry=entry,
+            params=params,
+            credential=credential,
+            files=files,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -1415,6 +1466,7 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
         owns_transport=owns_transport,
         rate_policy=resolve_rate_policy(settings),
         probe_policy=settings.probe_policy,
+        max_upload_bytes=settings.max_upload_bytes,
     )
 
 
@@ -1446,4 +1498,5 @@ def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
         owns_transport=owns_transport,
         rate_policy=resolve_rate_policy(settings),
         probe_policy=settings.probe_policy,
+        max_upload_bytes=settings.max_upload_bytes,
     )

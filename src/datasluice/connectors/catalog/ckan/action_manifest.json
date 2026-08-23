@@ -172,6 +172,34 @@
       "result_kind": "record-list"
     },
     {
+      "name": "resource_create",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_update",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_patch",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_delete",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
       "name": "organization_show",
       "group": "organizations",
       "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",

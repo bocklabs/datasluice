@@ -23,6 +23,19 @@ _NOT_FOUND_TYPE = "not found error"
 _VALIDATION_TYPE = "validation error"
 _CONFLICT_TYPES = frozenset({"conflict", "conflict error"})
 _FORBIDDEN_MESSAGE_MARKERS = ("unauthorized to", "not authorized")
+_SIZE_LIMIT_MARKERS = (
+    "file size",
+    "too large",
+    "max_size",
+    "max size",
+    "maximum size",
+    "size limit",
+    "content length",
+    "content-length",
+    "max_request_size",
+    "ckan.max_resource_size",
+)
+_UPLOAD_REMEDY = "Reduce the uploaded file size below the deployment limit and retry the action."
 
 
 def map_envelope_error(
@@ -85,11 +98,18 @@ def map_envelope_error(
             metadata=details,
         )
     elif envelope_type == _VALIDATION_TYPE:
+        size_limited = any(marker in lowered for marker in _SIZE_LIMIT_MARKERS) or any(
+            isinstance(key, str) and key.lower() in {"max_size", "size"} for key in redacted
+        )
         error = CatalogValidationError(
             "The deployment reported validation failures for this action.",
             operation=operation,
             platform=platform,
-            safe_action="Correct the rejected fields according to the deployment validation rules.",
+            safe_action=(
+                _UPLOAD_REMEDY
+                if size_limited
+                else "Correct the rejected fields according to the deployment validation rules."
+            ),
             metadata=details,
         )
     elif envelope_type in _CONFLICT_TYPES:
