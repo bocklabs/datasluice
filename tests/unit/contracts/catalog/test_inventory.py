@@ -193,3 +193,36 @@ def test_public_read_evidence_does_not_promote_mutation_permission() -> None:
     assert effective.for_operation(read_operation.id).state is EffectiveCapabilityState.CORE
     assert effective.for_operation(write_operation.id).state is EffectiveCapabilityState.UNAVAILABLE
     assert not effective.guard(write_operation.id).allowed
+
+
+def test_ckan_manifest_datasets_group_holds_exactly_the_documented_twenty_actions() -> None:
+    """Manifest-driven completeness: role splits and kind agreement, no duplicated tuple."""
+    from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
+    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
+
+    entries = [entry for entry in CKAN_ACTIONS.entries if entry.group == "datasets"]
+    assert len(entries) == 20
+    assert {entry.owning_operation_id for entry in entries} == {
+        "ckan/action-api-v3.dataset-list-show-search",
+        "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+        "ckan/action-api-v3.dataset-collaborators",
+    }
+    reads = [entry for entry in entries if entry.mutation_class == "read"]
+    standards = [entry for entry in entries if entry.mutation_class == "standard"]
+    destructive = [entry for entry in entries if entry.mutation_class == "destructive"]
+    assert len(reads) == 7
+    assert len(standards) == 12
+    assert len(destructive) == 1
+    collaborator_reads = [e for e in reads if e.owning_operation_id.endswith("dataset-collaborators")]
+    collaborator_mutations = [e for e in standards if e.owning_operation_id.endswith("dataset-collaborators")]
+    assert len(collaborator_reads) == 2
+    assert len(collaborator_mutations) == 2
+    purge = next(entry for entry in entries if entry.name == "dataset_purge")
+    assert purge.mutation_class == "destructive"
+    for entry in entries:
+        spec = RESULT_KINDS.get(entry.name)
+        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
+        outcome, family = spec
+        assert outcome == entry.result_kind
+        if family is not None:
+            assert family in RECORD_KINDS

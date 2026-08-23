@@ -32,6 +32,132 @@
       "result_kind": "record-list"
     },
     {
+      "name": "package_list",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "package_search",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "package_autocomplete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "package_create",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_update",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_revise",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_resource_reorder",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_owner_org_update",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_patch",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_delete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "dataset_purge",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "bulk_update_private",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "bulk_update_public",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "bulk_update_delete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "package_collaborator_create",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_collaborator_delete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "package_collaborator_list",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_collaborator_list_for_user",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
       "name": "resource_show",
       "group": "resources",
       "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",

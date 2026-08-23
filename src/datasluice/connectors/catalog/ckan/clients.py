@@ -10,7 +10,7 @@ from functools import lru_cache
 from importlib import resources
 from time import monotonic, sleep
 from types import MappingProxyType, TracebackType
-from typing import Self, cast
+from typing import TYPE_CHECKING, Self, cast
 
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEntry, ActionInventory
 from datasluice.connectors.catalog.ckan.mapping import parse_action_envelope, shape_result_envelope
@@ -73,6 +73,9 @@ from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.extras import require_extra
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse, TransportFailure
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.ckan.services.datasets import AsyncDatasetsService, SyncDatasetsService
 
 PLATFORM = CatalogPlatform.CKAN
 _ACTION_PATH = "/api/3/action/"
@@ -205,9 +208,11 @@ class SyncCKANClient:
         return self._rate_policy
 
     @property
-    def datasets(self) -> _SyncDatasetService:
+    def datasets(self) -> SyncDatasetsService:
         """Return the synchronous dataset projection carrying both surfaces."""
-        return _SyncDatasetService(self, "datasets", DatasetRecord.from_dict)
+        from datasluice.connectors.catalog.ckan.services.datasets import SyncDatasetsService
+
+        return SyncDatasetsService(self, "datasets", DatasetRecord.from_dict)
 
     @property
     def resources(self) -> _SyncResourceService:
@@ -538,9 +543,11 @@ class AsyncCKANClient:
         return self._rate_policy
 
     @property
-    def datasets(self) -> _AsyncDatasetService:
+    def datasets(self) -> AsyncDatasetsService:
         """Return the asynchronous dataset projection carrying both surfaces."""
-        return _AsyncDatasetService(self, "datasets", DatasetRecord.from_dict)
+        from datasluice.connectors.catalog.ckan.services.datasets import AsyncDatasetsService
+
+        return AsyncDatasetsService(self, "datasets", DatasetRecord.from_dict)
 
     @property
     def resources(self) -> _AsyncResourceService:
