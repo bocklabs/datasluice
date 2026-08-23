@@ -95,6 +95,7 @@ if TYPE_CHECKING:
     )
     from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
     from datasluice.connectors.catalog.ckan.services.users import AsyncUsersService, SyncUsersService
+    from datasluice.connectors.catalog.ckan.services.views import AsyncViewsService, SyncViewsService
     from datasluice.connectors.catalog.ckan.services.vocabularies_licenses import (
         AsyncVocabulariesLicensesService,
         SyncVocabulariesLicensesService,
@@ -314,9 +315,11 @@ class SyncCKANClient:
         return SyncRelationshipsActivityService(self)
 
     @property
-    def views(self) -> _SyncNativeService:
+    def views(self) -> SyncViewsService:
         """Return the synchronous resource-view group."""
-        return _SyncNativeService(self, "views")
+        from datasluice.connectors.catalog.ckan.services.views import SyncViewsService
+
+        return SyncViewsService(self)
 
     @property
     def datastore(self) -> _SyncNativeService:
@@ -671,9 +674,11 @@ class AsyncCKANClient:
         return AsyncRelationshipsActivityService(self)
 
     @property
-    def views(self) -> _AsyncNativeService:
+    def views(self) -> AsyncViewsService:
         """Return the asynchronous resource-view group."""
-        return _AsyncNativeService(self, "views")
+        from datasluice.connectors.catalog.ckan.services.views import AsyncViewsService
+
+        return AsyncViewsService(self)
 
     @property
     def datastore(self) -> _AsyncNativeService:

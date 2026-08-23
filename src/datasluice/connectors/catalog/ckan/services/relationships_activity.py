@@ -23,7 +23,7 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncNativeService,
 )
 from datasluice.connectors.catalog.ckan.inventory import ActionEntry
-from datasluice.connectors.catalog.ckan.mapping import PLATFORM
+from datasluice.connectors.catalog.ckan.mapping import ACTIVITY, PLATFORM
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
 from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -51,7 +51,17 @@ def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
     return {key: value for key, value in params.items() if value is not None}
 
 
+_ACTIVITY_TARGETS: Mapping[str, str] = {
+    "dashboard_mark_activities_old": "dashboard",
+    "send_email_notifications": "activity-notifications",
+}
+
+
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
+    if action == "activity_create":
+        return CatalogId(PLATFORM, ACTIVITY, str(params["object_id"]))
+    if action in _ACTIVITY_TARGETS:
+        return CatalogId(PLATFORM, ACTIVITY, _ACTIVITY_TARGETS[action])
     if action.startswith("package_relationship"):
         return CatalogId(PLATFORM, ResourceKind.DATASET, str(params["subject"]))
     entity = action.rsplit("_", 1)[-1]
@@ -199,6 +209,85 @@ class SyncRelationshipsActivityService(_SyncNativeService):
     def followee_list(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
         """List every object one user follows as user-kind records."""
         return self._invoke_read("followee_list", {"id": id})
+
+    def package_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one dataset's activity stream under the optional activity id."""
+        return self._invoke_read("package_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+
+    def group_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one group's activity stream under the optional activity id."""
+        return self._invoke_read("group_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+
+    def organization_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one organization's activity stream under the optional activity id."""
+        return self._invoke_read(
+            "organization_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit})
+        )
+
+    def user_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one user's activity stream under the optional activity id."""
+        return self._invoke_read("user_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+
+    def recently_changed_packages_activity_list(
+        self, *, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List recently changed datasets' activity under the optional activity id."""
+        return self._invoke_read(
+            "recently_changed_packages_activity_list", _drop_unset({"offset": offset, "limit": limit})
+        )
+
+    def dashboard_activity_list(
+        self, *, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List the authenticated user's dashboard activity under the optional activity id."""
+        return self._invoke_read("dashboard_activity_list", _drop_unset({"offset": offset, "limit": limit}))
+
+    def dashboard_new_activities_count(self) -> ResultEnvelope[CKANResultItem]:
+        """Count the dashboard's new activities as an integer ValueRecord."""
+        return self._invoke_read("dashboard_new_activities_count", {})
+
+    def dashboard_mark_activities_old(self, policy: MutationPolicy | None = None) -> CKANMutationResult:
+        """Mark every dashboard activity as seen on the standard tier."""
+        return self._invoke_mutation("dashboard_mark_activities_old", {}, policy)
+
+    def activity_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
+        """Show one activity detail as an activity-kind record."""
+        return self._invoke_read("activity_show", {"id": id})
+
+    def activity_data_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
+        """Show one activity's data payload as a lossless mapping."""
+        return self._invoke_read("activity_data_show", {"id": id})
+
+    def activity_diff(
+        self, *, id: str, context: str | None = None, diff_type: str | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """Show one activity's structured diff as a lossless mapping."""
+        return self._invoke_read("activity_diff", _drop_unset({"id": id, "context": context, "diff_type": diff_type}))
+
+    def activity_create(
+        self,
+        *,
+        user: str,
+        object_id: str,
+        activity_type: str,
+        data: dict[str, object],
+        policy: MutationPolicy | None = None,
+    ) -> CKANMutationResult:
+        """Create one activity record explicitly on the standard tier."""
+        params: dict[str, object] = {"user": user, "object_id": object_id, "activity_type": activity_type, "data": data}
+        return self._invoke_mutation("activity_create", params, policy)
+
+    def send_email_notifications(self, policy: MutationPolicy | None = None) -> CKANMutationResult:
+        """Trigger the privileged notification job; server authorization stays the evidence."""
+        return self._invoke_mutation("send_email_notifications", {}, policy)
 
     def _typed_entry(self, action: str) -> ActionEntry:
         entry = self._client._inventory.lookup(action)
@@ -375,6 +464,89 @@ class AsyncRelationshipsActivityService(_AsyncNativeService):
     async def followee_list(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
         """List every object one user follows as user-kind records."""
         return await self._invoke_read("followee_list", {"id": id})
+
+    async def package_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one dataset's activity stream under the optional activity id."""
+        return await self._invoke_read(
+            "package_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit})
+        )
+
+    async def group_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one group's activity stream under the optional activity id."""
+        return await self._invoke_read("group_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+
+    async def organization_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one organization's activity stream under the optional activity id."""
+        return await self._invoke_read(
+            "organization_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit})
+        )
+
+    async def user_activity_list(
+        self, *, id: str, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one user's activity stream under the optional activity id."""
+        return await self._invoke_read("user_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+
+    async def recently_changed_packages_activity_list(
+        self, *, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List recently changed datasets' activity under the optional activity id."""
+        return await self._invoke_read(
+            "recently_changed_packages_activity_list", _drop_unset({"offset": offset, "limit": limit})
+        )
+
+    async def dashboard_activity_list(
+        self, *, offset: int | None = None, limit: int | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List the authenticated user's dashboard activity under the optional activity id."""
+        return await self._invoke_read("dashboard_activity_list", _drop_unset({"offset": offset, "limit": limit}))
+
+    async def dashboard_new_activities_count(self) -> ResultEnvelope[CKANResultItem]:
+        """Count the dashboard's new activities as an integer ValueRecord."""
+        return await self._invoke_read("dashboard_new_activities_count", {})
+
+    async def dashboard_mark_activities_old(self, policy: MutationPolicy | None = None) -> CKANMutationResult:
+        """Mark every dashboard activity as seen on the standard tier."""
+        return await self._invoke_mutation("dashboard_mark_activities_old", {}, policy)
+
+    async def activity_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
+        """Show one activity detail as an activity-kind record."""
+        return await self._invoke_read("activity_show", {"id": id})
+
+    async def activity_data_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
+        """Show one activity's data payload as a lossless mapping."""
+        return await self._invoke_read("activity_data_show", {"id": id})
+
+    async def activity_diff(
+        self, *, id: str, context: str | None = None, diff_type: str | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """Show one activity's structured diff as a lossless mapping."""
+        return await self._invoke_read(
+            "activity_diff", _drop_unset({"id": id, "context": context, "diff_type": diff_type})
+        )
+
+    async def activity_create(
+        self,
+        *,
+        user: str,
+        object_id: str,
+        activity_type: str,
+        data: dict[str, object],
+        policy: MutationPolicy | None = None,
+    ) -> CKANMutationResult:
+        """Create one activity record explicitly on the standard tier."""
+        params: dict[str, object] = {"user": user, "object_id": object_id, "activity_type": activity_type, "data": data}
+        return await self._invoke_mutation("activity_create", params, policy)
+
+    async def send_email_notifications(self, policy: MutationPolicy | None = None) -> CKANMutationResult:
+        """Trigger the privileged notification job; server authorization stays the evidence."""
+        return await self._invoke_mutation("send_email_notifications", {}, policy)
 
     def _typed_entry(self, action: str) -> ActionEntry:
         entry = self._client._inventory.lookup(action)

@@ -800,6 +800,160 @@
       "owning_operation_id": "ckan/action-api-v3.relationships-follows",
       "mutation_class": "read",
       "result_kind": "record-list"
+    },
+    {
+      "name": "package_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "recently_changed_packages_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "dashboard_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "dashboard_new_activities_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dashboard_mark_activities_old",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "activity_show",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "activity_data_show",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "activity_diff",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "activity_create",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "send_email_notifications",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "resource_view_create",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_show",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_list",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_update",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_reorder",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_delete",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "resource_view_clear",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "package_create_default_resource_views",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_create_default_resource_views",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
     }
   ]
 }
