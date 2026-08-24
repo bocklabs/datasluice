@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 EXECUTABLE_PAGES: tuple[Path, ...] = (
     REPO_ROOT / "README.md",
-    REPO_ROOT / "docs/adapters.md",
+    REPO_ROOT / "docs/connectors.md",
     REPO_ROOT / "docs/supported-portals.md",
     REPO_ROOT / "docs/examples/application.md",
     REPO_ROOT / "docs/examples/ckan.md",
@@ -125,7 +125,7 @@ def test_optional_extra_example_pages_execute_when_the_extra_is_installed(tmp_pa
 @pytest.mark.parametrize(
     "page", [pytest.param(page, id=page.relative_to(REPO_ROOT).as_posix()) for page in _DATA_PLANE_PAGES]
 )
-def test_direct_data_plane_examples_execute_without_a_portal_adapter(page: Path, tmp_path: Path) -> None:
+def test_direct_data_plane_examples_execute_without_a_portal_connector(page: Path, tmp_path: Path) -> None:
     """Test 2: the facade flow runs from a local file with no connector import."""
     for block in _python_blocks(page):
         if "DataSluice(" in block:

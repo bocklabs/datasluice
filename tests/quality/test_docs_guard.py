@@ -35,11 +35,17 @@ AIRFLOW_OBSOLETE_PATTERNS = [
     "DataSluiceOperator",
 ]
 
-# Removed connector-surface identifiers: former adapter framework, former
+# Removed connector-surface identifiers: former facade framework, former
 # platform module paths, retired locator machinery, and the retired session
 # facade name. Banned from every scanned page, prose included.
 REMOVED_IDENTIFIER_PATTERNS = [
+    "adapter",
+    "AdapterError",
+    "AdapterNotFoundError",
     "BaseAdapter",
+    "CKANAdapter",
+    "SocrataAdapter",
+    "UDataAdapter",
     "datasluice.adapters",
     "registry.register",
     "datagouv",
@@ -85,17 +91,19 @@ NAMED_CONNECTOR_EXTRA_RE = re.compile(r"datasluice\[(ckan|udata|socrata|all-conn
 
 # Canonical platform symbols and their only legal import home.
 CANONICAL_PLATFORM_SYMBOLS: dict[str, str] = {
-    "CKANAdapter": "datasluice.connectors.catalog.ckan",
+    "CKANConnector": "datasluice.connectors.catalog.ckan",
     "create_ckan_connector": "datasluice.connectors.catalog.ckan",
-    "UDataAdapter": "datasluice.connectors.catalog.udata",
+    "UDataConnector": "datasluice.connectors.catalog.udata",
     "create_udata_connector": "datasluice.connectors.catalog.udata",
-    "SocrataAdapter": "datasluice.connectors.catalog.socrata",
+    "SocrataConnector": "datasluice.connectors.catalog.socrata",
     "create_socrata_connector": "datasluice.connectors.catalog.socrata",
 }
 
 # Historical terms may appear only where this explicit negative-audit
 # allowlist permits (repo-relative path -> allowed identifier substrings).
-PATTERN_ALLOWLIST: dict[str, frozenset[str]] = {}
+PATTERN_ALLOWLIST: dict[str, frozenset[str]] = {
+    "CONTEXT.md": frozenset({"adapter"}),
+}
 
 _FENCE_RE = re.compile(r"```(?P<lang>[a-zA-Z0-9_-]*)[^\n]*\n(?P<body>.*?)```", re.DOTALL)
 _MD_LINK_RE = re.compile(r"(?<!\!)\[[^\]]+\]\((?P<target>[^)\s]+)\)")
@@ -125,6 +133,9 @@ class _Page:
 
 def _doc_pages() -> list[_Page]:
     pages = []
+    glossary = REPO_ROOT / "CONTEXT.md"
+    if glossary.exists():
+        pages.append(_Page(glossary, glossary.read_text(encoding="utf-8")))
     if README.exists():
         pages.append(_Page(README, README.read_text(encoding="utf-8")))
     if DOCS_DIR.exists():

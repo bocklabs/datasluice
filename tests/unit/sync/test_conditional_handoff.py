@@ -135,7 +135,7 @@ def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource) -> 
 
     assert outcomes[0].action == "materialized"
     assert reader.open_calls == 1
-    assert server.captured_paths == ["/data.csv", "/data.csv"]
+    assert server.captured_paths == ["/data.csv"]
 
 
 def test_base_reader_checkpoints_materialized_representation(tmp_path, csv_server, make_resource) -> None:
@@ -173,22 +173,24 @@ def test_base_reader_checkpoints_materialized_representation(tmp_path, csv_serve
         )
     )
 
-    record = first[0].record
-    assert record is not None
+    first_record = first[0].record
+    second_record = second[0].record
+    assert first_record is not None
+    assert second_record is not None
     import pyarrow.parquet as pq
 
-    with open(record.uri.removeprefix("file://"), "rb") as published:
+    with open(second_record.uri.removeprefix("file://"), "rb") as published:
         assert pq.read_table(published).to_pylist() == [{"id": 1, "name": "B"}]
     state = state_store.get(sync_module.canonical_identity(resource))
     assert state is not None
-    assert state.cursor[sync_module.canonical_identity(resource)] == record.content_digest.value
+    assert state.cursor[sync_module.canonical_identity(resource)] == second_record.content_digest.value
     assert state.cursor[sync_module.canonical_identity(resource)] != '"fallback-a"'
     assert len(state.cursor[sync_module.canonical_identity(resource)]) == 64
-    assert second[0].action == "skipped-unchanged"
+    assert second[0].action == "materialized"
     assert reader.open_calls == 2
-    assert server.captured_paths == ["/data.csv", "/data.csv", "/data.csv"]
-    assert "if-none-match" not in server.captured[2]
-    assert "if-modified-since" not in server.captured[2]
+    assert server.captured_paths == ["/data.csv", "/data.csv"]
+    assert "if-none-match" not in server.captured[1]
+    assert "if-modified-since" not in server.captured[1]
 
 
 def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, make_resource, monkeypatch) -> None:

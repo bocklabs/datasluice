@@ -27,6 +27,37 @@ from datasluice.runtime.transport.base import RuntimeResponse
 logger = get_logger("runtime.mutation")
 
 
+def build_mutation_receipt(
+    operation_id: OperationId,
+    target: CatalogId,
+    policy: MutationPolicy,
+    outcome: str,
+    metadata: Mapping[str, object] | None = None,
+) -> MutationReceipt:
+    """Build the shared redacted mutation receipt for one dispatch outcome.
+
+    Args:
+        operation_id: The dispatched operation identifier.
+        target: The catalog target the mutation applied to.
+        policy: The confirmed mutation policy governing the dispatch.
+        outcome: One of the receipt outcomes (succeeded, failed, cancelled, skipped).
+        metadata: Caller audit metadata, redacted before inclusion.
+
+    Returns:
+        An immutable redacted mutation receipt.
+    """
+    redacted = redact_event_metadata(metadata or {})
+    return MutationReceipt(
+        operation=str(operation_id),
+        outcome=outcome,
+        target=target,
+        version_token=policy.concurrency.token if policy.concurrency is not None else None,
+        atomicity="independent",
+        operation_atomicity="independent",
+        audit_metadata=redacted,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MutationDispatchRequest:
     """One policy-derived request supplied to a mutation dispatch callable."""
@@ -152,15 +183,6 @@ class MutationEnforcer:
         outcome: str,
         metadata: Mapping[str, object],
     ) -> MutationReceipt:
-        redacted = redact_event_metadata(metadata)
-        receipt = MutationReceipt(
-            operation=str(operation_id),
-            outcome=outcome,
-            target=target,
-            version_token=policy.concurrency.token if policy.concurrency is not None else None,
-            atomicity="independent",
-            operation_atomicity="independent",
-            audit_metadata=redacted,
-        )
+        receipt = build_mutation_receipt(operation_id, target, policy, outcome, metadata)
         self.last_receipt = receipt
         return receipt

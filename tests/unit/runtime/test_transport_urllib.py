@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from http.client import IncompleteRead
 from typing import Any, cast
 from urllib.request import Request
 
@@ -11,6 +12,7 @@ import pytest
 
 from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
+from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport.base import RuntimeRequest, TransportFailure
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 from tests.helpers.catalog_transport import AsyncLoopbackTransport, SyncLoopbackTransport
@@ -22,18 +24,24 @@ class _FakeResponse:
         self.status = status
         self.headers = headers
         self._body = body
+        self.closed = False
 
     def read(self) -> bytes:
         return self._body
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _RecordingOpener:
     def __init__(self, responses: list[_FakeResponse]) -> None:
         self.requests: list[Request] = []
+        self.timeouts: list[float] = []
         self._responses = responses
 
     def open(self, request: Request, *, timeout: float) -> _FakeResponse:
         self.requests.append(request)
+        self.timeouts.append(timeout)
         return self._responses[len(self.requests) - 1]
 
 
@@ -49,6 +57,33 @@ class _LoopingRedirectOpener:
 
 def test_urllib_transport_uses_verified_tls_by_default() -> None:
     assert UrllibCatalogTransport()._tls_policy.verify
+
+
+def test_urllib_uses_read_budget_and_closes_completed_responses() -> None:
+    response = _FakeResponse(200, {})
+    opener = _RecordingOpener([response])
+    transport = UrllibCatalogTransport(budget=TimeBudget(connect=1, read=7, write=2, total=9))
+    cast(Any, transport)._opener = opener
+
+    transport.send(RuntimeRequest("GET", "https://example.test/data"))
+
+    assert opener.timeouts == [7]
+    assert response.closed
+
+
+def test_urllib_wraps_incomplete_response_reads_and_closes_response() -> None:
+    class _IncompleteResponse(_FakeResponse):
+        def read(self) -> bytes:
+            raise IncompleteRead(b"partial", 10)
+
+    response = _IncompleteResponse(200, {})
+    transport = UrllibCatalogTransport()
+    cast(Any, transport)._opener = _RecordingOpener([response])
+
+    with pytest.raises(TransportFailure, match="mid-response"):
+        transport.send(RuntimeRequest("GET", "https://example.test/data"))
+
+    assert response.closed
 
 
 def test_tls_policy_rejects_unscoped_disablement() -> None:
@@ -90,6 +125,7 @@ def test_urllib_cross_origin_redirect_strips_sensitive_headers_case_insensitivel
         "cOoKiE": "session-secret",
         "X-API-KEY": "api-secret",
         "x-AuTh-ToKeN": "token-secret",
+        "X-App-Token": "app-secret",
         "X-Benign": "preserve-me",
     }
     request = RuntimeRequest("GET", "https://example.test/start", request_headers)
@@ -99,7 +135,9 @@ def test_urllib_cross_origin_redirect_strips_sensitive_headers_case_insensitivel
     forwarded = {key.lower(): value for key, value in opener.requests[1].header_items()}
     assert response.status_code == 200
     assert len(opener.requests) == 2
-    assert all(name not in forwarded for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
+    assert all(
+        name not in forwarded for name in {"authorization", "cookie", "x-api-key", "x-auth-token", "x-app-token"}
+    )
     assert forwarded["x-benign"] == "preserve-me"
     assert dict(request.headers) == request_headers
 

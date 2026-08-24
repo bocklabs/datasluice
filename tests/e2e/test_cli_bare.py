@@ -22,29 +22,14 @@ _RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
 
 
 @pytest.fixture(scope="session")
-def bare_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+def bare_env(built_wheel: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     """Build the wheel, install it with no extras, return console + python paths."""
-    wheel_dir = tmp_path_factory.mktemp("wheels")
-    build = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    if build.returncode != 0:
-        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
-
-    wheels = list(wheel_dir.glob("datasluice-*.whl"))
-    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
-    wheel = wheels[0]
-
     venv = tmp_path_factory.mktemp("venv")
     venv_python = venv / "bin" / "python"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
 
     install = subprocess.run(
-        ["uv", "pip", "install", "--python", str(venv_python), str(wheel)],
+        ["uv", "pip", "install", "--python", str(venv_python), str(built_wheel)],
         capture_output=True,
         text=True,
         timeout=180,
@@ -82,6 +67,9 @@ def test_bare_wheel_import_sweep_stays_optional_dependency_free(bare_env: dict[s
             "-c",
             "import sys;"
             "import datasluice;"
+            "import datasluice.cli;"
+            "import datasluice.data;"
+            "import datasluice.data.readers;"
             "import datasluice.io;"
             "import datasluice.sync;"
             "import datasluice.discovery;"
@@ -126,7 +114,10 @@ def test_bare_console_script_exposes_runtime_cli_surface(bare_env: dict[str, str
     )
     assert version.returncode == 0, version.stderr
     assert version.stdout.startswith("datasluice ")
-    commands_section = result.stdout.split("Commands", 1)[1]
+    plain_help = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stdout)
+    commands_match = re.search(r"(?m)^[^\w\n]*Commands\b", plain_help)
+    assert commands_match is not None, "console --help has no Commands section"
+    commands_section = plain_help[commands_match.end() :]
     for command in ("scan", "open", "materialize", "capabilities", "credentials"):
         assert re.search(rf"^[\W_]*{command}\b", commands_section, re.MULTILINE), (
             f"console --help missing command {command}"

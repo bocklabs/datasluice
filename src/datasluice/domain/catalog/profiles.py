@@ -54,6 +54,13 @@ class EffectiveCapabilityState(StrEnum):
     DEPLOYMENT_DISABLED = "deployment-disabled"
 
 
+class EvidenceProvenance(StrEnum):
+    """Provenance of capability evidence relative to the pinned platform API line."""
+
+    VERIFIED_LINE = "verified-line"
+    UNVERIFIED = "unverified"
+
+
 @dataclass(frozen=True, slots=True)
 class ProbeEvidence:
     """Sanitized observation used to derive one operation's effective state."""
@@ -63,8 +70,10 @@ class ProbeEvidence:
     credential_classification: CredentialClassification
     role_classification: RoleClassification
     observed_response_class: ProbeResponseClass
+    provenance: EvidenceProvenance = EvidenceProvenance.VERIFIED_LINE
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "provenance", EvidenceProvenance(self.provenance))
         object.__setattr__(self, "deployment_url", _sanitize_deployment_url(self.deployment_url))
 
 

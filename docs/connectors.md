@@ -1,23 +1,23 @@
 # Connectors
 
 Connectors are typed façades over DataSluice's canonical catalog contract.
-Each platform lives in its own package and exposes exactly one adapter class
+Each platform lives in its own package and exposes exactly one connector class
 and one factory function — nothing else is public.
 
 ## Platform packages
 
 | Package | Public surface | Pinned profile |
 |---------|----------------|----------------|
-| `datasluice.connectors.catalog.ckan` | `CKANAdapter`, `create_ckan_connector` | CKAN `2.11.5`, Action API v3 |
-| `datasluice.connectors.catalog.udata` | `UDataAdapter`, `create_udata_connector` | uData `17.3.0`, API v1 |
-| `datasluice.connectors.catalog.socrata` | `SocrataAdapter`, `create_socrata_connector` | Socrata `3.0`, SODA 3 |
+| `datasluice.connectors.catalog.ckan` | `CKANConnector`, `create_ckan_connector` | CKAN `2.11.5`, Action API v3 |
+| `datasluice.connectors.catalog.udata` | `UDataConnector`, `create_udata_connector` | uData `17.3.0`, API v1 |
+| `datasluice.connectors.catalog.socrata` | `SocrataConnector`, `create_socrata_connector` | Socrata `3.0`, SODA 3 |
 
 Imports are always explicit and package-level:
 
 ```python
-from datasluice.connectors.catalog.ckan import CKANAdapter, create_ckan_connector
-from datasluice.connectors.catalog.socrata import SocrataAdapter, create_socrata_connector
-from datasluice.connectors.catalog.udata import UDataAdapter, create_udata_connector
+from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connector
+from datasluice.connectors.catalog.socrata import SocrataConnector, create_socrata_connector
+from datasluice.connectors.catalog.udata import UDataConnector, create_udata_connector
 ```
 
 The `datasluice.connectors.catalog` namespace itself re-exports nothing:
@@ -83,3 +83,45 @@ Third-party connectors are opt-in plugins:
 See [Platform Contracts](supported-portals.md) for the pinned platform
 profiles and [Architecture](architecture.md) for how the layers fit
 together.
+
+## Drift readiness
+
+The CKAN connector ships a runnable single-shot drift-read checker at
+`datasluice.connectors.catalog.ckan.drift`. It exercises representative
+public deployments with bounded, read-only typed calls and prints one
+redacted JSON advisory line per check; it registers no CLI subcommand.
+
+Three selection criteria govern every configured check, and each
+`DriftCheck` documents its rationale string against them:
+
+1. **Bounded** — every check is a single whitelisted typed read
+   (`status_show`, `package_list`, `package_show`,
+   `current_package_list_with_resources`) with fixed parameters; generic
+   action invocation stays unavailable.
+2. **Stable ordering** — sequences compare under a declared ordering
+   mode; `platform-deterministic` compares positions as the platform
+   returns them, while `canonicalized` sorts both sides before
+   comparing, so accidental reordering never reports as drift.
+3. **No time-varying fields** — expectations are exact key-set
+   skeletons; volatile keys are excluded by configuration in the
+   check definition, never filtered ad hoc at comparison time.
+
+Confirmed representative targets (amended 2026-08-23 per the recorded
+D-11 disposition): `demo.ckan.org` as primary — running the pinned
+2.11.5 line — and `ckan.publishing.service.gov.uk` as secondary. Known
+behaviors are part of the coverage: the secondary hides its version
+string (line state propagates as `unverified`) and selectively rejects
+some actions with gateway-level 403s, which the checker records as
+`unavailable` advisory rows while sibling checks still execute. Drift
+findings are always advisory — they advise, never block.
+
+Run it with:
+
+```bash
+uv run python -m datasluice.connectors.catalog.ckan.drift
+```
+
+Optional flags stay minimal: `--target SUBSTRING` restricts the run to
+matching default targets and `--json-out PATH` mirrors the JSON-lines
+output to a file. Scheduling and alerting integration live in a later
+phase; this module is the runnable proof only.

@@ -60,18 +60,29 @@ _QUERY_KEYWORDS = "|".join(re.escape(part) for part in sorted(SENSITIVE_QUERY_KE
 CREDENTIAL_QUERY_RE = re.compile(rf"(?i)((?:[?&;]|\b)[^=&;\s]*(?:{_QUERY_KEYWORDS})[^=&;\s]*)=[^&;\s]+")
 AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
 USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^@/\s]*):([^@\s]*)@")
+_SCAN_MARGIN = 64
+
+
+def _output_window(value: str) -> str:
+    return value[: MAX_TEXT_LENGTH + _SCAN_MARGIN]
 
 
 def contains_credential_content(value: object) -> bool:
     """Return whether a string contains a credential-shaped value."""
     if not isinstance(value, str):
         return False
-    return bool(USERINFO_RE.search(value) or CREDENTIAL_QUERY_RE.search(value) or AUTH_SCHEME_RE.search(value))
+    window_size = MAX_TEXT_LENGTH + _SCAN_MARGIN
+    step = MAX_TEXT_LENGTH
+    for offset in range(0, len(value) or 1, step):
+        window = value[offset : offset + window_size]
+        if USERINFO_RE.search(window) or CREDENTIAL_QUERY_RE.search(window) or AUTH_SCHEME_RE.search(window):
+            return True
+    return False
 
 
 def redact_string(value: str) -> str:
     """Return a bounded string with credential-shaped content replaced."""
-    scrubbed = USERINFO_RE.sub(r"\1:***@", value)
+    scrubbed = USERINFO_RE.sub(r"\1:***@", _output_window(value))
     scrubbed = CREDENTIAL_QUERY_RE.sub(r"\1=***", scrubbed)
     return AUTH_SCHEME_RE.sub(r"\1 ***", scrubbed)[:MAX_TEXT_LENGTH]
 

@@ -193,3 +193,165 @@ def test_public_read_evidence_does_not_promote_mutation_permission() -> None:
     assert effective.for_operation(read_operation.id).state is EffectiveCapabilityState.CORE
     assert effective.for_operation(write_operation.id).state is EffectiveCapabilityState.UNAVAILABLE
     assert not effective.guard(write_operation.id).allowed
+
+
+def test_ckan_manifest_datasets_group_holds_exactly_the_documented_twenty_actions() -> None:
+    """Manifest-driven completeness: role splits and kind agreement, no duplicated tuple."""
+    from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
+    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
+
+    entries = [entry for entry in CKAN_ACTIONS.entries if entry.group == "datasets"]
+    assert len(entries) == 20
+    assert {entry.owning_operation_id for entry in entries} == {
+        "ckan/action-api-v3.dataset-list-show-search",
+        "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+        "ckan/action-api-v3.dataset-collaborators",
+    }
+    reads = [entry for entry in entries if entry.mutation_class == "read"]
+    standards = [entry for entry in entries if entry.mutation_class == "standard"]
+    destructive = [entry for entry in entries if entry.mutation_class == "destructive"]
+    assert len(reads) == 7
+    assert len(standards) == 12
+    assert len(destructive) == 1
+    collaborator_reads = [e for e in reads if e.owning_operation_id.endswith("dataset-collaborators")]
+    collaborator_mutations = [e for e in standards if e.owning_operation_id.endswith("dataset-collaborators")]
+    assert len(collaborator_reads) == 2
+    assert len(collaborator_mutations) == 2
+    purge = next(entry for entry in entries if entry.name == "dataset_purge")
+    assert purge.mutation_class == "destructive"
+    for entry in entries:
+        spec = RESULT_KINDS.get(entry.name)
+        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
+        outcome, family = spec
+        assert outcome == entry.result_kind
+        if family is not None:
+            assert family in RECORD_KINDS
+
+
+def test_relationships_follows_manifest_holds_exactly_the_thirty_one_core_actions() -> None:
+    """Staged completeness gate: the core relationships-follows id owns exactly 31 entries."""
+    from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
+    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
+
+    entries = [
+        entry
+        for entry in CKAN_ACTIONS.entries
+        if entry.owning_operation_id == "ckan/action-api-v3.relationships-follows"
+    ]
+    assert len(entries) == 31
+    assert {entry.group for entry in entries} == {"relationships_activity"}
+    reads = [entry for entry in entries if entry.mutation_class == "read"]
+    mutations = [entry for entry in entries if entry.mutation_class != "read"]
+    assert len(reads) == 22
+    assert len(mutations) == 9
+    assert all(entry.mutation_class == "standard" for entry in mutations)
+    assert sum(1 for entry in entries if entry.name.startswith("package_relationship")) == 4
+    assert sum(1 for entry in entries if entry.result_kind == "value") == 13
+    assert sum(1 for entry in entries if entry.result_kind == "record-list") == 9
+    assert sum(1 for entry in entries if entry.result_kind == "mapping") == 9
+    for entry in entries:
+        spec = RESULT_KINDS.get(entry.name)
+        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
+        outcome, family = spec
+        assert outcome == entry.result_kind
+        if family is not None:
+            assert family in RECORD_KINDS
+
+
+def test_inventory_complete() -> None:
+    """Assert three-way completeness of the exhaustive 157-action CKAN inventory.
+
+    The checked-in ``action_manifest.json`` is the single source of registered
+    action names (D-22): registry, mapping truth table, declared v2 profile
+    operations, and the typed methods of BOTH projection modes must agree with
+    it exactly. Extending or regenerating the manifest requires a reviewed
+    manifest amendment — this gate fails on any addition or omission.
+    """
+    import json
+    from importlib import resources
+
+    from datasluice.connectors.catalog.ckan.clients import (
+        _AsyncDiscoveryService,
+        _SyncDiscoveryService,
+        declared_ckan_profile,
+    )
+    from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
+    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
+    from datasluice.connectors.catalog.ckan.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.ckan.services.datastore import AsyncDatastoreService, SyncDatastoreService
+    from datasluice.connectors.catalog.ckan.services.extensions import AsyncExtensionsService, SyncExtensionsService
+    from datasluice.connectors.catalog.ckan.services.groups import AsyncGroupsService, SyncGroupsService
+    from datasluice.connectors.catalog.ckan.services.organizations import (
+        AsyncOrganizationsService,
+        SyncOrganizationsService,
+    )
+    from datasluice.connectors.catalog.ckan.services.relationships_activity import (
+        AsyncRelationshipsActivityService,
+        SyncRelationshipsActivityService,
+    )
+    from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
+    from datasluice.connectors.catalog.ckan.services.users import AsyncUsersService, SyncUsersService
+    from datasluice.connectors.catalog.ckan.services.views import AsyncViewsService, SyncViewsService
+    from datasluice.connectors.catalog.ckan.services.vocabularies_licenses import (
+        AsyncVocabulariesLicensesService,
+        SyncVocabulariesLicensesService,
+    )
+
+    group_projections = {
+        "action_discovery": (_SyncDiscoveryService, _AsyncDiscoveryService),
+        "datasets": (SyncDatasetsService, AsyncDatasetsService),
+        "resources": (SyncResourcesService, AsyncResourcesService),
+        "organizations": (SyncOrganizationsService, AsyncOrganizationsService),
+        "groups": (SyncGroupsService, AsyncGroupsService),
+        "users": (SyncUsersService, AsyncUsersService),
+        "vocabularies_licenses": (SyncVocabulariesLicensesService, AsyncVocabulariesLicensesService),
+        "relationships_activity": (SyncRelationshipsActivityService, AsyncRelationshipsActivityService),
+        "views": (SyncViewsService, AsyncViewsService),
+        "datastore": (SyncDatastoreService, AsyncDatastoreService),
+        "extensions": (SyncExtensionsService, AsyncExtensionsService),
+    }
+
+    document = json.loads(
+        resources.files("datasluice.connectors.catalog.ckan")
+        .joinpath("action_manifest.json")
+        .read_text(encoding="utf-8")
+    )
+    manifest_names = {item["name"] for item in document["actions"]}
+    registry_names = {entry.name for entry in CKAN_ACTIONS.entries}
+    assert len(manifest_names) == 157
+    assert len(registry_names) == 157
+    assert manifest_names ^ registry_names == frozenset()
+    assert set(RESULT_KINDS) == manifest_names, (
+        f"RESULT_KINDS carries stale keys absent from the manifest: {sorted(set(RESULT_KINDS) - manifest_names)}"
+    )
+
+    declared_operations = {str(operation_id) for operation_id in declared_ckan_profile().operations}
+    valid_mutation_classes = {"read", "standard", "destructive"}
+    valid_result_kinds = {"record", "record-list", "value", "value-list", "mapping", "token-secret"}
+    for entry in CKAN_ACTIONS.entries:
+        assert entry.owning_operation_id in declared_operations, f"{entry.name} rides an undeclared v2 id"
+        assert entry.mutation_class in valid_mutation_classes, f"{entry.name} carries an invalid mutation class"
+        assert entry.result_kind in valid_result_kinds, f"{entry.name} carries an invalid result kind"
+        assert entry.group in group_projections, f"{entry.name} belongs to an unknown group"
+        spec = RESULT_KINDS.get(entry.name)
+        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
+        outcome, family = spec
+        assert outcome == entry.result_kind, f"{entry.name} disagrees with the mapping truth table"
+        if family is not None:
+            assert family in RECORD_KINDS, f"{entry.name} names an unknown record family"
+        sync_type, async_type = group_projections[entry.group]
+        sync_method = getattr(sync_type, entry.name, None)
+        async_method = getattr(async_type, entry.name, None)
+        assert callable(sync_method), f"{sync_type.__name__} misses the typed method {entry.name}"
+        assert callable(async_method), f"{async_type.__name__} misses the typed method {entry.name}"
+
+    filestore_entries = [
+        entry
+        for entry in CKAN_ACTIONS.entries
+        if entry.owning_operation_id == "ckan/filestore.upload-and-resource-file-replacement"
+    ]
+    assert filestore_entries == []
+    assert "filestore" not in {entry.group for entry in CKAN_ACTIONS.entries}
+
+    counted = sum(len([entry for entry in CKAN_ACTIONS.entries if entry.group == group]) for group in group_projections)
+    assert counted == 157

@@ -26,8 +26,8 @@ except ImportError:  # RED phase: module not yet importable
 if to_duckdb is None:
     pytest.skip("to_duckdb not yet implemented (RED -> GREEN)", allow_module_level=True)
 
-from datasluice.data.batch_stream import BatchStream  # noqa: E402
-from datasluice.integrations.duckdb import _validate_table_name  # noqa: E402
+from datasluice.data.batch_stream import BatchStream
+from datasluice.integrations.duckdb import _validate_table_name
 
 
 def test_to_duckdb_returns_named_relation() -> None:

@@ -8,12 +8,36 @@
       "outcome": "core"
     },
     {
+      "operation": "ckan/action-api-v3.organization-list-show-search",
+      "outcome": "core"
+    },
+    {
+      "operation": "ckan/action-api-v3.group-list-show-search",
+      "outcome": "core"
+    },
+    {
+      "operation": "ckan/action-api-v3.user-list-show",
+      "outcome": "core"
+    },
+    {
+      "operation": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "outcome": "core"
+    },
+    {
       "operation": "ckan/datastore-extension.query-and-record-crud",
       "outcome": "optional"
     },
     {
-      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
-      "outcome": "authenticated-success"
+      "operation": "ckan/action-api-v3.dataset-collaborators",
+      "outcome": "optional"
+    },
+    {
+      "operation": "ckan/action-api-v3.activity",
+      "outcome": "optional"
+    },
+    {
+      "operation": "ckan/filestore.upload-and-resource-file-replacement",
+      "outcome": "optional"
     },
     {
       "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
@@ -24,35 +48,59 @@
       "outcome": "invalid-credentials"
     },
     {
-      "operation": "ckan/action-api-v3.user-list-show-create-update-delete-token-management",
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-editor"
+      }
+    },
+    {
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
       "outcome": "forbidden"
     },
     {
-      "operation": "ckan/plugin-provided-action-and-extension-probes",
+      "operation": "ckan/action-api-v3.dataset-collaborators",
       "outcome": "deployment-disabled"
     },
     {
-      "operation": "ckan/action-api-v3.discovery-help-and-status",
-      "outcome": "unavailable"
+      "operation": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "outcome": "core"
     },
     {
       "operation": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-editor"
+      }
+    },
+    {
+      "operation": "ckan/action-api-v3.organization-create-update-delete-members",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-sysadmin"
+      }
+    },
+    {
+      "operation": "ckan/action-api-v3.organization-create-update-delete-members",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "ckan/action-api-v3.group-create-update-delete-members",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-sysadmin"
+      }
+    },
+    {
+      "operation": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
       "outcome": "authenticated-success"
     },
     {
-      "operation": "ckan/action-api-v3.organization-list-show-create-update-delete-members",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "ckan/action-api-v3.group-list-show-create-update-delete-members",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "ckan/action-api-v3.tags-vocabularies-and-licenses",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "ckan/action-api-v3.relationships-followers-and-activity",
+      "operation": "ckan/action-api-v3.relationships-follows",
       "outcome": "authenticated-success"
     },
     {
@@ -60,8 +108,40 @@
       "outcome": "authenticated-success"
     },
     {
-      "operation": "ckan/filestore.upload-and-resource-file-replacement",
-      "outcome": "optional"
+      "operation": "ckan/action-api-v3.jobs-and-task-status",
+      "outcome": "core"
+    },
+    {
+      "operation": "ckan/action-api-v3.jobs-and-task-status",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-admin"
+      }
+    },
+    {
+      "operation": "ckan/action-api-v3.config-options",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "ckan/plugin-provided-action-and-extension-probes",
+      "outcome": "deployment-disabled"
+    },
+    {
+      "operation": "ckan/datastore-extension.sql-search",
+      "outcome": "deployment-disabled"
+    },
+    {
+      "operation": "ckan/action-api-v3.discovery-help-and-status",
+      "outcome": "unavailable"
     }
   ]
 }

@@ -10,6 +10,7 @@ from typing import Annotated, Any, cast
 import typer
 
 from datasluice.cli._output import render_json, result_console
+from datasluice.cli._platforms import CATALOG_PLATFORMS
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -26,7 +27,6 @@ from datasluice.runtime.capability import EffectiveCapabilityCache
 
 app = typer.Typer(help="Inspect declared and effective catalog operation capabilities.")
 
-_PLATFORMS = ("ckan", "udata", "socrata")
 _AUTH_CLASS_LABELS = {
     **{item.value: item for item in AuthClass},
     "application-token-or-authenticated": AuthClass.AUTHENTICATED,
@@ -39,7 +39,7 @@ def list_profiles(
 ) -> None:
     """List the canonical connector profiles installed with DataSluice."""
     _validate_output(output)
-    profiles = [_profile_summary(platform) for platform in _PLATFORMS]
+    profiles = [_profile_summary(platform) for platform in CATALOG_PLATFORMS]
     if output == "json":
         render_json({"profiles": profiles})
         return
@@ -96,14 +96,16 @@ def _declared_profile(platform: str) -> DeclaredCapabilityProfile:
 
 def _load_profile(platform: str) -> tuple[DeclaredCapabilityProfile, list[dict[str, str]]]:
     """Parse the packaged profile document once and build the runtime profile."""
-    if platform not in _PLATFORMS:
+    if platform not in CATALOG_PLATFORMS:
         raise typer.BadParameter("platform must be one of: ckan, udata, socrata")
-    document = _profile_document(platform)
-    entries = _profile_entries(document)
-    specs = [_operation_spec(entry) for entry in entries]
-    operations = {spec.id: spec for spec in specs}
-    return (
-        DeclaredCapabilityProfile(
+    try:
+        document = _profile_document(platform)
+        entries = _profile_entries(document)
+        specs = [_operation_spec(entry) for entry in entries]
+        operations = {spec.id: spec for spec in specs}
+        if len(operations) != len(specs):
+            raise ValueError("duplicate operation identifiers")
+        profile = DeclaredCapabilityProfile(
             profile_version=document["profile_version"],
             schema_version=document["schema_version"],
             platform_api_version=document["platform_api_version"],
@@ -111,9 +113,10 @@ def _load_profile(platform: str) -> tuple[DeclaredCapabilityProfile, list[dict[s
             source_accessed_at=date.fromisoformat(document["source_accessed_at"]),
             fixture_fingerprint=document["fixture_fingerprint"],
             operations=operations,
-        ),
-        entries,
-    )
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise typer.BadParameter(f"Packaged capability profile for {platform!r} is invalid: {exc}") from exc
+    return profile, entries
 
 
 def _operation_id(value: str) -> OperationId:
@@ -129,8 +132,12 @@ def _operation_id(value: str) -> OperationId:
 def _profile_document(platform: str) -> dict[str, Any]:
     """Load raw packaged profile data without contacting a deployment."""
     profile_files = files("datasluice.contracts.catalog.profiles")
-    profile_path = next(path for path in profile_files.iterdir() if path.name.startswith(f"{platform}-"))
-    document = json.loads(profile_path.read_text(encoding="utf-8"))
+    matches = sorted(
+        (path for path in profile_files.iterdir() if path.name.startswith(f"{platform}-")), key=lambda path: path.name
+    )
+    if len(matches) != 1:
+        raise ValueError(f"expected exactly one packaged profile, found {len(matches)}")
+    document = json.loads(matches[0].read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise ValueError("Packaged capability profiles must be JSON objects.")
     return cast(dict[str, Any], document)
@@ -150,7 +157,7 @@ def _operation_spec(entry: dict[str, str]) -> OperationSpec:
         auth_class = _AUTH_CLASS_LABELS[entry["authentication"]]
         mutation_class = MutationClass(entry["mutation"])
         capability_class = CapabilityClass(entry["capability"])
-    except KeyError as exc:
+    except (KeyError, ValueError) as exc:
         raise ValueError(
             f"Packaged operation {entry.get('id', '<unknown>')!r} declares unsupported value for {exc.args[0]!r}."
         ) from exc

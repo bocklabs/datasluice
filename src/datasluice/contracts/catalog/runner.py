@@ -16,7 +16,7 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogClient,
 )
 from datasluice.contracts.catalog.report import CaseOutcome, ComplianceReport
-from datasluice.domain.catalog.models import DatasetRecord, NativeRecord, ResultEnvelope
+from datasluice.domain.catalog.models import DatasetRecord, MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.errors.catalog import (
     CatalogRateLimitError,
@@ -78,7 +78,7 @@ class UnsupportedCatalogOperationError(DataSluiceError):
 class _SyncReferenceCaseClient(Protocol):
     """Minimal synchronous fixture-case executor used by the public runner."""
 
-    def execute_case(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord]:
+    def execute_case(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord | ValueRecord | MappingRecord]:
         """Execute one declared fixture case."""
 
     def platform_metadata(self) -> Mapping[str, object]:
@@ -88,7 +88,7 @@ class _SyncReferenceCaseClient(Protocol):
 class _AsyncReferenceCaseClient(Protocol):
     """Minimal asynchronous fixture-case executor used by the public runner."""
 
-    async def execute_case(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord]:
+    async def execute_case(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord | ValueRecord | MappingRecord]:
         """Execute one declared fixture case."""
 
     def platform_metadata(self) -> Mapping[str, object]:

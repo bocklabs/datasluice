@@ -17,15 +17,15 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("httpx")
 
-import pyarrow as pa  # noqa: E402
-import pyarrow.parquet as pq  # noqa: E402
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-from datasluice.data.access import DataPlaneResourceReader  # noqa: E402
-from datasluice.domain import HttpDownload, Resource  # noqa: E402
-from datasluice.runtime.transport.base import RuntimeResponse  # noqa: E402
-from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport  # noqa: E402
-from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport  # noqa: E402
-from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
+from datasluice.data.access import DataPlaneResourceReader
+from datasluice.domain import HttpDownload, Resource
+from datasluice.runtime.transport.base import RuntimeResponse
+from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
+from tests.helpers.http_server import MockResponse, start_test_server
 
 
 def _parquet_bytes() -> bytes:
@@ -45,12 +45,12 @@ def _open_table(transport: HttpxCatalogTransport | UrllibCatalogTransport, base:
         return pa.Table.from_batches(list(stream.iter_batches()), schema=stream.schema)
 
 
-def _serve_parquet(response: MockResponse) -> tuple[pa.Table, str]:
+def _serve_parquet(response: MockResponse) -> pa.Table:
     """Read one scripted Parquet response through the data plane with teardown-safe cleanup."""
     server, base = start_test_server({"/data.parquet": response})
     transport = HttpxCatalogTransport()
     try:
-        return _open_table(transport, base), base
+        return _open_table(transport, base)
     finally:
         transport.close()
         server.shutdown()
@@ -59,7 +59,7 @@ def _serve_parquet(response: MockResponse) -> tuple[pa.Table, str]:
 
 def test_gzip_http_parquet_without_content_encoding_header_parses() -> None:
     """Magic-byte sniffing decompresses gzipped HTTP Parquet lacking Content-Encoding."""
-    table, _ = _serve_parquet(MockResponse(body=gzip.compress(_parquet_bytes())))
+    table = _serve_parquet(MockResponse(body=gzip.compress(_parquet_bytes())))
 
     assert table.num_rows == 3
     assert table.column("name").to_pylist() == ["a", "b", "c"]

@@ -1,0 +1,360 @@
+"""Unit coverage for CKAN wire envelope decoding and result shaping."""
+
+from __future__ import annotations
+
+import json
+from typing import cast
+
+import pytest
+
+from datasluice.connectors.catalog.ckan.errors import map_envelope_error
+from datasluice.connectors.catalog.ckan.mapping import (
+    GROUP,
+    RECORD_KINDS,
+    RESULT_KINDS,
+    TAG,
+    VOCABULARY,
+    parse_action_envelope,
+    shape_result_envelope,
+)
+from datasluice.connectors.catalog.ckan.results import (
+    CKANMutationResult,
+    CKANTokenResult,
+    default_standard_policy,
+    require_mutation_tier,
+)
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
+from datasluice.domain.catalog.operations import OperationId
+from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+from datasluice.errors.catalog import (
+    CatalogConflictError,
+    CatalogNotFoundError,
+    CatalogUnavailableError,
+    CatalogValidationError,
+    ForbiddenError,
+    NativeCatalogError,
+    UnauthenticatedError,
+)
+from datasluice.runtime.mutation import build_mutation_receipt
+
+_OPERATION = "ckan/action-api-v3.dataset-list-show-search"
+_UNIQUE_PAYLOAD_TOKEN = "raw-envelope-secret-9f8e7d6c5b4a"
+_TOKEN_LITERAL = "ds-token-abcdef0123456789"
+
+
+@pytest.mark.parametrize(
+    ("result",),
+    [
+        ({"id": "weather"},),
+        (["a", "b"],),
+        (17,),
+        (None,),
+    ],
+)
+def test_parse_action_envelope_returns_the_success_result_verbatim(result: object) -> None:
+    assert parse_action_envelope({"success": True, "result": result}, operation=_OPERATION) == result
+
+
+def test_plain_authorization_errors_map_to_unauthenticated() -> None:
+    payload = {"success": False, "error": {"__type": "Authorization Error", "message": "Access denied"}}
+
+    with pytest.raises(UnauthenticatedError) as raised:
+        parse_action_envelope(payload, operation=_OPERATION)
+
+    assert raised.value.operation == _OPERATION
+    assert raised.value.platform == "ckan"
+    assert raised.value.capability_state == "unauthorized"
+
+
+def test_forbidden_http_context_maps_to_a_distinguishable_forbidden_error() -> None:
+    error = {"__type": "Authorization Error", "message": "Access denied"}
+
+    mapped = map_envelope_error(error, operation=_OPERATION, platform=CatalogPlatform.CKAN, status_code=403)
+
+    assert isinstance(mapped, ForbiddenError)
+    assert mapped.capability_state == "forbidden"
+    assert mapped.safe_action != ""
+
+
+def test_access_denied_flavor_for_an_authenticated_caller_maps_to_forbidden() -> None:
+    error = {
+        "__type": "Authorization Error",
+        "message": "Unauthorized to update dataset weather. User bob not authorized.",
+    }
+
+    mapped = map_envelope_error(error, operation=_OPERATION, platform=CatalogPlatform.CKAN)
+
+    assert isinstance(mapped, ForbiddenError)
+    assert mapped.capability_state == "forbidden"
+
+
+@pytest.mark.parametrize(
+    ("envelope_type", "expected"),
+    [
+        ("Not Found Error", CatalogNotFoundError),
+        ("Validation Error", CatalogValidationError),
+        ("Conflict", CatalogConflictError),
+        ("Conflict Error", CatalogConflictError),
+        ("Some Novel Failure", CatalogUnavailableError),
+    ],
+)
+def test_envelope_types_map_to_typed_catalog_errors(envelope_type: str, expected: type[Exception]) -> None:
+    mapped = map_envelope_error({"__type": envelope_type}, operation=_OPERATION, platform="ckan")
+
+    assert isinstance(mapped, expected)
+
+
+def test_mapped_errors_never_expose_the_raw_payload_or_the_marker_key() -> None:
+    error = {
+        "__type": "Validation Error",
+        "message": "field rejection",
+        "nested": {"deep_token": _UNIQUE_PAYLOAD_TOKEN},
+    }
+
+    with pytest.raises(CatalogValidationError) as raised:
+        parse_action_envelope({"success": False, "error": error}, operation=_OPERATION)
+
+    rendered = str(raised.value)
+    assert _UNIQUE_PAYLOAD_TOKEN not in rendered
+    assert "__type" not in rendered
+    metadata = raised.value.metadata
+    assert "__type" not in metadata
+    assert _UNIQUE_PAYLOAD_TOKEN not in repr(metadata)
+
+
+@pytest.mark.parametrize(
+    ("payload",),
+    [
+        ([],),
+        ("nope",),
+        (42,),
+        ({"result": 1},),
+        ({"success": "yes"},),
+        ({"success": False},),
+        ({"success": False, "error": "boom"},),
+    ],
+)
+def test_malformed_payloads_raise_a_bounded_native_catalog_error(payload: object) -> None:
+    with pytest.raises(NativeCatalogError):
+        parse_action_envelope(payload, operation=_OPERATION)
+
+
+@pytest.mark.parametrize(
+    ("error_dict", "status_code"),
+    [
+        ({"__type": "Authorization Error", "message": "Access denied"}, None),
+        ({"__type": "Not Found Error", "message": "missing"}, None),
+        ({"__type": "Validation Error"}, None),
+        ({"__type": "Conflict"}, None),
+        ({"__type": "Mystery Failure"}, 500),
+    ],
+)
+def test_every_mapped_error_carries_operation_platform_and_safe_action(
+    error_dict: dict[str, object], status_code: int | None
+) -> None:
+    error = map_envelope_error(error_dict, operation=_OPERATION, platform="ckan", status_code=status_code)
+
+    assert error.operation == _OPERATION
+    assert error.platform == "ckan"
+    assert isinstance(error.safe_action, str) and error.safe_action
+
+
+def test_package_show_shapes_to_a_lossless_dataset_native_record() -> None:
+    payload = {
+        "id": "weather-123",
+        "name": "weather",
+        "title": "Weather records",
+        "revision": "legacy-server-sent-key",
+    }
+
+    envelope = shape_result_envelope("package_show", payload)
+
+    item = envelope.items[0]
+    assert isinstance(item, NativeRecord)
+    assert item.platform.value == "ckan"
+    assert item.resource_kind == ResourceKind.DATASET
+    assert item.id.value == "weather-123"
+    assert set(item.payload.keys()) == set(payload.keys())
+    assert dict(item.payload) == payload
+
+
+def test_package_list_shapes_scalars_with_page_total_from_the_list_length() -> None:
+    envelope = shape_result_envelope("package_list", ["a", "b"])
+
+    assert all(isinstance(item, ValueRecord) for item in envelope.items)
+    assert [item.value for item in envelope.items if isinstance(item, ValueRecord)] == ["a", "b"]
+    assert envelope.page is not None and envelope.page.total_items == 2
+
+
+def test_status_show_shapes_to_a_single_lossless_mapping_record() -> None:
+    payload = {"site_title": "Portal", "extensions": ["datastore"], "ckan_version": "2.11.5"}
+
+    envelope = shape_result_envelope("status_show", payload)
+
+    item = envelope.items[0]
+    assert isinstance(item, MappingRecord)
+    assert item.to_dict() == {"schema_version": 1, "kind": "mapping_record", "payload": payload}
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_kind"),
+    [
+        ("organization_show", ResourceKind.ORGANIZATION),
+        ("group_show", GROUP),
+        ("tag_show", TAG),
+        ("vocabulary_show", VOCABULARY),
+    ],
+)
+def test_record_families_use_connector_declared_resource_kinds(action: str, expected_kind: ResourceKind) -> None:
+    payload = {"id": "identity-1", "name": "named", "display_name": "Named"}
+
+    envelope = shape_result_envelope(action, payload)
+
+    item = envelope.items[0]
+    assert isinstance(item, NativeRecord)
+    assert item.resource_kind == expected_kind
+    assert item.id.resource_kind == expected_kind
+
+
+def test_follower_counts_and_am_following_shape_to_single_value_envelopes() -> None:
+    counted = shape_result_envelope("dataset_follower_count", 7)
+    following = shape_result_envelope("am_following_dataset", False)
+
+    assert isinstance(counted.items[0], ValueRecord) and counted.items[0].value == 7
+    assert isinstance(following.items[0], ValueRecord) and following.items[0].value is False
+
+
+def test_package_search_shapes_multi_records_with_the_platform_count_total() -> None:
+    result = {"count": 500, "results": [{"id": "one"}]}
+
+    envelope = shape_result_envelope("package_search", result)
+
+    assert len(envelope.items) == 1
+    assert all(isinstance(item, NativeRecord) for item in envelope.items)
+    assert envelope.page is not None and envelope.page.total_items == 500
+
+
+def test_member_lists_shape_to_lossless_member_mappings() -> None:
+    result = [["member-1", "user", "admin"]]
+
+    envelope = shape_result_envelope("member_list", result)
+
+    item = envelope.items[0]
+    assert isinstance(item, MappingRecord)
+    assert dict(item.payload) == {"id": "member-1", "type": "user", "capacity": "admin"}
+    assert envelope.page is not None and envelope.page.total_items == 1
+
+
+def test_api_token_create_shapes_to_a_secret_safe_token_result() -> None:
+    envelope = shape_result_envelope("api_token_create", {"token": _TOKEN_LITERAL, "user_id": "u-1"})
+
+    item = envelope.items[0]
+    assert isinstance(item, CKANTokenResult)
+    assert item.token.reveal() == _TOKEN_LITERAL
+    serialized = item.to_dict()
+    assert serialized["token"] == "***"
+    assert serialized["user_id"] == "u-1"
+    assert _TOKEN_LITERAL not in str(serialized)
+    assert _TOKEN_LITERAL not in repr(item)
+
+
+def test_token_results_require_a_non_empty_token_value() -> None:
+    with pytest.raises(ValueError):
+        CKANTokenResult.from_token_result({"user_id": "u-1"})
+
+
+def test_result_kind_tables_are_explicit_and_frozen() -> None:
+    assert "package_show" in RESULT_KINDS
+    assert RECORD_KINDS["package"] == ResourceKind.DATASET
+    mutable_records: dict[str, object] = cast("dict[str, object]", RECORD_KINDS)
+    mutable_results: dict[str, object] = cast("dict[str, object]", RESULT_KINDS)
+    with pytest.raises(TypeError):
+        mutable_records["intruder"] = ResourceKind.DATASET
+    with pytest.raises(TypeError):
+        mutable_results["intruder"] = ("record", None)
+
+
+def test_unknown_actions_shape_losslessly_through_the_mapping_fallback() -> None:
+    envelope = shape_result_envelope("some_brand_new_extension_action", {"anything": ["goes", 1]})
+
+    item = envelope.items[0]
+    assert isinstance(item, MappingRecord)
+    assert item.to_dict()["payload"] == {"anything": ["goes", 1]}
+
+
+def test_destructive_tier_refusal_names_operation_and_confirmation_remedy() -> None:
+    operation = OperationId("ckan", "datasets", "purge")
+
+    with pytest.raises(CatalogValidationError) as raised:
+        require_mutation_tier("destructive", operation, MutationPolicy(destructive=False))
+
+    assert "purge" in str(raised.value)
+    assert "confirmation" in raised.value.safe_action.lower()
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        MutationPolicy(destructive=True),
+        MutationPolicy(destructive=True, confirmation=ConfirmationPolicy(confirmed=True)),
+        MutationPolicy(
+            destructive=True,
+            confirmation=ConfirmationPolicy(confirmed=False),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ],
+)
+def test_destructive_tier_rejects_partially_confirmed_policies(policy: MutationPolicy) -> None:
+    with pytest.raises(CatalogValidationError):
+        require_mutation_tier("destructive", OperationId("ckan", "datasets", "purge"), policy)
+
+
+def test_confirmed_destructive_policy_passes_the_gate() -> None:
+    policy = MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(confirmed=True),
+        concurrency=ConcurrencyPolicy(token="v1"),
+    )
+    operation = OperationId("ckan", "datasets", "purge")
+
+    assert require_mutation_tier("destructive", operation, policy) is policy
+
+
+def test_standard_tier_without_caller_policy_uses_spine_default() -> None:
+    effective = require_mutation_tier("standard", OperationId("ckan", "datasets", "create"), None)
+
+    assert isinstance(effective, MutationPolicy)
+    assert not effective.destructive
+    assert effective.concurrency is not None
+    assert effective.concurrency.allows_execution()
+
+
+def test_read_entries_never_engage_the_gate() -> None:
+    operation = OperationId("ckan", "datasets", "show")
+    policy = default_standard_policy()
+
+    assert require_mutation_tier("read", operation, None) is None
+    assert require_mutation_tier("read", operation, policy) is policy
+
+
+def test_mutation_result_serialization_carries_no_credentials() -> None:
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+
+    envelope = cast(
+        "ResultEnvelope[CKANResultItem]",
+        ResultEnvelope(items=(CKANTokenResult.from_token_result({"token": _TOKEN_LITERAL}),)),
+    )
+    receipt = build_mutation_receipt(
+        OperationId("ckan", "datasets", "create"),
+        CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+        default_standard_policy(),
+        "succeeded",
+        {"dataset": "weather", "attempt": 1, "note": "Bearer aBcDeFgH12345678"},
+    )
+
+    payload = CKANMutationResult(result=envelope, receipt=receipt).to_dict()
+    serialized = json.dumps(payload, default=str)
+
+    assert _TOKEN_LITERAL not in serialized
+    assert "aBcDeFgH12345678" not in serialized

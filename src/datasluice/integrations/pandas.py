@@ -9,6 +9,7 @@ rebuilds the terminal over the shared :class:`datasluice.data.BatchStream`.
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -33,7 +34,7 @@ def to_pandas(stream: BatchStream) -> Any:
             ``pip install datasluice[pandas]``.
     """
     try:
-        import pandas as pd  # noqa: F401 — lazy import gate
+        importlib.import_module("pandas")
     except ImportError as exc:
         raise ImportError("to_pandas requires 'pandas'. Install with: pip install datasluice[pandas]") from exc
 

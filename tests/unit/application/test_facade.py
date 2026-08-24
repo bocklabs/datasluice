@@ -268,15 +268,47 @@ class _CloseSpy:
             raise self._error
 
 
+class _AsyncCloseSpy:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+
+
 class _OwnedSession:
     """Session double whose data-plane dependencies are all closeable."""
 
     def __init__(self) -> None:
         self._transport = _CloseSpy(RuntimeError("transport close failed"))
+        self._async_transport: _AsyncCloseSpy | None = None
         self._cache = _CloseSpy()
         self.storage = _CloseSpy()
         self.state_store = _CloseSpy()
         self.plugins = _CloseSpy()
+
+
+def test_facade_aclose_drains_owned_async_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = _OwnedSession()
+    session._transport = _CloseSpy()
+    session._async_transport = _AsyncCloseSpy()
+    reader = _CloseSpy()
+    monkeypatch.setattr(application_module, "DataSluiceSession", lambda **kwargs: session)
+    monkeypatch.setattr(application_module, "DataPlaneResourceReader", lambda **kwargs: reader)
+    data_sluice = application_module.DataSluice()
+
+    async def close_twice() -> None:
+        await data_sluice.aclose()
+        await data_sluice.aclose()
+
+    import asyncio
+
+    asyncio.run(close_twice())
+
+    assert session._async_transport is not None
+    assert session._async_transport.close_calls == 1
+    assert session._transport.close_calls == 1
+    assert reader.close_calls == 1
 
 
 def test_facade_closes_each_owned_dependency_once_and_preserves_first_failure(

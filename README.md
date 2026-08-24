@@ -83,9 +83,9 @@ imported from its own package — the catalog namespace never re-exports
 platform APIs:
 
 ```python
-from datasluice.connectors.catalog.ckan import CKANAdapter, create_ckan_connector
-from datasluice.connectors.catalog.socrata import SocrataAdapter, create_socrata_connector
-from datasluice.connectors.catalog.udata import UDataAdapter, create_udata_connector
+from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connector
+from datasluice.connectors.catalog.socrata import SocrataConnector, create_socrata_connector
+from datasluice.connectors.catalog.udata import UDataConnector, create_udata_connector
 ```
 
 Every factory accepts a `CatalogConnectorContext` carrying injected sync

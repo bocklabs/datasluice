@@ -18,10 +18,10 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.data.access import DataPlaneResourceReader  # noqa: E402
-from datasluice.domain import HttpDownload, Resource  # noqa: E402
-from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport  # noqa: E402
-from tests.helpers.http_server import MockResponse, start_test_server  # noqa: E402
+from datasluice.data.access import DataPlaneResourceReader
+from datasluice.domain import HttpDownload, Resource
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
+from tests.helpers.http_server import MockResponse, start_test_server
 
 
 def _csv_text(rows: int) -> bytes:
@@ -73,7 +73,7 @@ def test_http_download_reads_chunked_response_through_buffered_send_seam() -> No
 
 def test_urllib_runtime_transport_reads_the_resource() -> None:
     """The stdlib runtime transport reads a resource through the same buffered seam."""
-    server, base = start_test_server({"/buffered": MockResponse(status=200, body=_csv_text(rows=5))})
+    server, base = start_test_server({"/buffered": MockResponse(status=200, body=_csv_text(rows=5), chunk_size=64)})
     try:
         transport = UrllibCatalogTransport()
         try:

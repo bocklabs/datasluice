@@ -12,8 +12,8 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.transforms.protocol import TransformContext  # noqa: E402
-from datasluice.transforms.steps import RenameColumns  # noqa: E402
+from datasluice.transforms.protocol import TransformContext
+from datasluice.transforms.steps import RenameColumns
 
 
 def _ctx(schema: Any) -> TransformContext:

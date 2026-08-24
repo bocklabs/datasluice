@@ -1,10 +1,10 @@
-"""Transport-free uData catalog contract façade."""
+"""Transport-free Socrata catalog contract façade."""
 
 from __future__ import annotations
 
 from types import TracebackType
 
-from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
+from datasluice.contracts.catalog.native.socrata import AsyncSocrataServices, SyncSocrataServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     AsyncManagedExecutor,
@@ -15,8 +15,8 @@ from datasluice.contracts.catalog.protocols import (
 from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 
-class UDataAdapter:
-    """Expose injected uData service projections without a transport implementation."""
+class SocrataConnector:
+    """Expose injected Socrata service projections without a transport implementation."""
 
     def __init__(
         self,
@@ -24,8 +24,8 @@ class UDataAdapter:
         context: CatalogConnectorContext,
         normalized_sync: SyncCatalogClient,
         normalized_async: AsyncCatalogClient,
-        native_sync: SyncUDataServices,
-        native_async: AsyncUDataServices,
+        native_sync: SyncSocrataServices,
+        native_async: AsyncSocrataServices,
         effective_profile: EffectiveCapabilityProfile,
     ) -> None:
         self._sync_executor = SyncManagedExecutor(context)
@@ -40,7 +40,7 @@ class UDataAdapter:
         """Release the synchronous executor only when the context owns it."""
         self._sync_executor.close()
 
-    def __enter__(self) -> UDataAdapter:
+    def __enter__(self) -> SocrataConnector:
         """Enter the synchronous façade context."""
         return self
 
@@ -57,7 +57,7 @@ class UDataAdapter:
         """Release the asynchronous executor only when the context owns it."""
         await self._async_executor.aclose()
 
-    async def __aenter__(self) -> UDataAdapter:
+    async def __aenter__(self) -> SocrataConnector:
         """Enter the asynchronous façade context."""
         return self
 

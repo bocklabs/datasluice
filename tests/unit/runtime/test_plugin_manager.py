@@ -14,7 +14,7 @@ from typing import Any, cast
 
 import pytest
 
-from datasluice.exceptions import AdapterNotFoundError
+from datasluice.exceptions import ConnectorNotFoundError
 from datasluice.runtime.plugin_manager import PluginFailure, PluginManager
 
 CANONICAL_CONNECTOR_IDS = frozenset({"datasluice/ckan", "datasluice/udata", "datasluice/socrata"})
@@ -72,13 +72,13 @@ def test_former_connector_name_is_not_implicitly_activated() -> None:
     pm._factories = {name: lambda ctx: "connector" for name in CANONICAL_CONNECTOR_IDS}
     pm._failures = []
 
-    with pytest.raises(AdapterNotFoundError):
+    with pytest.raises(ConnectorNotFoundError):
         pm.get("datagouv")
 
 
 def test_get_unknown_raises() -> None:
     pm = PluginManager()
-    with pytest.raises(AdapterNotFoundError):
+    with pytest.raises(ConnectorNotFoundError):
         pm.get("nonexistent")
 
 
@@ -135,7 +135,7 @@ def test_get_error_message_lists_available() -> None:
     pm = PluginManager.__new__(PluginManager)
     pm._factories = {"datasluice/ckan": lambda ctx: None, "datasluice/socrata": lambda ctx: None}
     pm._failures = []
-    with pytest.raises(AdapterNotFoundError) as excinfo:
+    with pytest.raises(ConnectorNotFoundError) as excinfo:
         pm.get("missing")
     message = str(excinfo.value)
     assert "missing" in message

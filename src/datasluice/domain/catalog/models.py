@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import ClassVar
 
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.exceptions import DataSluiceError
@@ -285,6 +286,8 @@ class UserRecord:
 class NativeRecord:
     """A lossless immutable envelope for one platform-native record."""
 
+    kind: ClassVar[str] = "native_record"
+
     platform: CatalogPlatform
     resource_kind: ResourceKind
     id: CatalogId
@@ -337,6 +340,64 @@ class NativeRecord:
             payload=_object_dict(data["payload"], "native_record.payload"),
             extensions=_object_dict(data["extensions"], "native_record.extensions"),
         )
+
+
+@dataclass(frozen=True)
+class ValueRecord:
+    """A lossless immutable envelope for one scalar platform result."""
+
+    kind: ClassVar[str] = "value_record"
+
+    value: None | bool | int | float | str
+
+    def __post_init__(self) -> None:
+        if self.value is None or isinstance(self.value, (str, bool)) or type(self.value) is int:
+            return
+        if type(self.value) is float:
+            if math.isfinite(self.value):
+                return
+            raise _contract_error("value_record.value")
+        raise _contract_error("value_record.value")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a fresh JSON-safe value record envelope."""
+        return {"schema_version": 1, "kind": "value_record", "value": self.value}
+
+    @classmethod
+    def from_dict(cls, value: object) -> ValueRecord:
+        """Decode one strict schema-v1 value record envelope."""
+        data = _strict_envelope(value, "value_record", "value_record", frozenset({"schema_version", "kind", "value"}))
+        record_value = data["value"]
+        if record_value is not None and not isinstance(record_value, (str, bool, int, float)):
+            raise _contract_error("value_record.value")
+        return cls(value=record_value)
+
+
+@dataclass(frozen=True)
+class MappingRecord:
+    """A lossless immutable envelope for one arbitrary platform JSON object."""
+
+    kind: ClassVar[str] = "mapping_record"
+
+    payload: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        frozen = _freeze_json(self.payload, "mapping_record.payload")
+        if not isinstance(frozen, Mapping):
+            raise _contract_error("mapping_record.payload")
+        object.__setattr__(self, "payload", frozen)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a fresh JSON-safe mapping record envelope."""
+        return {"schema_version": 1, "kind": "mapping_record", "payload": _thaw_json(self.payload)}
+
+    @classmethod
+    def from_dict(cls, value: object) -> MappingRecord:
+        """Decode one strict schema-v1 mapping record envelope."""
+        data = _strict_envelope(
+            value, "mapping_record", "mapping_record", frozenset({"schema_version", "kind", "payload"})
+        )
+        return cls(payload=_object_dict(data["payload"], "mapping_record.payload"))
 
 
 @dataclass(frozen=True)

@@ -46,12 +46,15 @@ _SMOKE_ALLOWED_AIRFLOW_IMPORTS = {
 _PUBLIC_CORE_MODULES = frozenset(
     {
         "datasluice.application",
+        "datasluice.connectors.catalog.ckan",
+        "datasluice.contracts.catalog.protocols",
         "datasluice.domain.catalog.auth",
         "datasluice.domain.catalog.ids",
         "datasluice.domain.catalog.operations",
         "datasluice.domain.catalog.profiles",
         "datasluice.runtime.clients",
         "datasluice.runtime.credentials",
+        "datasluice.runtime.transport.base",
     }
 )
 _NEGATIVE_ASSERTION_ALLOWLIST = (_PROVIDER_TESTS / "test_public_boundary.py",)

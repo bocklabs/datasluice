@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.transforms import TransformContext, TransformStep  # noqa: E402
+from datasluice.transforms import TransformContext, TransformStep
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator

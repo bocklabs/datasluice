@@ -159,7 +159,7 @@ def sync_resources(
 
             if kind == "http_download" and url is not None:
                 should_fetch_conditionally = watermark is None or not _looks_like_sha256(watermark)
-                if transport is not None and should_fetch_conditionally:
+                if transport is not None and should_fetch_conditionally and isinstance(reader, ResponseAwareReader):
                     etag, last_modified = _conditional_validators(watermark)
                     headers = {
                         key: value
@@ -188,7 +188,7 @@ def sync_resources(
                                 state_key=key,
                             )
                             continue
-                    if 200 <= result.status_code < 300 and isinstance(reader, ResponseAwareReader):
+                    elif 200 <= result.status_code < 300:
                         response_stream = _BufferedResponseStream(result.body)
                         try:
                             handed_stream = reader.open_response(
@@ -201,8 +201,10 @@ def sync_resources(
                             raise
                         materialize_reader = _SingleStreamReader(handed_stream)
                         fresh_watermark = _preferred_watermark(result.headers)
-                    else:
-                        fresh_watermark = None
+                    elif result.status_code != 304:
+                        raise DataSluiceError(
+                            f"Conditional fetch for resource {resource.id!r} returned HTTP {result.status_code}"
+                        )
 
             # Capture the prior CAS version atomically with the state read above so
             # every state transition chains through the conditional-write path

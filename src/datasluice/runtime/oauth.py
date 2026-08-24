@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import secrets
 from collections.abc import Callable, Mapping
@@ -59,6 +60,10 @@ class AsyncTokenTransport(Protocol):
 
     async def aclose(self) -> None:
         """Release asynchronous resources."""
+
+
+def _is_async_transport(transport: object) -> bool:
+    return inspect.iscoroutinefunction(getattr(transport, "send", None))
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,14 +189,14 @@ class ClientCredentialsFlow:
 
     def fetch(self) -> OAuthCredential:
         """Synchronously exchange client credentials through the runtime transport."""
-        if not hasattr(self._transport, "close"):
+        if _is_async_transport(self._transport):
             raise TypeError("The synchronous OAuth flow requires a synchronous runtime transport.")
         transport = cast(CatalogTransport, self._transport)
         return _credential(transport.send(self._request()))
 
     async def fetch_async(self) -> OAuthCredential:
         """Asynchronously exchange client credentials through the async runtime transport."""
-        if not hasattr(self._transport, "aclose"):
+        if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")
         transport = cast(AsyncTokenTransport, self._transport)
         return _credential(await transport.send(self._request()))
@@ -245,14 +250,14 @@ class AuthorizationCodeFlow:
 
     def exchange(self, code: str) -> OAuthCredential:
         """Synchronously exchange an authorization code through the runtime transport."""
-        if not hasattr(self._transport, "close"):
+        if _is_async_transport(self._transport):
             raise TypeError("The synchronous OAuth flow requires a synchronous runtime transport.")
         transport = cast(CatalogTransport, self._transport)
         return _credential(transport.send(self._request(code)))
 
     async def exchange_async(self, code: str) -> OAuthCredential:
         """Asynchronously exchange an authorization code through the async runtime transport."""
-        if not hasattr(self._transport, "aclose"):
+        if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")
         transport = cast(AsyncTokenTransport, self._transport)
         return _credential(await transport.send(self._request(code)))
@@ -367,9 +372,9 @@ class RefreshingCredentialProvider:
                 safe_action="Wait for the circuit cool-down before refreshing credentials.",
             )
         deadline = DeadlineMonitor(self._budget, clock=self._monotonic_clock)
-        deadline.assert_dispatchable("oauth.refresh", "runtime")
         before = self._breakers.inspect(key)
         try:
+            deadline.assert_dispatchable("oauth.refresh", "runtime")
             response = RetryLoop(
                 budget=self._budget,
                 idempotency=IdempotencyPolicy(safe=True),
@@ -379,6 +384,7 @@ class RefreshingCredentialProvider:
             ).run(lambda: transport.send(self._request()))
             deadline.assert_dispatchable()
         except BudgetExhaustedError:
+            self._breakers.release_trial(key)
             self._emit("budget_exhausted")
             raise
         except Exception:
@@ -400,10 +406,10 @@ class RefreshingCredentialProvider:
 
     def resolve(self) -> OAuthCredential:
         """Return the current credential, refreshing it once when it is near expiry."""
-        if not hasattr(self._transport, "close"):
-            raise TypeError("The synchronous refresh provider requires a synchronous runtime transport.")
         with self._sync_lock:
             if self._needs_refresh():
+                if _is_async_transport(self._transport):
+                    raise TypeError("The synchronous refresh provider requires a synchronous runtime transport.")
                 self._credential = self._refresh_sync()
             return self._credential
 
@@ -420,9 +426,9 @@ class RefreshingCredentialProvider:
                 safe_action="Wait for the circuit cool-down before refreshing credentials.",
             )
         deadline = DeadlineMonitor(self._budget, clock=self._monotonic_clock)
-        deadline.assert_dispatchable("oauth.refresh", "runtime")
         before = self._breakers.inspect(key)
         try:
+            deadline.assert_dispatchable("oauth.refresh", "runtime")
             response = await RetryLoop(
                 budget=self._budget,
                 idempotency=IdempotencyPolicy(safe=True),
@@ -432,6 +438,7 @@ class RefreshingCredentialProvider:
             ).run_async(lambda: transport.send(self._request()), sleep=asyncio.sleep)
             deadline.assert_dispatchable()
         except BudgetExhaustedError:
+            self._breakers.release_trial(key)
             self._emit("budget_exhausted")
             raise
         except Exception:
@@ -453,10 +460,10 @@ class RefreshingCredentialProvider:
 
     async def resolve_async(self) -> OAuthCredential:
         """Asynchronously return the current credential, refreshing only on the async transport."""
-        if not hasattr(self._transport, "aclose"):
-            raise TypeError("The asynchronous refresh provider requires an asynchronous runtime transport.")
         async with self._async_lock_for():
             with self._sync_lock:
                 if self._needs_refresh():
+                    if not _is_async_transport(self._transport):
+                        raise TypeError("The asynchronous refresh provider requires an asynchronous runtime transport.")
                     self._credential = await self._refresh_async()
                 return self._credential

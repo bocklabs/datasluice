@@ -54,7 +54,7 @@ class AwsSecretsManagerProvider:
         except ImportError:
             raise
         except Exception as exc:
-            raise _resolution_error("AWS Secrets Manager", platform, exc) from exc
+            raise _resolution_error("AWS Secrets Manager", platform, exc) from None
         return {CredentialSource.SECRET_MANAGER: credential}
 
 

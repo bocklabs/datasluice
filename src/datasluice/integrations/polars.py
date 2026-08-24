@@ -32,7 +32,7 @@ def to_polars(stream: BatchStream) -> Any:
             ``pip install datasluice[polars]``.
     """
     try:
-        import polars as pl  # noqa: F401 — lazy import gate
+        import polars as pl
     except ImportError as exc:
         raise ImportError("to_polars requires 'polars'. Install with: pip install datasluice[polars]") from exc
 

@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Protocol, cast
 
 from datasluice.domain.catalog.models import _freeze_json, _object_dict, _thaw_json
+from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.redaction import redact_event_metadata
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,18 +69,21 @@ class EventEnvelope:
     @classmethod
     def from_dict(cls, value: object) -> EventEnvelope:
         """Decode one strict schema-v1 event envelope."""
-        data = _object_dict(value, "runtime_event")
-        if set(data) != _EVENT_KEYS or data["schema_version"] != 1 or type(data["schema_version"]) is not int:
-            raise ValueError("Invalid schema-v1 runtime event envelope.")
-        if data["kind"] != "runtime_event":
-            raise ValueError("Invalid schema-v1 runtime event envelope.")
-        return cls(
-            operation_id=_required_text(data["operation_id"], "operation_id"),
-            platform=_required_text(data["platform"], "platform"),
-            outcome=_required_text(data["outcome"], "outcome"),
-            correlation_ids=_object_dict(data["correlation_ids"], "runtime_event.correlation_ids"),
-            metadata=_object_dict(data["metadata"], "runtime_event.metadata"),
-        )
+        try:
+            data = _object_dict(value, "runtime_event")
+            if set(data) != _EVENT_KEYS or data["schema_version"] != 1 or type(data["schema_version"]) is not int:
+                raise ValueError("Invalid schema-v1 runtime event envelope.")
+            if data["kind"] != "runtime_event":
+                raise ValueError("Invalid schema-v1 runtime event envelope.")
+            return cls(
+                operation_id=_required_text(data["operation_id"], "operation_id"),
+                platform=_required_text(data["platform"], "platform"),
+                outcome=_required_text(data["outcome"], "outcome"),
+                correlation_ids=_object_dict(data["correlation_ids"], "runtime_event.correlation_ids"),
+                metadata=_object_dict(data["metadata"], "runtime_event.metadata"),
+            )
+        except DataSluiceError as exc:
+            raise ValueError("Invalid schema-v1 runtime event envelope.") from exc
 
 
 class EventSink(Protocol):
@@ -141,7 +145,12 @@ class EventEmitter:
         correlation_ids: Mapping[str, object] | None = None,
     ) -> EventEnvelope:
         """Redact metadata once, then send the resulting envelope to every sink."""
-        active_correlation_ids = self._correlation_id_provider() if self._correlation_id_provider is not None else {}
+        active_correlation_ids: Mapping[str, object] = {}
+        if self._correlation_id_provider is not None:
+            try:
+                active_correlation_ids = self._correlation_id_provider()
+            except Exception:
+                _LOGGER.exception("Runtime correlation id provider failed; continuing without correlation ids.")
         merged_correlation_ids = {**active_correlation_ids, **(correlation_ids or {})}
         envelope = EventEnvelope(
             operation_id=operation_id,

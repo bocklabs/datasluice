@@ -174,14 +174,24 @@ def _drain_owned_close(candidate: Any) -> None:
         return
     awaitable_closer = getattr(candidate, "aclose", None)
     if callable(awaitable_closer):
-        _drain_awaitable(awaitable_closer())
+        _drain_awaitable(awaitable_closer)
 
 
-def _drain_awaitable(action: Coroutine[Any, Any, None]) -> None:
+async def _drain_owned_aclose(candidate: Any) -> None:
+    awaitable_closer = getattr(candidate, "aclose", None)
+    if callable(awaitable_closer):
+        await awaitable_closer()
+        return
+    closer = getattr(candidate, "close", None)
+    if callable(closer):
+        closer()
+
+
+def _drain_awaitable(action: Callable[[], Coroutine[Any, Any, None]]) -> None:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        asyncio.run(action)
+        asyncio.run(action())
         return
     raise RuntimeError(
         "DataSluice cannot synchronously drain an owned asynchronous dependency inside a running event loop."
@@ -278,7 +288,6 @@ class DataSluice:
         self._reader = reader if reader is not None else DataPlaneResourceReader(transport=self._session._transport)
         self._services = _ApplicationServices(self._session, self._reader)
         self._session_kwargs = dict(session_kwargs)
-        self._owned_closeables = self._collect_owned_closeables(self._session_kwargs)
         self._closed = False
 
     def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
@@ -343,12 +352,34 @@ class DataSluice:
         if first_error is not None:
             raise first_error
 
+    async def aclose(self) -> None:
+        """Asynchronously close this facade and every dependency it owns."""
+        if self._closed:
+            return
+        self._closed = True
+        first_error: BaseException | None = None
+        for closeable in self._collect_owned_closeables(self._session_kwargs):
+            try:
+                await _drain_owned_aclose(closeable)
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
+
     def __enter__(self) -> DataSluice:
         self._ensure_open()
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+    async def __aenter__(self) -> DataSluice:
+        self._ensure_open()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self.aclose()
 
     def _ensure_open(self) -> None:
         if self._closed:

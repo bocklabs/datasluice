@@ -11,8 +11,8 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("polars")
 
-from datasluice.data.batch_stream import BatchStream  # noqa: E402
-from datasluice.integrations.polars import to_polars  # noqa: E402
+from datasluice.data.batch_stream import BatchStream
+from datasluice.integrations.polars import to_polars
 
 
 def test_to_polars_returns_dataframe() -> None:

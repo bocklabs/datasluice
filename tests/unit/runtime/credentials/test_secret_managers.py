@@ -69,6 +69,17 @@ def test_aws_boolean_scalar_secret_falls_back_to_plain_text() -> None:
     assert credential.api_token.reveal() == "true"
 
 
+def test_aws_json_string_scalar_secret_is_unwrapped() -> None:
+    discovered = AwsSecretsManagerProvider(
+        "datasluice/ckan", client_factory=lambda region: _AwsClient('"aws-secret"', [])
+    ).discover(CatalogPlatform.CKAN, {})
+
+    credential = discovered[CredentialSource.SECRET_MANAGER]
+    assert isinstance(credential, CKANCredential)
+    assert isinstance(credential.api_token, SecretValue)
+    assert credential.api_token.reveal() == "aws-secret"
+
+
 def test_aws_secret_binary_only_responses_are_rejected() -> None:
     class _BinaryOnlyClient:
         def get_secret_value(self, *, SecretId: str) -> dict[str, bytes]:

@@ -27,8 +27,12 @@ class DatasluiceCatalogOperator(BaseOperator):
     def execute(self, context: Any) -> dict[str, str]:
         """Validate hook client construction and return a serializable descriptor."""
         del context
-        with DatasluiceHook(airflow_conn_id=self.airflow_conn_id).get_conn():
+        hook = DatasluiceHook(airflow_conn_id=self.airflow_conn_id)
+        try:
+            hook.get_conn()
             return {"connection": self.airflow_conn_id}
+        finally:
+            hook.close()
 
 
 __all__ = ["DatasluiceCatalogOperator"]

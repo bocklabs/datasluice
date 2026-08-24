@@ -23,11 +23,11 @@ pytest.importorskip("pandas")
 pytest.importorskip("polars")
 pytest.importorskip("duckdb")
 
-from datasluice.data.batch_stream import BatchStream  # noqa: E402
-from datasluice.integrations.arrow import to_arrow  # noqa: E402
-from datasluice.integrations.duckdb import to_duckdb  # noqa: E402
-from datasluice.integrations.pandas import to_pandas  # noqa: E402
-from datasluice.integrations.polars import to_polars  # noqa: E402
+from datasluice.data.batch_stream import BatchStream
+from datasluice.integrations.arrow import to_arrow
+from datasluice.integrations.duckdb import to_duckdb
+from datasluice.integrations.pandas import to_pandas
+from datasluice.integrations.polars import to_polars
 
 
 def _normalize_string_types(table: Any) -> Any:

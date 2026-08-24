@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3 (2026-08-24)
+
+### Bug Fixes
+
+* close and reuse hook-owned runtime clients
+* declare the HTTP-enabled DataSluice runtime dependency
+
 ## [0.1.2](https://github.com/bocklabs/datasluice/compare/apache-airflow-providers-datasluice-v0.1.1...apache-airflow-providers-datasluice-v0.1.2) (2026-08-10)
 
 

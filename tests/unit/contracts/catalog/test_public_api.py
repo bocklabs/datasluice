@@ -10,7 +10,9 @@ import pytest
 import datasluice
 import datasluice.contracts as contracts
 import datasluice.contracts.catalog as catalog
+from datasluice.contracts.catalog.native.ckan import CKANResultItem, CKANSecretResultItem
 from datasluice.domain.catalog import CatalogPlatform
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import (
     CatalogConflictError,
     CatalogNotFoundError,
@@ -137,6 +139,18 @@ def test_rate_limit_mapping_forwards_native_retry_after() -> None:
     assert error.retry_after == 7.0
 
 
+@pytest.mark.parametrize("retry_after", (float("nan"), float("inf")))
+def test_native_errors_reject_non_finite_retry_after(retry_after: float) -> None:
+    with pytest.raises(ValueError, match="Retry-After"):
+        NativeCatalogError(
+            "slow down",
+            operation="datasets.get",
+            platform=CatalogPlatform.CKAN,
+            status_code=429,
+            retry_after=retry_after,
+        )
+
+
 @pytest.mark.parametrize(
     ("status_code", "error_type", "capability_state", "safe_action"),
     [
@@ -183,3 +197,17 @@ def test_native_error_messages_are_redacted_and_bounded() -> None:
     assert "abc123" not in str(native)
     assert "apikey=***" in str(native)
     assert len(str(native)) <= 256
+
+
+def test_ckan_result_union_alias_admits_value_and_mapping_record_items() -> None:
+    """The broadened CKANResult alias treats scalars and mappings as legal envelope items."""
+    assert CKANResultItem.__value__ == (NativeRecord | ValueRecord | MappingRecord | CKANSecretResultItem)
+
+    envelope = ResultEnvelope(items=(ValueRecord(value=None), MappingRecord(payload={"success": True})))
+
+    def decode(item: object) -> ValueRecord | MappingRecord:
+        assert isinstance(item, dict)
+        return ValueRecord.from_dict(item) if item.get("kind") == "value_record" else MappingRecord.from_dict(item)
+
+    decoded = ResultEnvelope.from_dict(envelope.to_dict(), item_decoder=decode)
+    assert [item.to_dict()["kind"] for item in decoded.items] == ["value_record", "mapping_record"]

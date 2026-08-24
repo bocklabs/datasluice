@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.transforms.protocol import TransformContext  # noqa: E402
-from datasluice.transforms.steps import NormalizeTimestamps  # noqa: E402
+from datasluice.transforms.protocol import TransformContext
+from datasluice.transforms.steps import NormalizeTimestamps
 
 
 def _ctx(schema: Any) -> TransformContext:

@@ -80,7 +80,7 @@ class VaultCredentialProvider:
         except ImportError:
             raise
         except Exception as exc:
-            raise _resolution_error("HashiCorp Vault", platform, exc) from exc
+            raise _resolution_error("HashiCorp Vault", platform, exc) from None
         return {CredentialSource.SECRET_MANAGER: credential}
 
 
