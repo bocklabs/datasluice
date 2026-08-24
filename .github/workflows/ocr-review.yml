@@ -23,7 +23,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
     steps:
       - name: Run OpenCodeReview
-        uses: alibaba/open-code-review@4bcc95acecd629e64ea984c962cfd08dd892a38e # v1.8.10
+        uses: alibaba/open-code-review@f7344e798a1ff08939c977fe117c374b51214a91 # v1.9.4
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
