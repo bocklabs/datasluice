@@ -141,8 +141,9 @@ def test_dual_surface_client_satisfies_sync_catalog_client() -> None:
 
 
 def test_ckan_live_client_flows_through_dlt_source_end_to_end(tmp_path: Any) -> None:
-    """create_sync_client products extract canned normalized records through datasluice_source."""
+    """create_sync_client produces canned normalized records extracted through datasluice_source."""
     server, base_url = _start_ckan_fixture()
+    transport: UrllibCatalogTransport | None = None
     try:
         client, transport = _loopback_client(base_url)
         assert client.transport is transport
@@ -158,8 +159,11 @@ def test_ckan_live_client_flows_through_dlt_source_end_to_end(tmp_path: Any) -> 
         assert "/api/3/action/resource_search" in server.captured_paths
         action_calls = [p for p in server.captured_paths if p.endswith("/api/3/action/resource_search")]
         assert len(action_calls) == 1
+        action_index = server.captured_paths.index(action_calls[0])
+        assert server.captured[action_index]["content-type"] == "application/json"
     finally:
-        transport.close()
+        if transport is not None:
+            transport.close()
         server.shutdown()
         server.server_close()
 

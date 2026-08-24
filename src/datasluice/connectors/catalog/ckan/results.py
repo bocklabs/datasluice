@@ -134,6 +134,8 @@ def require_mutation_tier(
         raise TypeError("Mutation tiers must be declared as strings.")
     if mutation_class not in _MUTATION_TIERS:
         raise ValueError(f"Unknown mutation tier: {mutation_class!r}.")
+    if policy is not None and not isinstance(policy, MutationPolicy):
+        raise TypeError("Mutation policies must use MutationPolicy or be omitted.")
     if mutation_class == "read":
         return policy
     if mutation_class == "destructive":

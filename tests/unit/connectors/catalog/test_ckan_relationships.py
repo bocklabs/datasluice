@@ -20,6 +20,41 @@ from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 RELATIONSHIPS_ID = "ckan/action-api-v3.relationships-follows"
+EXPECTED_RELATIONSHIP_ACTIONS = frozenset(
+    {
+        "package_relationships_list",
+        "package_relationship_create",
+        "package_relationship_update",
+        "package_relationship_delete",
+        "follow_dataset",
+        "unfollow_dataset",
+        "am_following_dataset",
+        "follow_group",
+        "unfollow_group",
+        "am_following_group",
+        "follow_user",
+        "unfollow_user",
+        "am_following_user",
+        "dataset_follower_count",
+        "dataset_follower_list",
+        "group_follower_count",
+        "group_follower_list",
+        "organization_follower_count",
+        "organization_follower_list",
+        "user_follower_count",
+        "user_follower_list",
+        "dataset_followee_count",
+        "dataset_followee_list",
+        "group_followee_count",
+        "group_followee_list",
+        "organization_followee_count",
+        "organization_followee_list",
+        "user_followee_count",
+        "user_followee_list",
+        "followee_count",
+        "followee_list",
+    }
+)
 
 USER_RESULT: dict[str, object] = {"id": "user-1", "name": "admin", "display_name": "Site Admin"}
 
@@ -99,7 +134,7 @@ def test_every_core_relationship_action_exposes_a_typed_method_on_both_mode_serv
     sync_surface = {name for name in dir(SyncRelationshipsActivityService) if not name.startswith("_")}
     async_surface = {name for name in dir(AsyncRelationshipsActivityService) if not name.startswith("_")}
     names = _core_names()
-    assert len(names) == 31
+    assert names == EXPECTED_RELATIONSHIP_ACTIONS
     for action in names:
         assert action in sync_surface, f"sync surface misses {action}"
         assert action in async_surface, f"async surface misses {action}"

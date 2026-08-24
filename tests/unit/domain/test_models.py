@@ -88,7 +88,10 @@ def test_value_record_round_trips_every_scalar_through_strict_schema_v1(
     envelope = record.to_dict()
 
     assert envelope == {"schema_version": 1, "kind": "value_record", "value": scalar}
-    assert ValueRecord.from_dict(envelope) == record
+    assert type(envelope["value"]) is type(scalar)
+    decoded = ValueRecord.from_dict(envelope)
+    assert decoded == record
+    assert type(decoded.value) is type(scalar)
 
 
 def test_value_record_rejects_non_scalar_values_with_the_domain_contract_error() -> None:
@@ -101,6 +104,8 @@ def test_value_record_rejects_non_scalar_values_with_the_domain_contract_error()
 def test_value_record_rejects_non_finite_floats_and_foreign_envelope_keys() -> None:
     with pytest.raises(DataSluiceError):
         ValueRecord(value=float("inf"))
+    with pytest.raises(DataSluiceError):
+        ValueRecord(value=float("nan"))
     with pytest.raises(DataSluiceError):
         ValueRecord.from_dict({"schema_version": 1, "kind": "value_record", "value": 1, "extra": "key"})
     with pytest.raises(DataSluiceError):

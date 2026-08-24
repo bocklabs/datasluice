@@ -189,6 +189,8 @@ class DriftCheck:
             )
         if not isinstance(self.parameters, Mapping):
             raise ValueError("Drift check parameters must be a mapping.")
+        if self.action == "package_show" and not isinstance(self.parameters.get("id"), str):
+            raise ValueError("package_show drift checks require a string id parameter.")
         if self.ordering not in _ORDERINGS:
             raise ValueError(f"The drift ordering {self.ordering!r} must be a documented ordering mode.")
         if not isinstance(self.rationale, str) or not self.rationale:
@@ -453,6 +455,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.target:
         targets = tuple(target for target in DEFAULT_TARGETS if any(seed in target.origin for seed in arguments.target))
+        if not targets:
+            parser.error("--target matched no configured CKAN drift origin")
     else:
         targets = DEFAULT_TARGETS
     records = run_drift_checks(targets)

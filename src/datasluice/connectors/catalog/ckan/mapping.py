@@ -23,6 +23,7 @@ MEMBER = ResourceKind("member")
 ACTIVITY = ResourceKind("activity")
 JOB = ResourceKind("job")
 TASK = ResourceKind("task")
+TOKEN = ResourceKind("token")
 
 _RECORD = "record"
 _RECORD_LIST = "record-list"
@@ -64,9 +65,9 @@ RESULT_KINDS: Mapping[str, tuple[str, str | None]] = MappingProxyType(
         "package_owner_org_update": (_MAPPING, None),
         "package_delete": (_VALUE, None),
         "dataset_purge": (_VALUE, None),
-        "bulk_update_private": (_RECORD_LIST, "task_status"),
-        "bulk_update_public": (_RECORD_LIST, "task_status"),
-        "bulk_update_delete": (_RECORD_LIST, "task_status"),
+        "bulk_update_private": (_VALUE, None),
+        "bulk_update_public": (_VALUE, None),
+        "bulk_update_delete": (_VALUE, None),
         "package_collaborator_create": (_MAPPING, None),
         "package_collaborator_delete": (_VALUE, None),
         "package_collaborator_list": (_MAPPING, None),
@@ -77,14 +78,14 @@ RESULT_KINDS: Mapping[str, tuple[str, str | None]] = MappingProxyType(
         "resource_update": (_RECORD, "resource"),
         "resource_patch": (_RECORD, "resource"),
         "resource_delete": (_VALUE, None),
-        "organization_list": (_VALUE_LIST, None),
+        "organization_list": (_RECORD_LIST, "organization"),
         "organization_list_for_user": (_RECORD_LIST, "organization"),
         "organization_show": (_RECORD, "organization"),
         "organization_autocomplete": (_RECORD_LIST, "organization"),
         "organization_create": (_RECORD, "organization"),
         "organization_update": (_RECORD, "organization"),
         "organization_patch": (_RECORD, "organization"),
-        "organization_delete": (_RECORD, "organization"),
+        "organization_delete": (_VALUE, None),
         "organization_purge": (_VALUE, None),
         "organization_member_create": (_RECORD, "member"),
         "organization_member_delete": (_VALUE, None),
@@ -96,13 +97,13 @@ RESULT_KINDS: Mapping[str, tuple[str, str | None]] = MappingProxyType(
         "group_create": (_RECORD, "group"),
         "group_update": (_RECORD, "group"),
         "group_patch": (_RECORD, "group"),
-        "group_delete": (_RECORD, "group"),
+        "group_delete": (_VALUE, None),
         "group_purge": (_VALUE, None),
         "group_member_create": (_RECORD, "member"),
         "group_member_delete": (_VALUE, None),
         "member_create": (_RECORD, "member"),
         "member_delete": (_VALUE, None),
-        "member_list": (_RECORD_LIST, "member"),
+        "member_list": (_MAPPING, None),
         "member_roles_list": (_VALUE_LIST, None),
         "user_list": (_RECORD_LIST, "user"),
         "user_show": (_RECORD, "user"),
@@ -111,7 +112,7 @@ RESULT_KINDS: Mapping[str, tuple[str, str | None]] = MappingProxyType(
         "user_invite": (_RECORD, "user"),
         "user_update": (_RECORD, "user"),
         "user_patch": (_RECORD, "user"),
-        "user_delete": (_RECORD, "user"),
+        "user_delete": (_VALUE, None),
         "get_site_user": (_RECORD, "user"),
         "api_token_create": (_TOKEN_SECRET, None),
         "api_token_list": (_MAPPING, None),
@@ -341,10 +342,18 @@ def _mapping_items(action: str, result: object) -> tuple[CKANResultItem, ...]:
     if isinstance(result, Mapping):
         return (MappingRecord(dict(result)),)
     if isinstance(result, list | tuple):
+        if action == "member_list":
+            return tuple(_member_item(action, entry) for entry in result)
         return tuple(
             MappingRecord(dict(entry)) if isinstance(entry, Mapping) else _value_item(action, entry) for entry in result
         )
     raise _shaping_error(action, "The result value was neither object nor array for a mapping outcome.")
+
+
+def _member_item(action: str, entry: object) -> CKANResultItem:
+    if not isinstance(entry, list | tuple) or len(entry) != 3:
+        raise _shaping_error(action, "The member list carried an entry that was not an id/type/capacity triple.")
+    return MappingRecord({"id": entry[0], "type": entry[1], "capacity": entry[2]})
 
 
 def _platform_page(result: object) -> PageInfo | None:

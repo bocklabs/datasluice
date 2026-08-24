@@ -20,7 +20,7 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncNativeService,
 )
 from datasluice.connectors.catalog.ckan.inventory import ActionEntry
-from datasluice.connectors.catalog.ckan.mapping import PLATFORM
+from datasluice.connectors.catalog.ckan.mapping import PLATFORM, TOKEN
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, CKANTokenResult, require_mutation_tier
 from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -53,7 +53,7 @@ def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "api_token_create":
         return CatalogId(PLATFORM, ResourceKind.USER, str(params["user"]))
     if action == "api_token_revoke":
-        return CatalogId(PLATFORM, ResourceKind.USER, str(params["token_id"]))
+        return CatalogId(PLATFORM, TOKEN, str(params["jti"]))
     return CatalogId(PLATFORM, ResourceKind.USER, "site-user")
 
 
@@ -155,7 +155,7 @@ class SyncUsersService(_SyncNativeService):
 
     def api_token_revoke(self, *, token_id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
         """Revoke one API token by its identifier; the server owns revocation semantics."""
-        return self._invoke_mutation("api_token_revoke", {"token_id": token_id}, policy)
+        return self._invoke_mutation("api_token_revoke", {"jti": token_id}, policy)
 
     def _typed_entry(self, action: str) -> ActionEntry:
         entry = self._client._inventory.lookup(action)
@@ -290,7 +290,7 @@ class AsyncUsersService(_AsyncNativeService):
 
     async def api_token_revoke(self, *, token_id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
         """Revoke one API token by its identifier; the server owns revocation semantics."""
-        return await self._invoke_mutation("api_token_revoke", {"token_id": token_id}, policy)
+        return await self._invoke_mutation("api_token_revoke", {"jti": token_id}, policy)
 
     def _typed_entry(self, action: str) -> ActionEntry:
         entry = self._client._inventory.lookup(action)

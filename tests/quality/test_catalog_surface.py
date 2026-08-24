@@ -142,7 +142,6 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
         {
             "AdapterError",
             "AdapterNotFoundError",
-            "AdapterRegistry",
             "BaseAdapter",
             "CKANAdapter",
             "CatalogResourceLocator",
@@ -152,7 +151,6 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
             "DataSluiceOperator",
             "DataSluiceSearchOperator",
             "DataSluiceMaterializeOperator",
-            "SODA2Adapter",
             "SocrataAdapter",
             "UDataAdapter",
             "datagouv",
@@ -466,7 +464,7 @@ PUBLIC_CATALOG_TREES: tuple[Path, ...] = (
 _SCAN_SUFFIXES = frozenset({".py", ".md", ".toml", ".json", ".yaml", ".yml", ".cfg"})
 _COVERAGE_ROW_RE = re.compile(r"^\|\s*(\w+)\.([\w.-]+)\s*\|\s*(INTEGRATE|OPT-OUT)\s*\|", re.MULTILINE)
 
-RETIRED_WORD_RE = re.compile(r"adapt(er|ers)", re.IGNORECASE)
+RETIRED_WORD_RE = re.compile(r"adapters?", re.IGNORECASE)
 RETIRED_WORD_SCAN_ROOTS: tuple[str, ...] = (
     "src/datasluice/connectors/",
     "docs/",
@@ -531,7 +529,7 @@ def _retired_word_violations() -> list[str]:
     ]
     violations: list[str] = []
     for path in corpus:
-        if not path.exists() or path.suffix not in {".py", ".md", ".toml", ".yml", ".yaml"}:
+        if not path.exists() or path.suffix not in _SCAN_SUFFIXES:
             continue
         relative = path.relative_to(REPO_ROOT).as_posix()
         allowed = RETIRED_WORD_ALLOWLIST.get(relative, frozenset())

@@ -18,7 +18,7 @@ from datasluice.connectors.catalog.ckan.services.organizations import (
 )
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import CKANCredential
-from datasluice.domain.catalog.models import NativeRecord, ValueRecord
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
@@ -175,16 +175,20 @@ def test_organization_surfaces_stay_in_structural_lockstep_across_modes() -> Non
 
 def test_organization_list_sends_native_sort_and_offset_verbatim() -> None:
     """D-04 fidelity: documented list parameters cross the wire untranslated."""
-    transport = SyncCaptureTransport(body=_success_body(["health-org", "transit-org"]))
+    transport = SyncCaptureTransport(body=_success_body([ORGANIZATION_RESULT]))
     client = _client(transport)
 
     envelope = client.organizations.organization_list(sort="name desc", limit=5, offset=10)
 
     request = transport.requests[0]
     assert request.url.endswith("/api/3/action/organization_list")
-    assert json.loads(request.body or b"{}") == {"sort": "name desc", "limit": 5, "offset": 10}
-    values = [item for item in envelope.items if isinstance(item, ValueRecord)]
-    assert len(values) == 2
+    assert json.loads(request.body or b"{}") == {
+        "sort": "name desc",
+        "limit": 5,
+        "offset": 10,
+        "all_fields": True,
+    }
+    assert isinstance(envelope.items[0], NativeRecord)
 
 
 def test_organization_show_decodes_an_organization_kind_record() -> None:
@@ -203,19 +207,31 @@ def test_organization_show_decodes_an_organization_kind_record() -> None:
 
 
 def test_organization_autocomplete_and_member_reads_decode_their_own_kinds() -> None:
-    """Autocomplete yields organization records; member_list yields member records."""
+    """Autocomplete yields organization records; member_list preserves triples."""
     transport = SyncCaptureTransport(body=_success_body([ORGANIZATION_RESULT]))
     client = _client(transport)
     envelope = client.organizations.organization_autocomplete(q="hea")
     record = next(item for item in envelope.items if isinstance(item, NativeRecord))
     assert record.resource_kind.value == "organization"
 
-    member_transport = SyncCaptureTransport(body=_success_body([MEMBER_RESULT]))
+    member_transport = SyncCaptureTransport(body=_success_body([["user-1", "user", "editor"]]))
     member_client = _client(member_transport)
     member_envelope = member_client.organizations.member_list(id="org-1", object_type="user")
-    member_record = next(item for item in member_envelope.items if isinstance(item, NativeRecord))
-    assert member_record.resource_kind.value == "member"
-    assert dict(member_record.payload)["capacity"] == "editor"
+    member_record = next(item for item in member_envelope.items if isinstance(item, MappingRecord))
+    assert dict(member_record.payload) == {"id": "user-1", "type": "user", "capacity": "editor"}
+
+
+def test_normalized_organization_list_uses_the_public_all_fields_action() -> None:
+    transport = SyncCaptureTransport(body=_success_body([ORGANIZATION_RESULT]))
+    client = _client(transport)
+    operation = CatalogOperationRequest(operation_id=OperationId("ckan", "organizations", "list"))
+    guard = CatalogOperationGuard(operation_id=operation.operation_id)
+
+    envelope = client.organizations.list(operation, guard)
+
+    assert envelope.items[0].id.value == "org-1"
+    assert transport.requests[0].url.endswith("/api/3/action/organization_list")
+    assert json.loads(transport.requests[0].body or b"{}") == {"all_fields": True}
 
 
 def test_member_roles_list_returns_value_items_as_a_read() -> None:

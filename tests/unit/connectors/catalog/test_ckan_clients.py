@@ -558,6 +558,7 @@ def test_https_origins_attach_default_probe_runners_with_zero_construction_netwo
     assert transport.requests == status_reads
 
 
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_explicit_runner_settings_win_over_the_https_default_attachment() -> None:
     """Override precedence: caller-supplied runners replace the factory default."""
     transport = SyncCaptureTransport(body=_success_body({"pkg-1": ()}))
@@ -579,6 +580,7 @@ def test_explicit_runner_settings_win_over_the_https_default_attachment() -> Non
     assert envelope.items
 
 
+@pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None:
     """The controlled-stack posture is an explicit choice, never a silent bypass."""
     transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
@@ -597,15 +599,17 @@ def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None
 
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_async_https_factories_attach_the_default_async_probe_runner() -> None:
-    """The async twin shares the factory-owned transport for its default probes."""
-    from datasluice.connectors.catalog.ckan.probes import CKANAsyncProbeRunner
-
+    """The async twin performs its default probe through the injected transport."""
     transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
     client = create_async_client(CKANClientSettings(base_url=DEMO_HTTPS_ORIGIN, async_transport=transport))
 
     assert len(transport.requests) == 0
-    assert isinstance(client._probe_runner, CKANAsyncProbeRunner)
-    assert client._probe_runner._transport is transport
+    operation, guard = _collaborator_dispatch()
+    with pytest.raises(UnsupportedCapabilityError):
+        asyncio.run(client.datasets.list_show_search(operation, guard))
+    status_reads = [request for request in transport.requests if request.url.endswith("/api/3/action/status_show")]
+    assert transport.requests == status_reads
+    assert len(status_reads) == 1
 
 
 def test_admin_corpus_rows_resolve_to_manifest_actions_with_regenerated_fingerprint() -> None:

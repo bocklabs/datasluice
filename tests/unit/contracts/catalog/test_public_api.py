@@ -10,7 +10,7 @@ import pytest
 import datasluice
 import datasluice.contracts as contracts
 import datasluice.contracts.catalog as catalog
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
+from datasluice.contracts.catalog.native.ckan import CKANResultItem, CKANSecretResultItem
 from datasluice.domain.catalog import CatalogPlatform
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import (
@@ -189,9 +189,13 @@ def test_native_error_messages_are_redacted_and_bounded() -> None:
 
 def test_ckan_result_union_alias_admits_value_and_mapping_record_items() -> None:
     """The broadened CKANResult alias treats scalars and mappings as legal envelope items."""
-    assert CKANResultItem.__value__ == (NativeRecord | ValueRecord | MappingRecord)
+    assert CKANResultItem.__value__ == (NativeRecord | ValueRecord | MappingRecord | CKANSecretResultItem)
 
     envelope = ResultEnvelope(items=(ValueRecord(value=None), MappingRecord(payload={"success": True})))
 
-    assert all(hasattr(item, "to_dict") for item in envelope.items)
-    assert [item.to_dict()["kind"] for item in envelope.items] == ["value_record", "mapping_record"]
+    def decode(item: object) -> ValueRecord | MappingRecord:
+        assert isinstance(item, dict)
+        return ValueRecord.from_dict(item) if item.get("kind") == "value_record" else MappingRecord.from_dict(item)
+
+    decoded = ResultEnvelope.from_dict(envelope.to_dict(), item_decoder=decode)
+    assert [item.to_dict()["kind"] for item in decoded.items] == ["value_record", "mapping_record"]

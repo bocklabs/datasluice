@@ -10,7 +10,6 @@ import pytest
 from datasluice.connectors.catalog.ckan.errors import map_envelope_error
 from datasluice.connectors.catalog.ckan.mapping import (
     GROUP,
-    MEMBER,
     RECORD_KINDS,
     RESULT_KINDS,
     TAG,
@@ -227,23 +226,23 @@ def test_follower_counts_and_am_following_shape_to_single_value_envelopes() -> N
 
 
 def test_package_search_shapes_multi_records_with_the_platform_count_total() -> None:
-    result = {"count": 2, "results": [{"id": "one"}, {"id": "two"}]}
+    result = {"count": 500, "results": [{"id": "one"}]}
 
     envelope = shape_result_envelope("package_search", result)
 
-    assert len(envelope.items) == 2
+    assert len(envelope.items) == 1
     assert all(isinstance(item, NativeRecord) for item in envelope.items)
-    assert envelope.page is not None and envelope.page.total_items == 2
+    assert envelope.page is not None and envelope.page.total_items == 500
 
 
-def test_member_lists_shape_to_connector_member_records() -> None:
-    result = [{"id": "member-1", "type": "user", "capacity": "admin"}]
+def test_member_lists_shape_to_lossless_member_mappings() -> None:
+    result = [["member-1", "user", "admin"]]
 
     envelope = shape_result_envelope("member_list", result)
 
     item = envelope.items[0]
-    assert isinstance(item, NativeRecord)
-    assert item.resource_kind == MEMBER
+    assert isinstance(item, MappingRecord)
+    assert dict(item.payload) == {"id": "member-1", "type": "user", "capacity": "admin"}
     assert envelope.page is not None and envelope.page.total_items == 1
 
 
@@ -284,22 +283,31 @@ def test_unknown_actions_shape_losslessly_through_the_mapping_fallback() -> None
     assert item.to_dict()["payload"] == {"anything": ["goes", 1]}
 
 
-def test_destructive_tier_refusal_names_operation_and_never_touches_transport() -> None:
-    sends: list[object] = []
-
-    def send(request: object) -> object:
-        sends.append(request)
-        raise AssertionError("transport I/O attempted")
-
+def test_destructive_tier_refusal_names_operation_and_confirmation_remedy() -> None:
     operation = OperationId("ckan", "datasets", "purge")
 
     with pytest.raises(CatalogValidationError) as raised:
         require_mutation_tier("destructive", operation, MutationPolicy(destructive=False))
-        send("unused")
 
     assert "purge" in str(raised.value)
     assert "confirmation" in raised.value.safe_action.lower()
-    assert sends == []
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        MutationPolicy(destructive=True),
+        MutationPolicy(destructive=True, confirmation=ConfirmationPolicy(confirmed=True)),
+        MutationPolicy(
+            destructive=True,
+            confirmation=ConfirmationPolicy(confirmed=False),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ],
+)
+def test_destructive_tier_rejects_partially_confirmed_policies(policy: MutationPolicy) -> None:
+    with pytest.raises(CatalogValidationError):
+        require_mutation_tier("destructive", OperationId("ckan", "datasets", "purge"), policy)
 
 
 def test_confirmed_destructive_policy_passes_the_gate() -> None:
@@ -342,7 +350,7 @@ def test_mutation_result_serialization_carries_no_credentials() -> None:
         CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
         default_standard_policy(),
         "succeeded",
-        {"dataset": "weather", "attempt": 1},
+        {"dataset": "weather", "attempt": 1, "note": "Bearer aBcDeFgH12345678"},
     )
 
     payload = CKANMutationResult(result=envelope, receipt=receipt).to_dict()

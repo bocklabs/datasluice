@@ -52,11 +52,11 @@ def _operations_by_id(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {operation["id"]: operation for operation in operations}
 
 
-def test_profile_declares_exactly_the_22_v2_evidence_distinct_operations() -> None:
+def test_profile_declares_exactly_the_v2_evidence_distinct_operations() -> None:
     profile = _read_json(_PROFILE_PATH)
 
     operations = _operations_by_id(profile)
-    assert len(operations) == 22
+    assert len(operations) == len(_V2_OPERATION_IDS)
 
 
 def test_sql_search_is_evidence_distinct_from_datastore_record_crud() -> None:
@@ -68,7 +68,8 @@ def test_sql_search_is_evidence_distinct_from_datastore_record_crud() -> None:
     assert sql_search["capability"] == "optional"
     assert sql_search["mutation"] == "read"
     assert record_crud["mutation"] == "update"
-    assert sql_search["id"] != record_crud["id"]
+    assert sql_search["evidence_requirement"] == "deployment-probe"
+    assert record_crud["evidence_requirement"] == "controlled-environment-only"
 
 
 def test_dataset_collaborators_are_separate_from_dataset_mutations() -> None:
@@ -92,7 +93,8 @@ def test_activity_is_separate_from_relationships_and_optional_per_d06() -> None:
     assert relationships["mutation"] == "update"
     assert activity["capability"] == "optional"
     assert activity["mutation"] == "read"
-    assert "activity" not in relationships["id"]
+    assert relationships["evidence_requirement"] == "controlled-environment-only"
+    assert activity["evidence_requirement"] == "deployment-probe"
 
 
 def test_resource_views_declare_the_optional_view_plugin_tier() -> None:
@@ -217,24 +219,27 @@ def test_regenerated_fingerprint_script_is_idempotent() -> None:
 
     before = _PROFILE_PATH.read_bytes()
     environment = {**os.environ, "PYTHONPATH": str(_ROOT / "src")}
-    result = subprocess.run(
-        [sys.executable, "scripts/regenerate_fixture_fingerprint.py", "--platform", "ckan"],
-        cwd=_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=environment,
-    )
-    assert result.returncode == 0, result.stderr
-    first_pass = _PROFILE_PATH.read_bytes()
-    subprocess.run(
-        [sys.executable, "scripts/regenerate_fixture_fingerprint.py", "--platform", "ckan"],
-        cwd=_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-        env=environment,
-    )
-    assert _PROFILE_PATH.read_bytes() == first_pass
-    assert hashlib.sha256(_CASES_PATH.read_bytes()).hexdigest() in result.stdout
-    assert before == first_pass
+    try:
+        result = subprocess.run(
+            [sys.executable, "scripts/regenerate_fixture_fingerprint.py", "--platform", "ckan"],
+            cwd=_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        assert result.returncode == 0, result.stderr
+        first_pass = _PROFILE_PATH.read_bytes()
+        subprocess.run(
+            [sys.executable, "scripts/regenerate_fixture_fingerprint.py", "--platform", "ckan"],
+            cwd=_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=environment,
+        )
+        assert _PROFILE_PATH.read_bytes() == first_pass
+        assert hashlib.sha256(_CASES_PATH.read_bytes()).hexdigest() in result.stdout
+        assert before == first_pass
+    finally:
+        _PROFILE_PATH.write_bytes(before)

@@ -230,10 +230,8 @@ def test_filestore_projection_routes_through_the_resource_paths() -> None:
     transport = SyncCaptureTransport(body=_success_body({"id": "res-9", "package_id": "pkg-1"}))
     client = _client(transport)
     operation = CatalogOperationRequest(
-        operation_id=OperationId(
-            platform="ckan", service="action-api-v3", method="resource-list-show-create-update-patch-delete-upload"
-        ),
-        payload={"action": "resource_patch", "id": "res-9", "name": "renamed"},
+        operation_id=OperationId(platform="ckan", service="filestore", method="upload-and-resource-file-replacement"),
+        payload={"action": "resource_patch", "id": "res-9", "name": "renamed", "upload": io.BytesIO(b"file")},
     )
     guard = CatalogOperationGuard(operation_id=operation.operation_id)
 
@@ -241,6 +239,7 @@ def test_filestore_projection_routes_through_the_resource_paths() -> None:
 
     request = transport.requests[0]
     assert request.url.endswith("/api/3/action/resource_patch")
+    assert request.files
     record = envelope.items[0]
     assert isinstance(record, NativeRecord)
     assert record.id.value == "res-9"

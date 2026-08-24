@@ -33,6 +33,8 @@ coverage.xml
 .commandcode
 .gsd
 .codeboarding
+# dev compose secrets (see dev/ckan-evidence/compose.yaml)
+dev/ckan-evidence/.env
 # uv
 #   Generally recommended to include uv.lock in version control for
 #   reproducibility. Uncomment for libraries where you want consumers
@@ -72,4 +74,3 @@ graphify-out/*
 !graphify-out/graph.html
 !graphify-out/graph.json
 !graphify-out/manifest.json
-dev/ckan-evidence/.env

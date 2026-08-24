@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 
 import pytest
 
@@ -48,11 +49,14 @@ def test_ckan_live_construction_requires_the_connector_extra(monkeypatch: pytest
         create_async_client(settings)
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("httpx") is None,
+    reason="the real CKAN client requires the datasluice[ckan] extra",
+)
 def test_ckan_live_construction_reaches_the_real_client_after_the_gate() -> None:
     """A satisfied extra constructs the real transport-backed CKAN client."""
     from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_client
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 
-    client = create_sync_client(CKANClientSettings(base_url="https://demo.ckan.org"))
-
-    assert client.transport is not None
-    client.close()
+    with create_sync_client(CKANClientSettings(base_url="https://demo.ckan.org")) as client:
+        assert isinstance(client.transport, HttpxCatalogTransport)

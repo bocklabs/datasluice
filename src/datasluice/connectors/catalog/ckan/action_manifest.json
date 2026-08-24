@@ -113,21 +113,21 @@
       "group": "datasets",
       "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
       "mutation_class": "standard",
-      "result_kind": "record-list"
+      "result_kind": "value"
     },
     {
       "name": "bulk_update_public",
       "group": "datasets",
       "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
       "mutation_class": "standard",
-      "result_kind": "record-list"
+      "result_kind": "value"
     },
     {
       "name": "bulk_update_delete",
       "group": "datasets",
       "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
       "mutation_class": "standard",
-      "result_kind": "record-list"
+      "result_kind": "value"
     },
     {
       "name": "package_collaborator_create",
@@ -218,7 +218,7 @@
       "group": "organizations",
       "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
       "mutation_class": "read",
-      "result_kind": "value-list"
+      "result_kind": "record-list"
     },
     {
       "name": "organization_autocomplete",
@@ -232,7 +232,7 @@
       "group": "organizations",
       "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
       "mutation_class": "read",
-      "result_kind": "record-list"
+      "result_kind": "mapping"
     },
     {
       "name": "member_roles_list",
@@ -267,7 +267,7 @@
       "group": "organizations",
       "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
       "mutation_class": "standard",
-      "result_kind": "record"
+      "result_kind": "value"
     },
     {
       "name": "organization_purge",
@@ -365,7 +365,7 @@
       "group": "groups",
       "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
       "mutation_class": "standard",
-      "result_kind": "record"
+      "result_kind": "value"
     },
     {
       "name": "group_purge",
@@ -442,7 +442,7 @@
       "group": "users",
       "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
       "mutation_class": "standard",
-      "result_kind": "record"
+      "result_kind": "value"
     },
     {
       "name": "get_site_user",

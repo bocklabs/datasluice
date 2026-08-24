@@ -115,7 +115,7 @@ _NORMALIZED_BACKING: Mapping[tuple[str, str], str] = MappingProxyType(
         ("resources", "get"): "resource_show",
         ("resources", "list"): "resource_search",
         ("organizations", "get"): "organization_show",
-        ("organizations", "list"): "organization_list_for_user",
+        ("organizations", "list"): "organization_list",
     }
 )
 
@@ -930,6 +930,12 @@ class _SyncFamilyService[T]:
 
     def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a normalized list through the owning client."""
+        if self._family == "organizations":
+            operation = CatalogOperationRequest(
+                operation_id=operation.operation_id,
+                payload={**operation.payload, "all_fields": True},
+                mutation_policy=operation.mutation_policy,
+            )
         return cast(
             ResultEnvelope[T],
             self._client._dispatch(
@@ -1030,6 +1036,12 @@ class _AsyncFamilyService[T]:
 
     async def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a normalized list through the owning client."""
+        if self._family == "organizations":
+            operation = CatalogOperationRequest(
+                operation_id=operation.operation_id,
+                payload={**operation.payload, "all_fields": True},
+                mutation_policy=operation.mutation_policy,
+            )
         return cast(
             ResultEnvelope[T],
             await self._client._dispatch(

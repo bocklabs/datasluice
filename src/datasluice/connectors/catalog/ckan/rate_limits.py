@@ -43,8 +43,16 @@ class DocumentedPortalLimit:
     source_note: str
 
     def __post_init__(self) -> None:
-        if self.requests_per_window is None and (self.window_seconds is not None or not self.source_note):
-            raise ValueError("A none-documented portal limit must carry no window and a provenance note.")
+        if not isinstance(self.source_note, str) or not self.source_note:
+            raise ValueError("A documented portal limit requires a provenance note.")
+        if self.requests_per_window is None:
+            if self.window_seconds is not None:
+                raise ValueError("An undocumented portal limit must not carry a window.")
+            return
+        if type(self.requests_per_window) is not int or self.requests_per_window < 1:
+            raise ValueError("A documented portal limit requires a positive request count.")
+        if type(self.window_seconds) is not int or self.window_seconds < 1:
+            raise ValueError("A documented portal limit requires a positive window in seconds.")
 
 
 PORTAL_RATE_LIMITS: Mapping[str, DocumentedPortalLimit] = MappingProxyType(
@@ -80,7 +88,7 @@ def resolve_rate_policy(settings: CKANClientSettings) -> PortalRatePolicy:
     """
     if settings.rate_policy is not None:
         return settings.rate_policy
-    entry = PORTAL_RATE_LIMITS.get(settings.base_url)
+    entry = PORTAL_RATE_LIMITS.get(settings.base_url.lower())
     if entry is not None:
         return entry
     return UnlimitedRatePolicy()

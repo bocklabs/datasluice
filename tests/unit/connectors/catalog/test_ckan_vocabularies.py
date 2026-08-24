@@ -249,6 +249,40 @@ def test_tag_crud_and_lists_decode_their_declared_shapes() -> None:
     assert all(isinstance(item, ValueRecord) for item in listing.items)
 
 
+def test_remaining_tag_vocabulary_and_translation_actions_cross_the_wire() -> None:
+    show_transport = SyncCaptureTransport(body=_success_body(TAG_RESULT))
+    shown = _client(show_transport).vocabularies_licenses.tag_show(id="tag-1")
+    assert isinstance(shown.items[0], NativeRecord)
+    assert show_transport.requests[0].url.endswith("/api/3/action/tag_show")
+    assert json.loads(show_transport.requests[0].body or b"{}") == {"id": "tag-1"}
+
+    tag_delete_transport = SyncCaptureTransport(body=_success_body(None))
+    _client(tag_delete_transport).vocabularies_licenses.tag_delete(id="tag-1", vocabulary_id="vocab-1")
+    assert tag_delete_transport.requests[0].url.endswith("/api/3/action/tag_delete")
+    assert json.loads(tag_delete_transport.requests[0].body or b"{}") == {
+        "id": "tag-1",
+        "vocabulary_id": "vocab-1",
+    }
+
+    vocabulary_delete_transport = SyncCaptureTransport(body=_success_body(None))
+    _client(vocabulary_delete_transport).vocabularies_licenses.vocabulary_delete(id="vocab-1")
+    assert vocabulary_delete_transport.requests[0].url.endswith("/api/3/action/vocabulary_delete")
+    assert json.loads(vocabulary_delete_transport.requests[0].body or b"{}") == {"id": "vocab-1"}
+
+    translation_transport = SyncCaptureTransport(
+        body=_success_body([{"term": "health", "lang_code": "de", "term_translation": "Gesundheit"}])
+    )
+    translations = _client(translation_transport).vocabularies_licenses.term_translation_show(
+        terms=["health"], lang_codes=["de"]
+    )
+    assert isinstance(translations.items[0], MappingRecord)
+    assert translation_transport.requests[0].url.endswith("/api/3/action/term_translation_show")
+    assert json.loads(translation_transport.requests[0].body or b"{}") == {
+        "terms": ["health"],
+        "lang_codes": ["de"],
+    }
+
+
 def test_license_list_and_format_autocomplete_decode_read_only_envelopes() -> None:
     """License rows arrive as mapping records; format completions as scalar values."""
     license_transport = SyncCaptureTransport(body=_success_body([LICENSE_ROW]))
@@ -269,8 +303,8 @@ def test_term_translation_batch_sends_payload_keys_verbatim() -> None:
     client = _client(transport)
 
     batch: TranslationBatch = [
-        {"term": "health", "lang_from": "en", "lang_to": "de", "translation": "Gesundheit"},
-        {"term": "transit", "lang_from": "en", "lang_to": "de", "translation": "Transit"},
+        {"term": "health", "lang_code": "de", "term_translation": "Gesundheit"},
+        {"term": "transit", "lang_code": "de", "term_translation": "Transit"},
     ]
     result = client.vocabularies_licenses.term_translation_update_many(data=batch)
 
@@ -283,13 +317,12 @@ def test_term_translation_batch_sends_payload_keys_verbatim() -> None:
     single_transport = SyncCaptureTransport(body=_success_body(None))
     single_client = _client(single_transport)
     single_client.vocabularies_licenses.term_translation_update(
-        term="health", lang_from="en", lang_to="de", translation="Gesundheit"
+        term="health", lang_code="de", term_translation="Gesundheit"
     )
     assert json.loads(single_transport.requests[0].body or b"{}") == {
         "term": "health",
-        "lang_from": "en",
-        "lang_to": "de",
-        "translation": "Gesundheit",
+        "lang_code": "de",
+        "term_translation": "Gesundheit",
     }
 
 

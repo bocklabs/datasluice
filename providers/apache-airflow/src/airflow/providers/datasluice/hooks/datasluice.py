@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date
-from typing import Any
 
 from airflow.sdk import BaseHook
 
 from datasluice.application import DataSluice
 from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_client
 from datasluice.contracts.catalog.protocols import SyncCatalogClient
-from datasluice.domain.catalog.auth import CredentialResolver
+from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.operations import (
     Atomicity,
@@ -26,6 +25,7 @@ from datasluice.domain.catalog.operations import (
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.runtime.credentials import credential_from_fields
+from datasluice.runtime.transport.base import CatalogTransport
 
 _PLATFORMS = frozenset({"ckan", "udata", "socrata"})
 
@@ -68,7 +68,7 @@ def _ckan_sync_client(
     connection: object,
     extras: Mapping[str, object],
     *,
-    sync_transport: Any = None,
+    sync_transport: CatalogTransport | Callable[[], CatalogTransport] | None = None,
 ) -> SyncCatalogClient:
     """Build one real CKAN live client from connection extras.
 
@@ -93,16 +93,15 @@ def _ckan_sync_client(
     credential = credential_from_fields(
         CatalogPlatform.CKAN, _credential_fields(connection, extras, CatalogPlatform.CKAN)
     )
+    if not isinstance(credential, CKANCredential):
+        raise TypeError("CKAN Airflow connections require a CKAN credential.")
     probe_policy = "declared-baseline" if base_url.startswith("http://") else "auto"
-    if sync_transport is None:
-        settings = CKANClientSettings(base_url=base_url, credential=credential, probe_policy=probe_policy)
-    else:
-        settings = CKANClientSettings(
-            base_url=base_url,
-            credential=credential,
-            probe_policy=probe_policy,
-            sync_transport=sync_transport,
-        )
+    settings = CKANClientSettings(
+        base_url=base_url,
+        credential=credential,
+        probe_policy=probe_policy,
+        sync_transport=sync_transport,
+    )
     return create_sync_client(settings)
 
 

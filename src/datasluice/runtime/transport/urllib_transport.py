@@ -147,7 +147,7 @@ class UrllibCatalogTransport(CatalogTransport):
         if self._closed:
             raise TransportFailure("The urllib catalog transport is closed.")
         if request.files:
-            raise ValueError(
+            raise TransportFailure(
                 "Multipart requests require the httpx transport; install datasluice[http] or inject an httpx transport."
             )
         current = request
@@ -185,10 +185,18 @@ class UrllibCatalogTransport(CatalogTransport):
             headers_for_next = dict(current.headers)
             if not self._retains_credentials(current.url, next_url):
                 headers_for_next = strip_sensitive_redirect_headers(headers_for_next)
-            next_method, next_body, next_files = redirect_method_and_body(current.method, status, current.body)
+            next_method, next_body, next_files = redirect_method_and_body(
+                current.method, status, current.body, current.files
+            )
             if next_body is None and not next_files:
                 headers_for_next = drop_body_transfer_headers(headers_for_next)
-            current = RuntimeRequest(method=next_method, url=next_url, headers=headers_for_next, body=next_body)
+            current = RuntimeRequest(
+                method=next_method,
+                url=next_url,
+                headers=headers_for_next,
+                body=next_body,
+                files=next_files,
+            )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     def close(self) -> None:

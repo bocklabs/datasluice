@@ -38,10 +38,6 @@ from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 SQL_ID = "ckan/datastore-extension.sql-search"
 
-SEARCH_RESULT: dict[str, object] = {
-    "records": ({"id": "1", "title": "Row one"}, {"id": "2", "title": "Row two"}),
-    "count": 2,
-}
 JOB_RESULT: dict[str, object] = {"id": "job-1", "title": "bulk_enqueue", "state": "queued"}
 TASK_RESULT: dict[str, object] = {"id": "task-1", "entity_id": "dataset-a", "task_type": "archiver", "key": "celery"}
 
@@ -395,3 +391,17 @@ def test_async_sqlsearch_blocks_and_datastore_dispatches_from_their_own_evidence
     envelope = asyncio.run(allowed_client.datastore.datastore_search(resource_id="res-1"))
     assert isinstance(envelope.items[0], MappingRecord)
     assert len(allowed_transport.requests) == 1
+
+    destructive_transport = AsyncCaptureTransport(body=_success_body({}))
+    destructive_client = _async_client(destructive_transport)
+    with pytest.raises(CatalogValidationError):
+        asyncio.run(destructive_client.datastore.datastore_delete(resource_id="res-1"))
+    assert destructive_transport.requests == []
+
+    forbidden_transport = AsyncCaptureTransport(
+        body=_failure_body({"__type": "Authorization Error", "message": "not authorized"})
+    )
+    forbidden_client = _async_client(forbidden_transport)
+    with pytest.raises(ForbiddenError):
+        asyncio.run(forbidden_client.extensions.config_option_update(values={"ckan.site_title": "Changed"}))
+    assert len(forbidden_transport.requests) == 1

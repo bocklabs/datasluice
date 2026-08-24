@@ -77,9 +77,11 @@ class SyncRelationshipsActivityService(_SyncNativeService):
     def __init__(self, client: SyncCKANClient) -> None:
         super().__init__(client, "relationships_activity")
 
-    def package_relationships_list(self, *, id: str, id2: str, rel: str) -> ResultEnvelope[CKANResultItem]:
-        """List relationships between two datasets filtered by relationship type."""
-        return self._invoke_read("package_relationships_list", {"id": id, "id2": id2, "rel": rel})
+    def package_relationships_list(
+        self, *, id: str, id2: str | None = None, rel: str | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one dataset's relationships with optional peer and type filters."""
+        return self._invoke_read("package_relationships_list", _drop_unset({"id": id, "id2": id2, "rel": rel}))
 
     def package_relationship_create(
         self, *, subject: str, object: str, type: str, policy: MutationPolicy | None = None
@@ -275,14 +277,19 @@ class SyncRelationshipsActivityService(_SyncNativeService):
     def activity_create(
         self,
         *,
-        user: str,
+        user_id: str,
         object_id: str,
         activity_type: str,
         data: dict[str, object],
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create one activity record explicitly on the standard tier."""
-        params: dict[str, object] = {"user": user, "object_id": object_id, "activity_type": activity_type, "data": data}
+        params: dict[str, object] = {
+            "user_id": user_id,
+            "object_id": object_id,
+            "activity_type": activity_type,
+            "data": data,
+        }
         return self._invoke_mutation("activity_create", params, policy)
 
     def send_email_notifications(self, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -332,9 +339,11 @@ class AsyncRelationshipsActivityService(_AsyncNativeService):
     def __init__(self, client: AsyncCKANClient) -> None:
         super().__init__(client, "relationships_activity")
 
-    async def package_relationships_list(self, *, id: str, id2: str, rel: str) -> ResultEnvelope[CKANResultItem]:
-        """List relationships between two datasets filtered by relationship type."""
-        return await self._invoke_read("package_relationships_list", {"id": id, "id2": id2, "rel": rel})
+    async def package_relationships_list(
+        self, *, id: str, id2: str | None = None, rel: str | None = None
+    ) -> ResultEnvelope[CKANResultItem]:
+        """List one dataset's relationships with optional peer and type filters."""
+        return await self._invoke_read("package_relationships_list", _drop_unset({"id": id, "id2": id2, "rel": rel}))
 
     async def package_relationship_create(
         self, *, subject: str, object: str, type: str, policy: MutationPolicy | None = None
@@ -534,14 +543,19 @@ class AsyncRelationshipsActivityService(_AsyncNativeService):
     async def activity_create(
         self,
         *,
-        user: str,
+        user_id: str,
         object_id: str,
         activity_type: str,
         data: dict[str, object],
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create one activity record explicitly on the standard tier."""
-        params: dict[str, object] = {"user": user, "object_id": object_id, "activity_type": activity_type, "data": data}
+        params: dict[str, object] = {
+            "user_id": user_id,
+            "object_id": object_id,
+            "activity_type": activity_type,
+            "data": data,
+        }
         return await self._invoke_mutation("activity_create", params, policy)
 
     async def send_email_notifications(self, policy: MutationPolicy | None = None) -> CKANMutationResult:

@@ -141,11 +141,11 @@ class SyncVocabulariesLicensesService(_SyncNativeService):
         return self._invoke_read("format_autocomplete", _drop_unset({"q": q, "limit": limit}))
 
     def term_translation_show(
-        self, *, terms: TermTranslationTerms, lang_from: str | None = None, lang_to: str | None = None
+        self, *, terms: TermTranslationTerms, lang_codes: list[str] | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Show translations for the listed terms."""
         params: WireParams = {"terms": terms}
-        params.update(_drop_unset({"lang_from": lang_from, "lang_to": lang_to}))
+        params.update(_drop_unset({"lang_codes": lang_codes}))
         return self._invoke_read("term_translation_show", params)
 
     def tag_create(
@@ -184,15 +184,10 @@ class SyncVocabulariesLicensesService(_SyncNativeService):
         return self._invoke_mutation("vocabulary_delete", {"id": id}, policy)
 
     def term_translation_update(
-        self, *, term: str, lang_from: str, lang_to: str, translation: str, policy: MutationPolicy | None = None
+        self, *, term: str, lang_code: str, term_translation: str, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Update one term translation with documented language codes."""
-        params: WireParams = {
-            "term": term,
-            "lang_from": lang_from,
-            "lang_to": lang_to,
-            "translation": translation,
-        }
+        params: WireParams = {"term": term, "lang_code": lang_code, "term_translation": term_translation}
         return self._invoke_mutation("term_translation_update", params, policy)
 
     def term_translation_update_many(
@@ -302,11 +297,11 @@ class AsyncVocabulariesLicensesService(_AsyncNativeService):
         return await self._invoke_read("format_autocomplete", _drop_unset({"q": q, "limit": limit}))
 
     async def term_translation_show(
-        self, *, terms: TermTranslationTerms, lang_from: str | None = None, lang_to: str | None = None
+        self, *, terms: TermTranslationTerms, lang_codes: list[str] | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Show translations for the listed terms."""
         params: WireParams = {"terms": terms}
-        params.update(_drop_unset({"lang_from": lang_from, "lang_to": lang_to}))
+        params.update(_drop_unset({"lang_codes": lang_codes}))
         return await self._invoke_read("term_translation_show", params)
 
     async def tag_create(
@@ -348,15 +343,10 @@ class AsyncVocabulariesLicensesService(_AsyncNativeService):
         return await self._invoke_mutation("vocabulary_delete", {"id": id}, policy)
 
     async def term_translation_update(
-        self, *, term: str, lang_from: str, lang_to: str, translation: str, policy: MutationPolicy | None = None
+        self, *, term: str, lang_code: str, term_translation: str, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Update one term translation with documented language codes."""
-        params: WireParams = {
-            "term": term,
-            "lang_from": lang_from,
-            "lang_to": lang_to,
-            "translation": translation,
-        }
+        params: WireParams = {"term": term, "lang_code": lang_code, "term_translation": term_translation}
         return await self._invoke_mutation("term_translation_update", params, policy)
 
     async def term_translation_update_many(

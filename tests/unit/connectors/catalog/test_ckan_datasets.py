@@ -30,7 +30,6 @@ from datasluice.errors.catalog import CatalogValidationError, UnsupportedCapabil
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
-DATASET_READ_ID = "ckan/action-api-v3.dataset-list-show-search"
 
 PACKAGE_CREATE_RESULT: dict[str, object] = {"id": "pkg-1", "name": "created-dataset", "title": "Created"}
 COLLABORATOR_RESULT: dict[str, object] = {

@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from datasluice.connectors.catalog.ckan.rate_limits import PortalRatePolicy
-from datasluice.domain.catalog.auth import (
-    CatalogCredential,
-    CKANCredential,
-    CredentialResolver,
-    SocrataCredential,
-    UDataCredential,
-)
+from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.capability import AsyncProbeRunner, ProbeRunner
@@ -25,7 +20,7 @@ from datasluice.runtime.constants import (
 from datasluice.runtime.resilience import BreakerRegistry
 from datasluice.runtime.transport.base import CatalogTransport
 
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 PROBE_POLICIES = ("auto", "declared-baseline")
 
 type SyncTransportOverride = CatalogTransport | Callable[[], CatalogTransport]
@@ -33,13 +28,13 @@ type AsyncTransportOverride = AsyncCatalogTransport | Callable[[], AsyncCatalogT
 
 
 def normalize_origin(value: str) -> str:
-    """Normalize one deployment base URL to its scheme and netloc origin form.
+    """Normalize one deployment base URL while preserving an optional CKAN mount path.
 
     Args:
         value: The caller-supplied base URL.
 
     Returns:
-        The origin-form URL carrying only scheme and netloc.
+        The normalized URL carrying scheme, netloc, and an optional mount path.
 
     Raises:
         ValueError: If the URL is not a sanitized HTTP(S) origin, or an http
@@ -56,7 +51,7 @@ def normalize_origin(value: str) -> str:
         raise ValueError("CKAN base URLs cannot carry query strings or fragments.")
     if parsed.scheme == "http" and parsed.hostname not in LOOPBACK_HOSTS:
         raise ValueError("Plain-text HTTP origins are restricted to loopback CKAN deployments.")
-    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
 
 
 def _transport_role(value: object) -> str:
@@ -81,7 +76,7 @@ class CKANClientSettings:
     """
 
     base_url: str
-    credential: CatalogCredential | CredentialResolver | None = None
+    credential: CKANCredential | CredentialResolver | None = None
     sync_transport: SyncTransportOverride | None = None
     async_transport: AsyncTransportOverride | None = None
     tls_policy: TLSPolicy | None = None
@@ -99,10 +94,8 @@ class CKANClientSettings:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", normalize_origin(self.base_url))
-        if self.credential is not None and not isinstance(
-            self.credential, CKANCredential | UDataCredential | SocrataCredential | CredentialResolver
-        ):
-            raise TypeError("CKAN client settings require a typed catalog credential or resolver.")
+        if self.credential is not None and not isinstance(self.credential, CKANCredential | CredentialResolver):
+            raise TypeError("CKAN client settings require a CKAN credential or resolver.")
         for field_name in ("sync_transport", "async_transport"):
             override = getattr(self, field_name)
             if override is None:
@@ -132,7 +125,7 @@ class CKANClientSettings:
             raise ValueError("CKAN probe policies are 'auto' or 'declared-baseline'.")
         if (
             type(self.capability_cache_ttl) not in (int, float)
-            or self.capability_cache_ttl != self.capability_cache_ttl
+            or not math.isfinite(self.capability_cache_ttl)
             or self.capability_cache_ttl < 0
         ):
             raise ValueError("Capability cache TTL must be a finite non-negative number.")

@@ -228,10 +228,10 @@ def _forbidden_artifact(
     }
 
 
-def _purge_quietly(client: SyncCKANClient, name: str) -> None:
+def _purge_quietly(purge: Callable[..., object], name: str) -> None:
     """Purge one leftover entity from a prior aborted run, ignoring failures."""
     try:
-        client.datasets.dataset_purge(id=name, policy=confirmed_destructive_policy())
+        purge(id=name, policy=confirmed_destructive_policy())
     except Exception:
         pass
 
@@ -259,7 +259,7 @@ def capture_sysadmin_receipts(client: SyncCKANClient, out_dir: Path, provenance:
     )
     paths: list[Path] = []
     for action, scratch, purge in flows:
-        _purge_quietly(client, scratch)
+        _purge_quietly(purge, scratch)
         if action == "dataset_purge":
             client.datasets.package_create(name=scratch, owner_org=EVIDENCE_ORG)
         elif action == "organization_purge":
@@ -428,7 +428,7 @@ def run_bulk_capture(client: SyncCKANClient, bulk_count: int, out_dir: Path, pro
         for index in range(bulk_count)
     )
     for item in items:
-        _purge_quietly(client, item.value)
+        _purge_quietly(client.datasets.dataset_purge, item.value)
     phases = [_run_bulk_phase(client, items, mode) for mode in ("create", "delete")]
     document = {"schema_version": 1, "kind": "bulk_run_evidence", "bulk_count": bulk_count, "phases": phases}
     document.update(provenance)
@@ -467,7 +467,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for role, credential in credentials.items()
         }
         record_provenance(clients["sysadmin"], provenance)
-        _purge_quietly(clients["sysadmin"], ORG_ADMIN_DATASET)
+        _purge_quietly(clients["sysadmin"].datasets.dataset_purge, ORG_ADMIN_DATASET)
         presence = capture_identity_presence(clients["sysadmin"])
         missing = [identity for identity, present in presence.items() if not present]
         if missing:

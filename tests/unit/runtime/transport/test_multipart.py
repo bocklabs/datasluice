@@ -11,6 +11,7 @@ httpx = pytest.importorskip("httpx")
 
 from datasluice.runtime.transport.base import (
     RuntimeRequest,
+    TransportFailure,
     UploadPart,
 )
 from datasluice.runtime.transport.httpx_transport import (
@@ -203,7 +204,7 @@ def test_async_httpx_redirect_preserves_files(status: int) -> None:
 def test_urllib_rejects_multipart_with_actionable_message_naming_the_extra() -> None:
     transport = UrllibCatalogTransport()
     try:
-        with pytest.raises(ValueError, match=r"datasluice\[http\]") as excinfo:
+        with pytest.raises(TransportFailure, match=r"datasluice\[http\]") as excinfo:
             transport.send(RuntimeRequest("POST", "https://example.test/upload", files=_PARTS))
     finally:
         transport.close()

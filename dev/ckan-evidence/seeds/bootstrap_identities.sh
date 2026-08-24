@@ -6,12 +6,19 @@ COMPOSE_FILE="$(cd "$(dirname "$0")/.." && pwd)/compose.yaml"
 EVIDENCE_ORIGIN="${CKAN_EVIDENCE_ORIGIN:-http://127.0.0.1:5500}"
 IDENTITIES="datasluice-sysadmin datasluice-org-admin datasluice-user"
 
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+CREDENTIALS_PATH="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$CREDENTIALS_FILE")"
+if [ -n "$REPO_ROOT" ] && [[ "$CREDENTIALS_PATH" == "$REPO_ROOT"/* ]]; then
+  echo "refusing to write credentials inside the repository: ${CREDENTIALS_FILE}" >&2
+  exit 1
+fi
+
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
 # ckan user show exits 0 even for missing users, so presence is checked in the DB.
 identity_exists() {
   local name="$1"
-  [ "$(compose exec -T db psql -U ckan -d ckan -tAc "SELECT count(*) FROM \"user\" WHERE name = '${name}'")" = "1" ]
+  [ "$(compose exec -T db psql -U ckan -d ckan -v name="$name" -tAc "SELECT count(*) FROM \"user\" WHERE name = :'name'")" = "1" ]
 }
 
 ensure_user() {
@@ -29,7 +36,7 @@ issue_token() {
   compose exec -T ckan ckan user token revoke "$name" "$token_name" >/dev/null 2>&1 || true
   # Token output goes to stdout; container log lines go to stderr under -T only
   # sometimes, so take the last line that looks like a JWT.
-  token="$(compose exec -T ckan ckan user token add "$name" "$token_name" 2>/dev/null | grep -Eo 'eyJ[A-Za-z0-9_.-]+' | tail -n 1)"
+  token="$(compose exec -T ckan ckan user token add "$name" "$token_name" 2>/dev/null | grep -Eo 'eyJ[A-Za-z0-9_.-]+' | tail -n 1 || true)"
   if [ -z "$token" ]; then
     echo "failed to issue token for ${name}" >&2
     exit 1
@@ -41,7 +48,7 @@ for identity in $IDENTITIES; do
   ensure_user "$identity"
 done
 
-compose exec -T db psql -U ckan -d ckan -c "UPDATE \"user\" SET sysadmin = true WHERE name = 'datasluice-sysadmin' AND sysadmin = false;" >/dev/null
+compose exec -T ckan ckan sysadmin add datasluice-sysadmin >/dev/null
 echo "sysadmin role granted: datasluice-sysadmin"
 
 SYSADMIN_TOKEN="$(issue_token datasluice-sysadmin datasluice-evidence-capture)"
@@ -50,6 +57,8 @@ USER_TOKEN="$(issue_token datasluice-user datasluice-evidence-capture)"
 
 umask 077
 mkdir -p "$(dirname "$CREDENTIALS_FILE")"
+tmp_file="$(mktemp "$(dirname "$CREDENTIALS_FILE")/ckan-evidence-credentials.XXXXXX")"
+trap 'rm -f "$tmp_file"' EXIT
 {
   printf '{\n'
   printf '  "origin": "%s",\n' "$EVIDENCE_ORIGIN"
@@ -59,8 +68,10 @@ mkdir -p "$(dirname "$CREDENTIALS_FILE")"
   printf '    "user": "%s"\n' "$USER_TOKEN"
   printf '  }\n'
   printf '}\n'
-} > "$CREDENTIALS_FILE"
-chmod 600 "$CREDENTIALS_FILE"
+} > "$tmp_file"
+chmod 600 "$tmp_file"
+mv -f "$tmp_file" "$CREDENTIALS_FILE"
+trap - EXIT
 
 echo "credentials written with mode 0600: ${CREDENTIALS_FILE}"
 echo "identity seeding complete (presence asserted for: ${IDENTITIES})"

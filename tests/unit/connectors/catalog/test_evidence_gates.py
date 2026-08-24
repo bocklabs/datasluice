@@ -18,7 +18,7 @@ from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.contracts.catalog.fixtures import load_reference_fixture_set
 from datasluice.domain.catalog.redaction import contains_credential_content
 
-FIXTURES = Path("src/datasluice/contracts/catalog/fixtures/ckan")
+FIXTURES = Path(__file__).parents[4] / "src/datasluice/contracts/catalog/fixtures/ckan"
 PURGE_ACTIONS = ("dataset_purge", "organization_purge", "group_purge")
 JWT_PATTERN = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}")
 
@@ -35,6 +35,8 @@ def _purge_family_operation_ids() -> dict[str, str]:
     for entry in CKAN_ACTIONS.entries:
         if entry.name in PURGE_ACTIONS:
             families[entry.name] = str(entry.owning_operation_id)
+    missing = set(PURGE_ACTIONS) - set(families)
+    assert not missing, f"G1: purge actions absent from the action manifest: {sorted(missing)}"
     return families
 
 
@@ -109,6 +111,7 @@ def test_g3_tracked_evidence_round_trips_sanitization() -> None:
                 walk(item)
 
     walk(document)
+    walk(json.loads((FIXTURES / "cases.json").read_text(encoding="utf-8")))
 
     loader_set = load_reference_fixture_set("ckan")
     platform_version = loader_set.evidence["platform_version"]

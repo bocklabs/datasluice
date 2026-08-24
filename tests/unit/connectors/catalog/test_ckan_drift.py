@@ -91,6 +91,7 @@ class _FakeDatasets:
         self.shows = shows
         self.names = names or []
         self.requested_ids: list[str] = []
+        self.current_package_list_parameters: list[dict[str, int | None]] = []
 
     def package_list(self) -> ResultEnvelope[object]:
         return _name_list_envelope(self.names)
@@ -102,6 +103,7 @@ class _FakeDatasets:
     def current_package_list_with_resources(
         self, *, limit: int | None = None, offset: int | None = None
     ) -> ResultEnvelope[object]:
+        self.current_package_list_parameters.append({"limit": limit, "offset": offset})
         return next(iter(self.shows.values()))
 
 
@@ -353,13 +355,15 @@ def test_bounded_current_package_list_dispatch_matches_against_the_record_schema
             ),
         ),
     )
+    clients: list[_FakeClient] = []
     records = run_drift_checks(
         [target],
         client_factory=_factory(
-            [], status=_status_envelope(), shows={"ds-1": _dataset_envelope("ds-1", _show_payload())}
+            clients, status=_status_envelope(), shows={"ds-1": _dataset_envelope("ds-1", _show_payload())}
         ),
     )
     assert records[0].outcome == "matched"
+    assert clients[0].datasets.current_package_list_parameters == [{"limit": 1, "offset": None}]
 
 
 def test_package_list_sequence_check_matches_names_canonically() -> None:
@@ -382,7 +386,8 @@ def test_package_list_sequence_check_matches_names_canonically() -> None:
     assert records[0].line_state == LineState.UNVERIFIED.value
 
 
-def test_serialized_records_carry_exactly_the_five_redacted_keys() -> None:
+def test_serialized_records_carry_exactly_the_five_redacted_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATASLUICE_NO_REDACT", raising=False)
     record = AdvisoryRecord(
         target=DEMO_ORIGIN,
         operation="status_show",
@@ -392,7 +397,9 @@ def test_serialized_records_carry_exactly_the_five_redacted_keys() -> None:
     )
     rendered = json.loads(json.dumps(record.to_dict()))
     assert set(rendered) == _ADVISORY_KEYS
-    assert redact_for_output("token=abc123 secret") != "token=abc123 secret"
+    redacted = redact_for_output("token=abc123 secret")
+    assert isinstance(redacted, str)
+    assert "abc123" not in redacted
 
 
 def test_default_targets_reflect_the_amended_demo_ckan_disposition() -> None:

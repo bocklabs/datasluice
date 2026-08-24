@@ -102,8 +102,8 @@ class RuntimeRequest:
             raise ValueError("Runtime request URLs must be non-empty strings.")
         if self.body is not None and not isinstance(self.body, bytes):
             raise ValueError("Runtime request bodies must be bytes when supplied.")
-        if not isinstance(self.files, (tuple, list)) or isinstance(self.files, (str, bytes)):
-            raise ValueError("Runtime request multipart parts must be a sequence of UploadPart instances.")
+        if not isinstance(self.files, (tuple, list)):
+            raise ValueError("Runtime request multipart parts must be a tuple or list of UploadPart instances.")
         if not all(isinstance(part, UploadPart) for part in self.files):
             raise ValueError("Runtime request multipart parts must be UploadPart instances.")
         if self.body is not None and self.files:

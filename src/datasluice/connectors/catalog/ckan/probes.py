@@ -379,7 +379,6 @@ class CKANProbeRunner:
     ) -> None:
         if not isinstance(profile, DeclaredCapabilityProfile):
             raise TypeError("CKAN probe runners require the declared CKAN capability profile.")
-        self._profile = profile
         self._snapshots = StatusSnapshotCache(
             origin=origin, reader=transport.send, ttl_seconds=ttl_seconds, clock=clock
         )
@@ -412,7 +411,6 @@ class CKANAsyncProbeRunner:
     ) -> None:
         if not isinstance(profile, DeclaredCapabilityProfile):
             raise TypeError("CKAN probe runners require the declared CKAN capability profile.")
-        self._profile = profile
         self._transport = transport
         self._snapshots = StatusSnapshotCache(origin=origin, ttl_seconds=ttl_seconds, clock=clock)
         self._core = _EvidenceCore(emitter=emitter, clock=clock, ttl_seconds=ttl_seconds)

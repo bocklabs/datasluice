@@ -85,8 +85,12 @@ def _load_entries() -> tuple[ActionEntry, ...]:
         raise ActionManifestError(f"The CKAN action manifest {MANIFEST_RESOURCE} is not valid JSON.") from exc
     if not isinstance(document, dict) or set(document) != _MANIFEST_KEYS:
         raise ActionManifestError(f"The CKAN action manifest {MANIFEST_RESOURCE} carries unexpected top-level keys.")
-    if document["platform"] != "ckan" or not isinstance(document["profile_version"], str):
+    if document["schema_version"] != "1.0":
+        raise ActionManifestError(f"The CKAN action manifest {MANIFEST_RESOURCE} uses an unsupported schema version.")
+    if document["platform"] != "ckan":
         raise ActionManifestError(f"The CKAN action manifest {MANIFEST_RESOURCE} names the wrong platform identity.")
+    if not isinstance(document["profile_version"], str) or not document["profile_version"]:
+        raise ActionManifestError(f"The CKAN action manifest {MANIFEST_RESOURCE} requires a profile version string.")
     actions = document["actions"]
     if not isinstance(actions, list) or not actions:
         raise ActionManifestError(f"The CKAN action manifest {MANIFEST_RESOURCE} must list at least one action.")

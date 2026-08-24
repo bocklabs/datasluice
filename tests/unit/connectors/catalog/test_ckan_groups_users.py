@@ -71,6 +71,10 @@ def _success_body(result: object) -> bytes:
     return json.dumps({"success": True, "result": result}).encode("utf-8")
 
 
+def _failure_body(error: dict[str, object]) -> bytes:
+    return json.dumps({"success": False, "error": error}).encode("utf-8")
+
+
 class SyncCaptureTransport:
     """A deterministic loopback capture transport recording every sent request."""
 
@@ -199,23 +203,31 @@ def test_group_show_decodes_a_group_kind_record() -> None:
 
 def test_group_reads_dispatch_under_the_core_read_id_with_native_kinds() -> None:
     """List/authz/package-show/autocomplete keep their documented outcome shapes."""
-    client = _client(SyncCaptureTransport(body=_success_body(["transit-group"])))
+    list_transport = SyncCaptureTransport(body=_success_body(["transit-group"]))
+    client = _client(list_transport)
     listing = client.groups.group_list(limit=3, offset=6)
     assert all(isinstance(item, ValueRecord) for item in listing.items)
+    assert list_transport.requests[0].url.endswith("/api/3/action/group_list")
 
-    authz_client = _client(SyncCaptureTransport(body=_success_body(["transit-group"])))
+    authz_transport = SyncCaptureTransport(body=_success_body(["transit-group"]))
+    authz_client = _client(authz_transport)
     authz = authz_client.groups.group_list_authz()
     assert all(isinstance(item, ValueRecord) for item in authz.items)
+    assert authz_transport.requests[0].url.endswith("/api/3/action/group_list_authz")
 
-    packages_client = _client(SyncCaptureTransport(body=_success_body([PACKAGE_ROW])))
+    packages_transport = SyncCaptureTransport(body=_success_body([PACKAGE_ROW]))
+    packages_client = _client(packages_transport)
     packages = packages_client.groups.group_package_show(id="grp-1")
     package_record = next(item for item in packages.items if isinstance(item, NativeRecord))
     assert package_record.resource_kind.value == "dataset"
+    assert packages_transport.requests[0].url.endswith("/api/3/action/group_package_show")
 
-    autocomplete_client = _client(SyncCaptureTransport(body=_success_body([GROUP_RESULT])))
+    autocomplete_transport = SyncCaptureTransport(body=_success_body([GROUP_RESULT]))
+    autocomplete_client = _client(autocomplete_transport)
     autocomplete = autocomplete_client.groups.group_autocomplete(q="tra")
     group_record = next(item for item in autocomplete.items if isinstance(item, NativeRecord))
     assert group_record.resource_kind.value == "group"
+    assert autocomplete_transport.requests[0].url.endswith("/api/3/action/group_autocomplete")
 
 
 def test_group_member_variants_pass_documented_parameters_verbatim() -> None:
@@ -378,12 +390,12 @@ def test_api_token_trio_captures_documented_routes_and_stays_secret_safe() -> No
     revoke_client = _client(revoke_transport)
     revoked = revoke_client.users.api_token_revoke(token_id="t-1")
     assert revoke_transport.requests[0].url.endswith("/api/3/action/api_token_revoke")
-    assert json.loads(revoke_transport.requests[0].body or b"{}") == {"token_id": "t-1"}
+    assert json.loads(revoke_transport.requests[0].body or b"{}") == {"jti": "t-1"}
     assert revoked.receipt.outcome == "succeeded"
+    assert revoked.receipt.target.resource_kind.value == "token"
 
     serialized = json.dumps(wrapper.to_dict())
     assert "issued-secret-123" not in serialized
-    assert repr(wrapper) == repr(wrapper)
     assert "issued-secret-123" not in repr(wrapper)
 
 
@@ -411,7 +423,10 @@ def test_get_site_user_passes_no_parameters_and_maps_authorization_envelopes() -
     record = next(item for item in result.result.items if isinstance(item, NativeRecord))
     assert record.resource_kind.value == "user"
 
-    rejected = SyncCaptureTransport(status_code=401, body=_success_body(None))
+    rejected = SyncCaptureTransport(
+        status_code=401,
+        body=_failure_body({"__type": "Authorization Error", "message": "not authenticated"}),
+    )
     rejected_client = _client(rejected)
     with pytest.raises(UnauthenticatedError) as excinfo:
         rejected_client.users.get_site_user()

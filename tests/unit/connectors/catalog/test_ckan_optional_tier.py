@@ -274,11 +274,14 @@ def test_dashboard_and_activity_create_dispatch_receipt_bearing_when_available()
     create_transport = SyncCaptureTransport(body=_success_body(ACTIVITY_RESULT))
     create_client = _client(create_transport)
     created = create_client.relationships_activity.activity_create(
-        user="user-1", object_id="dataset-a", activity_type="changed package", data={"package": {"title": "New"}}
+        user_id="user-1",
+        object_id="dataset-a",
+        activity_type="changed package",
+        data={"package": {"title": "New"}},
     )
     assert isinstance(created, CKANMutationResult)
     assert json.loads(create_transport.requests[0].body or b"{}") == {
-        "user": "user-1",
+        "user_id": "user-1",
         "object_id": "dataset-a",
         "activity_type": "changed package",
         "data": {"package": {"title": "New"}},
@@ -299,21 +302,30 @@ def test_send_email_notifications_forbidden_envelope_maps_to_forbidden_error() -
     assert len(transport.requests) == 1
 
 
-def test_default_resource_views_pass_their_ids_verbatim() -> None:
-    """Default-view creation actions cross with their documented ids untouched."""
+def test_default_resource_views_pass_their_objects_verbatim() -> None:
+    """Default-view creation actions cross with their documented objects untouched."""
     package_transport = SyncCaptureTransport(body=_success_body([VIEW_RESULT]))
     package_client = _client(package_transport)
 
-    package_client.views.package_create_default_resource_views(package_id="dataset-a")
+    package = {"id": "dataset-a", "resources": [{"id": "res-1"}]}
+    package_result = package_client.views.package_create_default_resource_views(
+        package=package, create_datastore_views=True
+    )
 
-    assert json.loads(package_transport.requests[0].body or b"{}") == {"package_id": "dataset-a"}
+    assert json.loads(package_transport.requests[0].body or b"{}") == {
+        "package": package,
+        "create_datastore_views": True,
+    }
+    assert package_result.receipt.target.resource_kind.value == "dataset"
 
     resource_transport = SyncCaptureTransport(body=_success_body([VIEW_RESULT]))
     resource_client = _client(resource_transport)
 
-    resource_client.views.resource_create_default_resource_views(resource_id="res-1")
+    resource = {"id": "res-1", "format": "CSV"}
+    resource_result = resource_client.views.resource_create_default_resource_views(resource=resource)
 
-    assert json.loads(resource_transport.requests[0].body or b"{}") == {"resource_id": "res-1"}
+    assert json.loads(resource_transport.requests[0].body or b"{}") == {"resource": resource}
+    assert resource_result.receipt.target.resource_kind.value == "resource"
 
 
 def test_async_views_mirror_the_dual_state_semantics_per_family() -> None:

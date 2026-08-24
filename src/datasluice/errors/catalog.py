@@ -123,6 +123,7 @@ class CatalogRateLimitError(CatalogError):
         capability_state: str | None = None,
         safe_action: str,
         retry_after: float | None = None,
+        metadata: Mapping[str, object] | None = None,
     ) -> None:
         if retry_after is not None and (
             (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
@@ -134,6 +135,7 @@ class CatalogRateLimitError(CatalogError):
             platform=platform,
             capability_state=capability_state,
             safe_action=safe_action,
+            metadata=metadata,
         )
         self.retry_after = float(retry_after) if retry_after is not None else None
 
@@ -152,6 +154,7 @@ class BudgetExhaustedError(CatalogError):
         elapsed_seconds: float,
         budget_seconds: float,
         retry_state: Mapping[str, object] | None = None,
+        metadata: Mapping[str, object] | None = None,
     ) -> None:
         for value, name in ((elapsed_seconds, "Elapsed"), (budget_seconds, "Budget")):
             if (type(value) is not int and type(value) is not float) or value < 0:
@@ -164,6 +167,7 @@ class BudgetExhaustedError(CatalogError):
             platform=platform,
             capability_state=capability_state,
             safe_action=safe_action,
+            metadata=metadata,
         )
         self.elapsed_seconds = float(elapsed_seconds)
         self.budget_seconds = float(budget_seconds)
@@ -218,6 +222,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
             capability_state=capability_state,
             safe_action=safe_action,
             retry_after=native.retry_after,
+            metadata=native.metadata,
         )
     else:
         error = error_type(
@@ -226,6 +231,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
             platform=native.platform,
             capability_state=capability_state,
             safe_action=safe_action,
+            metadata=native.metadata,
         )
     error.__cause__ = native
     return error

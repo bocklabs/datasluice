@@ -321,6 +321,9 @@ def test_inventory_complete() -> None:
     assert len(manifest_names) == 157
     assert len(registry_names) == 157
     assert manifest_names ^ registry_names == frozenset()
+    assert set(RESULT_KINDS) == manifest_names, (
+        f"RESULT_KINDS carries stale keys absent from the manifest: {sorted(set(RESULT_KINDS) - manifest_names)}"
+    )
 
     declared_operations = {str(operation_id) for operation_id in declared_ckan_profile().operations}
     valid_mutation_classes = {"read", "standard", "destructive"}
