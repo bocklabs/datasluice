@@ -155,13 +155,21 @@ class UrllibCatalogTransport(CatalogTransport):
             try:
                 response = self._opener.open(
                     Request(current.url, data=current.body, headers=dict(current.headers), method=current.method),
-                    timeout=self._budget.connect,
+                    timeout=min(self._budget.read, self._budget.total),
                 )
-                status = response.status
-                headers = dict(response.headers.items())
-                body = response.read()
+                try:
+                    status = response.status
+                    headers = dict(response.headers.items())
+                    body = response.read()
+                finally:
+                    close = getattr(response, "close", None)
+                    if callable(close):
+                        close()
             except HTTPError as exc:
-                status, headers, body = exc.code, dict(exc.headers.items()), exc.read()
+                try:
+                    status, headers, body = exc.code, dict(exc.headers.items()), exc.read()
+                finally:
+                    exc.close()
             except HTTPException as exc:
                 raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
             except (URLError, OSError) as exc:

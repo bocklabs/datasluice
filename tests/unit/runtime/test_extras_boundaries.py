@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import sys
 
 import pytest
 
 
 @pytest.mark.parametrize("platform", ("ckan", "udata", "socrata"))
-def test_connector_contract_imports_without_its_extra(platform: str) -> None:
+def test_connector_contract_imports_without_its_extra(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     """Connector contract packages remain importable in a bare installation."""
+    monkeypatch.setitem(sys.modules, "httpx", None)
+    sys.modules.pop(f"datasluice.connectors.catalog.{platform}", None)
     importlib.import_module(f"datasluice.connectors.catalog.{platform}")
 
 

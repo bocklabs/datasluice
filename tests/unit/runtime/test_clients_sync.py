@@ -197,7 +197,7 @@ def test_sync_capability_reads_cached_state_without_probe_or_transport_dispatch(
     assert transport.requests == []
 
 
-def test_clients_keep_independent_transports_and_pools() -> None:
+def test_clients_keep_independent_transports() -> None:
     first_transport = _Transport(RuntimeResponse(200, {}, _envelope()))
     second_transport = _Transport(RuntimeResponse(200, {}, _envelope()))
     first = SyncCatalogClient(first_transport, _profile())
@@ -319,20 +319,20 @@ def test_caller_headers_override_credential_headers() -> None:
 
 
 def test_undeclared_mutation_policy_defaults_retry_safety_by_http_method() -> None:
-    post_operation = OperationId("reference", "datasets", "get")
+    post_method_operation = OperationId("reference", "datasets", "get")
     post_request = CatalogOperationRequest(
-        post_operation, {"url": "http://127.0.0.1:8000/datasets/fixture", "method": "POST"}
+        post_method_operation, {"url": "http://127.0.0.1:8000/datasets/fixture", "method": "POST"}
     )
     get_request = _request()
 
     post_transport = _FailingTransport()
     with pytest.raises(TransportFailure):
-        SyncCatalogClient(post_transport, _profile()).datasets.get(post_request, _guard(post_operation))
+        SyncCatalogClient(post_transport, _profile()).datasets.get(post_request, _guard(post_method_operation))
     assert len(post_transport.requests) == 1
 
     get_transport = _FailingTransport()
     with pytest.raises(TransportFailure):
-        SyncCatalogClient(get_transport, _profile()).datasets.get(get_request, _guard())
+        SyncCatalogClient(get_transport, _profile(), retry_sleep=lambda _: None).datasets.get(get_request, _guard())
     assert len(get_transport.requests) == 3
 
 

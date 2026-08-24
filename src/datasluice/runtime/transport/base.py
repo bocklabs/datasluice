@@ -10,7 +10,9 @@ from typing import Protocol
 
 from datasluice.domain.catalog.redaction import redact_string
 
-SENSITIVE_REDIRECT_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token"})
+SENSITIVE_REDIRECT_HEADERS = frozenset(
+    {"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token", "x-app-token"}
+)
 
 _HOP_BODYLESS_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding"})
 _POST_TO_GET_STATUSES = frozenset({301, 302})

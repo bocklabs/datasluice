@@ -92,6 +92,29 @@ def test_retry_decision_declines_unsafe_or_unavailable_retries(
     assert decision.reason == reason
 
 
+def test_retry_decision_computes_budget_clamped_default_backoff() -> None:
+    budget = TimeBudget(connect=1, read=2, write=3, total=8)
+    plain = RetryDecision.for_response(
+        attempt=2,
+        max_attempts=5,
+        status_code=503,
+        retry_after=None,
+        idempotency=IdempotencyPolicy(safe=True),
+        budget=budget,
+    )
+    clamped = RetryDecision.for_response(
+        attempt=5,
+        max_attempts=6,
+        status_code=503,
+        retry_after=None,
+        idempotency=IdempotencyPolicy(safe=True),
+        budget=budget,
+    )
+
+    assert plain.retry and plain.delay == 2.0
+    assert clamped.retry and clamped.delay == 8.0
+
+
 @pytest.mark.parametrize(
     ("retry_after", "expected_retry", "expected_delay"),
     [

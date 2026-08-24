@@ -73,7 +73,7 @@ def test_http_download_reads_chunked_response_through_buffered_send_seam() -> No
 
 def test_urllib_runtime_transport_reads_the_resource() -> None:
     """The stdlib runtime transport reads a resource through the same buffered seam."""
-    server, base = start_test_server({"/buffered": MockResponse(status=200, body=_csv_text(rows=5))})
+    server, base = start_test_server({"/buffered": MockResponse(status=200, body=_csv_text(rows=5), chunk_size=64)})
     try:
         transport = UrllibCatalogTransport()
         try:

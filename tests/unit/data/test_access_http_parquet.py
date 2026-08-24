@@ -45,12 +45,12 @@ def _open_table(transport: HttpxCatalogTransport | UrllibCatalogTransport, base:
         return pa.Table.from_batches(list(stream.iter_batches()), schema=stream.schema)
 
 
-def _serve_parquet(response: MockResponse) -> tuple[pa.Table, str]:
+def _serve_parquet(response: MockResponse) -> pa.Table:
     """Read one scripted Parquet response through the data plane with teardown-safe cleanup."""
     server, base = start_test_server({"/data.parquet": response})
     transport = HttpxCatalogTransport()
     try:
-        return _open_table(transport, base), base
+        return _open_table(transport, base)
     finally:
         transport.close()
         server.shutdown()
@@ -59,7 +59,7 @@ def _serve_parquet(response: MockResponse) -> tuple[pa.Table, str]:
 
 def test_gzip_http_parquet_without_content_encoding_header_parses() -> None:
     """Magic-byte sniffing decompresses gzipped HTTP Parquet lacking Content-Encoding."""
-    table, _ = _serve_parquet(MockResponse(body=gzip.compress(_parquet_bytes())))
+    table = _serve_parquet(MockResponse(body=gzip.compress(_parquet_bytes())))
 
     assert table.num_rows == 3
     assert table.column("name").to_pylist() == ["a", "b", "c"]

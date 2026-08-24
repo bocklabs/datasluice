@@ -88,6 +88,11 @@ def test_receipt_accepts_its_own_scrubbed_query_output() -> None:
     assert MutationReceipt.from_dict(receipt.to_dict()) == receipt
 
 
+def test_receipt_rejects_compound_credential_query_keys() -> None:
+    with pytest.raises(DataSluiceError):
+        _receipt({"url": "https://portal.example/data?user_token=raw-secret-value"})
+
+
 def test_round_trip_rejects_mutated_audit_metadata() -> None:
     receipt = _receipt({"details": {"response": {"value": "Bearer ***"}}})
     payload = receipt.to_dict()
@@ -134,6 +139,13 @@ def test_redaction_limits_are_exact_boundaries() -> None:
     digest = hashlib.sha256(b"fixture").hexdigest()
     assert redact_string(digest) == digest
     assert not contains_credential_content(digest)
+
+
+def test_long_remote_text_is_scanned_through_a_bounded_window() -> None:
+    value = "x" * 100_000
+
+    assert redact_string(value) == "x" * 256
+    assert not contains_credential_content(value)
 
 
 def test_sequence_values_are_normalized_to_tuples() -> None:

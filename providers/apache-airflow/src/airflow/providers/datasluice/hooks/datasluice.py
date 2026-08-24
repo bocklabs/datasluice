@@ -27,13 +27,12 @@ from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.runtime.credentials import credential_from_fields
 from datasluice.runtime.transport.base import CatalogTransport
 
-_PLATFORMS = frozenset({"ckan", "udata", "socrata"})
-
 _TOKEN_FIELDS = {
     CatalogPlatform.CKAN: "api_token",
     CatalogPlatform.UDATA: "api_key",
     CatalogPlatform.SOCRATA: "app_token",
 }
+_PLATFORMS = frozenset(platform.value for platform in _TOKEN_FIELDS)
 
 
 class DatasluiceHook(BaseHook):
@@ -51,17 +50,32 @@ class DatasluiceHook(BaseHook):
         if not isinstance(airflow_conn_id, str) or not airflow_conn_id:
             raise ValueError("airflow_conn_id must be a non-empty string.")
         self.airflow_conn_id = airflow_conn_id
+        self._facade: DataSluice | None = None
+        self._client: SyncCatalogClient | None = None
 
     def get_conn(self) -> SyncCatalogClient:
         """Construct one runtime client with the connection's explicit credential."""
+        if self._client is not None:
+            return self._client
         connection = self.get_connection(self.airflow_conn_id)
         extras = _connection_extras(connection)
         platform = _platform(extras)
         if platform == CatalogPlatform.CKAN:
-            return _ckan_sync_client(connection, extras)
-        credential = credential_from_fields(platform, _credential_fields(connection, extras, platform))
-        facade = DataSluice(credentials=CredentialResolver(explicit=credential))
-        return facade.sync_client(_deferred_profile(platform))
+            self._client = _ckan_sync_client(connection, extras)
+        else:
+            credential = credential_from_fields(platform, _credential_fields(connection, extras, platform))
+            self._facade = DataSluice(credentials=CredentialResolver(explicit=credential))
+            self._client = self._facade.sync_client(_deferred_profile(platform))
+        return self._client
+
+    def close(self) -> None:
+        """Close the cached client and its owning facade exactly once."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+        if self._facade is not None:
+            self._facade.close()
+            self._facade = None
 
 
 def _ckan_sync_client(

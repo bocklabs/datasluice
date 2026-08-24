@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import isfinite
 from types import MappingProxyType
 from typing import Never
 
@@ -19,6 +20,7 @@ def _platform_value(platform: CatalogPlatform | str) -> str:
 
 
 def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) -> Mapping[str, object]:
+    """Return total, redacted error metadata, truncating values beyond public bounds."""
     if value is None:
         return MappingProxyType({})
     redacted = redact_mapping(value, _depth=_depth)
@@ -75,7 +77,9 @@ class NativeCatalogError(DataSluiceError):
         if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > MAX_TEXT_LENGTH):
             raise ValueError("Native catalog error vendor codes must be bounded strings.")
         if retry_after is not None and (
-            (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
+            (type(retry_after) is not int and type(retry_after) is not float)
+            or not isfinite(retry_after)
+            or retry_after < 0
         ):
             raise ValueError("Native catalog error Retry-After must be a non-negative number.")
         super().__init__(redact_string(message))
@@ -126,7 +130,9 @@ class CatalogRateLimitError(CatalogError):
         metadata: Mapping[str, object] | None = None,
     ) -> None:
         if retry_after is not None and (
-            (type(retry_after) is not int and type(retry_after) is not float) or retry_after < 0
+            (type(retry_after) is not int and type(retry_after) is not float)
+            or not isfinite(retry_after)
+            or retry_after < 0
         ):
             raise ValueError("Retry-After must be a non-negative number.")
         super().__init__(
@@ -157,8 +163,8 @@ class BudgetExhaustedError(CatalogError):
         metadata: Mapping[str, object] | None = None,
     ) -> None:
         for value, name in ((elapsed_seconds, "Elapsed"), (budget_seconds, "Budget")):
-            if (type(value) is not int and type(value) is not float) or value < 0:
-                raise ValueError(f"{name} seconds must be non-negative numbers.")
+            if (type(value) is not int and type(value) is not float) or not isfinite(value) or value < 0:
+                raise ValueError(f"{name} seconds must be finite non-negative numbers.")
         if budget_seconds <= 0:
             raise ValueError("Budget seconds must be a positive number.")
         super().__init__(

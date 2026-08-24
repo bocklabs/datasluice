@@ -276,7 +276,7 @@ def test_origin_comparison_normalizes_hostname_case_and_default_ports() -> None:
 def test_one_flaky_probe_never_aborts_the_detection_run() -> None:
     """Typed probe failures become matched=False evidence instead of an abort."""
     profile = _declared_profile("ckan")
-    get_op, list_op = tuple(profile.operations)
+    get_op = next(iter(profile.operations))
     runner = _FailingProbeRunner(
         dict.fromkeys(profile.operations, ProbeResponseClass.SUCCESS),
         "https://127.0.0.1",
@@ -306,7 +306,7 @@ def test_one_flaky_probe_never_aborts_the_detection_run() -> None:
 def test_flaky_probe_containment_covers_transport_level_failures(failure: Exception) -> None:
     """OSError and TransportFailure are contained exactly like PortalError."""
     profile = _declared_profile("ckan")
-    get_op, list_op = tuple(profile.operations)
+    get_op = next(iter(profile.operations))
     runner = _FailingProbeRunner(
         dict.fromkeys(profile.operations, ProbeResponseClass.SUCCESS),
         "https://127.0.0.1",
@@ -319,3 +319,14 @@ def test_flaky_probe_containment_covers_transport_level_failures(failure: Except
     by_check = {row.check: row for row in result.evidence}
     assert by_check["ckan/datasets.get"].matched is False
     assert by_check["ckan/datasets.list"].matched is True
+
+
+def test_resolve_without_evidence_fails_fast_with_typed_wiring_error() -> None:
+    profile = _declared_profile("ckan")
+    operation = next(iter(profile.operations))
+    runner = _ProbeRunner(dict.fromkeys(profile.operations, ProbeResponseClass.SUCCESS), "https://127.0.0.1")
+    engine = EffectiveCapabilityCache(profile, runner)
+    engine.record_response(operation, ProbeResponseClass.SUCCESS)
+
+    with pytest.raises(CatalogValidationError, match="no probe evidence"):
+        detect("https://127.0.0.1", {"datasluice/ckan": engine}, _Registry(("datasluice/ckan",)))

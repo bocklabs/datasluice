@@ -46,7 +46,12 @@ def discover_enabled(
     discovered: dict[CredentialSource, CatalogCredential] = {}
     for source in CredentialSource:
         if source in policy.enabled_sources and (provider := providers.get(source)) is not None:
-            discovered.update(provider.discover(platform, context))
+            try:
+                discovered.update(provider.discover(platform, context))
+            except (CredentialResolutionError, ImportError):
+                raise
+            except Exception as exc:
+                raise _resolution_error(source.value, platform, exc) from None
     return discovered
 
 

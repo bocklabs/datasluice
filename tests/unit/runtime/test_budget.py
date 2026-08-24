@@ -68,3 +68,16 @@ def test_caller_supplied_budget_controls_deadline() -> None:
     clock.value = 34.0
 
     assert monitor.remaining() == 1.0
+
+
+@pytest.mark.parametrize("value", (float("nan"), float("inf")))
+def test_budget_errors_reject_non_finite_elapsed_values(value: float) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        BudgetExhaustedError(
+            "expired",
+            operation="reference/datasets.get",
+            platform="reference",
+            safe_action="Retry later.",
+            elapsed_seconds=value,
+            budget_seconds=1.0,
+        )

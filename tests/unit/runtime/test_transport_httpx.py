@@ -104,6 +104,7 @@ def test_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() 
         "cOoKiE": "session-secret",
         "X-API-KEY": "api-secret",
         "x-AuTh-ToKeN": "token-secret",
+        "X-App-Token": "app-secret",
         "X-Benign": "preserve-me",
     }
     try:
@@ -115,8 +116,9 @@ def test_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() 
     assert len(seen) == 2
     first_headers = {key.lower(): value for key, value in seen[0].headers.items()}
     second_headers = {key.lower(): value for key, value in seen[1].headers.items()}
-    assert all(name in first_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
-    assert all(name not in second_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
+    sensitive = {"authorization", "cookie", "x-api-key", "x-auth-token", "x-app-token"}
+    assert all(name in first_headers for name in sensitive)
+    assert all(name not in second_headers for name in sensitive)
     assert second_headers["x-benign"] == "preserve-me"
     assert "token=redirect-secret" in str(seen[1].url)
     assert "keep=value" in str(seen[1].url)

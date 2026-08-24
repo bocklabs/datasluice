@@ -11,8 +11,7 @@ from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.events import EventEmitter, EventEnvelope, ListSink, LoggingSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
-from tests.unit.runtime.test_clients_sync import _Transport
+from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request, _Transport
 
 
 def test_event_envelope_round_trips_with_exact_schema() -> None:
@@ -95,6 +94,12 @@ def test_event_envelope_rejects_invalid_schema_version_or_kind(schema_version: o
         EventEnvelope.from_dict(encoded)
 
 
+@pytest.mark.parametrize("encoded", (None, [], {"correlation_ids": [], "metadata": {}}))
+def test_event_envelope_normalizes_non_mapping_inputs_to_value_error(encoded: object) -> None:
+    with pytest.raises(ValueError, match="schema-v1 runtime event"):
+        EventEnvelope.from_dict(encoded)
+
+
 def test_emitter_redacts_before_fanning_out_to_sinks(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every sink observes a redacted envelope exactly once in registration order."""
     monkeypatch.delenv("DATASLUICE_NO_REDACT", raising=False)
@@ -132,12 +137,28 @@ def test_emitter_redacts_merged_correlation_ids(monkeypatch: pytest.MonkeyPatch)
         operation_id="reference/datasets/get",
         platform="reference",
         outcome="succeeded",
-        correlation_ids={"authorization": "Bearer aBcDeFgH1234", "request_id": "request-123"},
+        correlation_ids={
+            "authorization": "Bearer aBcDeFgH1234",
+            "request_id": "request-123",
+            "trace_id": "caller-trace",
+        },
     )
 
     assert envelope.correlation_ids["authorization"] == "***"
     assert envelope.correlation_ids["request_id"] == "request-123"
-    assert envelope.correlation_ids["trace_id"] == "a" * 32
+    assert envelope.correlation_ids["trace_id"] == "caller-trace"
+
+
+def test_emitter_contains_a_failing_correlation_provider(caplog: pytest.LogCaptureFixture) -> None:
+    def failing_provider() -> dict[str, object]:
+        raise RuntimeError("provider exploded")
+
+    emitter = EventEmitter(correlation_id_provider=failing_provider)
+    with caplog.at_level(logging.ERROR, logger="datasluice.runtime.events"):
+        envelope = emitter.record(operation_id="op", platform="reference", outcome="succeeded")
+
+    assert envelope.correlation_ids == {}
+    assert "provider exploded" in caplog.text
 
 
 def test_emitter_contains_failing_sinks_and_continues_dispatch(

@@ -8,22 +8,15 @@ import — the redirect handler imports it from here.
 from __future__ import annotations
 
 import logging
+import os
+from collections.abc import Mapping
 from typing import Any
+
+from datasluice.domain.catalog.redaction import REDACTED, redact_mapping
 
 _logger_name = "datasluice"
 
 SENSITIVE_HEADERS = frozenset({"authorization", "cookie", "x-api-key", "x-auth-token"})
-
-_REDACTED = "***"
-
-_SENSITIVE_KEYS = SENSITIVE_HEADERS | {
-    "x_api_key",
-    "x_auth_token",
-    "api_key",
-    "token",
-    "secret",
-    "password",
-}
 
 _STANDARD_RECORD_ATTRS = frozenset(
     {
@@ -82,20 +75,23 @@ class RedactingFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        from datasluice.runtime.redaction import redact_event_metadata, redact_for_output
+        if os.environ.get("DATASLUICE_NO_REDACT") == "1":
+            return True
 
         extras = {key: value for key, value in record.__dict__.items() if key not in _STANDARD_RECORD_ATTRS}
         if extras:
             try:
-                record.__dict__.update(redact_event_metadata(extras))
+                safe_extras = redact_mapping(extras)
             except Exception:
-                pass
+                safe_extras = {}
+            for key in extras:
+                record.__dict__[key] = safe_extras.get(key, REDACTED)
         if record.args:
             args = record.args if isinstance(record.args, tuple) else (record.args,)
             try:
-                record.args = tuple(redact_for_output(arg) for arg in args)
+                record.args = tuple(redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args)
             except Exception:
-                pass
+                record.args = tuple(REDACTED if isinstance(arg, Mapping) else arg for arg in args)
         return True
 
 

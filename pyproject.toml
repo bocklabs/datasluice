@@ -93,7 +93,9 @@ datasluice = "datasluice.cli.app:app"
 # dependency (apache-airflow) is deliberately not installed in the core dev venv
 # (D-23). Core type-checking excludes it; the provider is type-checked inside the
 # wheel-only candidate venv built by providers/apache-airflow/tests/run_candidate.py.
-exclude = ["providers"]
+# Agent worktrees contain separate repository checkouts and must not be resolved
+# as additional first-party module roots.
+exclude = ["providers", ".claude"]
 
 [tool.ruff]
 line-length = 120

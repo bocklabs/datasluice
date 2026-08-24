@@ -94,7 +94,7 @@ def test_half_open_trial_marker_is_discarded_after_a_4xx_response() -> None:
     assert registry.admit(_key())
     assert registry.record_response(_key(), 404).open
 
-    clock.value = 61.0
+    clock.value = 45.0
     assert registry.admit(_key())
 
 
@@ -221,6 +221,9 @@ def test_capability_cache_exposes_its_probe_runner_read_only() -> None:
 
     assert cache.probe_runner is runner
     assert EffectiveCapabilityCache(_profile()).probe_runner is None
+    field = "probe_runner"
+    with pytest.raises(AttributeError):
+        setattr(cache, field, _Runner())
 
 
 def test_client_pipeline_exhausts_tiny_total_budget_between_attempts() -> None:

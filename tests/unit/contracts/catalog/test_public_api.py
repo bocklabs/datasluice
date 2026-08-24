@@ -139,6 +139,18 @@ def test_rate_limit_mapping_forwards_native_retry_after() -> None:
     assert error.retry_after == 7.0
 
 
+@pytest.mark.parametrize("retry_after", (float("nan"), float("inf")))
+def test_native_errors_reject_non_finite_retry_after(retry_after: float) -> None:
+    with pytest.raises(ValueError, match="Retry-After"):
+        NativeCatalogError(
+            "slow down",
+            operation="datasets.get",
+            platform=CatalogPlatform.CKAN,
+            status_code=429,
+            retry_after=retry_after,
+        )
+
+
 @pytest.mark.parametrize(
     ("status_code", "error_type", "capability_state", "safe_action"),
     [

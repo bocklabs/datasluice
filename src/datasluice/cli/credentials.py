@@ -11,6 +11,7 @@ from typing import Annotated, cast
 import typer
 
 from datasluice.cli._output import render_json, result_console
+from datasluice.cli._platforms import CATALOG_PLATFORMS
 from datasluice.domain.catalog.auth import CatalogCredential, CKANCredential, SocrataCredential, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.runtime.credentials import credential_from_fields
@@ -24,7 +25,6 @@ _SOURCES = (
     ("secrets-aws", "boto3", "secrets-aws"),
     ("secrets-vault", "hvac", "secrets-vault"),
 )
-_PLATFORMS = ("ckan", "udata", "socrata")
 
 
 @app.command("availability")
@@ -56,7 +56,7 @@ def validate(
 ) -> None:
     """Validate caller-supplied explicit credentials without revealing secret values."""
     _validate_output(output)
-    if platform not in _PLATFORMS:
+    if platform not in CATALOG_PLATFORMS:
         raise typer.BadParameter("--platform must be one of: ckan, udata, socrata")
     if (credential_json is None) == (credential_file is None):
         raise typer.BadParameter("Supply exactly one of --credential-json or --credential-file")

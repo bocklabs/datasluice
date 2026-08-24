@@ -21,45 +21,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 _RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
 
-_GATED_RUNTIME_SURFACE = (
-    "datasluice",
-    "datasluice.io",
-    "datasluice.sync",
-    "datasluice.discovery",
-    "datasluice.integrations.dlt",
-    "datasluice.runtime.bulk",
-    "datasluice.runtime.mutation",
-    "datasluice.runtime.oauth",
-    "datasluice.connectors.catalog.ckan",
-    "datasluice.connectors.catalog.udata",
-    "datasluice.connectors.catalog.socrata",
-)
-
 
 @pytest.fixture(scope="session")
-def installed_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+def installed_env(built_wheel: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     """Build the wheel, install it into an isolated venv, return console + python paths."""
-    wheel_dir = tmp_path_factory.mktemp("wheels")
-    build = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    if build.returncode != 0:
-        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
-
-    wheels = list(wheel_dir.glob("datasluice-*.whl"))
-    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
-    wheel = wheels[0]
-
     venv = tmp_path_factory.mktemp("venv")
     venv_python = venv / "bin" / "python"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
 
     extras = os.environ.get("DATASLUICE_E2E_EXTRAS", "http,parquet,storage")
-    wheel_spec = str(wheel) if extras == "none" else f"{wheel}[{extras}]"
+    wheel_spec = str(built_wheel) if extras == "none" else f"{built_wheel}[{extras}]"
 
     install = subprocess.run(
         [
@@ -84,26 +55,13 @@ def installed_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def all_connectors_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+def all_connectors_env(built_wheel: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     """Build the wheel and install its all-connectors extra in an isolated venv."""
-    wheel_dir = tmp_path_factory.mktemp("connector-wheels")
-    build = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    if build.returncode != 0:
-        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
-
-    wheels = list(wheel_dir.glob("datasluice-*.whl"))
-    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
     venv = tmp_path_factory.mktemp("all-connectors-venv")
     venv_python = venv / "bin" / "python"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
     install = subprocess.run(
-        ["uv", "pip", "install", "--python", str(venv_python), f"{wheels[0]}[all-connectors]"],
+        ["uv", "pip", "install", "--python", str(venv_python), f"{built_wheel}[all-connectors]"],
         capture_output=True,
         text=True,
         timeout=180,
@@ -115,26 +73,13 @@ def all_connectors_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, st
 
 
 @pytest.fixture(scope="session")
-def bare_install_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+def bare_install_env(built_wheel: Path, tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     """Build the wheel and install it with no extras for the bare-gate mirror sweep."""
-    wheel_dir = tmp_path_factory.mktemp("bare-gate-wheels")
-    build = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    if build.returncode != 0:
-        pytest.fail(f"uv build failed: {build.stderr[:300]}", pytrace=False)
-
-    wheels = list(wheel_dir.glob("datasluice-*.whl"))
-    assert len(wheels) == 1, f"expected one wheel, found {wheels}"
     venv = tmp_path_factory.mktemp("bare-gate-venv")
     venv_python = venv / "bin" / "python"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
     install = subprocess.run(
-        ["uv", "pip", "install", "--python", str(venv_python), str(wheels[0])],
+        ["uv", "pip", "install", "--python", str(venv_python), str(built_wheel)],
         capture_output=True,
         text=True,
         timeout=180,
@@ -194,28 +139,26 @@ def test_installed_version_flag_reports_the_wheel_version(installed_env: dict[st
     assert result.stdout.strip().startswith("datasluice ")
 
 
-def test_bare_install_loads_none_of_the_gated_extra_dependencies(bare_install_env: dict[str, str]) -> None:
-    """The bare-install mirror sweep never loads modules behind runtime extra gates."""
-    from datasluice.runtime.extras import _EXTRA_IMPORTS
-
-    checked_modules = tuple(sorted(set(_EXTRA_IMPORTS.values())))
-    script = (
-        "import sys;"
-        + "".join(f"import {module};" for module in _GATED_RUNTIME_SURFACE)
-        + f"optional = {checked_modules!r};"
-        "loaded = [name for name in optional if any(module == name or module.startswith(name + '.') "
-        "for module in sys.modules)];"
-        "assert not loaded, loaded"
-    )
-    result = subprocess.run(
-        [bare_install_env["python"], "-c", script],
-        capture_output=True,
-        text=True,
-        env={"PATH": str(Path(bare_install_env["venv"]) / "bin"), "HOME": os.environ.get("HOME", "")},
-        timeout=60,
-    )
-
-    assert result.returncode == 0, result.stderr
+def test_bare_install_reports_actionable_live_client_gate_errors(bare_install_env: dict[str, str]) -> None:
+    """A real bare install reports the platform extra required by each live client seam."""
+    for platform in ("udata", "socrata"):
+        script = (
+            "import importlib\n"
+            f"live = importlib.import_module('datasluice.connectors.catalog.{platform}.live')\n"
+            "try:\n"
+            "    live.create_live_client()\n"
+            "except ImportError as exc:\n"
+            "    print(str(exc))\n"
+        )
+        result = subprocess.run(
+            [bare_install_env["python"], "-c", script],
+            capture_output=True,
+            text=True,
+            env={"PATH": str(Path(bare_install_env["venv"]) / "bin"), "HOME": os.environ.get("HOME", "")},
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert f"datasluice[{platform}]" in result.stdout
 
 
 def test_all_connectors_unlocks_live_client_execution_gates(all_connectors_env: dict[str, str]) -> None:

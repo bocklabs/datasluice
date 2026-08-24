@@ -1,7 +1,7 @@
 """Unit tests for :class:`DataPlaneResourceReader` access dispatch.
 
-Covers the dispatch by ``resource.access.kind``: HttpDownload (streaming via
-``StreamingTransport`` and the urllib buffered fallback with WARNING),
+Covers the dispatch by ``resource.access.kind``: HttpDownload through buffered
+``CatalogTransport.send()`` responses,
 ObjectStorage via ``open_filesystem``, LocalFile via ``open(path, 'rb')``, and
 QueryAccess raising :class:`UnsupportedAccessError`. Also covers the zero-config
 default (``access=None`` → ``HttpDownload(url=resource.url)``) and the full
@@ -138,8 +138,8 @@ def test_object_storage_dispatch_via_memory_fs() -> None:
     assert table.num_rows == 5
 
 
-def test_http_download_with_streaming_transport() -> None:
-    """HttpDownload uses StreamingTransport.stream yielding IterableBytesIO."""
+def test_http_download_with_buffered_transport() -> None:
+    """HttpDownload consumes a buffered CatalogTransport response."""
 
     import pyarrow as pa
 

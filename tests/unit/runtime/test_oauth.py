@@ -141,6 +141,7 @@ def test_authorization_code_uses_rfc7636_s256_only() -> None:
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
 
     assert 43 <= len(verifier) <= 128
+    assert AuthorizationCodeFlow(_flow(), _SyncTransport(_token_response())).verifier != verifier
     assert query["code_challenge"] == [expected]
     assert query["code_challenge_method"] == ["S256"]
     assert query["response_type"] == ["code"]
@@ -279,16 +280,50 @@ def test_async_refresh_rebinds_its_lock_across_event_loops() -> None:
 
 
 def test_mixed_sync_and_async_resolution_share_exclusion() -> None:
-    transport = _AsyncTransport(_token_response())
-    fresh = OAuthCredential(SecretValue("fresh-access-token"), time() + 3600, SecretValue("refresh-token"))
-    provider = RefreshingCredentialProvider(_flow(), fresh, transport)
+    released = threading.Event()
 
-    synced = provider.resolve()
-    async_resolved = asyncio.run(provider.resolve_async())
+    class _ObservedAsyncTransport(_AsyncTransport):
+        dispatched_before_release = False
 
-    assert synced.access_token.reveal() == "fresh-access-token"
-    assert async_resolved.access_token.reveal() == "fresh-access-token"
-    assert transport.requests == []
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            self.dispatched_before_release = not released.is_set()
+            return await super().send(request)
+
+    transport = _ObservedAsyncTransport(_token_response())
+    provider = RefreshingCredentialProvider(_flow(), _expired_credential(), transport)
+    acquired = threading.Event()
+    allow_release = threading.Event()
+
+    def hold_sync_lock() -> None:
+        with provider._sync_lock:
+            acquired.set()
+            assert allow_release.wait(timeout=1)
+        released.set()
+
+    holder = threading.Thread(target=hold_sync_lock)
+    holder.start()
+    assert acquired.wait(timeout=1)
+    timer = threading.Timer(0.05, allow_release.set)
+    timer.start()
+    try:
+        resolved = asyncio.run(provider.resolve_async())
+    finally:
+        allow_release.set()
+        holder.join(timeout=1)
+        timer.cancel()
+
+    assert resolved.access_token.reveal() == "access-token"
+    assert not transport.dispatched_before_release
+
+
+def test_refresh_dispatch_rejects_the_wrong_transport_mode() -> None:
+    sync_provider = RefreshingCredentialProvider(_flow(), _expired_credential(), _AsyncTransport(_token_response()))
+    async_provider = RefreshingCredentialProvider(_flow(), _expired_credential(), _SyncTransport(_token_response()))
+
+    with pytest.raises(TypeError, match="synchronous runtime transport"):
+        sync_provider.resolve()
+    with pytest.raises(TypeError, match="asynchronous runtime transport"):
+        asyncio.run(async_provider.resolve_async())
 
 
 def test_failed_refresh_emits_a_redacted_event() -> None:

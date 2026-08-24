@@ -95,6 +95,34 @@ def test_ckan_connection_composes_a_real_live_client(monkeypatch: pytest.MonkeyP
     assert client.platform_metadata()["platform"] == "ckan"
 
 
+def test_hook_memoizes_and_closes_its_owned_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repeated access returns one client and hook cleanup closes its owned transport once."""
+
+    class _ClientSpy:
+        def __init__(self) -> None:
+            self.close_count = 0
+
+        def close(self) -> None:
+            self.close_count += 1
+
+    client = _ClientSpy()
+    extras: dict[str, object] = {"platform": "ckan", "base_url": LOOPBACK_ORIGIN, "api_token": SEAM_TOKEN}
+    connection = Connection(extras)
+    hook = _hook_with(monkeypatch, connection)
+    monkeypatch.setattr(
+        "airflow.providers.datasluice.hooks.datasluice._ckan_sync_client",
+        lambda connection, extras: client,
+    )
+
+    first = hook.get_conn()
+    second = hook.get_conn()
+    hook.close()
+    hook.close()
+
+    assert first is second
+    assert client.close_count == 1
+
+
 def test_typed_read_rides_the_mapped_api_token_over_the_borrowed_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     """One resources.list read dispatches through the injected borrowed transport with the mapped token."""
     capture = _CkanCaptureTransport(body=_RESOURCE_SEARCH_BODY)
