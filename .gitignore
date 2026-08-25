@@ -63,9 +63,7 @@ site/
 
 # Data
 /data/
-
-# Notebooks
-notebook/
+demo/**/data/
 
 # Graphify
 graphify-out/*

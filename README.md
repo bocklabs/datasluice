@@ -32,15 +32,12 @@ Optional extras cover format readers and pipeline integrations:
 
 ```bash
 pip install "datasluice[pandas,polars,parquet,xlsx]"
-pip install "datasluice[all]"          # every optional integration
+pip install "datasluice[all]"          # every supported optional extra
 ```
 
-The base installation carries the full connector contract surface: typed
-models, sync and async client Protocols, capability profiles, reference
-fakes, and the public compliance runner. Installable named connector
-extras (`ckan`, `udata`, `socrata`, `all-connectors`) are planned for
-Phase 2 packaging work and are **not** advertised or installable from this
-release.
+The base installation carries the shared catalog contracts, models,
+capability profiles, reference fakes, and compliance runner. Named connector
+extras belong to the Phase 2 packaging boundary and are not advertised here.
 
 ### Apache Airflow
 
@@ -51,72 +48,82 @@ Airflow integration is a separate distribution that reserves the
 pip install apache-airflow-providers-datasluice
 ```
 
-The provider currently ships package metadata only. Hooks and operators
-arrive with the live platform executors of later phases.
+The provider's `DatasluiceHook` builds a live CKAN client from an Airflow
+connection with explicit `base_url` and `api_token` extras. uData and Socrata
+connections retain the deferred typed runtime until their live executors ship.
 
 ## Quick Start
 
 ### Direct-resource data plane
 
-Resolve, stream, and materialize individual resources without any catalog
-connector:
+Convert a supported local file, URL, or object-storage resource to a portable
+Parquet artifact in one command:
+
+```bash
+pip install "datasluice[parquet]"
+datasluice materialize ./source.csv --destination ./converted --mode parquet --output json
+datasluice materialize https://example.org/data.json --destination ./converted --mode parquet --output json
+```
+
+`./converted` is an output directory. DataSluice writes a content-addressed
+Parquet file there and returns its URI and checksums. CSV, JSON, JSONL,
+GeoJSON, XLSX, and Parquet inputs use the same command.
+
+The equivalent Python operation is one `materialize` call:
 
 ```python
 from datasluice import DataSluice, DirectResourceLocator
 
 with DataSluice() as ds:
-    direct = DirectResourceLocator(uri="https://example.org/data.csv")
-    resource = ds.resolve(direct)
-
-    with ds.open(direct) as opened:
-        for batch in opened:
-            print(batch.num_rows)
-
-    artifact = ds.materialize(direct, "out.parquet")
+    artifact = ds.materialize(
+        DirectResourceLocator(uri="https://example.org/data.csv"),
+        "./converted",
+        mode="parquet",
+    )
     print(artifact.content_digest, artifact.uri)
 ```
 
-### Catalog connector contract
+Use `mode="raw"` when you want a checksummed byte-for-byte copy instead of a
+conversion. For in-memory destinations, the same source can become a pandas
+DataFrame, Polars DataFrame, DuckDB relation, or Arrow table through
+`ds.open(locator).to_pandas()`, `.to_polars()`, `.to_duckdb()`, or `.to_arrow()`.
 
-Connectors are explicit, typed, and factory-constructed. Each platform is
-imported from its own package — the catalog namespace never re-exports
-platform APIs:
+### Live CKAN catalog client
+
+CKAN 2.11.5 (Action API v3) is available through a typed, context-managed
+sync or async client. Pass the deployment origin explicitly:
 
 ```python
-from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connector
+from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_client
+
+settings = CKANClientSettings(base_url="https://catalog.example.gov")
+
+if globals().get("__name__") == "__main__":
+    with create_sync_client(settings) as client:
+        result = client.datasets.package_search(q="climate", rows=5)
+        print(result.items)
+```
+
+The client exposes normalized dataset/resource/organization projections and
+complete typed native service groups. It applies operation-level capability
+guards, explicit credential handling, retries and time budgets, and redacted
+mutation receipts. Mutating operations require an explicit safety policy.
+
+### Connector contracts and upcoming platforms
+
+Each platform has an explicit package; the shared catalog namespace never
+re-exports platform APIs:
+
+```python
+from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_client
 from datasluice.connectors.catalog.socrata import SocrataConnector, create_socrata_connector
 from datasluice.connectors.catalog.udata import UDataConnector, create_udata_connector
 ```
 
-Every factory accepts a `CatalogConnectorContext` carrying injected sync
-and async executors, normalized and native service projections, and the
-pinned effective capability profile. In Phase 1 those executors are
-caller-supplied — deterministic reference fakes back the executable
-contract suite:
-
-```python
-from datasluice.contracts.catalog import (
-    CatalogContractCase,
-    run_catalog_contract,
-)
-from datasluice.contracts.catalog.fakes import (
-    AsyncReferenceConnector,
-    SyncReferenceConnector,
-)
-
-report = run_catalog_contract(
-    CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),
-    sync_client=SyncReferenceConnector(),
-    async_client=AsyncReferenceConnector(),
-)
-print([(outcome.mode, outcome.state) for outcome in report.outcomes])
-```
-
-Live CKAN, uData, and Socrata endpoint clients are implemented in Phases
-3–5, after pinned capability profiles and controlled endpoint evidence
-are recorded for each platform. Until then, connector façades accept
-injected executors only; nothing in this release contacts a live
-deployment.
+uData and Socrata currently expose typed façades, pinned profiles, fixtures,
+and contract tests through their factories. Their live endpoint clients are
+not implemented yet. All connectors can be exercised against deterministic
+reference fakes through the public compliance runner.
 
 CLI:
 
@@ -129,12 +136,13 @@ datasluice materialize ./source.csv --destination ./out.parquet --output json
 
 ## Features
 
-* **Typed connector contracts** — explicit platform packages for CKAN, uData, and Socrata with factory-constructed façades over normalized and native service Protocols
-* **Sync and async parity** — separate context-managed clients with identical operation surfaces and independent lifecycles
+* **Live CKAN 2.11.5 client** — typed Action API v3 service groups with sync/async parity, capability evidence, authenticated operations, mutation safeguards, and read-only drift checks
+* **Typed connector contracts** — explicit platform packages and pinned profiles for CKAN, uData, and Socrata; uData and Socrata live clients are forthcoming
+* **Sync and async parity** — separate context-managed client surfaces with independent lifecycles
 * **Evidence-backed capabilities** — pinned versioned profiles distinguish core, optional, authenticated, and deployment-unavailable operations; guards fail before dispatch with typed remedies
 * **Public compliance runner** — fixture-backed contract cases produce pytest results and a machine-readable compliance report for built-in and third-party connectors
 * **Direct-resource data plane** — streaming readers for CSV, JSON, JSONL, XLSX, Parquet, and GeoJSON over a shared batch-stream contract
-* **Integrations** — pandas, Polars, dlt, and DuckDB (optional extras); Apache Airflow (separate provider)
+* **Integrations** — pandas, Polars, dlt, and DuckDB (optional extras); Apache Airflow with live CKAN hook composition
 * **CLI** — scan, open, and materialize resources from the command line
 
 ## Documentation
