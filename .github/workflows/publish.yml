@@ -110,6 +110,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
 
   smoke:
     needs: [build, publish-testpypi]
@@ -133,7 +134,7 @@ jobs:
           PACKAGE_VERSION: ${{ inputs.version }}
         run: |
           uv venv --python 3.12 "$SMOKE_VENV"
-          uv pip install --python "$SMOKE_VENV/bin/python" --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${PACKAGE_NAME}==${PACKAGE_VERSION}"
+          uv pip install --python "$SMOKE_VENV/bin/python" --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${PACKAGE_NAME}==${PACKAGE_VERSION}"
       - if: inputs.package_name == 'datasluice'
         run: |
           "$SMOKE_VENV/bin/python" -c "import datasluice"
