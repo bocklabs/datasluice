@@ -66,8 +66,12 @@ def _python_blocks(doc: Path) -> list[str]:
 
 def _rebind_to_local_fixture(body: str, source: Path, destination: Path) -> str:
     rebound = body.replace('"https://example.org/data.csv"', f'"{source}"')
+    rebound = rebound.replace('"https://example.org/data.json"', f'"{source}"')
     rebound = rebound.replace('SOURCE_FILE = "/tmp/datasluice-source.csv"', f'SOURCE_FILE = r"{source}"')
     rebound = rebound.replace('"/tmp/datasluice-out.parquet"', f'"{destination}"')
+    rebound = rebound.replace('"/tmp/datasluice-out"', f'"{destination}"')
+    rebound = rebound.replace('"/tmp/datasluice-converted"', f'"{destination}"')
+    rebound = rebound.replace('"./converted"', f'"{destination}"')
     rebound = rebound.replace('"out.parquet"', f'"{destination}"')
     return rebound
 
