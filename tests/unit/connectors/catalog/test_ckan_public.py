@@ -103,20 +103,26 @@ def _context(*, profile: EffectiveCapabilityProfile | None = None) -> CatalogCon
     )
 
 
-def test_ckan_package_exports_only_its_adapter_and_factory() -> None:
+def test_ckan_package_exports_the_canonical_connector_factory_and_live_clients() -> None:
     """The platform package is the sole canonical CKAN publication point."""
     import datasluice.connectors.catalog.ckan as ckan
 
-    assert ckan.__all__ == ["CKANAdapter", "create_ckan_connector"]
+    assert ckan.__all__ == [
+        "CKANClientSettings",
+        "CKANConnector",
+        "create_async_client",
+        "create_ckan_connector",
+        "create_sync_client",
+    ]
 
 
 def test_factory_accepts_canonical_context_and_validates_profile_identity() -> None:
     """The factory rejects non-CKAN profile evidence before exposing services."""
-    from datasluice.connectors.catalog.ckan import CKANAdapter, create_ckan_connector
+    from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connector
 
-    adapter = create_ckan_connector(_context())
+    connector = create_ckan_connector(_context())
 
-    assert isinstance(adapter, CKANAdapter)
+    assert isinstance(connector, CKANConnector)
 
     wrong_operation = OperationSpec(
         id=OperationId(platform="udata", service="datasets", method="get"),
@@ -192,25 +198,25 @@ def test_factory_rejects_an_invalid_asynchronous_executor() -> None:
         create_ckan_connector(context)
 
 
-def test_adapter_exposes_injected_normalized_native_services_and_effective_profile() -> None:
+def test_connector_exposes_injected_normalized_native_services_and_effective_profile() -> None:
     """The façade retains explicit projections for both execution modes."""
     from datasluice.connectors.catalog.ckan import create_ckan_connector
 
     context = _context()
-    adapter = create_ckan_connector(context)
+    connector = create_ckan_connector(context)
 
-    assert adapter.normalized_sync is context.normalized_sync
-    assert adapter.normalized_async is context.normalized_async
-    assert adapter.native_sync is context.native_sync
-    assert adapter.native_async is context.native_async
-    assert adapter.effective_profile is context.effective_profile
+    assert connector.normalized_sync is context.normalized_sync
+    assert connector.normalized_async is context.normalized_async
+    assert connector.native_sync is context.native_sync
+    assert connector.native_async is context.native_async
+    assert connector.effective_profile is context.effective_profile
 
 
-def test_adapter_has_no_transport_default_or_raw_request_escape_hatch() -> None:
+def test_connector_has_no_transport_default_or_raw_request_escape_hatch() -> None:
     """The façade cannot bypass the typed injected-executor boundary."""
-    from datasluice.connectors.catalog.ckan import CKANAdapter
+    from datasluice.connectors.catalog.ckan import CKANConnector
 
     forbidden = {"transport", "request", "get_json", "raw_request", "raw_response"}
 
-    assert forbidden.isdisjoint(CKANAdapter.__dict__)
-    assert "transport" not in inspect.signature(CKANAdapter).parameters
+    assert forbidden.isdisjoint(CKANConnector.__dict__)
+    assert "transport" not in inspect.signature(CKANConnector).parameters

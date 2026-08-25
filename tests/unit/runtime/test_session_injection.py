@@ -301,6 +301,17 @@ def test_session_aclose_leaves_injected_transports_open() -> None:
     assert async_spy.closed is False
 
 
+def test_session_close_leaves_injected_async_transport_open() -> None:
+    sync_spy = _ClosingSpyTransport()
+    async_spy = _AsyncClosingSpyTransport()
+    session = DataSluiceSession(transport=sync_spy, async_transport=async_spy)
+
+    session.close()
+
+    assert sync_spy.closed is False
+    assert async_spy.closed is False
+
+
 def test_storage_injectable() -> None:
     """An injected StoragePort is stored on the session."""
     storage = _StubStorage()

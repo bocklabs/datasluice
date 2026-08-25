@@ -3,7 +3,35 @@
 This example walks the explicit public `DataSluice` data-plane flow, the
 canonical connector entry points, and the direct-resource CLI commands.
 
-## Facade: streaming and materialization
+## One-call conversion to Parquet
+
+Every supported direct source uses the same materialization call. The
+destination is a directory; DataSluice writes a content-addressed Parquet file
+and returns its strict `Artifact` envelope.
+
+```python
+from datasluice import DataSluice, DirectResourceLocator
+
+with DataSluice() as ds:
+    artifact = ds.materialize(
+        DirectResourceLocator(uri="https://example.org/data.json"),
+        "/tmp/datasluice-converted",
+        mode="parquet",
+    )
+
+print(artifact.uri, artifact.content_digest)
+```
+
+The CLI exposes the same operation:
+
+```bash
+datasluice materialize ./source.csv --destination ./converted --mode parquet --output json
+```
+
+`parquet` is the current durable conversion target. Use `mode="raw"` to
+store an unchanged, checksummed byte copy instead.
+
+## Facade: streaming and in-memory formats
 
 ```python
 from datasluice import (
@@ -15,22 +43,19 @@ from datasluice import (
 SOURCE_FILE = "/tmp/datasluice-source.csv"
 
 with DataSluice() as ds:
-    # Direct locator (a local file or URL).
     direct = DirectResourceLocator(uri=SOURCE_FILE)
     resource = ds.resolve(direct)
 
-    # Open a resource lazily and stream/browse it.
     with ds.open(direct) as opened:
         for batch in opened:
             print(batch.num_rows)
 
-    # Fluent transform pipeline to a pandas frame.
     from pandas import DataFrame
 
     frame: DataFrame = ds.open(direct).to_pandas()
     print(frame.shape)
 
-    artifact: Artifact = ds.materialize(direct, "/tmp/datasluice-out.parquet")
+    artifact: Artifact = ds.materialize(direct, "/tmp/datasluice-out", mode="parquet")
     print(artifact.content_digest, artifact.uri)
 ```
 
@@ -47,7 +72,7 @@ from datasluice.connectors.catalog.socrata import create_socrata_connector
 from datasluice.connectors.catalog.udata import create_udata_connector
 ```
 
-With a context assembled (see [Connectors](../adapters.md)), a facade
+With a context assembled (see [Connectors](../connectors.md)), a facade
 opens exactly one caller-selected connector:
 
 ```python

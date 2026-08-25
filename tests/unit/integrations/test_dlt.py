@@ -90,6 +90,20 @@ class _TransportlessDltConnector(SyncReferenceConnector):
         return self
 
 
+class _NullTransportDltConnector(_ReferenceDltConnector):
+    @property
+    def transport(self) -> None:
+        """Expose a null transport for boundary validation."""
+        return None
+
+
+class _InvalidTransportDltConnector(_ReferenceDltConnector):
+    @property
+    def transport(self) -> object:
+        """Expose an object that does not satisfy the synchronous transport boundary."""
+        return object()
+
+
 def _query() -> CatalogOperationRequest:
     return CatalogOperationRequest(operation_id=OperationId(platform="reference", service="resources", method="list"))
 
@@ -139,6 +153,12 @@ def test_source_requires_a_client_exposing_the_public_transport_accessor() -> No
     """A protocol-compatible client without a public transport accessor is rejected early."""
     with pytest.raises(TypeError, match="transport"):
         datasluice_source(cast(SyncCatalogClient, _TransportlessDltConnector()), _query())
+
+    with pytest.raises(TypeError, match="transport"):
+        datasluice_source(cast(SyncCatalogClient, _NullTransportDltConnector(())), _query())
+
+    with pytest.raises(TypeError, match="transport"):
+        datasluice_source(cast(SyncCatalogClient, _InvalidTransportDltConnector(())), _query())
 
 
 def test_source_uses_reference_connector_resources(tmp_path: Path) -> None:

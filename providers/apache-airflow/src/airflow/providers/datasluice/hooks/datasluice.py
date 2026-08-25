@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date
 
 from airflow.sdk import BaseHook
 
 from datasluice.application import DataSluice
-from datasluice.domain.catalog.auth import CredentialResolver
+from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_client
+from datasluice.contracts.catalog.protocols import SyncCatalogClient
+from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.operations import (
     Atomicity,
@@ -22,22 +24,23 @@ from datasluice.domain.catalog.operations import (
     OperationTier,
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
-from datasluice.runtime.clients import SyncCatalogClient
 from datasluice.runtime.credentials import credential_from_fields
-
-_PLATFORMS = frozenset({"ckan", "udata", "socrata"})
+from datasluice.runtime.transport.base import CatalogTransport
 
 _TOKEN_FIELDS = {
     CatalogPlatform.CKAN: "api_token",
     CatalogPlatform.UDATA: "api_key",
     CatalogPlatform.SOCRATA: "app_token",
 }
+_PLATFORMS = frozenset(platform.value for platform in _TOKEN_FIELDS)
 
 
 class DatasluiceHook(BaseHook):
     """Build a sync catalog client from connection-defined explicit credentials.
 
-    Live platform actions await the canonical executors delivered in Phases 3-5.
+    Platform ``ckan`` connections compose real dual-surface CKAN live clients
+    from the connection origin; other platforms build the deferred runtime
+    client pending their canonical executors.
     """
 
     conn_name_attr = "airflow_conn_id"
@@ -47,15 +50,73 @@ class DatasluiceHook(BaseHook):
         if not isinstance(airflow_conn_id, str) or not airflow_conn_id:
             raise ValueError("airflow_conn_id must be a non-empty string.")
         self.airflow_conn_id = airflow_conn_id
+        self._facade: DataSluice | None = None
+        self._client: SyncCatalogClient | None = None
 
     def get_conn(self) -> SyncCatalogClient:
         """Construct one runtime client with the connection's explicit credential."""
+        if self._client is not None:
+            return self._client
         connection = self.get_connection(self.airflow_conn_id)
         extras = _connection_extras(connection)
         platform = _platform(extras)
-        credential = credential_from_fields(platform, _credential_fields(connection, extras, platform))
-        facade = DataSluice(credentials=CredentialResolver(explicit=credential))
-        return facade.sync_client(_deferred_profile(platform))
+        if platform == CatalogPlatform.CKAN:
+            self._client = _ckan_sync_client(connection, extras)
+        else:
+            credential = credential_from_fields(platform, _credential_fields(connection, extras, platform))
+            self._facade = DataSluice(credentials=CredentialResolver(explicit=credential))
+            self._client = self._facade.sync_client(_deferred_profile(platform))
+        return self._client
+
+    def close(self) -> None:
+        """Close the cached client and its owning facade exactly once."""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+        if self._facade is not None:
+            self._facade.close()
+            self._facade = None
+
+
+def _ckan_sync_client(
+    connection: object,
+    extras: Mapping[str, object],
+    *,
+    sync_transport: CatalogTransport | Callable[[], CatalogTransport] | None = None,
+) -> SyncCatalogClient:
+    """Build one real CKAN live client from connection extras.
+
+    Args:
+        connection: The Airflow connection carrying the optional password fallback.
+        extras: The connection extras mapping with platform, base_url, and api_token.
+        sync_transport: Optional borrowed transport instance injected at construction
+            for tests; production clients own their default transport.
+
+    Returns:
+        A synchronous dual-surface CKAN live client.
+
+    Raises:
+        ValueError: If extras carry no usable ``base_url`` key.
+    """
+    base_url = extras.get("base_url")
+    if not isinstance(base_url, str) or not base_url:
+        raise ValueError(
+            "DataSluice ckan connections require a 'base_url' key in extras naming the deployment origin, "
+            'e.g. {"platform": "ckan", "base_url": "https://catalog.example.gov", "api_token": "<token>"}.'
+        )
+    credential = credential_from_fields(
+        CatalogPlatform.CKAN, _credential_fields(connection, extras, CatalogPlatform.CKAN)
+    )
+    if not isinstance(credential, CKANCredential):
+        raise TypeError("CKAN Airflow connections require a CKAN credential.")
+    probe_policy = "declared-baseline" if base_url.startswith("http://") else "auto"
+    settings = CKANClientSettings(
+        base_url=base_url,
+        credential=credential,
+        probe_policy=probe_policy,
+        sync_transport=sync_transport,
+    )
+    return create_sync_client(settings)
 
 
 def _connection_extras(connection: object) -> Mapping[str, object]:

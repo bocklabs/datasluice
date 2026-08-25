@@ -169,21 +169,21 @@ def test_import_namespace_resolves() -> None:
 
 
 def test_hook_injects_connection_credential_into_runtime_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The hook constructs a sync client from a connection-defined explicit credential."""
+    """The hook composes a real CKAN live client from the connection credential and origin."""
     from airflow.providers.datasluice.hooks.datasluice import DatasluiceHook
 
-    from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
-    from datasluice.runtime.clients import SyncCatalogClient
+    from datasluice.contracts.catalog.protocols import SyncCatalogClient
+    from datasluice.domain.catalog.auth import CKANCredential
 
     class Connection:
-        extra_dejson = {"platform": "ckan", "api_token": "loopback-token"}
+        extra_dejson = {"platform": "ckan", "base_url": "http://127.0.0.1:9001", "api_token": "loopback-token"}
 
     monkeypatch.setattr(DatasluiceHook, "get_connection", lambda self, _: Connection())
     client = DatasluiceHook(airflow_conn_id="loopback").get_conn()
 
     assert isinstance(client, SyncCatalogClient)
-    assert isinstance(client.credentials, CredentialResolver)
-    assert isinstance(client.credentials.explicit, CKANCredential)
+    assert isinstance(client.credentials, CKANCredential)
+    assert client.platform_metadata()["platform"] == "ckan"
 
 
 def test_provider_distribution_metadata_matches_contract() -> None:

@@ -227,7 +227,7 @@ def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
             for _ in range(20):
                 for key, data in expected.items():
                     cache.put(key, data + b"-rewrite")
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             writer_errors.append(exc)
 
     def reader() -> None:
@@ -239,7 +239,7 @@ def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
                         continue
                     if actual not in (expected[key], expected[key] + b"-rewrite"):
                         reader_violations.append(f"torn read for {key}: len={len(actual)}")
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             reader_violations.append(f"reader raised: {exc!r}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:

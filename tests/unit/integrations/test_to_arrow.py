@@ -10,8 +10,8 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.data.batch_stream import BatchStream  # noqa: E402
-from datasluice.integrations.arrow import to_arrow  # noqa: E402
+from datasluice.data.batch_stream import BatchStream
+from datasluice.integrations.arrow import to_arrow
 
 
 def test_to_arrow_returns_table() -> None:

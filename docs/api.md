@@ -23,7 +23,7 @@ the only public entry point for contract execution and certification:
 
 ## Platform packages
 
-Each platform exports exactly one adapter façade class and one factory
+Each platform exports exactly one connector façade class and one factory
 function; imports are always explicit and package-level:
 
 ::: datasluice.connectors.catalog.ckan

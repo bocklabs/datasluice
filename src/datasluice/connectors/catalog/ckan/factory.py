@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from datasluice.connectors.catalog.ckan.adapter import CKANAdapter
+from datasluice.connectors.catalog.ckan.connector import CKANConnector
 from datasluice.contracts.catalog.native.ckan import AsyncCKANServices, SyncCKANServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
@@ -20,7 +20,7 @@ _CKAN_API_VERSION = "Action API v3"
 _CKAN_PLATFORM = "ckan"
 
 
-def create_ckan_connector(ctx: CatalogConnectorContext) -> CKANAdapter:
+def create_ckan_connector(ctx: CatalogConnectorContext) -> CKANConnector:
     """Construct a CKAN façade from explicit typed service projections."""
     if not isinstance(ctx, CatalogConnectorContext):
         raise TypeError("CKAN connectors require a CatalogConnectorContext.")
@@ -35,7 +35,7 @@ def create_ckan_connector(ctx: CatalogConnectorContext) -> CKANAdapter:
     if ctx.native_sync is None or ctx.native_async is None:
         raise ValueError("CKAN connectors require CKAN-native sync and async service projections.")
     profile = _require_ckan_profile(ctx.effective_profile)
-    return CKANAdapter(
+    return CKANConnector(
         context=ctx,
         normalized_sync=cast(SyncCatalogClient, ctx.normalized_sync),
         normalized_async=cast(AsyncCatalogClient, ctx.normalized_async),

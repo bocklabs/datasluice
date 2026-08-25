@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from datasluice.connectors.catalog.udata.adapter import UDataAdapter
+from datasluice.connectors.catalog.udata.connector import UDataConnector
 from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
@@ -20,7 +20,7 @@ _UDATA_API_VERSION = "uData API v1"
 _UDATA_PLATFORM = "udata"
 
 
-def create_udata_connector(ctx: CatalogConnectorContext) -> UDataAdapter:
+def create_udata_connector(ctx: CatalogConnectorContext) -> UDataConnector:
     """Construct a uData façade from explicit typed service projections."""
     if not isinstance(ctx, CatalogConnectorContext):
         raise TypeError("uData connectors require a CatalogConnectorContext.")
@@ -35,7 +35,7 @@ def create_udata_connector(ctx: CatalogConnectorContext) -> UDataAdapter:
     if ctx.native_sync is None or ctx.native_async is None:
         raise ValueError("uData connectors require uData-native sync and async service projections.")
     profile = _require_udata_profile(ctx.effective_profile)
-    return UDataAdapter(
+    return UDataConnector(
         context=ctx,
         normalized_sync=cast(SyncCatalogClient, ctx.normalized_sync),
         normalized_async=cast(AsyncCatalogClient, ctx.normalized_async),

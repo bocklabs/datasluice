@@ -64,13 +64,25 @@ class HttpxCatalogTransport:
         current = request
         for _ in range(self._max_redirects + 1):
             try:
-                response = self._client.request(
-                    current.method,
-                    current.url,
-                    headers=dict(current.headers),
-                    content=current.body,
-                    follow_redirects=False,
-                )
+                if current.files:
+                    response = self._client.request(
+                        current.method,
+                        current.url,
+                        headers=dict(drop_body_transfer_headers(current.headers)),
+                        data=None,
+                        files=[
+                            (part.field_name, (part.file_name, part.data, part.content_type)) for part in current.files
+                        ],
+                        follow_redirects=False,
+                    )
+                else:
+                    response = self._client.request(
+                        current.method,
+                        current.url,
+                        headers=dict(current.headers),
+                        content=current.body,
+                        follow_redirects=False,
+                    )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
             location = response.headers.get("location")
@@ -93,10 +105,12 @@ class HttpxCatalogTransport:
             headers = dict(current.headers)
             if not _retains_credentials(self._credential_scope, current.url, next_url):
                 headers = strip_sensitive_redirect_headers(headers)
-            next_method, next_body = redirect_method_and_body(current.method, response.status_code, current.body)
-            if next_body is None:
+            next_method, next_body, next_files = redirect_method_and_body(
+                current.method, response.status_code, current.body, current.files
+            )
+            if next_body is None and not next_files:
                 headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(next_method, next_url, headers, next_body)
+            current = RuntimeRequest(next_method, next_url, headers, next_body, next_files)
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     def close(self) -> None:
@@ -141,13 +155,25 @@ class AsyncHttpxCatalogTransport:
         current = request
         for _ in range(self._max_redirects + 1):
             try:
-                response = await self._client.request(
-                    current.method,
-                    current.url,
-                    headers=dict(current.headers),
-                    content=current.body,
-                    follow_redirects=False,
-                )
+                if current.files:
+                    response = await self._client.request(
+                        current.method,
+                        current.url,
+                        headers=dict(drop_body_transfer_headers(current.headers)),
+                        data=None,
+                        files=[
+                            (part.field_name, (part.file_name, part.data, part.content_type)) for part in current.files
+                        ],
+                        follow_redirects=False,
+                    )
+                else:
+                    response = await self._client.request(
+                        current.method,
+                        current.url,
+                        headers=dict(current.headers),
+                        content=current.body,
+                        follow_redirects=False,
+                    )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
             location = response.headers.get("location")
@@ -170,10 +196,12 @@ class AsyncHttpxCatalogTransport:
             headers = dict(current.headers)
             if not _retains_credentials(self._credential_scope, current.url, next_url):
                 headers = strip_sensitive_redirect_headers(headers)
-            next_method, next_body = redirect_method_and_body(current.method, response.status_code, current.body)
-            if next_body is None:
+            next_method, next_body, next_files = redirect_method_and_body(
+                current.method, response.status_code, current.body, current.files
+            )
+            if next_body is None and not next_files:
                 headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(next_method, next_url, headers, next_body)
+            current = RuntimeRequest(next_method, next_url, headers, next_body, next_files)
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     async def aclose(self) -> None:

@@ -5,7 +5,7 @@
   "platform_api_version": "Action API v3",
   "official_source_uri": "https://docs.ckan.org/en/2.11/api/",
   "source_accessed_at": "2026-08-15",
-  "fixture_fingerprint": "24ad7ecf6c72b6b5fb9351db9c1f0166e4701b5cc1f020156e7fbf4640190f06",
+  "fixture_fingerprint": "6221a6c535a396d4dac0fa6a115bea5a19677d371c72ad8d0ee7eeb9f8e02797",
   "operations": [
     {
       "id": "ckan/action-api-v3.discovery-help-and-status",
@@ -29,6 +29,13 @@
       "evidence_requirement": "controlled-environment-only"
     },
     {
+      "id": "ckan/action-api-v3.dataset-collaborators",
+      "capability": "optional",
+      "authentication": "authenticated",
+      "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
       "id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
       "capability": "authenticated",
       "authentication": "authenticated",
@@ -36,43 +43,78 @@
       "evidence_requirement": "controlled-environment-only"
     },
     {
-      "id": "ckan/action-api-v3.organization-list-show-create-update-delete-members",
+      "id": "ckan/action-api-v3.organization-list-show-search",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "ckan/action-api-v3.organization-create-update-delete-members",
       "capability": "admin",
       "authentication": "privileged",
       "mutation": "admin",
       "evidence_requirement": "controlled-environment-only"
     },
     {
-      "id": "ckan/action-api-v3.group-list-show-create-update-delete-members",
+      "id": "ckan/action-api-v3.group-list-show-search",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "ckan/action-api-v3.group-create-update-delete-members",
       "capability": "admin",
       "authentication": "privileged",
       "mutation": "admin",
       "evidence_requirement": "controlled-environment-only"
     },
     {
-      "id": "ckan/action-api-v3.user-list-show-create-update-delete-token-management",
+      "id": "ckan/action-api-v3.user-list-show",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "ckan/action-api-v3.user-create-update-delete-token-management",
       "capability": "admin",
       "authentication": "privileged",
       "mutation": "admin",
       "evidence_requirement": "controlled-environment-only"
     },
     {
-      "id": "ckan/action-api-v3.tags-vocabularies-and-licenses",
+      "id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
       "capability": "authenticated",
       "authentication": "authenticated",
       "mutation": "update",
       "evidence_requirement": "controlled-environment-only"
     },
     {
-      "id": "ckan/action-api-v3.relationships-followers-and-activity",
-      "capability": "authenticated",
+      "id": "ckan/action-api-v3.relationships-follows",
+      "capability": "core",
       "authentication": "authenticated",
       "mutation": "update",
       "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "ckan/action-api-v3.activity",
+      "capability": "optional",
+      "authentication": "authenticated",
+      "mutation": "read",
+      "evidence_requirement": "deployment-probe"
     },
     {
       "id": "ckan/action-api-v3.resource-views",
-      "capability": "authenticated",
+      "capability": "optional",
       "authentication": "authenticated",
       "mutation": "update",
       "evidence_requirement": "controlled-environment-only"
@@ -85,10 +127,31 @@
       "evidence_requirement": "controlled-environment-only"
     },
     {
+      "id": "ckan/datastore-extension.sql-search",
+      "capability": "optional",
+      "authentication": "authenticated",
+      "mutation": "read",
+      "evidence_requirement": "deployment-probe"
+    },
+    {
       "id": "ckan/filestore.upload-and-resource-file-replacement",
       "capability": "optional",
       "authentication": "authenticated",
       "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "ckan/action-api-v3.jobs-and-task-status",
+      "capability": "core",
+      "authentication": "authenticated",
+      "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "ckan/action-api-v3.config-options",
+      "capability": "admin",
+      "authentication": "privileged",
+      "mutation": "admin",
       "evidence_requirement": "controlled-environment-only"
     },
     {

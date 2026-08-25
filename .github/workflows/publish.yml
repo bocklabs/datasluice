@@ -2,7 +2,7 @@ name: Publish package
 
 on:
   workflow_call:
-    inputs:
+    inputs: &publish-inputs
       component:
         required: true
         type: string
@@ -24,11 +24,17 @@ on:
       pypi_environment:
         required: true
         type: string
+  workflow_dispatch:
+    inputs: *publish-inputs
 
 permissions:
   actions: read
   contents: read
   id-token: write
+
+concurrency:
+  group: publish-${{ inputs.component }}-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -42,14 +48,57 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Guard publish inputs
+        env:
+          COMPONENT: ${{ inputs.component }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          PACKAGE_PATH: ${{ inputs.package_path }}
+          TESTPYPI_ENVIRONMENT: ${{ inputs.testpypi_environment }}
+          PYPI_ENVIRONMENT: ${{ inputs.pypi_environment }}
+        run: |
+          python3 - "$COMPONENT" "$PACKAGE_NAME" "$PACKAGE_PATH" "$TESTPYPI_ENVIRONMENT" "$PYPI_ENVIRONMENT" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          component, package_name, package_path, testpypi, pypi = sys.argv[1:6]
+          allowed = {("core", "datasluice", ".", "test-pypi", "pypi")}
+          trusted = subprocess.run(
+              ["git", "show", "origin/main:providers/registry.json"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          allowed |= {
+              (p["slug"], p["package_name"], p["path"], p["testpypi_env"], p["pypi_env"])
+              for p in json.loads(trusted)["providers"]
+          }
+          if (component, package_name, package_path, testpypi, pypi) not in allowed:
+              sys.exit(f"Unexpected component/package/path/environments: {component}/{package_name}/{package_path}/{testpypi}/{pypi}")
+          PY
+      - name: Verify ref is the release tag
+        env:
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          tag="refs/tags/${PACKAGE_NAME}-v${VERSION}"
+          expected="$(git rev-parse "${tag}^{commit}" 2>/dev/null)" || {
+            echo "Release tag ${tag} not found" >&2
+            exit 1
+          }
+          test "${expected}" = "$(git rev-parse HEAD)" || {
+            echo "HEAD does not match ${tag}" >&2
+            exit 1
+          }
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           enable-cache: false
       - name: Build distribution
         env:
           PACKAGE_PATH: ${{ inputs.package_path }}
-        run: uv build --no-sources "$PACKAGE_PATH"
+        run: uv build --no-sources --out-dir dist "$PACKAGE_PATH"
       - run: uvx twine check dist/*
       - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
@@ -78,6 +127,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
 
   smoke:
     needs: [build, publish-testpypi]
@@ -101,7 +151,7 @@ jobs:
           PACKAGE_VERSION: ${{ inputs.version }}
         run: |
           uv venv --python 3.12 "$SMOKE_VENV"
-          uv pip install --python "$SMOKE_VENV/bin/python" --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${PACKAGE_NAME}==${PACKAGE_VERSION}"
+          uv pip install --python "$SMOKE_VENV/bin/python" --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${PACKAGE_NAME}==${PACKAGE_VERSION}"
       - if: inputs.package_name == 'datasluice'
         run: |
           "$SMOKE_VENV/bin/python" -c "import datasluice"

@@ -61,9 +61,25 @@ ZENSICAL = REPO_ROOT / "zensical.toml"
 PLATFORMS = ("ckan", "udata", "socrata")
 
 CANONICAL_PLATFORM_EXPORTS: dict[str, tuple[str, str]] = {
-    "ckan": ("CKANAdapter", "create_ckan_connector"),
-    "udata": ("UDataAdapter", "create_udata_connector"),
-    "socrata": ("SocrataAdapter", "create_socrata_connector"),
+    "ckan": ("CKANConnector", "create_ckan_connector"),
+    "udata": ("UDataConnector", "create_udata_connector"),
+    "socrata": ("SocrataConnector", "create_socrata_connector"),
+}
+
+CANONICAL_LIVE_CLIENT_EXPORTS: dict[str, tuple[str, ...]] = {
+    "ckan": (
+        "CKANClientSettings",
+        "CKANConnector",
+        "create_async_client",
+        "create_ckan_connector",
+        "create_sync_client",
+    ),
+}
+
+CONNECTOR_MODULE_PATHS: dict[str, str] = {
+    "ckan": "src/datasluice/connectors/catalog/ckan/connector.py",
+    "udata": "src/datasluice/connectors/catalog/udata/connector.py",
+    "socrata": "src/datasluice/connectors/catalog/socrata/connector.py",
 }
 
 EXPECTED_ENTRY_POINTS: dict[str, str] = {
@@ -99,8 +115,13 @@ REMOVED_RUNTIME_MODULES: tuple[str, ...] = (
 
 BANNED_IDENTIFIERS: tuple[str, ...] = (
     *REMOVED_MODULES,
+    "AdapterError",
+    "AdapterNotFoundError",
+    "AdapterRegistry",
     "BaseAdapter",
+    "CKANAdapter",
     "CatalogResourceLocator",
+    "CustomAdapter",
     "DataGouvAdapter",
     "create_datagouv_connector",
     "DataSluiceHook",
@@ -108,6 +129,9 @@ BANNED_IDENTIFIERS: tuple[str, ...] = (
     "DataSluiceSearchOperator",
     "DataSluiceMaterializeOperator",
     "PortalType",
+    "SODA2Adapter",
+    "SocrataAdapter",
+    "UDataAdapter",
     "datagouv",
     "registry.register",
 )
@@ -116,7 +140,10 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
     "tests/quality/test_catalog_surface.py": frozenset(BANNED_IDENTIFIERS),
     "tests/quality/test_docs_guard.py": frozenset(
         {
+            "AdapterError",
+            "AdapterNotFoundError",
             "BaseAdapter",
+            "CKANAdapter",
             "CatalogResourceLocator",
             "DataGouvAdapter",
             "create_datagouv_connector",
@@ -124,6 +151,8 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
             "DataSluiceOperator",
             "DataSluiceSearchOperator",
             "DataSluiceMaterializeOperator",
+            "SocrataAdapter",
+            "UDataAdapter",
             "datagouv",
             "datasluice.adapters",
             "datasluice.connectors.ckan",
@@ -137,15 +166,21 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
     "tests/unit/runtime/test_catalog_cutover.py": frozenset({"BaseAdapter", "datasluice.runtime.context"}),
     "tests/unit/application/test_catalog_cutover.py": frozenset({"CatalogResourceLocator"}),
     "tests/unit/application/test_facade.py": frozenset({"CatalogResourceLocator"}),
-    "tests/unit/contracts/catalog/test_public_api.py": frozenset({"CatalogResourceLocator"}),
-    "tests/unit/test_package.py": frozenset({"CatalogResourceLocator"}),
+    "tests/unit/contracts/catalog/test_public_api.py": frozenset(
+        {"AdapterError", "AdapterNotFoundError", "CatalogResourceLocator"}
+    ),
+    "tests/unit/test_package.py": frozenset({"AdapterNotFoundError", "CatalogResourceLocator"}),
     "tests/unit/connectors/catalog/test_udata_public.py": frozenset(
         {"DataGouvAdapter", "create_datagouv_connector", "datagouv"}
     ),
+    "tests/unit/connectors/catalog/test_socrata_public.py": frozenset({"SODA2Adapter"}),
     "tests/unit/discovery/test_detection_evidence.py": frozenset({"datagouv"}),
     "tests/unit/discovery/test_discovery.py": frozenset({"datagouv"}),
     "tests/unit/runtime/test_plugin_manager.py": frozenset({"datagouv"}),
-    "tests/unit/runtime/test_no_global_state.py": frozenset({"registry.register"}),
+    "tests/unit/runtime/test_no_global_state.py": frozenset({"AdapterRegistry", "registry.register"}),
+    "tests/unit/test_former_facade_names_removed.py": frozenset(
+        {"CKANAdapter", "CustomAdapter", "SocrataAdapter", "UDataAdapter"}
+    ),
     "providers/apache-airflow/tests/test_public_boundary.py": frozenset(
         {
             "DataSluiceHook",
@@ -184,15 +219,24 @@ LOCKED_INTEGRATE_ROWS: tuple[str, ...] = (
     "ckan.action-api-v3.discovery-help-and-status",
     "ckan.action-api-v3.dataset-list-show-search",
     "ckan.action-api-v3.dataset-create-update-patch-delete-purge",
+    "ckan.action-api-v3.dataset-collaborators",
     "ckan.action-api-v3.resource-list-show-create-update-patch-delete-upload",
-    "ckan.action-api-v3.organization-list-show-create-update-delete-members",
-    "ckan.action-api-v3.group-list-show-create-update-delete-members",
-    "ckan.action-api-v3.user-list-show-create-update-delete-token-management",
-    "ckan.action-api-v3.tags-vocabularies-and-licenses",
-    "ckan.action-api-v3.relationships-followers-and-activity",
+    "ckan.action-api-v3.organization-list-show-search",
+    "ckan.action-api-v3.organization-create-update-delete-members",
+    "ckan.action-api-v3.group-list-show-search",
+    "ckan.action-api-v3.group-create-update-delete-members",
+    "ckan.action-api-v3.user-list-show",
+    "ckan.action-api-v3.user-create-update-delete-token-management",
+    "ckan.action-api-v3.tags-vocabularies-licenses-list-show",
+    "ckan.action-api-v3.tags-vocabularies-licenses-create-update-delete",
+    "ckan.action-api-v3.relationships-follows",
+    "ckan.action-api-v3.activity",
     "ckan.action-api-v3.resource-views",
     "ckan.datastore-extension.query-and-record-crud",
+    "ckan.datastore-extension.sql-search",
     "ckan.filestore.upload-and-resource-file-replacement",
+    "ckan.action-api-v3.jobs-and-task-status",
+    "ckan.action-api-v3.config-options",
     "ckan.plugin-provided-action-and-extension-probes",
     "udata.api-v1.root-and-effective-profile-probe",
     "udata.api-v1.dataset-list-search-show-create-update-delete",
@@ -233,32 +277,62 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "AsyncCKANDatasetService",
             "create_update_patch_delete_purge",
         ),
+        "ckan/action-api-v3.dataset-collaborators": (
+            "SyncCKANDatasetService",
+            "AsyncCKANDatasetService",
+            "create_update_patch_delete_purge",
+        ),
         "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload": (
             "SyncCKANResourceService",
             "AsyncCKANResourceService",
             "list_show_create_update_patch_delete_upload",
         ),
-        "ckan/action-api-v3.organization-list-show-create-update-delete-members": (
+        "ckan/action-api-v3.organization-list-show-search": (
             "SyncCKANOrganizationService",
             "AsyncCKANOrganizationService",
             "list_show_create_update_delete_members",
         ),
-        "ckan/action-api-v3.group-list-show-create-update-delete-members": (
+        "ckan/action-api-v3.organization-create-update-delete-members": (
+            "SyncCKANOrganizationService",
+            "AsyncCKANOrganizationService",
+            "list_show_create_update_delete_members",
+        ),
+        "ckan/action-api-v3.group-list-show-search": (
             "SyncCKANGroupService",
             "AsyncCKANGroupService",
             "list_show_create_update_delete_members",
         ),
-        "ckan/action-api-v3.user-list-show-create-update-delete-token-management": (
+        "ckan/action-api-v3.group-create-update-delete-members": (
+            "SyncCKANGroupService",
+            "AsyncCKANGroupService",
+            "list_show_create_update_delete_members",
+        ),
+        "ckan/action-api-v3.user-list-show": (
             "SyncCKANUserService",
             "AsyncCKANUserService",
             "list_show_create_update_delete_token_management",
         ),
-        "ckan/action-api-v3.tags-vocabularies-and-licenses": (
+        "ckan/action-api-v3.user-create-update-delete-token-management": (
+            "SyncCKANUserService",
+            "AsyncCKANUserService",
+            "list_show_create_update_delete_token_management",
+        ),
+        "ckan/action-api-v3.tags-vocabularies-licenses-list-show": (
             "SyncCKANVocabularyLicenseService",
             "AsyncCKANVocabularyLicenseService",
             "tags_vocabularies_and_licenses",
         ),
-        "ckan/action-api-v3.relationships-followers-and-activity": (
+        "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete": (
+            "SyncCKANVocabularyLicenseService",
+            "AsyncCKANVocabularyLicenseService",
+            "tags_vocabularies_and_licenses",
+        ),
+        "ckan/action-api-v3.relationships-follows": (
+            "SyncCKANRelationshipActivityService",
+            "AsyncCKANRelationshipActivityService",
+            "relationships_followers_and_activity",
+        ),
+        "ckan/action-api-v3.activity": (
             "SyncCKANRelationshipActivityService",
             "AsyncCKANRelationshipActivityService",
             "relationships_followers_and_activity",
@@ -269,10 +343,25 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "AsyncCKANDatastoreService",
             "query_and_record_crud",
         ),
+        "ckan/datastore-extension.sql-search": (
+            "SyncCKANDatastoreService",
+            "AsyncCKANDatastoreService",
+            "query_and_record_crud",
+        ),
         "ckan/filestore.upload-and-resource-file-replacement": (
             "SyncCKANFilestoreService",
             "AsyncCKANFilestoreService",
             "upload_and_resource_file_replacement",
+        ),
+        "ckan/action-api-v3.jobs-and-task-status": (
+            "SyncCKANExtensionService",
+            "AsyncCKANExtensionService",
+            "extension_probes",
+        ),
+        "ckan/action-api-v3.config-options": (
+            "SyncCKANExtensionService",
+            "AsyncCKANExtensionService",
+            "extension_probes",
         ),
         "ckan/plugin-provided-action-and-extension-probes": (
             "SyncCKANExtensionService",
@@ -375,6 +464,17 @@ PUBLIC_CATALOG_TREES: tuple[Path, ...] = (
 _SCAN_SUFFIXES = frozenset({".py", ".md", ".toml", ".json", ".yaml", ".yml", ".cfg"})
 _COVERAGE_ROW_RE = re.compile(r"^\|\s*(\w+)\.([\w.-]+)\s*\|\s*(INTEGRATE|OPT-OUT)\s*\|", re.MULTILINE)
 
+RETIRED_WORD_RE = re.compile(r"adapters?", re.IGNORECASE)
+RETIRED_WORD_SCAN_ROOTS: tuple[str, ...] = (
+    "src/datasluice/connectors/",
+    "docs/",
+    ".github/workflows/",
+)
+RETIRED_WORD_SCAN_TOPS: tuple[str, ...] = ("README.md", "zensical.toml", "AGENTS.md", "CONTEXT.md")
+RETIRED_WORD_ALLOWLIST: dict[str, frozenset[str]] = {
+    "CONTEXT.md": frozenset({"adapter"}),
+}
+
 
 def _tracked_files() -> list[str]:
     result = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=False)
@@ -413,6 +513,45 @@ def _coverage_rows() -> list[tuple[str, str, str]]:
 def _row_to_operation_id(row: str) -> str:
     platform, _, name = row.partition(".")
     return f"{platform}/{name}"
+
+
+def _retired_word_violations() -> list[str]:
+    """Scan connector-facing surfaces for any casing of the retired word.
+
+    Per-file granularity: a file listed in ``RETIRED_WORD_ALLOWLIST`` permits
+    only its enumerated spellings; every other match in connector trees,
+    docs, workflows, and top-level surfaces fails the gate.
+    """
+    corpus = [
+        REPO_ROOT / name
+        for name in _tracked_files()
+        if name.startswith(RETIRED_WORD_SCAN_ROOTS) or name in RETIRED_WORD_SCAN_TOPS
+    ]
+    violations: list[str] = []
+    for path in corpus:
+        if not path.exists() or path.suffix not in _SCAN_SUFFIXES:
+            continue
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        allowed = RETIRED_WORD_ALLOWLIST.get(relative, frozenset())
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in RETIRED_WORD_RE.finditer(text):
+            if match.group(0).lower() not in allowed:
+                violations.append(f"{relative}: retired word {match.group(0)!r}")
+                break
+    return violations
+
+
+def _connector_module_violations(tracked: list[str]) -> list[str]:
+    """Prove the renamed connector modules are tracked canonical surface."""
+    tracked_set = set(tracked)
+    violations: list[str] = []
+    for platform, module_path in CONNECTOR_MODULE_PATHS.items():
+        if module_path not in tracked_set:
+            violations.append(f"{platform} connector module missing from tracking: {module_path}")
+        former = module_path.replace("connector.py", "adapter.py")
+        if former in tracked_set:
+            violations.append(f"{platform} former facade module still tracked: {former}")
+    return violations
 
 
 def _identifier_violations() -> list[str]:
@@ -485,11 +624,14 @@ def _fixture_linkage_violations() -> list[str]:
 
 def _static_audit_gaps() -> list[str]:
     """Aggregate the fast static invariants gating this module's execution."""
+    tracked = _tracked_files()
     return (
         _removed_module_violations()
         + _entry_point_violations()
         + _identifier_violations()
         + _fixture_linkage_violations()
+        + _retired_word_violations()
+        + _connector_module_violations(tracked)
     )
 
 
@@ -574,16 +716,21 @@ def _certificate_parts(platform: str):
 
 
 def test_canonical_platform_packages_export_exactly_the_typed_surface() -> None:
-    """Test 1: each platform package exports only its adapter and factory."""
-    for platform, (adapter_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
+    """Test 1: each platform package exports only its canonical published surface."""
+    for platform, (connector_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
         module = importlib.import_module(f"datasluice.connectors.catalog.{platform}")
-        assert sorted(module.__all__) == sorted((adapter_name, factory_name))
-        adapter = getattr(module, adapter_name)
+        expected = CANONICAL_LIVE_CLIENT_EXPORTS.get(platform, (connector_name, factory_name))
+        assert sorted(module.__all__) == sorted(expected)
+        connector = getattr(module, connector_name)
         factory = getattr(module, factory_name)
-        assert inspect.isclass(adapter) and adapter.__module__.startswith(f"datasluice.connectors.catalog.{platform}.")
+        assert inspect.isclass(connector) and connector.__module__.startswith(
+            f"datasluice.connectors.catalog.{platform}."
+        )
         assert inspect.isfunction(factory) and factory.__module__.startswith(
             f"datasluice.connectors.catalog.{platform}."
         )
+        for extra in set(expected) - {connector_name, factory_name}:
+            assert getattr(module, extra).__module__.startswith(f"datasluice.connectors.catalog.{platform}.")
 
 
 def test_namespaced_entry_points_declare_and_install_the_canonical_factories() -> None:
@@ -612,15 +759,15 @@ def test_namespaced_entry_points_declare_and_install_the_canonical_factories() -
 def test_catalog_root_packages_do_not_re_export_platform_apis(package: str) -> None:
     """Test 1: the package root and catalog roots stay free of platform symbols."""
     module = importlib.import_module(package)
-    for _, (adapter_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
-        assert not hasattr(module, adapter_name), f"{package} re-exports {adapter_name}"
+    for _, (connector_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
+        assert not hasattr(module, connector_name), f"{package} re-exports {connector_name}"
         assert not hasattr(module, factory_name), f"{package} re-exports {factory_name}"
     contracts = importlib.import_module("datasluice.contracts.catalog")
     errors = importlib.import_module("datasluice.errors.catalog")
     domain = importlib.import_module("datasluice.domain.catalog")
     for public_module in (contracts, errors, domain):
-        for _, (adapter_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
-            assert not hasattr(public_module, adapter_name)
+        for _, (connector_name, factory_name) in CANONICAL_PLATFORM_EXPORTS.items():
+            assert not hasattr(public_module, connector_name)
             assert not hasattr(public_module, factory_name)
 
 
@@ -742,12 +889,15 @@ def test_provider_metadata_and_dependency_table_stay_locked() -> None:
     assert runtime_sources, "provider runtime source must exist"
     allowed_modules = {
         "datasluice.application",
+        "datasluice.connectors.catalog.ckan",
+        "datasluice.contracts.catalog.protocols",
         "datasluice.domain.catalog.auth",
         "datasluice.domain.catalog.ids",
         "datasluice.domain.catalog.operations",
         "datasluice.domain.catalog.profiles",
         "datasluice.runtime.clients",
         "datasluice.runtime.credentials",
+        "datasluice.runtime.transport.base",
     }
     for source in runtime_sources:
         tree = ast.parse(source.read_text(encoding="utf-8"))

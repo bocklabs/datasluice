@@ -18,6 +18,21 @@ from datasluice.domain.catalog.operations import (
     OperationTier,
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+
+class _Transport:
+    def __init__(self, response: RuntimeResponse) -> None:
+        self.response = response
+        self.requests: list[RuntimeRequest] = []
+        self.close_count = 0
+
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        self.requests.append(request)
+        return self.response
+
+    def close(self) -> None:
+        self.close_count += 1
 
 
 def _profile() -> DeclaredCapabilityProfile:

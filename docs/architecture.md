@@ -37,7 +37,7 @@ pinned capability profile, not an implicit convention.
 ### 1. Public connector packages (`datasluice.connectors.catalog`)
 
 Three platform packages — `ckan`, `udata`, `socrata` — each exporting one
-adapter façade class and one factory function. Factories accept a
+connector façade class and one factory function. Factories accept a
 `CatalogConnectorContext` (injected sync/async executors, normalized and
 native service projections, effective capability profile) and narrow the
 generic projections to the platform's typed native service groups at the

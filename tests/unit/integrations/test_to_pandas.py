@@ -18,10 +18,10 @@ import pytest
 
 pytest.importorskip("pyarrow")
 pytest.importorskip("pandas")
-import pandas as pd  # noqa: E402
+import pandas as pd
 
-from datasluice.data.batch_stream import BatchStream  # noqa: E402
-from datasluice.integrations.pandas import to_pandas  # noqa: E402
+from datasluice.data.batch_stream import BatchStream
+from datasluice.integrations.pandas import to_pandas
 
 
 @pytest.fixture(autouse=True)

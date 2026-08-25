@@ -13,7 +13,7 @@ import io
 import pytest
 
 pytest.importorskip("pyarrow")
-import pyarrow as pa  # noqa: E402
+import pyarrow as pa
 
 try:
     _readers_mod = importlib.import_module("datasluice.data.readers")
@@ -22,7 +22,7 @@ try:
 except ImportError:
     pytest.skip("datasluice.data.readers not importable", allow_module_level=True)
 
-from datasluice.data._byte_source import IterableBytesIO  # noqa: E402
+from datasluice.data._byte_source import IterableBytesIO
 
 READERS = _readers_mod.READERS
 get_reader = _readers_mod.get_reader

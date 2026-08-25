@@ -13,6 +13,7 @@ from datasluice.runtime.transport.base import CatalogTransport
 if TYPE_CHECKING:
     from datasluice.contracts.catalog.protocols import CatalogOperationRequest, SyncCatalogClient
 
+
 logger = get_logger("integrations.dlt")
 
 
@@ -55,7 +56,7 @@ def datasluice_source(
     """Return a dlt source from a caller-owned normalized resource query.
 
     Args:
-        client: Explicit normalized synchronous catalog client.
+        client: Explicit normalized synchronous catalog client exposing its public transport accessor.
         query: Typed resources.list catalog operation.
         state_store: Optional durable store seeded with prior per-resource watermarks.
         include_metadata: Whether to include normalized resource metadata as a sibling resource.
@@ -78,9 +79,14 @@ def datasluice_source(
     if (query.operation_id.service, query.operation_id.method) != ("resources", "list"):
         raise ValueError("datasluice_source requires a resources.list catalog operation")
     transport = getattr(client, "transport", None)
-    if transport is None:
+    if (
+        transport is None
+        or not callable(getattr(transport, "send", None))
+        or not callable(getattr(transport, "close", None))
+    ):
         raise TypeError(
-            "datasluice_source requires a SyncCatalogClient exposing the public transport accessor for extraction"
+            "datasluice_source requires a SyncCatalogClient exposing the public transport accessor "
+            "with a synchronous transport for extraction"
         )
 
     records = client.resources.list(query, CatalogOperationGuard(operation_id=query.operation_id)).items

@@ -10,7 +10,7 @@ generations are out of scope until a new capability profile ships.
 ## Import the platform package
 
 ```python
-from datasluice.connectors.catalog.socrata import SocrataAdapter, create_socrata_connector
+from datasluice.connectors.catalog.socrata import SocrataConnector, create_socrata_connector
 ```
 
 `create_socrata_connector` accepts one `CatalogConnectorContext` carrying
@@ -62,6 +62,6 @@ async modes. Third-party connectors certify through the same runner.
 - **Phase 5:** the live Socrata SODA 3 client behind the same factory
   and contract surface, once endpoint evidence is recorded.
 
-See [Connectors](../adapters.md) for factory construction details and
+See [Connectors](../connectors.md) for factory construction details and
 [Platform Contracts](../supported-portals.md) for the pinned Socrata
 profile.

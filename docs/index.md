@@ -12,7 +12,7 @@ A contract-driven Python SDK for public-data catalog platforms, plus a direct-re
 
 - [Installation](install.md) — how to install DataSluice
 - [Architecture](architecture.md) — how the library is structured
-- [Connectors](adapters.md) — the typed connector contract and platform factories
+- [Connectors](connectors.md) — the typed connector contract and platform factories
 - [Platform Contracts](supported-portals.md) — pinned CKAN, uData, and Socrata capability profiles
 - [API Reference](api.md) — auto-generated API documentation
 

@@ -653,7 +653,7 @@ def _idempotency_for(operation: CatalogOperationRequest) -> IdempotencyPolicy:
 
 def _release_abandoned_trial(breakers: BreakerRegistry, key: CircuitKey, recorded: bool) -> None:
     if not recorded:
-        breakers.record_transport_failure(key)
+        breakers.release_trial(key)
 
 
 class _SyncService[T]:

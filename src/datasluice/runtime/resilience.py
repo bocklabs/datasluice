@@ -117,7 +117,8 @@ class RetryLoop:
         if not decision.retry:
             if response is not None:
                 return response
-            assert failure is not None
+            if failure is None:
+                raise TransportFailure("Runtime transport produced neither a response nor a failure.")
             raise failure
         delay = decision.delay or 0.0
         self._deadline.check_wait(
@@ -235,6 +236,12 @@ class BreakerRegistry:
         """Return the immutable circuit snapshot for one identity."""
         with self._lock:
             return self._state_for(key)
+
+    def release_trial(self, key: CircuitKey) -> None:
+        """Release a half-open trial without recording an origin-health verdict."""
+        with self._lock:
+            self._state_for(key)
+            self._trial_in_flight.discard(key)
 
     def reset(self, key: CircuitKey) -> CircuitState:
         """Explicitly reset one circuit for operational recovery."""

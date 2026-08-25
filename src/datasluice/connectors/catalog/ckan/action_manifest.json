@@ -1,0 +1,1106 @@
+{
+  "schema_version": "1.0",
+  "platform": "ckan",
+  "profile_version": "2.11.5",
+  "actions": [
+    {
+      "name": "help_show",
+      "group": "action_discovery",
+      "owning_operation_id": "ckan/action-api-v3.discovery-help-and-status",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "status_show",
+      "group": "action_discovery",
+      "owning_operation_id": "ckan/action-api-v3.discovery-help-and-status",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_show",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "current_package_list_with_resources",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "package_list",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "package_search",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "package_autocomplete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "package_create",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_update",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_revise",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_resource_reorder",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_owner_org_update",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_patch",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "package_delete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "dataset_purge",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "bulk_update_private",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "bulk_update_public",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "bulk_update_delete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "package_collaborator_create",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_collaborator_delete",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "package_collaborator_list",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_collaborator_list_for_user",
+      "group": "datasets",
+      "owning_operation_id": "ckan/action-api-v3.dataset-collaborators",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_show",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_search",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "resource_create",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_update",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_patch",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "resource_delete",
+      "group": "resources",
+      "owning_operation_id": "ckan/action-api-v3.resource-list-show-create-update-patch-delete-upload",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_show",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_list_for_user",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_list",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_autocomplete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "member_list",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "member_roles_list",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "organization_create",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_update",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_patch",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_delete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_purge",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_member_create",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "organization_member_delete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "member_create",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "member_delete",
+      "group": "organizations",
+      "owning_operation_id": "ckan/action-api-v3.organization-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_list",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "group_list_authz",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "group_show",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_package_show",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_autocomplete",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-list-show-search",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_create",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_update",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_patch",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_delete",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_purge",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_member_create",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "group_member_delete",
+      "group": "groups",
+      "owning_operation_id": "ckan/action-api-v3.group-create-update-delete-members",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "user_list",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_show",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-list-show",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_autocomplete",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_create",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_invite",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_update",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_patch",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "user_delete",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "get_site_user",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "api_token_create",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "token-secret"
+    },
+    {
+      "name": "api_token_list",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "api_token_revoke",
+      "group": "users",
+      "owning_operation_id": "ckan/action-api-v3.user-create-update-delete-token-management",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "tag_list",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "tag_show",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "tag_search",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "tag_autocomplete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "vocabulary_list",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "vocabulary_show",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "license_list",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "format_autocomplete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "term_translation_show",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-list-show",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "tag_create",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "tag_delete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "vocabulary_create",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "vocabulary_update",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "vocabulary_delete",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "term_translation_update",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "term_translation_update_many",
+      "group": "vocabularies_licenses",
+      "owning_operation_id": "ckan/action-api-v3.tags-vocabularies-licenses-create-update-delete",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationships_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationship_create",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationship_update",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "package_relationship_delete",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "follow_dataset",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "unfollow_dataset",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "am_following_dataset",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "follow_group",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "unfollow_group",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "am_following_group",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "follow_user",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "unfollow_user",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "am_following_user",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dataset_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dataset_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_follower_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "user_follower_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "dataset_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dataset_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "group_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "organization_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "user_followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "followee_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "followee_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.relationships-follows",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "package_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "group_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "organization_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "user_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "recently_changed_packages_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "dashboard_activity_list",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "dashboard_new_activities_count",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "dashboard_mark_activities_old",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "activity_show",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "activity_data_show",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "activity_diff",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "activity_create",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "send_email_notifications",
+      "group": "relationships_activity",
+      "owning_operation_id": "ckan/action-api-v3.activity",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "resource_view_create",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_show",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_list",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_update",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_reorder",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_view_delete",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "resource_view_clear",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "package_create_default_resource_views",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "resource_create_default_resource_views",
+      "group": "views",
+      "owning_operation_id": "ckan/action-api-v3.resource-views",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_search",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_info",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_create",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_upsert",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_delete",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "destructive",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_records_delete",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_function_create",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_function_delete",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "datastore_run_triggers",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.query-and-record-crud",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "datastore_search_sql",
+      "group": "datastore",
+      "owning_operation_id": "ckan/datastore-extension.sql-search",
+      "mutation_class": "read",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "job_list",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "read",
+      "result_kind": "record-list"
+    },
+    {
+      "name": "job_show",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "job_cancel",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "standard",
+      "result_kind": "value"
+    },
+    {
+      "name": "job_clear",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "task_status_show",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "read",
+      "result_kind": "record"
+    },
+    {
+      "name": "task_status_update",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "standard",
+      "result_kind": "record"
+    },
+    {
+      "name": "task_status_update_many",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    },
+    {
+      "name": "task_status_delete",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.jobs-and-task-status",
+      "mutation_class": "destructive",
+      "result_kind": "value"
+    },
+    {
+      "name": "config_option_show",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.config-options",
+      "mutation_class": "read",
+      "result_kind": "value"
+    },
+    {
+      "name": "config_option_list",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.config-options",
+      "mutation_class": "read",
+      "result_kind": "value-list"
+    },
+    {
+      "name": "config_option_update",
+      "group": "extensions",
+      "owning_operation_id": "ckan/action-api-v3.config-options",
+      "mutation_class": "standard",
+      "result_kind": "mapping"
+    }
+  ]
+}

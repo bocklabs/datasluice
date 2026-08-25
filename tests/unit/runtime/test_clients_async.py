@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 
 import pytest
 
 from datasluice.contracts.catalog.protocols import AsyncCatalogClient as AsyncCatalogClientProtocol
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard
 from datasluice.domain.catalog.auth import (
+    CatalogCredential,
+    CredentialResolutionPolicy,
     CredentialResolver,
+    CredentialSource,
     EffectivePermissions,
     SocrataCredential,
     UDataCredential,
@@ -57,6 +61,20 @@ class _AsyncProbeRunner:
         )
 
 
+class _FailingResolver(CredentialResolver):
+    async def resolve_async(self) -> object:
+        raise AssertionError("resolver methods must not be invoked for explicit credentials")
+
+    def resolve(
+        self,
+        discovered: Mapping[CredentialSource, CatalogCredential],
+        *,
+        policy: CredentialResolutionPolicy | None = None,
+    ) -> CatalogCredential | None:
+        del discovered, policy
+        raise AssertionError("resolver methods must not be invoked for explicit credentials")
+
+
 def test_async_client_dispatches_dataset_get_and_closes_once() -> None:
     async def exercise() -> _AsyncTransport:
         transport = _AsyncTransport()
@@ -70,6 +88,19 @@ def test_async_client_dispatches_dataset_get_and_closes_once() -> None:
 
     transport = asyncio.run(exercise())
     assert transport.close_count == 1
+
+
+def test_async_client_dispatches_after_a_successful_probe() -> None:
+    async def exercise() -> tuple[int, int]:
+        transport = _AsyncTransport()
+        runner = _AsyncProbeRunner(ProbeResponseClass.SUCCESS)
+        client = AsyncCatalogClient(transport, _profile(), probe_runner=runner)
+
+        assert (await client.datasets.get(_request(), _guard())).items[0].name == "Fixture dataset"
+        await client.aclose()
+        return runner.calls, len(transport.requests)
+
+    assert asyncio.run(exercise()) == (1, 1)
 
 
 def test_async_client_matches_sync_guard_and_error_semantics() -> None:
@@ -87,8 +118,12 @@ def test_async_client_matches_sync_guard_and_error_semantics() -> None:
             async def send(self, request: RuntimeRequest) -> RuntimeResponse:
                 return RuntimeResponse(404, {}, b"")
 
-        with pytest.raises(CatalogNotFoundError):
-            await AsyncCatalogClient(_NotFoundTransport(), _profile()).datasets.get(_request(), _guard())
+        not_found = AsyncCatalogClient(_NotFoundTransport(), _profile())
+        try:
+            with pytest.raises(CatalogNotFoundError):
+                await not_found.datasets.get(_request(), _guard())
+        finally:
+            await not_found.aclose()
 
     asyncio.run(exercise())
 
@@ -154,7 +189,7 @@ def test_async_client_allowed_caller_guard_does_not_bypass_denied_effective_capa
     ("credentials", "header", "value"),
     [
         (SocrataCredential(app_token="async-app"), "X-App-Token", "async-app"),
-        (CredentialResolver(explicit=UDataCredential(api_key="async-key")), "X-API-KEY", "async-key"),
+        (_FailingResolver(explicit=UDataCredential(api_key="async-key")), "X-API-KEY", "async-key"),
     ],
 )
 def test_async_client_honors_static_and_resolver_credentials_without_resolve_async(
@@ -207,3 +242,13 @@ def test_async_client_context_exit_keeps_borrowed_transport_open() -> None:
     close_count, dispatches = asyncio.run(exercise())
     assert close_count == 0
     assert dispatches == 1
+
+
+def test_async_client_context_exit_closes_owned_transport_once() -> None:
+    async def exercise() -> int:
+        transport = _AsyncTransport()
+        async with AsyncCatalogClient(transport, _profile()) as client:
+            await client.datasets.get(_request(), _guard())
+        return transport.close_count
+
+    assert asyncio.run(exercise()) == 1

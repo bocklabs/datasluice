@@ -129,6 +129,26 @@ def test_filter_return_value_always_true() -> None:
     assert RedactingFilter().filter(plain) is True
 
 
+def test_filter_fails_closed_for_extras_beyond_the_metadata_bound() -> None:
+    attrs = {f"field_{index}": "safe" for index in range(33)}
+    attrs["authorization"] = "Bearer raw-secret-value"
+    record = _make_record(**attrs)
+
+    RedactingFilter().filter(record)
+
+    assert record.__dict__["authorization"] == "***"
+
+
+def test_filter_preserves_non_mapping_log_arguments_verbatim() -> None:
+    payload = "x" * 1000
+    record = _make_record()
+    record.args = (payload, ["one", "two"])
+
+    RedactingFilter().filter(record)
+
+    assert record.args == (payload, ["one", "two"])
+
+
 # --------------------------------------------------------------------------- #
 # configure_logging attachment
 # --------------------------------------------------------------------------- #

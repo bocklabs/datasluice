@@ -9,5 +9,85 @@
     "response_class": "success",
     "sanitized": true
   },
-  "mutation_evidence": "controlled-environment-only"
+  "mutation_evidence": "controlled-environment-only",
+  "controlled_stack": {
+    "captured_at": "2026-08-23",
+    "local_only": true,
+    "ckan_version_reported": "2.11.5",
+    "origin_class": "loopback",
+    "identity_presence": {
+      "datasluice-sysadmin": true,
+      "datasluice-org-admin": true,
+      "datasluice-user": true
+    },
+    "images": [
+      {
+        "reference": "ckan/ckan-base:2.11.5",
+        "digest": "ckan/ckan-base@sha256:0bf06c0d05a761696295247a63ce01846b6798febe6ebb91288e29120de102be"
+      },
+      {
+        "reference": "ckan/ckan-solr:2.11-solr9",
+        "digest": "ckan/ckan-solr@sha256:ef8e5d3e6be1678cfe50ceb14a8ebf16c36d44aac2de1086a285ce6807af64e6"
+      },
+      {
+        "reference": "postgres:17",
+        "digest": "postgres@sha256:e38411452a464af89e5adadb8d223bf53b898d47d6ef918b2d58c08707350449"
+      },
+      {
+        "reference": "redis:8",
+        "digest": "redis@sha256:691577adaf11927f4bb8871d40a5dd69a5c300d4453b742e8f6383c3e6e8d2e1"
+      }
+    ],
+    "bulk_run": {
+      "operation": "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
+      "bulk_count": 5,
+      "duration_seconds_total": 1.11,
+      "phases": [
+        {
+          "mode": "create",
+          "item_receipt_indexes": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "item_outcomes": [
+            "succeeded",
+            "succeeded",
+            "succeeded",
+            "succeeded",
+            "succeeded"
+          ],
+          "checkpoints_recorded": 5,
+          "last_checkpoint_settled": 5,
+          "state": "completed",
+          "succeeded": 5,
+          "failed": 0
+        },
+        {
+          "mode": "delete",
+          "item_receipt_indexes": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "item_outcomes": [
+            "succeeded",
+            "succeeded",
+            "succeeded",
+            "succeeded",
+            "succeeded"
+          ],
+          "checkpoints_recorded": 5,
+          "last_checkpoint_settled": 5,
+          "state": "completed",
+          "succeeded": 5,
+          "failed": 0
+        }
+      ]
+    }
+  }
 }

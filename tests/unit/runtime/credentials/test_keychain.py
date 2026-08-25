@@ -123,11 +123,13 @@ def test_keychain_backend_errors_redact_credential_shaped_cause_chain(
 
 
 def _redaction_surface(error: BaseException) -> str:
-    """Render the message, exception-only traceback, and full cause chain of *error*."""
+    """Render the message, exception-only traceback, and visible exception chain of *error*."""
     surfaces = [str(error), *traceback.format_exception_only(type(error), error)]
-    cause: BaseException | None = error.__cause__
-    while cause is not None:
-        surfaces.append(str(cause))
-        surfaces.extend(traceback.format_exception_only(type(cause), cause))
-        cause = cause.__cause__
+    linked: BaseException | None = error.__cause__
+    if linked is None and not error.__suppress_context__:
+        linked = error.__context__
+    while linked is not None:
+        surfaces.append(str(linked))
+        surfaces.extend(traceback.format_exception_only(type(linked), linked))
+        linked = linked.__cause__
     return "\n".join(surfaces)

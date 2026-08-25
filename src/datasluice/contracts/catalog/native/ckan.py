@@ -5,10 +5,19 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
-from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import NativeCatalogError
 
-type CKANResult = ResultEnvelope[NativeRecord]
+
+class CKANSecretResultItem(Protocol):
+    """Structural item contract for reveal-only CKAN secret results."""
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a redacted serialization that never reveals the secret."""
+
+
+type CKANResultItem = NativeRecord | ValueRecord | MappingRecord | CKANSecretResultItem
+type CKANResult = ResultEnvelope[CKANResultItem]
 
 
 @runtime_checkable

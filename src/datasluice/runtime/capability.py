@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -73,7 +74,7 @@ class EffectiveCapabilityCache:
         ttl_seconds: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         clock: Callable[[], float] = monotonic,
     ) -> None:
-        if type(ttl_seconds) not in (int, float) or ttl_seconds != ttl_seconds or ttl_seconds < 0:
+        if type(ttl_seconds) not in (int, float) or not math.isfinite(ttl_seconds) or ttl_seconds < 0:
             raise ValueError("Capability cache TTL must be a finite non-negative number.")
         self._declared_profile = (
             profile.declared_profile if isinstance(profile, EffectiveCapabilityProfile) else profile

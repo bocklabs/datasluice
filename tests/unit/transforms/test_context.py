@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from datasluice.transforms import TransformContext  # noqa: E402
+from datasluice.transforms import TransformContext
 
 
 def test_context_is_frozen() -> None:

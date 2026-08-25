@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from datasluice.domain.catalog.ids import CatalogId
 from datasluice.domain.catalog.models import _contract_error, _freeze_json, _object_dict, _thaw_json
-from datasluice.domain.catalog.redaction import (
-    AUTH_SCHEME_RE,
-    SENSITIVE_QUERY_KEYS,
-    USERINFO_RE,
-    redact_string,
-)
+from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 
 _ATOMICITIES = frozenset({"atomic", "independent"})
 _OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "skipped"})
@@ -36,27 +30,10 @@ _SENSITIVE_KEY_PARTS = (
     "header",
     "body",
 )
-_RECEIPT_CREDENTIAL_KEYS = (
-    "access_token",
-    "api_token",
-    "app_token",
-    "refresh_token",
-    "auth_token",
-    "session_token",
-    "client_secret",
-    "password",
-)
-_SENSITIVE_KEY_VARIANTS = frozenset(
-    variant
-    for key in (*_RECEIPT_CREDENTIAL_KEYS, *SENSITIVE_QUERY_KEYS)
-    for variant in (key, key.replace("-", "_"), key.replace("_", "-"))
-)
-_SENSITIVE_KEY_ALTERNATION = "|".join(re.escape(key) for key in sorted(_SENSITIVE_KEY_VARIANTS, key=len, reverse=True))
-_SENSITIVE_KEY_ASSIGNMENT_RE = re.compile(rf"(^|[^a-z0-9_-])(?:{_SENSITIVE_KEY_ALTERNATION})=[^&;\s]+", re.IGNORECASE)
 
 
 def _contains_credential_value(value: str) -> bool:
-    return bool(USERINFO_RE.search(value) or _SENSITIVE_KEY_ASSIGNMENT_RE.search(value) or AUTH_SCHEME_RE.search(value))
+    return contains_credential_content(value)
 
 
 def _required_text(value: object, path: str) -> str:
