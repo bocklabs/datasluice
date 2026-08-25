@@ -32,6 +32,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: publish-${{ inputs.component }}-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -46,6 +50,28 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Guard publish inputs
+        env:
+          COMPONENT: ${{ inputs.component }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          PACKAGE_PATH: ${{ inputs.package_path }}
+          TESTPYPI_ENVIRONMENT: ${{ inputs.testpypi_environment }}
+          PYPI_ENVIRONMENT: ${{ inputs.pypi_environment }}
+        run: |
+          python3 - "$COMPONENT" "$PACKAGE_NAME" "$PACKAGE_PATH" "$TESTPYPI_ENVIRONMENT" "$PYPI_ENVIRONMENT" <<'PY'
+          import json
+          import sys
+
+          component, package_name, package_path, testpypi, pypi = sys.argv[1:6]
+          allowed = {("core", "datasluice", ".", "test-pypi", "pypi")}
+          with open("providers/registry.json", encoding="utf-8") as fh:
+              allowed |= {
+                  (p["slug"], p["package_name"], p["path"], p["testpypi_env"], p["pypi_env"])
+                  for p in json.load(fh)["providers"]
+              }
+          if (component, package_name, package_path, testpypi, pypi) not in allowed:
+              sys.exit(f"Unexpected component/package/path/environments: {component}/{package_name}/{package_path}/{testpypi}/{pypi}")
+          PY
       - name: Verify ref is the release tag
         env:
           PACKAGE_NAME: ${{ inputs.package_name }}
@@ -60,21 +86,6 @@ jobs:
             echo "HEAD does not match ${tag}" >&2
             exit 1
           }
-      - name: Guard publish inputs
-        env:
-          COMPONENT: ${{ inputs.component }}
-          PACKAGE_NAME: ${{ inputs.package_name }}
-          PACKAGE_PATH: ${{ inputs.package_path }}
-          TESTPYPI_ENVIRONMENT: ${{ inputs.testpypi_environment }}
-          PYPI_ENVIRONMENT: ${{ inputs.pypi_environment }}
-        run: |
-          case "${COMPONENT}:${PACKAGE_NAME}:${PACKAGE_PATH}:${TESTPYPI_ENVIRONMENT}:${PYPI_ENVIRONMENT}" in
-            core:datasluice:.:test-pypi:pypi | airflow:apache-airflow-providers-datasluice:providers/apache-airflow:airflow-test-pypi:airflow-pypi) ;;
-            *)
-              echo "Unexpected component/package/path/environments: ${COMPONENT}/${PACKAGE_NAME}/${PACKAGE_PATH}/${TESTPYPI_ENVIRONMENT}/${PYPI_ENVIRONMENT}" >&2
-              exit 1
-              ;;
-          esac
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           enable-cache: false
