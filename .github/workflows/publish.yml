@@ -2,7 +2,7 @@ name: Publish package
 
 on:
   workflow_call:
-    inputs:
+    inputs: &publish-inputs
       component:
         required: true
         type: string
@@ -25,28 +25,7 @@ on:
         required: true
         type: string
   workflow_dispatch:
-    inputs:
-      component:
-        required: true
-        type: string
-      package_path:
-        required: true
-        type: string
-      package_name:
-        required: true
-        type: string
-      version:
-        required: true
-        type: string
-      ref:
-        required: true
-        type: string
-      testpypi_environment:
-        required: true
-        type: string
-      pypi_environment:
-        required: true
-        type: string
+    inputs: *publish-inputs
 
 permissions:
   actions: read
@@ -71,17 +50,28 @@ jobs:
         env:
           PACKAGE_NAME: ${{ inputs.package_name }}
           VERSION: ${{ inputs.version }}
-        run: test "$(git rev-parse "refs/tags/${PACKAGE_NAME}-v${VERSION}^{commit}")" = "$(git rev-parse HEAD)"
-      - name: Guard publish environments
+        run: |
+          tag="refs/tags/${PACKAGE_NAME}-v${VERSION}"
+          expected="$(git rev-parse "${tag}^{commit}" 2>/dev/null)" || {
+            echo "Release tag ${tag} not found" >&2
+            exit 1
+          }
+          test "${expected}" = "$(git rev-parse HEAD)" || {
+            echo "HEAD does not match ${tag}" >&2
+            exit 1
+          }
+      - name: Guard publish inputs
         env:
           COMPONENT: ${{ inputs.component }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          PACKAGE_PATH: ${{ inputs.package_path }}
           TESTPYPI_ENVIRONMENT: ${{ inputs.testpypi_environment }}
           PYPI_ENVIRONMENT: ${{ inputs.pypi_environment }}
         run: |
-          case "${COMPONENT}:${TESTPYPI_ENVIRONMENT}:${PYPI_ENVIRONMENT}" in
-            core:test-pypi:pypi | airflow:airflow-test-pypi:airflow-pypi) ;;
+          case "${COMPONENT}:${PACKAGE_NAME}:${PACKAGE_PATH}:${TESTPYPI_ENVIRONMENT}:${PYPI_ENVIRONMENT}" in
+            core:datasluice:.:test-pypi:pypi | airflow:apache-airflow-providers-datasluice:providers/apache-airflow:airflow-test-pypi:airflow-pypi) ;;
             *)
-              echo "Unexpected component/environments: ${COMPONENT}/${TESTPYPI_ENVIRONMENT}/${PYPI_ENVIRONMENT}" >&2
+              echo "Unexpected component/package/path/environments: ${COMPONENT}/${PACKAGE_NAME}/${PACKAGE_PATH}/${TESTPYPI_ENVIRONMENT}/${PYPI_ENVIRONMENT}" >&2
               exit 1
               ;;
           esac
