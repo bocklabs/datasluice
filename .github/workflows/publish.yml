@@ -60,15 +60,21 @@ jobs:
         run: |
           python3 - "$COMPONENT" "$PACKAGE_NAME" "$PACKAGE_PATH" "$TESTPYPI_ENVIRONMENT" "$PYPI_ENVIRONMENT" <<'PY'
           import json
+          import subprocess
           import sys
 
           component, package_name, package_path, testpypi, pypi = sys.argv[1:6]
           allowed = {("core", "datasluice", ".", "test-pypi", "pypi")}
-          with open("providers/registry.json", encoding="utf-8") as fh:
-              allowed |= {
-                  (p["slug"], p["package_name"], p["path"], p["testpypi_env"], p["pypi_env"])
-                  for p in json.load(fh)["providers"]
-              }
+          trusted = subprocess.run(
+              ["git", "show", "origin/main:providers/registry.json"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          allowed |= {
+              (p["slug"], p["package_name"], p["path"], p["testpypi_env"], p["pypi_env"])
+              for p in json.loads(trusted)["providers"]
+          }
           if (component, package_name, package_path, testpypi, pypi) not in allowed:
               sys.exit(f"Unexpected component/package/path/environments: {component}/{package_name}/{package_path}/{testpypi}/{pypi}")
           PY
