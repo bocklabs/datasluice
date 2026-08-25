@@ -65,7 +65,26 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify ref is the release tag
+        env:
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          VERSION: ${{ inputs.version }}
+        run: test "$(git rev-parse "refs/tags/${PACKAGE_NAME}-v${VERSION}^{commit}")" = "$(git rev-parse HEAD)"
+      - name: Guard publish environments
+        env:
+          COMPONENT: ${{ inputs.component }}
+          TESTPYPI_ENVIRONMENT: ${{ inputs.testpypi_environment }}
+          PYPI_ENVIRONMENT: ${{ inputs.pypi_environment }}
+        run: |
+          case "${COMPONENT}:${TESTPYPI_ENVIRONMENT}:${PYPI_ENVIRONMENT}" in
+            core:test-pypi:pypi | airflow:airflow-test-pypi:airflow-pypi) ;;
+            *)
+              echo "Unexpected component/environments: ${COMPONENT}/${TESTPYPI_ENVIRONMENT}/${PYPI_ENVIRONMENT}" >&2
+              exit 1
+              ;;
+          esac
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
         with:
           enable-cache: false
