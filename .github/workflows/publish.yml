@@ -24,6 +24,29 @@ on:
       pypi_environment:
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      component:
+        required: true
+        type: string
+      package_path:
+        required: true
+        type: string
+      package_name:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      testpypi_environment:
+        required: true
+        type: string
+      pypi_environment:
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -49,7 +72,7 @@ jobs:
       - name: Build distribution
         env:
           PACKAGE_PATH: ${{ inputs.package_path }}
-        run: uv build --no-sources "$PACKAGE_PATH"
+        run: uv build --no-sources --out-dir dist "$PACKAGE_PATH"
       - run: uvx twine check dist/*
       - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
