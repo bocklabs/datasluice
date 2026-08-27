@@ -230,6 +230,7 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
     assert oracle.PINNED_COMMIT in dockerfile
     assert "ghcr.io/astral-sh/uv:0.12.5@sha256:" in dockerfile
     assert "python:3.13-slim-bookworm@sha256:" in dockerfile
+    assert "flask-caching==2.3.1" in dockerfile
     output = tmp_path / "capture.json"
     capture.write_capture("http://127.0.0.1:5640", "17.6.0", output)
     record = json.loads(output.read_text(encoding="utf-8"))
