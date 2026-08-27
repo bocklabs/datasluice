@@ -224,6 +224,7 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
     assert len(images) == 5
     assert all("@sha256:" in image for image in images)
     assert "127.0.0.1:" in text
+    assert "HOME: /tmp" in text
     assert "volumes:" not in text
     assert "mongo" in text and "redis" in text and "elasticsearch" in text and "minio" in text and "mailpit" in text
     assert oracle.PINNED_COMMIT in dockerfile
