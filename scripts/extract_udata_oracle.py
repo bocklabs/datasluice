@@ -47,25 +47,6 @@ def _source_commit(source_root: Path) -> str:
     return completed.stdout.strip()
 
 
-def _api_modules(source_root: Path) -> list[str]:
-    """Return the stock API modules registered by uData's API initializer."""
-    initializer = source_root / "udata" / "api" / "__init__.py"
-    try:
-        tree = ast.parse(initializer.read_text(encoding="utf-8"), filename=str(initializer))
-    except (OSError, SyntaxError) as error:
-        raise ReconciliationError("unable to parse uData API initializer") from error
-    modules: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            modules.update(
-                alias.name for alias in node.names if alias.name.startswith("udata.") and ".api" in alias.name
-            )
-        elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("udata."):
-            if ".api" in node.module:
-                modules.add(node.module)
-    return sorted(modules)
-
-
 def _module_path(source_root: Path, module: str) -> Path:
     """Resolve an imported upstream module without importing application code."""
     path = source_root.joinpath(*module.split("."))
@@ -76,6 +57,69 @@ def _module_path(source_root: Path, module: str) -> Path:
     raise ReconciliationError(f"registered API module is missing from source checkout: {module}")
 
 
+def _ancestor_packages(module: str) -> list[str]:
+    """Return the ancestor packages Python executes before importing a module."""
+    parts = module.split(".")
+    return [".".join(parts[:index]) for index in range(1, len(parts))]
+
+
+def _module_imports(tree: ast.AST, module: str) -> set[str]:
+    """Return every udata module imported anywhere inside a parsed module."""
+    imports: set[str] = set()
+    parts = module.split(".")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names if alias.name.startswith("udata."))
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                package = parts[: max(len(parts) - node.level, 1)]
+                base = ".".join(package)
+                if node.module:
+                    imports.add(f"{base}.{node.module}")
+                    for alias in node.names:
+                        imports.add(f"{base}.{node.module}.{alias.name}")
+                else:
+                    for alias in node.names:
+                        imports.add(f"{base}.{alias.name}")
+            elif node.module and node.module.startswith("udata"):
+                imports.add(node.module)
+                for alias in node.names:
+                    imports.add(f"{node.module}.{alias.name}")
+    return {name for name in imports if len(name.split(".")) > 1}
+
+
+def _stock_modules(source_root: Path) -> list[str]:
+    """Discover the transitive import closure started by uData's API initializer."""
+    initializer = source_root / "udata" / "api" / "__init__.py"
+    try:
+        tree = ast.parse(initializer.read_text(encoding="utf-8"), filename=str(initializer))
+    except (OSError, SyntaxError) as error:
+        raise ReconciliationError("unable to parse uData API initializer") from error
+    queue = sorted(_module_imports(tree, "udata.api"))
+    closure: set[str] = set()
+    while queue:
+        module = queue.pop()
+        if module in closure:
+            continue
+        candidates = [module, *_ancestor_packages(module)]
+        for candidate in candidates:
+            if candidate in closure:
+                continue
+            path = source_root.joinpath(*candidate.split("."))
+            module_path = path.with_suffix(".py")
+            package_path = path / "__init__.py"
+            if not module_path.is_file() and not package_path.is_file():
+                continue
+            closure.add(candidate)
+            parse_path = module_path if module_path.is_file() else package_path
+            try:
+                candidate_tree = ast.parse(parse_path.read_text(encoding="utf-8"), filename=str(parse_path))
+            except (OSError, SyntaxError) as error:
+                raise ReconciliationError(f"unable to parse stock module {candidate}") from error
+            queue.extend(sorted(_module_imports(candidate_tree, candidate)))
+    return sorted(closure)
+
+
 def _string_constant(node: ast.AST) -> str:
     """Read a string literal from a static source expression."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -83,18 +127,107 @@ def _string_constant(node: ast.AST) -> str:
     raise ReconciliationError("stock API route declarations must use literal paths and namespaces")
 
 
-def _methods(node: ast.Call, route_target: ast.AST) -> tuple[str, ...]:
+def _own_http_methods(class_def: ast.ClassDef) -> set[str]:
+    """Return the literal HTTP verbs implemented directly by a class."""
+    return {
+        item.name.upper()
+        for item in class_def.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.upper() in ALLOWED_METHODS
+    }
+
+
+def _imported_names(tree: ast.AST, module: str) -> dict[str, str]:
+    """Map imported names to the absolute udata module providing them."""
+    names: dict[str, str] = {}
+    parts = module.split(".")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level:
+            package = parts[: max(len(parts) - node.level, 1)]
+            base = ".".join(package)
+            absolute = f"{base}.{node.module}" if node.module else base
+        elif node.module:
+            absolute = node.module
+        else:
+            continue
+        if not absolute.startswith("udata"):
+            continue
+        for alias in node.names:
+            names.setdefault(alias.name, absolute)
+    return names
+
+
+def _class_definitions(tree: ast.Module) -> dict[str, ast.ClassDef]:
+    """Index top-level classes declared in one module."""
+    return {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+
+
+def _resolve_base_class(
+    source_root: Path,
+    module: str,
+    tree: ast.Module,
+    class_registry: dict[str, tuple[str, ast.Module, ast.ClassDef]],
+    name: str,
+) -> tuple[str, ast.Module, ast.ClassDef] | None:
+    """Resolve a route class base locally or through its importing statement."""
+    local = _class_definitions(tree).get(name)
+    if local is not None:
+        return module, tree, local
+    imported = _imported_names(tree, module).get(name)
+    if imported is None:
+        return None
+    cached = class_registry.get(f"{imported}:{name}")
+    if cached is not None:
+        return cached
+    try:
+        base_path = _module_path(source_root, imported)
+        base_tree = ast.parse(base_path.read_text(encoding="utf-8"), filename=str(base_path))
+    except (OSError, SyntaxError, ReconciliationError):
+        return None
+    base_class = _class_definitions(base_tree).get(name)
+    if base_class is None:
+        return None
+    resolved = (imported, base_tree, base_class)
+    class_registry[f"{imported}:{name}"] = resolved
+    return resolved
+
+
+def _inherited_http_methods(
+    source_root: Path,
+    module: str,
+    tree: ast.Module,
+    class_def: ast.ClassDef,
+    class_registry: dict[str, tuple[str, ast.Module, ast.ClassDef]],
+    stack: frozenset[str],
+) -> set[str]:
+    """Collect HTTP verbs from a class and every resolvable udata base class."""
+    methods = _own_http_methods(class_def)
+    key = f"{module}:{class_def.name}"
+    if key in stack:
+        return methods
+    for base in class_def.bases:
+        if not isinstance(base, ast.Name):
+            continue
+        resolved = _resolve_base_class(source_root, module, tree, class_registry, base.id)
+        if resolved is None:
+            continue
+        base_module, base_tree, base_class = resolved
+        methods.update(
+            _inherited_http_methods(source_root, base_module, base_tree, base_class, class_registry, stack | {key})
+        )
+    return methods
+
+
+def _methods(node: ast.Call, route_target: ast.AST, inherited: set[str] | None = None) -> tuple[str, ...]:
     """Read a route decorator's literal HTTP methods."""
     methods = next((item.value for item in node.keywords if item.arg == "methods"), None)
     if methods is None:
         if isinstance(route_target, ast.ClassDef):
-            class_methods = tuple(
-                item.name.upper()
-                for item in route_target.body
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name.upper() in ALLOWED_METHODS
-            )
+            class_methods = inherited or _own_http_methods(route_target)
             if class_methods:
-                return class_methods
+                return tuple(sorted(class_methods))
+            raise ReconciliationError("decorated API class exposes no HTTP methods")
         return ("GET",)
     if not isinstance(methods, (ast.List, ast.Tuple)):
         raise ReconciliationError("stock API route methods must be a literal list or tuple")
@@ -132,6 +265,7 @@ def _decorated_routes(
     prefixes: Mapping[str, tuple[str, str]],
     module: str,
     owner: str | None = None,
+    inherited: set[str] | None = None,
 ) -> list[dict[str, str]]:
     """Extract route methods and source signatures from a decorated AST node."""
     routes: list[dict[str, str]] = []
@@ -149,7 +283,7 @@ def _decorated_routes(
         route_path = _string_constant(decorator.args[0])
         full_path = f"{prefix[0]}/{route_path.lstrip('/')}"
         signature = f"{module}:{owner or getattr(node, 'name', '<unknown>')}"
-        for method in _methods(decorator, node):
+        for method in _methods(decorator, node, inherited=inherited):
             routes.append(
                 {
                     "api_version": prefix[1],
@@ -161,7 +295,9 @@ def _decorated_routes(
     return routes
 
 
-def _module_routes(source_root: Path, module: str) -> list[dict[str, str]]:
+def _module_routes(
+    source_root: Path, module: str, class_registry: dict[str, tuple[str, ast.Module, ast.ClassDef]]
+) -> list[dict[str, str]]:
     """Extract literal route declarations from one registered stock API module."""
     path = _module_path(source_root, module)
     try:
@@ -172,9 +308,10 @@ def _module_routes(source_root: Path, module: str) -> list[dict[str, str]]:
     routes: list[dict[str, str]] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            routes.extend(_decorated_routes(node, prefixes=prefixes, module=module))
+            routes.extend(_decorated_routes(node, prefixes=prefixes, module=module, inherited=None))
         elif isinstance(node, ast.ClassDef):
-            routes.extend(_decorated_routes(node, prefixes=prefixes, module=module))
+            inherited = _inherited_http_methods(source_root, module, tree, node, class_registry, frozenset())
+            routes.extend(_decorated_routes(node, prefixes=prefixes, module=module, inherited=inherited))
     return routes
 
 
@@ -183,7 +320,10 @@ def extract_source_document(source_root: Path) -> dict[str, Any]:
     commit = _source_commit(source_root)
     if commit != PINNED_COMMIT:
         raise PinnedSourceError(f"source commit must equal pinned commit {PINNED_COMMIT}")
-    routes = [route for module in _api_modules(source_root) for route in _module_routes(source_root, module)]
+    class_registry: dict[str, tuple[str, ast.Module, ast.ClassDef]] = {}
+    routes = [
+        route for module in _stock_modules(source_root) for route in _module_routes(source_root, module, class_registry)
+    ]
     route_keys = [_route_key(route) for route in routes]
     if len(route_keys) != len(set(route_keys)):
         raise ReconciliationError("pinned source extraction contains duplicate route methods")
@@ -210,7 +350,9 @@ def _route_key(route: Mapping[str, Any]) -> tuple[str, str, str]:
         raise ReconciliationError("route path must be an absolute path")
     if not isinstance(api_version, str) or api_version not in {"v1", "v2", "oauth"}:
         raise ReconciliationError("route api_version must be v1, v2, or oauth")
-    return method, path, api_version
+    canonical_path = re.sub(r"\{([^}/]+)\}", r"<\1>", path)
+    canonical_path = re.sub(r"<[^</:]+:([^/>]+)>", r"<\1>", canonical_path)
+    return method, canonical_path, api_version
 
 
 def load_route_document(path: Path, *, require_pinned_commit: bool = False) -> dict[str, Any]:
@@ -235,7 +377,7 @@ def load_route_document(path: Path, *, require_pinned_commit: bool = False) -> d
 
 
 def reconcile_route_documents(source: Path, swagger: Path, url_map: Path) -> dict[str, Any]:
-    """Fail closed unless all three independently captured route sets are identical."""
+    """Fail closed unless every capture channel matches its observable source scope."""
     documents = {
         "source": load_route_document(source, require_pinned_commit=True),
         "swagger": load_route_document(swagger),
@@ -243,11 +385,18 @@ def reconcile_route_documents(source: Path, swagger: Path, url_map: Path) -> dic
     }
     route_sets = {name: {_route_key(route) for route in document["routes"]} for name, document in documents.items()}
     baseline = route_sets["source"]
+    swagger_scope = {route for route in baseline if route[2] != "oauth"}
     disagreements = {
-        name: {"missing": sorted(baseline - routes), "extra": sorted(routes - baseline)}
-        for name, routes in route_sets.items()
-        if routes != baseline
+        "url_map": {
+            "missing": sorted(baseline - route_sets["url_map"]),
+            "extra": sorted(route_sets["url_map"] - baseline),
+        },
+        "swagger": {
+            "missing": sorted(swagger_scope - route_sets["swagger"]),
+            "extra": sorted(route_sets["swagger"] - swagger_scope),
+        },
     }
+    disagreements = {name: delta for name, delta in disagreements.items() if delta["missing"] or delta["extra"]}
     if disagreements:
         names = ", ".join(sorted(disagreements))
         raise ReconciliationError(f"route reconciliation disagrees with {names}: {disagreements}")
@@ -358,6 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verify-preflight", type=Path)
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--source-output", type=Path)
+    parser.add_argument("--exclude-namespace", action="append", default=[])
     return parser
 
 
@@ -373,6 +523,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if any((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
             raise SystemExit("source extraction cannot be combined with route reconciliation arguments")
         document = extract_source_document(args.source_root)
+        if args.exclude_namespace:
+            document = {
+                **document,
+                "routes": [
+                    route
+                    for route in document["routes"]
+                    if not any(
+                        route["path"] == namespace or route["path"].startswith(namespace + "/")
+                        for namespace in args.exclude_namespace
+                    )
+                ],
+                "excluded_namespaces": sorted(args.exclude_namespace),
+            }
         write_source_document(args.source_output, document)
         print(json.dumps({key: value for key, value in document.items() if key != "routes"}, sort_keys=True))
         return 0

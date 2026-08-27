@@ -27,6 +27,12 @@ assert _seed_spec is not None and _seed_spec.loader is not None
 seed = importlib.util.module_from_spec(_seed_spec)
 _seed_spec.loader.exec_module(seed)
 
+ROUTE_CAPTURE_PATH = Path(__file__).resolve().parents[4] / "scripts" / "capture_udata_route_documents.py"
+_route_capture_spec = importlib.util.spec_from_file_location("capture_udata_routes", ROUTE_CAPTURE_PATH)
+assert _route_capture_spec is not None and _route_capture_spec.loader is not None
+route_capture = importlib.util.module_from_spec(_route_capture_spec)
+_route_capture_spec.loader.exec_module(route_capture)
+
 
 def _write_routes(path: Path, routes: list[dict[str, str]], *, commit: str | None = None) -> None:
     document: dict[str, object] = {"schema_version": 1, "routes": routes}
@@ -259,3 +265,140 @@ def test_seed_roles_only_executes_the_fixed_loopback_compose_target(
     ]
     with pytest.raises(ValueError, match="127.0.0.1"):
         seed.seed_roles("http://localhost:5640", compose)
+
+
+def test_extract_source_document_inherits_base_class_http_methods(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "udata-source"
+    api_init = source_root / "udata" / "api" / "__init__.py"
+    base_module = source_root / "udata" / "core" / "followers" / "api.py"
+    module = source_root / "udata" / "core" / "dataset" / "api.py"
+    api_init.parent.mkdir(parents=True)
+    base_module.parent.mkdir(parents=True)
+    module.parent.mkdir(parents=True)
+    api_init.write_text("def init_app(app):\n    import udata.core.dataset.api\n", encoding="utf-8")
+    base_module.write_text(
+        "from udata.api import API\n\n"
+        "class FollowAPI(API):\n"
+        "    def get(self, id):\n        return {}\n\n"
+        "    def post(self, id):\n        return {}\n\n"
+        "    def delete(self, id):\n        return {}\n",
+        encoding="utf-8",
+    )
+    module.write_text(
+        "from udata.api import api\n"
+        "from udata.core.followers.api import FollowAPI\n\n"
+        "@api.route('/datasets/<id>/followers/')\n"
+        "class DatasetFollowersAPI(FollowAPI):\n"
+        "    model = None\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(oracle, "_source_commit", lambda path: oracle.PINNED_COMMIT)
+
+    document = oracle.extract_source_document(source_root)
+
+    followers = [route for route in document["routes"] if "followers" in route["path"]]
+    assert {route["method"] for route in followers} == {"GET", "POST", "DELETE"}
+    assert followers[0]["signature"] == "udata.core.dataset.api:DatasetFollowersAPI"
+
+
+def test_extract_source_document_follows_transitive_stock_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "udata-source"
+    api_init = source_root / "udata" / "api" / "__init__.py"
+    importer = source_root / "udata" / "core" / "dataset" / "api.py"
+    extension = source_root / "udata" / "core" / "captcha.py"
+    api_init.parent.mkdir(parents=True)
+    importer.parent.mkdir(parents=True)
+    api_init.write_text("def init_app(app):\n    import udata.core.dataset.api\n", encoding="utf-8")
+    importer.write_text("import udata.core.captcha\n", encoding="utf-8")
+    extension.write_text(
+        "from udata.api import apiv2\n\n"
+        "ns = apiv2.namespace('captcha', 'Captcha operations')\n\n"
+        "@ns.route('/')\n"
+        "class CaptchaAPI:\n"
+        "    def get(self):\n        return {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(oracle, "_source_commit", lambda path: oracle.PINNED_COMMIT)
+
+    document = oracle.extract_source_document(source_root)
+
+    assert document["routes"] == [
+        {
+            "api_version": "v2",
+            "method": "GET",
+            "path": "/api/2/captcha/",
+            "signature": "udata.core.captcha:CaptchaAPI",
+        }
+    ]
+
+
+def test_reconcile_canonicalizes_converter_and_swagger_path_spellings(tmp_path: Path) -> None:
+    source = tmp_path / "source.json"
+    swagger = tmp_path / "swagger.json"
+    url_map = tmp_path / "url-map.json"
+    _write_routes(
+        source,
+        [{"method": "GET", "path": "/api/1/datasets/<dataset:dataset>/", "api_version": "v1"}],
+        commit=oracle.PINNED_COMMIT,
+    )
+    _write_routes(swagger, [{"method": "GET", "path": "/api/1/datasets/{dataset}/", "api_version": "v1"}])
+    _write_routes(url_map, [{"method": "GET", "path": "/api/1/datasets/<dataset>/", "api_version": "v1"}])
+
+    result = oracle.reconcile_route_documents(source, swagger, url_map)
+
+    assert result["route_count"] == 1
+
+
+def test_reconcile_lets_swagger_omit_only_the_oauth_blueprint(tmp_path: Path) -> None:
+    source = tmp_path / "source.json"
+    swagger = tmp_path / "swagger.json"
+    url_map = tmp_path / "url-map.json"
+    routes = [
+        {"method": "GET", "path": "/api/1/site/", "api_version": "v1"},
+        {"method": "POST", "path": "/oauth/token", "api_version": "oauth"},
+    ]
+    _write_routes(source, routes, commit=oracle.PINNED_COMMIT)
+    _write_routes(swagger, [routes[0]])
+    _write_routes(url_map, routes)
+
+    assert oracle.reconcile_route_documents(source, swagger, url_map)["route_count"] == 2
+
+    _write_routes(swagger, [])
+    with pytest.raises(oracle.ReconciliationError, match="swagger"):
+        oracle.reconcile_route_documents(source, swagger, url_map)
+
+
+def test_url_map_capture_filters_infrastructure_and_scoped_namespaces(tmp_path: Path) -> None:
+    raw = tmp_path / "raw.json"
+    raw.write_text(
+        json.dumps(
+            [
+                {"path": "/api/1/", "method": "GET", "endpoint": "api.doc"},
+                {"path": "/api/1/swagger.json", "method": "GET", "endpoint": "api.specs"},
+                {"path": "/api/1/proconnect/auth", "method": "GET", "endpoint": "api.proconnect_auth"},
+                {"path": "/api/1/site/", "method": "GET", "endpoint": "api.site"},
+                {"path": "/api/1/site/", "method": "OPTIONS", "endpoint": "api.site"},
+                {"path": "/static/logo.png", "method": "GET", "endpoint": "static"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "url-map-routes.json"
+
+    document = route_capture.capture_url_map(
+        raw, output, {"/api/1/proconnect": route_capture.DEFAULT_EXCLUSION_REASONS["/api/1/proconnect"]}
+    )
+
+    assert [route["path"] for route in document["routes"]] == ["/api/1/site/"]
+    assert document["excluded"] == [
+        {"path": "/api/1/", "reason": "flask-restx documentation infrastructure"},
+        {"path": "/api/1/swagger.json", "reason": "flask-restx documentation infrastructure"},
+        {
+            "path": "/api/1/proconnect/auth",
+            "reason": route_capture.DEFAULT_EXCLUSION_REASONS["/api/1/proconnect"],
+        },
+    ]

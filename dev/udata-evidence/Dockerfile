@@ -34,4 +34,4 @@ RUN printf '%s\n' \
 
 EXPOSE 7000
 
-CMD ["udata", "run", "--host=0.0.0.0", "--port=7000"]
+CMD ["udata", "serve", "--host=0.0.0.0", "--port=7000", "--no-reload"]
