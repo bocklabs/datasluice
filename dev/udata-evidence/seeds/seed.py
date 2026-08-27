@@ -37,7 +37,9 @@ with app.app_context():
     ensure_user("user@evidence.invalid", "User")
     organization = Organization.objects(slug="evidence-organization").first()
     if organization is None:
-        organization = Organization(name="Evidence Organization")
+        organization = Organization(
+            name="Evidence Organization", description="Controlled evidence organization"
+        )
         organization.members = [Member(user=organization_admin, role="admin")]
         organization.save()
     elif not organization.is_admin(organization_admin):
