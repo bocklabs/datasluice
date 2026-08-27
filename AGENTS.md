@@ -63,7 +63,7 @@ Built with **Zensical** (MkDocs Material wrapper). Config is `zensical.toml`, no
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`):
+GitHub Actions (`.github/workflows/ci.yaml`):
 - Runs on pull requests and push to `main`.
 - **type-check job** uses `uv run --all-extras ty check .` — if you add new optional deps, the CI must install them.
 - Tests run on Python 3.12, 3.13, and 3.14 matrix.
@@ -73,9 +73,9 @@ GitHub Actions (`.github/workflows/ci.yml`):
 
 ## Release
 
-Automated by **Release Please** (`.github/workflows/release-please.yml`). Commits **must** use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, …). On push to `main`, Release Please maintains a release PR that bumps `version` in `pyproject.toml` and updates `CHANGELOG.md`. Merging that PR tags the release and creates a GitHub Release.
+Automated by **Release Please** (`.github/workflows/release-please.yaml`). Commits **must** use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, …). On push to `main`, Release Please maintains a release PR that bumps `version` in `pyproject.toml` and updates `CHANGELOG.md`. Merging that PR tags the release and creates a GitHub Release.
 
-Publishing (`.github/workflows/publish.yml`) triggers on `release: published`:
+Publishing (`.github/workflows/publish.yaml`) triggers on `release: published`:
 1. **Build** — builds, validates (`twine check`), attests provenance, uploads the artifact.
 2. **TestPyPI** (`test-pypi` env, secret `TEST_PYPI_API_KEY`) — publishes automatically.
 3. **PyPI** (`pypi` env, secret `PYPI_API_KEY`) — `needs` TestPyPI to pass, then **waits for approval** (required reviewers on the `pypi` environment) before publishing.

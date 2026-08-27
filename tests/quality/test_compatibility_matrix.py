@@ -20,7 +20,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MANIFEST_PATH = REPO_ROOT / "providers" / "apache-airflow" / "compatibility.json"
 CORE_PYPROJECT = REPO_ROOT / "pyproject.toml"
-CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+CI_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yaml"
 
 _TDD_RED = os.environ.get("DATASLUICE_TDD_RED") == "1"
 

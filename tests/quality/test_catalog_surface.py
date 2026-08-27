@@ -193,7 +193,7 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
             "example_datasluice",
         }
     ),
-    ".github/workflows/docs.yml": frozenset({"DataSluiceOperator", "DataSluiceSession"}),
+    ".github/workflows/docs.yaml": frozenset({"DataSluiceOperator", "DataSluiceSession"}),
 }
 
 PROVIDER_RETIRED_TOKENS: tuple[str, ...] = (
