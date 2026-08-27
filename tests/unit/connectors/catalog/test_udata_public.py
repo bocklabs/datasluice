@@ -72,10 +72,10 @@ def _effective_udata_profile() -> EffectiveCapabilityProfile:
         capability_class=CapabilityClass.CORE,
     )
     declared = DeclaredCapabilityProfile(
-        profile_version="17.3.0",
+        profile_version="17.6.0",
         schema_version="1.0",
         platform_api_version="uData API v1",
-        official_source_uri="https://udata.readthedocs.io/en/17.3/",
+        official_source_uri="https://udata.readthedocs.io/en/17.6/",
         source_accessed_at=date(2026, 8, 15),
         fixture_fingerprint="fixture-fingerprint",
         operations={operation.id: operation},
@@ -102,11 +102,17 @@ def _context(*, profile: EffectiveCapabilityProfile | None = None) -> CatalogCon
     )
 
 
-def test_udata_package_exports_only_its_connector_and_factory() -> None:
+def test_udata_package_exports_the_canonical_connector_factory_and_live_clients() -> None:
     """The platform package is the sole canonical uData publication point."""
     import datasluice.connectors.catalog.udata as udata
 
-    assert udata.__all__ == ["UDataConnector", "create_udata_connector"]
+    assert udata.__all__ == [
+        "UDataClientSettings",
+        "UDataConnector",
+        "create_async_client",
+        "create_sync_client",
+        "create_udata_connector",
+    ]
 
 
 def test_factory_accepts_canonical_context_and_validates_profile_identity() -> None:

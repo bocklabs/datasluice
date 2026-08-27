@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "platform": "udata",
-  "profile_version": "17.3.0",
+  "profile_version": "17.6.0",
   "cases": [
     {
       "operation": "udata/api-v1.root-and-effective-profile-probe",

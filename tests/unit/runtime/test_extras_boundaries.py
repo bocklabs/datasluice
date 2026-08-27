@@ -17,7 +17,7 @@ def test_connector_contract_imports_without_its_extra(monkeypatch: pytest.Monkey
     importlib.import_module(f"datasluice.connectors.catalog.{platform}")
 
 
-@pytest.mark.parametrize("platform", ("udata", "socrata"))
+@pytest.mark.parametrize("platform", ("socrata",))
 def test_live_client_requires_its_connector_extra(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     """Stubbed live construction reports the exact missing platform extra."""
     live = importlib.import_module(f"datasluice.connectors.catalog.{platform}.live")
@@ -27,7 +27,7 @@ def test_live_client_requires_its_connector_extra(monkeypatch: pytest.MonkeyPatc
         live.create_live_client()
 
 
-@pytest.mark.parametrize("platform", ("udata", "socrata"))
+@pytest.mark.parametrize("platform", ("socrata",))
 def test_live_client_reaches_future_implementation_after_extra_gate(
     monkeypatch: pytest.MonkeyPatch, platform: str
 ) -> None:
@@ -36,6 +36,17 @@ def test_live_client_reaches_future_implementation_after_extra_gate(
     monkeypatch.setattr(live, "require_extra", lambda _: None)
 
     with pytest.raises(NotImplementedError, match="not implemented"):
+        live.create_live_client()
+
+
+def test_udata_live_seam_reports_retired_no_argument_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shipped uData live client replaces the no-argument seam with typed factories."""
+    live = importlib.import_module("datasluice.connectors.catalog.udata.live")
+    monkeypatch.setattr(live, "require_extra", lambda _: None)
+
+    with pytest.raises(NotImplementedError, match="create_sync_client"):
         live.create_live_client()
 
 

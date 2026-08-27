@@ -8,7 +8,8 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
 from datasluice.errors.catalog import NativeCatalogError
 
-type UDataResult = ResultEnvelope[NativeRecord]
+type UDataResultItem = NativeRecord
+type UDataResult = ResultEnvelope[UDataResultItem]
 
 
 @runtime_checkable

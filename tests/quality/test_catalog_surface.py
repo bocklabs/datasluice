@@ -74,6 +74,13 @@ CANONICAL_LIVE_CLIENT_EXPORTS: dict[str, tuple[str, ...]] = {
         "create_ckan_connector",
         "create_sync_client",
     ),
+    "udata": (
+        "UDataClientSettings",
+        "UDataConnector",
+        "create_async_client",
+        "create_sync_client",
+        "create_udata_connector",
+    ),
 }
 
 CONNECTOR_MODULE_PATHS: dict[str, str] = {

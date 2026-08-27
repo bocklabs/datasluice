@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0",
-  "profile_version": "17.3.0",
+  "profile_version": "17.6.0",
   "platform": "udata",
   "platform_api_version": "uData API v1",
-  "official_source_uri": "https://udata.readthedocs.io/en/17.3/",
-  "source_accessed_at": "2026-08-15",
-  "fixture_fingerprint": "64545cfcdc5ba7177d15b458fd4097a41ee96c745383442654c383651dfa39f8",
+  "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
+  "source_accessed_at": "2026-08-27",
+  "fixture_fingerprint": "54f960e1383dacc93dc7bb9b926a5a5c3e39d62a07428b7e4745aa98448174ec",
   "operations": [
     {
       "id": "udata/api-v1.root-and-effective-profile-probe",

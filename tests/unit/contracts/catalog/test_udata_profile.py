@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).parents[4]
-_PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/udata-17.3.json"
+_PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/udata-17.6.json"
 _EVIDENCE_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/evidence.json"
 _CASES_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/cases.json"
 _EXPECTED_OPERATION_IDS = {
@@ -46,14 +46,14 @@ def test_evidence_pins_official_read_observation_and_controlled_mutation_boundar
     profile = _read_json(_PROFILE_PATH)
     evidence = _read_json(_EVIDENCE_PATH)
 
-    assert profile["profile_version"] == "17.3.0"
+    assert profile["profile_version"] == "17.6.0"
     assert profile["platform"] == "udata"
-    assert evidence["platform_version"] == "uData 17.3.0"
-    assert evidence["official_source_uri"] == "https://udata.readthedocs.io/en/17.3/"
-    assert evidence["source_accessed_at"] == "2026-08-15"
+    assert evidence["platform_version"] == "uData 17.6.0"
+    assert evidence["official_source_uri"] == "https://udata.readthedocs.io/en/17.6/"
+    assert evidence["source_accessed_at"] == "2026-08-27"
     assert evidence["public_read"] == {
         "deployment_url": "https://www.data.gouv.fr/api/1/datasets/",
-        "accessed_at": "2026-08-15",
+        "accessed_at": "2026-08-27",
         "response_class": "success",
         "sanitized": True,
     }
