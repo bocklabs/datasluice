@@ -15,7 +15,11 @@ from datasluice.domain.catalog.models import NativeRecord
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
-_DATASET_OPERATION_ID = next(op_id for op_id in declared_udata_profile().operations if "dataset" in op_id.method)
+_DATASET_OPERATION_ID = next(
+    op_id
+    for op_id in declared_udata_profile().operations
+    if op_id.method == "dataset-list-search-show-create-update-delete"
+)
 
 
 def _datasets_operation() -> tuple[CatalogOperationRequest, CatalogOperationGuard]:

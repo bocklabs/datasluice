@@ -8,11 +8,18 @@
   "fixture_fingerprint": "54f960e1383dacc93dc7bb9b926a5a5c3e39d62a07428b7e4745aa98448174ec",
   "operations": [
     {
-      "id": "udata/api-v1.root-and-effective-profile-probe",
-      "capability": "core",
+      "id": "udata/api-v1.authentication-and-oauth-flows",
+      "capability": "optional",
       "authentication": "public",
       "mutation": "read",
-      "evidence_requirement": "anonymous-read"
+      "evidence_requirement": "deployment-probe"
+    },
+    {
+      "id": "udata/api-v1.create-dataset",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "create",
+      "evidence_requirement": "controlled-environment-only"
     },
     {
       "id": "udata/api-v1.dataset-list-search-show-create-update-delete",
@@ -29,7 +36,112 @@
       "evidence_requirement": "controlled-environment-only"
     },
     {
+      "id": "udata/api-v1.delete-dataset",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "delete",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.feature-dataset",
+      "capability": "admin",
+      "authentication": "privileged",
+      "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.followers-activities-discussions-and-reuses",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.get-dataset",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.harvest-moderation-and-admin-operations",
+      "capability": "admin",
+      "authentication": "privileged",
+      "mutation": "admin",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.list-datasets",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
       "id": "udata/api-v1.organizations-and-memberships",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.rdf-dataset",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.rdf-dataset-format",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.recent-datasets-atom",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.root-and-effective-profile-probe",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.suggest-datasets",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.taxonomies-licenses-frequencies-formats-badges-and-schemas",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.topics-territories-contact-points-and-dataservices",
+      "capability": "optional",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "deployment-probe"
+    },
+    {
+      "id": "udata/api-v1.unfeature-dataset",
+      "capability": "admin",
+      "authentication": "privileged",
+      "mutation": "delete",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.update-dataset",
       "capability": "authenticated",
       "authentication": "authenticated",
       "mutation": "update",
@@ -43,38 +155,45 @@
       "evidence_requirement": "controlled-environment-only"
     },
     {
-      "id": "udata/api-v1.authentication-and-oauth-flows",
-      "capability": "optional",
-      "authentication": "public",
-      "mutation": "read",
-      "evidence_requirement": "deployment-probe"
+      "id": "udata/api-v2.delete-dataset-extras",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "delete",
+      "evidence_requirement": "controlled-environment-only"
     },
     {
-      "id": "udata/api-v1.taxonomies-licenses-frequencies-formats-badges-and-schemas",
+      "id": "udata/api-v2.get-dataset",
       "capability": "core",
       "authentication": "public",
       "mutation": "read",
       "evidence_requirement": "anonymous-read"
     },
     {
-      "id": "udata/api-v1.followers-activities-discussions-and-reuses",
+      "id": "udata/api-v2.get-dataset-extras",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v2.list-datasets",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v2.search-datasets",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v2.update-dataset-extras",
       "capability": "authenticated",
       "authentication": "authenticated",
       "mutation": "update",
-      "evidence_requirement": "controlled-environment-only"
-    },
-    {
-      "id": "udata/api-v1.topics-territories-contact-points-and-dataservices",
-      "capability": "optional",
-      "authentication": "public",
-      "mutation": "read",
-      "evidence_requirement": "deployment-probe"
-    },
-    {
-      "id": "udata/api-v1.harvest-moderation-and-admin-operations",
-      "capability": "admin",
-      "authentication": "privileged",
-      "mutation": "admin",
       "evidence_requirement": "controlled-environment-only"
     },
     {

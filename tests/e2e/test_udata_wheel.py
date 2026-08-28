@@ -13,7 +13,11 @@ from datasluice.connectors.catalog.udata.clients import declared_udata_profile
 
 _ROOT = Path(__file__).resolve().parents[2]
 
-_DATASET_OPERATION_ID = next(op_id for op_id in declared_udata_profile().operations if "dataset" in op_id.method)
+_DATASET_OPERATION_ID = next(
+    op_id
+    for op_id in declared_udata_profile().operations
+    if op_id.method == "dataset-list-search-show-create-update-delete"
+)
 
 
 def _build_wheel(tmp_path: Path) -> Path:
@@ -71,7 +75,11 @@ from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.runtime.transport.base import RuntimeResponse
 
-op_id = next(op for op in declared_udata_profile().operations if "dataset" in op.method)
+op_id = next(
+    op
+    for op in declared_udata_profile().operations
+    if op.method == "dataset-list-search-show-create-update-delete"
+)
 
 class Transport:
     def __init__(self, version="17.6.0"):
@@ -100,11 +108,14 @@ envelope = client.datasets_list(
     CatalogOperationRequest(operation_id=op_id, payload={}),
     CatalogOperationGuard(operation_id=op_id),
 )
+service_page = client.datasets.list()
+assert service_page.items[0].id.value == "abc"
 client.close()
 recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/",
+    "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
 ], recorded
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

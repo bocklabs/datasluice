@@ -224,6 +224,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
         error_type = CatalogValidationError
         safe_action = "Correct the request before retrying."
     error: CatalogError
+    metadata = {**native.metadata, "status_code": status_code}
     if error_type is CatalogRateLimitError:
         error = CatalogRateLimitError(
             str(native),
@@ -232,7 +233,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
             capability_state=capability_state,
             safe_action=safe_action,
             retry_after=native.retry_after,
-            metadata=native.metadata,
+            metadata=metadata,
         )
     else:
         error = error_type(
@@ -241,7 +242,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
             platform=native.platform,
             capability_state=capability_state,
             safe_action=safe_action,
-            metadata=native.metadata,
+            metadata=metadata,
         )
     error.__cause__ = native
     return error

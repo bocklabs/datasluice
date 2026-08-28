@@ -29,6 +29,7 @@ from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsS
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings, normalize_origin
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.models import ResultEnvelope
 from datasluice.domain.catalog.operations import (
     Atomicity,
@@ -56,7 +57,9 @@ from datasluice.errors.catalog import (
     map_catalog_error,
 )
 from datasluice.runtime.capability import (
+    AsyncProbeRunner,
     EffectiveCapabilityCache,
+    ProbeRunner,
     build_catalog_operation_guard,
 )
 from datasluice.runtime.clients import (
@@ -172,13 +175,16 @@ class _UDataClientCore:
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         owns_transport: bool = True,
         site_gate: SiteVersionGate | AsyncSiteVersionGate | None = None,
+        probe_runner: ProbeRunner | None = None,
+        async_probe_runner: AsyncProbeRunner | None = None,
     ) -> None:
         self._transport = transport
         self._owns_transport = owns_transport
         self._origin = normalize_origin(origin)
         self._capabilities = EffectiveCapabilityCache(
             profile,
-            probe_runner=None,
+            probe_runner=probe_runner,
+            async_probe_runner=async_probe_runner,
             ttl_seconds=capability_cache_ttl,
             clock=clock,
         )
@@ -263,13 +269,11 @@ class _UDataClientCore:
         owning_id: OperationId,
         response: RuntimeResponse,
         *,
-        allow_redirect: bool = False,
-        expect_statuses: set[int] | None = None,
+        redirect_mode: bool = False,
     ) -> None:
-        accepted = expect_statuses or set()
-        if allow_redirect and response.status_code in {301, 302}:
+        if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
             return
-        if 200 <= response.status_code < 300 or response.status_code in accepted:
+        if 200 <= response.status_code < 300:
             return
         if response.status_code in {401, 403}:
             self._capabilities.record_response(
@@ -354,6 +358,7 @@ class SyncUDataClient(_UDataClientCore):
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         owns_transport: bool = True,
+        probe_runner: ProbeRunner | None = None,
     ) -> None:
         """Build the shared sync core over the caller-owned or borrowed transport."""
         self._retry_sleep = retry_sleep
@@ -371,6 +376,7 @@ class SyncUDataClient(_UDataClientCore):
             emitter=emitter,
             capability_cache_ttl=capability_cache_ttl,
             owns_transport=owns_transport,
+            probe_runner=probe_runner,
         )
 
     def site_version(self) -> SiteVersion:
@@ -402,27 +408,27 @@ class SyncUDataClient(_UDataClientCore):
         *,
         method: str,
         path: str,
+        owning_operation: str,
         query: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
-        allow_redirect: bool = False,
-        expect_statuses: set[int] | None = None,
-    ) -> tuple[int, object]:
-        """Run one guarded dataset-family request and return (status, decoded body)."""
+        redirect_mode: bool = False,
+        permissions: EffectivePermissions | None = None,
+    ) -> tuple[int, object, RuntimeResponse]:
+        """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The synchronous uData client is closed.")
-        owning_id = _operation_id_from(_DATASETS_OPERATION_ID)
+        owning_id = _operation_id_from(owning_operation)
         self._require_site_version()
         effective = self._capabilities.resolve(owning_id)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
+        guard.require_allowed()
         credential = _refreshed_credential(self._credentials)
-        pairs = "&".join(f"{key}={value}" for key, value in sorted((query or {}).items()))
-        url = self._origin + path + (f"&{pairs}" if pairs and "?" in path else f"?{pairs}" if pairs else "")
         headers = _auth_headers(credential)
         body = json.dumps(json_body).encode() if json_body is not None else None
         if body is not None:
             headers = {"Content-Type": "application/json", **headers}
-        request = RuntimeRequest(method=method, url=url, headers=headers, body=body)
+        request = RuntimeRequest(method=method, url=self._origin + path, headers=headers, body=body)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         sync_transport = cast(CatalogTransport, self._transport)
@@ -452,7 +458,7 @@ class SyncUDataClient(_UDataClientCore):
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=method in {"GET", "PUT", "DELETE"}),
+                idempotency=IdempotencyPolicy(safe=method == "GET"),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -463,14 +469,16 @@ class SyncUDataClient(_UDataClientCore):
         except Exception:
             self._emit(owning_id, "failed")
             raise
-        self._validate_status(owning_id, response, allow_redirect=allow_redirect, expect_statuses=expect_statuses)
+        self._validate_status(owning_id, response, redirect_mode=redirect_mode)
         self._emit(owning_id, "succeeded")
+        if redirect_mode:
+            return response.status_code, dict(response.headers), response
         if raw_text:
-            return response.status_code, response.body.decode("utf-8")
+            return response.status_code, response.body.decode("utf-8"), response
         if not response.body:
-            return response.status_code, None
+            return response.status_code, None, response
         try:
-            return response.status_code, json.loads(response.body)
+            return response.status_code, json.loads(response.body), response
         except (TypeError, ValueError) as exc:
             raise NativeCatalogError(
                 "Catalog operation returned an invalid JSON result.",
@@ -600,6 +608,7 @@ class AsyncUDataClient(_UDataClientCore):
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         owns_transport: bool = True,
+        async_probe_runner: AsyncProbeRunner | None = None,
     ) -> None:
         """Build the shared async core over the caller-owned or borrowed transport."""
         self._retry_sleep = retry_sleep
@@ -617,6 +626,7 @@ class AsyncUDataClient(_UDataClientCore):
             emitter=emitter,
             capability_cache_ttl=capability_cache_ttl,
             owns_transport=owns_transport,
+            async_probe_runner=async_probe_runner,
         )
 
     async def site_version(self) -> SiteVersion:
@@ -726,27 +736,27 @@ class AsyncUDataClient(_UDataClientCore):
         *,
         method: str,
         path: str,
+        owning_operation: str,
         query: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
-        allow_redirect: bool = False,
-        expect_statuses: set[int] | None = None,
-    ) -> tuple[int, object]:
-        """Run one guarded async dataset-family request and return (status, decoded body)."""
+        redirect_mode: bool = False,
+        permissions: EffectivePermissions | None = None,
+    ) -> tuple[int, object, RuntimeResponse]:
+        """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The asynchronous uData client is closed.")
-        owning_id = _operation_id_from(_DATASETS_OPERATION_ID)
+        owning_id = _operation_id_from(owning_operation)
         await self.site_version()
         effective = await self._capabilities.resolve_async(owning_id)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
+        guard.require_allowed()
         credential = await _refreshed_credential_async(self._credentials)
-        pairs = "&".join(f"{key}={value}" for key, value in sorted((query or {}).items()))
-        url = self._origin + path + (f"&{pairs}" if pairs and "?" in path else f"?{pairs}" if pairs else "")
         headers = _auth_headers(credential)
         body = json.dumps(json_body).encode() if json_body is not None else None
         if body is not None:
             headers = {"Content-Type": "application/json", **headers}
-        request = RuntimeRequest(method=method, url=url, headers=headers, body=body)
+        request = RuntimeRequest(method=method, url=self._origin + path, headers=headers, body=body)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         async_transport = cast(AsyncCatalogTransport, self._transport)
@@ -776,7 +786,7 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=method in {"GET", "PUT", "DELETE"}),
+                idempotency=IdempotencyPolicy(safe=method == "GET"),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
@@ -787,14 +797,16 @@ class AsyncUDataClient(_UDataClientCore):
         except Exception:
             self._emit(owning_id, "failed")
             raise
-        self._validate_status(owning_id, response, allow_redirect=allow_redirect, expect_statuses=expect_statuses)
+        self._validate_status(owning_id, response, redirect_mode=redirect_mode)
         self._emit(owning_id, "succeeded")
+        if redirect_mode:
+            return response.status_code, dict(response.headers), response
         if raw_text:
-            return response.status_code, response.body.decode("utf-8")
+            return response.status_code, response.body.decode("utf-8"), response
         if not response.body:
-            return response.status_code, None
+            return response.status_code, None, response
         try:
-            return response.status_code, json.loads(response.body)
+            return response.status_code, json.loads(response.body), response
         except (TypeError, ValueError) as exc:
             raise NativeCatalogError(
                 "Catalog operation returned an invalid JSON result.",
@@ -848,6 +860,7 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
         retry_sleep=settings.retry_sleep if settings.retry_sleep is not None else sleep,
         capability_cache_ttl=settings.capability_cache_ttl,
         owns_transport=owns_transport,
+        probe_runner=settings.probe_runner,
     )
 
 
@@ -876,4 +889,5 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
         retry_sleep=settings.async_retry_sleep if settings.async_retry_sleep is not None else asyncio.sleep,
         capability_cache_ttl=settings.capability_cache_ttl,
         owns_transport=owns_transport,
+        async_probe_runner=settings.async_probe_runner,
     )

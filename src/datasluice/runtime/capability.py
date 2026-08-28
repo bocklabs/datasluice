@@ -13,6 +13,7 @@ from typing import Protocol, cast, runtime_checkable
 from urllib.parse import urlsplit
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard
+from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
     DeclaredCapabilityProfile,
@@ -325,10 +326,12 @@ class EffectiveCapabilityCache:
 
 
 def build_catalog_operation_guard(
-    operation_id: OperationId, profile: EffectiveCapabilityProfile
+    operation_id: OperationId,
+    profile: EffectiveCapabilityProfile,
+    permissions: EffectivePermissions | None = None,
 ) -> CatalogOperationGuard:
     """Build the normalized guard for one effective operation profile."""
-    return _EffectiveCapabilityGuard(operation_id=operation_id, profile=profile)
+    return _EffectiveCapabilityGuard(operation_id=operation_id, profile=profile, permissions=permissions)
 
 
 class _EffectiveCapabilityGuard(CatalogOperationGuard):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 _V1_LIST_SORTS = frozenset({"title", "created", "last_update", "reuses", "followers", "views"})
 _V1_LIST_FILTERS = frozenset(
@@ -32,6 +33,21 @@ _V1_LIST_FILTERS = frozenset(
         "private",
     }
 )
+
+
+_RESERVED_CREATE_FIELDS = frozenset({"title", "description", "private", "tags"})
+_RESERVED_UPDATE_FIELDS = frozenset({"title", "description", "private", "tags"})
+
+
+def _freeze_json(value: object) -> object:
+    """Freeze a JSON-safe structure into immutable equivalents."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise ValueError(f"uData input mappings accept JSON-safe values only, got {type(value).__name__}.")
 
 
 def _required_text(value: object, field: str) -> str:
@@ -80,22 +96,22 @@ class DatasetListQuery:
             unknown = set(self.filters) - _V1_LIST_FILTERS
             if unknown:
                 raise ValueError(f"Unknown dataset list filters: {sorted(unknown)}.")
+            object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
 
-    def query_params(self) -> dict[str, str]:
-        """Encode the query into exact stock query-string parameters."""
-        params: dict[str, str] = {"page": str(self.page), "page_size": str(self.page_size)}
+    def query_params(self) -> list[tuple[str, str]]:
+        """Encode the query into exact stock query-string parameter pairs."""
+        params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
         if self.q is not None:
-            params["q"] = self.q
+            params.append(("q", self.q))
         if self.sort is not None:
-            params["sort"] = self.sort
+            params.append(("sort", self.sort))
         for key, value in sorted((self.filters or {}).items()):
             if isinstance(value, bool):
-                params[key] = "true" if value else "false"
+                params.append((key, "true" if value else "false"))
             elif isinstance(value, tuple):
-                for index, item in enumerate(value):
-                    params[key if index == 0 else f"{key}[{index}]"] = _required_text(item, key)
+                params.extend((key, _required_text(item, key)) for item in value)
             else:
-                params[key] = _required_text(value, key)
+                params.append((key, _required_text(value, key)))
         return params
 
 
@@ -116,8 +132,13 @@ class DatasetCreateInput:
             raise ValueError("Dataset create private flag must be a boolean.")
         if not isinstance(self.tags, tuple) or not all(isinstance(tag, str) and tag for tag in self.tags):
             raise ValueError("Dataset create tags must be a tuple of non-empty strings.")
-        if self.fields is not None and not isinstance(self.fields, Mapping):
-            raise ValueError("Dataset create extra fields must be a mapping.")
+        if self.fields is not None:
+            if not isinstance(self.fields, Mapping):
+                raise ValueError("Dataset create extra fields must be a mapping.")
+            reserved = set(self.fields) & _RESERVED_CREATE_FIELDS
+            if reserved:
+                raise ValueError(f"Dataset create fields cannot override typed fields: {sorted(reserved)}.")
+            object.__setattr__(self, "fields", _freeze_json(dict(self.fields)))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact create JSON body."""
@@ -155,8 +176,13 @@ class DatasetUpdateInput:
             not isinstance(self.tags, tuple) or not all(isinstance(tag, str) and tag for tag in self.tags)
         ):
             raise ValueError("Dataset update tags must be a tuple of non-empty strings when supplied.")
-        if self.fields is not None and not isinstance(self.fields, Mapping):
-            raise ValueError("Dataset update extra fields must be a mapping.")
+        if self.fields is not None:
+            if not isinstance(self.fields, Mapping):
+                raise ValueError("Dataset update extra fields must be a mapping.")
+            reserved = set(self.fields) & _RESERVED_UPDATE_FIELDS
+            if reserved:
+                raise ValueError(f"Dataset update fields cannot override typed fields: {sorted(reserved)}.")
+            object.__setattr__(self, "fields", _freeze_json(dict(self.fields)))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact update JSON body with omission semantics."""
@@ -183,11 +209,11 @@ class DatasetDeleteOptions:
         if type(self.send_legal_notice) is not bool:
             raise ValueError("Dataset delete send_legal_notice must be a boolean.")
 
-    def query_params(self) -> dict[str, str]:
+    def query_params(self) -> list[tuple[str, str]]:
         """Encode the exact delete query string."""
         if not self.send_legal_notice:
-            return {}
-        return {"send_legal_notice": "true"}
+            return []
+        return [("send_legal_notice", "true")]
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,9 +228,9 @@ class DatasetSuggestQuery:
         if type(self.size) is not int or self.size < 1:
             raise ValueError("Dataset suggest size must be a positive integer.")
 
-    def query_params(self) -> dict[str, str]:
+    def query_params(self) -> list[tuple[str, str]]:
         """Encode the exact suggest query string."""
-        return {"q": self.q, "size": str(self.size)}
+        return [("q", self.q), ("size", str(self.size))]
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +242,7 @@ class DatasetExtrasUpdate:
     def __post_init__(self) -> None:
         if not isinstance(self.values, Mapping):
             raise ValueError("Dataset extras update values must be a mapping.")
+        object.__setattr__(self, "values", _freeze_json(dict(self.values)))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact extras JSON body."""
@@ -259,5 +286,89 @@ class DatasetMutationOutcome:
     def __post_init__(self) -> None:
         for name in ("operation_id", "dataset_id", "outcome"):
             _required_text(getattr(self, name), name)
-        if type(self.status_code) is not int or not 200 <= self.status_code <= 599:
+        if type(self.status_code) is not int or not 0 <= self.status_code <= 599:
             raise ValueError("Dataset mutation receipt requires a valid HTTP status code.")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the bounded redacted receipt projection for error metadata."""
+        return {
+            "schema_version": 1,
+            "operation_id": self.operation_id,
+            "dataset_id": self.dataset_id,
+            "status_code": self.status_code,
+            "outcome": self.outcome,
+        }
+
+
+_V2_SEARCH_FILTERS = frozenset(
+    {
+        "tag",
+        "badge",
+        "organization",
+        "organization_badge",
+        "organization_name",
+        "owner",
+        "license",
+        "geozone",
+        "granularity",
+        "format",
+        "schema",
+        "temporal_coverage",
+        "featured",
+        "topic",
+        "access_type",
+        "format_family",
+        "producer_type",
+        "last_update_range",
+    }
+)
+_V2_SEARCH_LAST_UPDATE_RANGES = frozenset({"last_30_days", "last_12_months", "last_3_years"})
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetSearchQuery:
+    """The documented v2 search surface (`DatasetSearch` request parser)."""
+
+    q: str | None = None
+    sort: str | None = None
+    page: int = 1
+    page_size: int = 20
+    filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("Dataset search page must be a positive integer.")
+        if type(self.page_size) is not int or self.page_size < 1:
+            raise ValueError("Dataset search page_size must be a positive integer.")
+        if self.sort is not None:
+            key = self.sort.lstrip("-")
+            if key not in _V1_LIST_SORTS:
+                raise ValueError(f"Dataset search sort must be one of {sorted(_V1_LIST_SORTS)} with optional '-'.")
+        if self.q is not None and not isinstance(self.q, str):
+            raise ValueError("Dataset search q must be a string when supplied.")
+        if self.filters is not None:
+            if not isinstance(self.filters, Mapping):
+                raise ValueError("Dataset search filters must be a mapping.")
+            unknown = set(self.filters) - _V2_SEARCH_FILTERS
+            if unknown:
+                raise ValueError(f"Unknown dataset search filters: {sorted(unknown)}.")
+            range_value = self.filters.get("last_update_range")
+            if range_value is not None and range_value not in _V2_SEARCH_LAST_UPDATE_RANGES:
+                raise ValueError("Dataset search last_update_range must be a documented range choice.")
+            object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
+
+    def query_params(self) -> list[tuple[str, str]]:
+        """Encode the exact v2 search query-string parameter pairs."""
+        params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
+        if self.q is not None:
+            params.append(("q", self.q))
+        if self.sort is not None:
+            params.append(("sort", self.sort))
+        for key, value in sorted((self.filters or {}).items()):
+            if isinstance(value, bool):
+                params.append((key, "true" if value else "false"))
+            elif isinstance(value, tuple):
+                params.extend((key, _required_text(item, key)) for item in value)
+            else:
+                params.append((key, _required_text(value, key)))
+        return params

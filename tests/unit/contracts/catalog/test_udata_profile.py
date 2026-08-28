@@ -31,14 +31,36 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
-    """Every planned uData contract family has one declared operation."""
+    """Every planned uData contract family and dataset route is declared exactly once."""
     profile = _read_json(_PROFILE_PATH)
     operations = profile["operations"]
 
     assert isinstance(operations, list)
     operation_ids = [operation["id"] for operation in operations]
-    assert set(operation_ids) == _EXPECTED_OPERATION_IDS
+    assert set(_EXPECTED_OPERATION_IDS).issubset(set(operation_ids))
+    assert set(operation_ids) == _EXPECTED_OPERATION_IDS | _DATASET_ROUTE_OPERATION_IDS
     assert len(operation_ids) == len(set(operation_ids))
+
+
+_DATASET_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-datasets",
+    "udata/api-v1.create-dataset",
+    "udata/api-v1.recent-datasets-atom",
+    "udata/api-v1.get-dataset",
+    "udata/api-v1.update-dataset",
+    "udata/api-v1.delete-dataset",
+    "udata/api-v1.feature-dataset",
+    "udata/api-v1.unfeature-dataset",
+    "udata/api-v1.rdf-dataset",
+    "udata/api-v1.rdf-dataset-format",
+    "udata/api-v1.suggest-datasets",
+    "udata/api-v2.search-datasets",
+    "udata/api-v2.list-datasets",
+    "udata/api-v2.get-dataset",
+    "udata/api-v2.get-dataset-extras",
+    "udata/api-v2.update-dataset-extras",
+    "udata/api-v2.delete-dataset-extras",
+}
 
 
 def test_evidence_pins_official_read_observation_and_controlled_mutation_boundary() -> None:

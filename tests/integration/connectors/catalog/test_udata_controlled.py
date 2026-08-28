@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 import pytest
 
@@ -14,8 +15,17 @@ from datasluice.connectors.catalog.udata.clients import (
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+from datasluice.domain.catalog.ids import CatalogPlatform
 
-ORIGIN = os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640")
+_ORIGINAL_ORIGIN = os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640")
+_parsed = urlparse(_ORIGINAL_ORIGIN)
+if _parsed.scheme != "http" or _parsed.hostname != "127.0.0.1" or _parsed.port != 5640:
+    raise SystemExit(
+        "Controlled uData evidence is restricted to the fixed loopback stack "
+        "http://127.0.0.1:5640; set UDATA_EVIDENCE_ORIGIN to the stock loopback origin."
+    )
+
+ORIGIN = "http://127.0.0.1:5640"
 
 pytestmark = [
     pytest.mark.udata_controlled,
@@ -25,7 +35,11 @@ pytestmark = [
     ),
 ]
 
-_DATASET_OPERATION_ID = next(op_id for op_id in declared_udata_profile().operations if "dataset" in op_id.method)
+_FAMILY_OPERATION_ID = next(
+    op_id
+    for op_id in declared_udata_profile().operations
+    if op_id.method == "dataset-list-search-show-create-update-delete"
+)
 
 
 def test_controlled_stack_proves_exact_version_then_one_dataset_read() -> None:
@@ -33,8 +47,8 @@ def test_controlled_stack_proves_exact_version_then_one_dataset_read() -> None:
     with create_sync_client(settings) as client:
         assert client.site_version().version == "17.6.0"
         envelope = client.datasets_list(
-            CatalogOperationRequest(operation_id=_DATASET_OPERATION_ID, payload={"page": 1, "page_size": 5}),
-            CatalogOperationGuard(operation_id=_DATASET_OPERATION_ID),
+            CatalogOperationRequest(operation_id=_FAMILY_OPERATION_ID, payload={"page": 1, "page_size": 5}),
+            CatalogOperationGuard(operation_id=_FAMILY_OPERATION_ID),
         )
 
     assert envelope.page is not None
@@ -64,17 +78,33 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
         DatasetDeleteOptions,
         DatasetUpdateInput,
     )
-    from datasluice.domain.catalog.auth import UDataCredential
+    from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 
+    permissions = EffectivePermissions(platform=CatalogPlatform.UDATA, authenticated=True, roles=frozenset({"admin"}))
     settings = UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))
+    dataset_id: str | None = None
+    cleanup_outcome = None
+    cleanup_error: Exception | None = None
     with create_sync_client(settings) as client:
-        record = client.datasets.create(DatasetCreateInput(title="Evidence dataset", description="d"))
-        dataset_id = record.id.value
-        updated = client.datasets.update(dataset_id, DatasetUpdateInput(title="Evidence dataset v2"))
-        outcome = client.datasets.delete(dataset_id, DatasetDeleteOptions())
+        assert client.site_version().version == "17.6.0"
+        try:
+            record = client.datasets.create(
+                DatasetCreateInput(title="Evidence dataset", description="d"), permissions=permissions
+            )
+            dataset_id = record.id.value
+            updated = client.datasets.update(
+                dataset_id, DatasetUpdateInput(title="Evidence dataset v2"), permissions=permissions
+            )
+            assert updated.payload["title"] == "Evidence dataset v2"
+        finally:
+            if dataset_id is not None:
+                try:
+                    cleanup_outcome = client.datasets.delete(dataset_id, permissions, DatasetDeleteOptions())
+                except Exception as error:
+                    cleanup_error = error
 
-    assert updated.payload["title"] == "Evidence dataset v2"
-    assert outcome.status_code == 204 and outcome.outcome == "deleted"
+    assert cleanup_error is None, f"controlled cleanup failed for {dataset_id}: {cleanup_error}"
+    assert cleanup_outcome is not None and cleanup_outcome.status_code == 204
 
 
 def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> None:
@@ -86,8 +116,8 @@ def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> 
         async with create_async_client(settings) as client:
             version = (await client.site_version()).version
             envelope = await client.datasets_list(
-                CatalogOperationRequest(operation_id=_DATASET_OPERATION_ID, payload={}),
-                CatalogOperationGuard(operation_id=_DATASET_OPERATION_ID),
+                CatalogOperationRequest(operation_id=_FAMILY_OPERATION_ID, payload={}),
+                CatalogOperationGuard(operation_id=_FAMILY_OPERATION_ID),
             )
             return version, envelope.page.total_items if envelope.page else None
 
