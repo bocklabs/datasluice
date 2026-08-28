@@ -25,6 +25,7 @@ from datasluice.connectors.catalog.udata.probes import (
     SiteVersion,
     SiteVersionGate,
 )
+from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings, normalize_origin
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -257,13 +258,41 @@ class _UDataClientCore:
             params[key] = value
         return params
 
+    def _validate_status(
+        self,
+        owning_id: OperationId,
+        response: RuntimeResponse,
+        *,
+        allow_redirect: bool = False,
+        expect_statuses: set[int] | None = None,
+    ) -> None:
+        accepted = expect_statuses or set()
+        if allow_redirect and response.status_code in {301, 302}:
+            return
+        if 200 <= response.status_code < 300 or response.status_code in accepted:
+            return
+        if response.status_code in {401, 403}:
+            self._capabilities.record_response(
+                owning_id,
+                ProbeResponseClass.UNAUTHORIZED if response.status_code == 401 else ProbeResponseClass.FORBIDDEN,
+            )
+        raise map_catalog_error(
+            NativeCatalogError(
+                "Catalog operation returned an unsuccessful HTTP status.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                status_code=response.status_code,
+                retry_after=response.retry_after,
+            )
+        )
+
     def _decode(self, owning_id: OperationId, response: RuntimeResponse) -> ResultEnvelope[UDataResultItem]:
         if not 200 <= response.status_code < 300:
-            response_class = {
-                401: ProbeResponseClass.UNAUTHORIZED,
-                403: ProbeResponseClass.FORBIDDEN,
-            }.get(response.status_code, ProbeResponseClass.UNAVAILABLE)
-            self._capabilities.record_response(owning_id, response_class)
+            if response.status_code in {401, 403}:
+                self._capabilities.record_response(
+                    owning_id,
+                    ProbeResponseClass.UNAUTHORIZED if response.status_code == 401 else ProbeResponseClass.FORBIDDEN,
+                )
             raise map_catalog_error(
                 NativeCatalogError(
                     "Catalog operation returned an unsuccessful HTTP status.",
@@ -350,6 +379,11 @@ class SyncUDataClient(_UDataClientCore):
             raise RuntimeError("The synchronous uData client is closed.")
         return self._require_site_version()
 
+    @property
+    def datasets(self) -> SyncDatasetsService:
+        """Expose the complete typed dataset service."""
+        return SyncDatasetsService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -362,6 +396,87 @@ class SyncUDataClient(_UDataClientCore):
         """Execute the single bounded dataset list read behind the version gate."""
         owning_id = _operation_id_from(_DATASETS_OPERATION_ID)
         return self._dispatch(operation, guard, owning_id=owning_id)
+
+    def _dataset_call(
+        self,
+        *,
+        method: str,
+        path: str,
+        query: Mapping[str, str] | None = None,
+        json_body: object = None,
+        raw_text: bool = False,
+        allow_redirect: bool = False,
+        expect_statuses: set[int] | None = None,
+    ) -> tuple[int, object]:
+        """Run one guarded dataset-family request and return (status, decoded body)."""
+        if self._closed:
+            raise RuntimeError("The synchronous uData client is closed.")
+        owning_id = _operation_id_from(_DATASETS_OPERATION_ID)
+        self._require_site_version()
+        effective = self._capabilities.resolve(owning_id)
+        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        credential = _refreshed_credential(self._credentials)
+        pairs = "&".join(f"{key}={value}" for key, value in sorted((query or {}).items()))
+        url = self._origin + path + (f"&{pairs}" if pairs and "?" in path else f"?{pairs}" if pairs else "")
+        headers = _auth_headers(credential)
+        body = json.dumps(json_body).encode() if json_body is not None else None
+        if body is not None:
+            headers = {"Content-Type": "application/json", **headers}
+        request = RuntimeRequest(method=method, url=url, headers=headers, body=body)
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        sync_transport = cast(CatalogTransport, self._transport)
+        key = _circuit_key(request, self._credentials)
+        if not self._breakers.admit(key):
+            self._emit(owning_id, "breaker_open")
+            raise CatalogUnavailableError(
+                "The catalog origin circuit is open after consecutive transport failures.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                capability_state="unavailable",
+                safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
+            )
+
+        def send() -> RuntimeResponse:
+            before = self._breakers.inspect(key)
+            try:
+                response = sync_transport.send(request)
+            except TransportFailure:
+                after = self._breakers.record_transport_failure(key)
+                self._emit_breaker_change(owning_id, before.open, after.open)
+                raise
+            after = self._breakers.record_response(key, response.status_code)
+            self._emit_breaker_change(owning_id, before.open, after.open)
+            return response
+
+        try:
+            response = RetryLoop(
+                budget=self._budget,
+                idempotency=IdempotencyPolicy(safe=method in {"GET", "PUT", "DELETE"}),
+                deadline=deadline,
+                max_attempts=self._max_attempts,
+                sleep=self._retry_sleep,
+            ).run(send)
+        except BudgetExhaustedError:
+            self._emit(owning_id, "budget_exhausted")
+            raise
+        except Exception:
+            self._emit(owning_id, "failed")
+            raise
+        self._validate_status(owning_id, response, allow_redirect=allow_redirect, expect_statuses=expect_statuses)
+        self._emit(owning_id, "succeeded")
+        if raw_text:
+            return response.status_code, response.body.decode("utf-8")
+        if not response.body:
+            return response.status_code, None
+        try:
+            return response.status_code, json.loads(response.body)
+        except (TypeError, ValueError) as exc:
+            raise NativeCatalogError(
+                "Catalog operation returned an invalid JSON result.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            ) from exc
 
     def _dispatch(
         self,
@@ -513,6 +628,11 @@ class AsyncUDataClient(_UDataClientCore):
             return await gate.require_current_async(self._credentials)
         raise RuntimeError("The asynchronous uData client requires an asynchronous site gate.")
 
+    @property
+    def datasets(self) -> AsyncDatasetsService:
+        """Expose the complete typed dataset service."""
+        return AsyncDatasetsService(self)
+
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[UDataResultItem]:
@@ -600,6 +720,87 @@ class AsyncUDataClient(_UDataClientCore):
             budget_usage=max(0.0, self._budget.total - deadline.remaining()),
         )
         return result
+
+    async def _dataset_call_async(
+        self,
+        *,
+        method: str,
+        path: str,
+        query: Mapping[str, str] | None = None,
+        json_body: object = None,
+        raw_text: bool = False,
+        allow_redirect: bool = False,
+        expect_statuses: set[int] | None = None,
+    ) -> tuple[int, object]:
+        """Run one guarded async dataset-family request and return (status, decoded body)."""
+        if self._closed:
+            raise RuntimeError("The asynchronous uData client is closed.")
+        owning_id = _operation_id_from(_DATASETS_OPERATION_ID)
+        await self.site_version()
+        effective = await self._capabilities.resolve_async(owning_id)
+        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        credential = await _refreshed_credential_async(self._credentials)
+        pairs = "&".join(f"{key}={value}" for key, value in sorted((query or {}).items()))
+        url = self._origin + path + (f"&{pairs}" if pairs and "?" in path else f"?{pairs}" if pairs else "")
+        headers = _auth_headers(credential)
+        body = json.dumps(json_body).encode() if json_body is not None else None
+        if body is not None:
+            headers = {"Content-Type": "application/json", **headers}
+        request = RuntimeRequest(method=method, url=url, headers=headers, body=body)
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        async_transport = cast(AsyncCatalogTransport, self._transport)
+        key = _circuit_key(request, self._credentials)
+        if not self._breakers.admit(key):
+            self._emit(owning_id, "breaker_open")
+            raise CatalogUnavailableError(
+                "The catalog origin circuit is open after consecutive transport failures.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                capability_state="unavailable",
+                safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
+            )
+
+        async def send() -> RuntimeResponse:
+            before = self._breakers.inspect(key)
+            try:
+                response = await async_transport.send(request)
+            except TransportFailure:
+                after = self._breakers.record_transport_failure(key)
+                self._emit_breaker_change(owning_id, before.open, after.open)
+                raise
+            after = self._breakers.record_response(key, response.status_code)
+            self._emit_breaker_change(owning_id, before.open, after.open)
+            return response
+
+        try:
+            response = await RetryLoop(
+                budget=self._budget,
+                idempotency=IdempotencyPolicy(safe=method in {"GET", "PUT", "DELETE"}),
+                deadline=deadline,
+                max_attempts=self._max_attempts,
+                sleep=lambda _: None,
+            ).run_async(send, sleep=self._retry_sleep)
+        except BudgetExhaustedError:
+            self._emit(owning_id, "budget_exhausted")
+            raise
+        except Exception:
+            self._emit(owning_id, "failed")
+            raise
+        self._validate_status(owning_id, response, allow_redirect=allow_redirect, expect_statuses=expect_statuses)
+        self._emit(owning_id, "succeeded")
+        if raw_text:
+            return response.status_code, response.body.decode("utf-8")
+        if not response.body:
+            return response.status_code, None
+        try:
+            return response.status_code, json.loads(response.body)
+        except (TypeError, ValueError) as exc:
+            raise NativeCatalogError(
+                "Catalog operation returned an invalid JSON result.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            ) from exc
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""

@@ -206,6 +206,10 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
     elif status_code == 409:
         error_type = CatalogConflictError
         safe_action = "Refresh the target version token before retrying."
+    elif status_code == 410:
+        error_type = CatalogConflictError
+        capability_state = "unavailable"
+        safe_action = "The target is deleted or retired; recreate it or address the archived resource."
     elif status_code == 422:
         error_type = CatalogValidationError
         safe_action = "Correct the request according to the platform validation details."

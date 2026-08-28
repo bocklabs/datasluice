@@ -109,6 +109,8 @@ assert recorded == [
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
 
+
+
 blocked = create_sync_client(
     UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=Transport(version="17.7"))
 )
