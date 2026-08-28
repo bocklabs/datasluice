@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "reviewed_sha": "1d75e8fbe7baa172fe8b37dbc48762c6d735a318",
+  "threads": [
+    {
+      "id": "CR-01",
+      "classification": "not_actionable",
+      "rationale": "The flagged helper is a pre-existing test harness line; phase 04 changed only adjacent workflow filename assertions. It is retained in the source review for follow-up, but it is not a phase-04 defect and no phase-04 code change is being claimed as a fix.",
+      "regression_test": "tests/quality/test_release_routing.py::test_provider_only_and_joint_dependencies"
+    }
+  ]
+}

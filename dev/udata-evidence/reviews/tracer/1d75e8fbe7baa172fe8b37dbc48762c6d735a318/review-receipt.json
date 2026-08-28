@@ -1,0 +1,14 @@
+{
+  "author_ids": [
+    "nitish-raj"
+  ],
+  "base_sha": "747ce5d6b3c9af38c359bdd4a5971187bf9b0f22",
+  "created_at": "2026-08-28T17:13:58.416585Z",
+  "current_thread_sha256": "ed45f5b6650697452fcf7508ebcb2035f9f9287f8455a7a6c8a21c14dcb7fb8c",
+  "parent_receipt": null,
+  "post_fix": false,
+  "reviewed_sha": "1d75e8fbe7baa172fe8b37dbc48762c6d735a318",
+  "reviewer_id": "codex-gsd-code-reviewer-01",
+  "schema_version": 1,
+  "source_review_sha256": "9f7013d2ac2e1e3c28f742e9d69259ffaa640c3ff7a7afa488cd9e18e52da672"
+}
