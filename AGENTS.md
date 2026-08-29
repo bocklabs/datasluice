@@ -13,6 +13,13 @@ uv run <command>       # run anything in the project venv
 
 `--all-extras` is **required** for type checking and running pre-commit locally, because `ty` resolves lazy imports of optional deps (pandas, polars, dlt, duckdb, pyarrow, openpyxl, airflow). Without it you get `unresolved-import` errors.
 
+## GSD on Codex
+
+- This repository runs GSD through Codex; keep `runtime` set to `codex` and `workflow.use_worktrees` set to `false` in `.planning/config.json`.
+- Execute GSD plan waves with native Codex subagents using the exact GSD role, such as `gsd-executor` or `gsd-verifier`, in the current checkout.
+- Keep orchestration in the parent session and let subagents own their declared implementation or review scope. Do not invoke `codex exec`, `--cd`, `git worktree`, or `.claude/worktrees` for GSD work.
+- Use the phase-resolved model for each native subagent; the parent session model and subagent model may differ.
+
 `just` (task runner) is a Rust binary, not a pip package. Install it into the venv:
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to .venv/bin
