@@ -5,22 +5,27 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from codecs import getincrementaldecoder
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit
 
 from datasluice.connectors.catalog.udata.models.root_profile import (
     ROOT_OPERATION,
-    SiteCatalogQuery,
+    SET_SITE_OPERATION,
+    SiteDatasetCatalogQuery,
+    SiteDatasetCsvQuery,
     SiteDocument,
+    SiteOrganizationCsvQuery,
     SitePatchInput,
     SiteProfile,
 )
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
 
 ROOT_OPERATIONS = {
     "get_site": ROOT_OPERATION,
-    "set_site": "udata/api-v1.set-site",
+    "set_site": SET_SITE_OPERATION,
     "data_portal": ROOT_OPERATION,
     "site_data_portal": ROOT_OPERATION,
     "rdf_catalog": ROOT_OPERATION,
@@ -80,6 +85,10 @@ _CSV_PATHS = {
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FORMAT = re.compile(r"^[A-Za-z0-9-]{1,16}$")
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+_MEDIA_TYPE = re.compile(r"^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
+_SENSITIVE_QUERY_PARTS = frozenset({"api_key", "apikey", "token", "secret", "password", "credential", "signature"})
+
+type SiteRootQuery = SiteDatasetCatalogQuery | SiteDatasetCsvQuery | SiteOrganizationCsvQuery
 
 
 def _format_extension(value: object) -> str:
@@ -106,11 +115,11 @@ def media_type_for_format(value: str) -> str:
     return _FORMAT_MEDIA_TYPES[_format_extension(value)]
 
 
-def _query(query: SiteCatalogQuery | None) -> str:
+def _query(query: SiteRootQuery | None) -> str:
     return urlencode(query.query_params()) if query is not None else ""
 
 
-def _with_query(path: str, query: SiteCatalogQuery | None) -> str:
+def _with_query(path: str, query: SiteRootQuery | None) -> str:
     encoded = _query(query)
     return f"{path}?{encoded}" if encoded else path
 
@@ -161,21 +170,21 @@ def data_portal_request(fmt: str) -> tuple[str, str, dict[str, str], None]:
 
 
 def rdf_catalog_request(
-    query: SiteCatalogQuery | None = None, *, accept: str | None = None
+    query: SiteDatasetCatalogQuery | None = None, *, accept: str | None = None
 ) -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/catalog with optional content negotiation."""
     return _request("GET", _with_query(f"{_SITE_PATH}catalog", query), headers=_accept_header(accept))
 
 
 def rdf_catalog_format_request(
-    fmt: str, query: SiteCatalogQuery | None = None
+    fmt: str, query: SiteDatasetCatalogQuery | None = None
 ) -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/catalog.<format>."""
     extension = _format_extension(fmt)
     return _request("GET", _with_query(f"{_SITE_PATH}catalog.{quote(extension, safe='')}", query))
 
 
-def csv_request(name: str, query: SiteCatalogQuery | None = None) -> tuple[str, str, dict[str, str], None]:
+def csv_request(name: str, query: SiteRootQuery | None = None) -> tuple[str, str, dict[str, str], None]:
     """Build one of the stock site CSV export requests."""
     path = _CSV_PATHS.get(name)
     if path is None:
@@ -185,32 +194,53 @@ def csv_request(name: str, query: SiteCatalogQuery | None = None) -> tuple[str, 
             platform="udata",
             safe_action="Use a declared site CSV export name.",
         )
+    if name in {"datasets", "resources"} and query is not None and not isinstance(query, SiteDatasetCsvQuery):
+        raise CatalogValidationError(
+            "The uData dataset CSV routes require SiteDatasetCsvQuery.",
+            operation=ROOT_OPERATION,
+            platform="udata",
+            safe_action="Use the route-specific dataset query model.",
+        )
+    if name == "organizations" and query is not None and not isinstance(query, SiteOrganizationCsvQuery):
+        raise CatalogValidationError(
+            "The uData organization CSV route requires SiteOrganizationCsvQuery.",
+            operation=ROOT_OPERATION,
+            platform="udata",
+            safe_action="Use the route-specific organization query model.",
+        )
+    if name not in {"datasets", "resources", "organizations"} and query is not None:
+        raise CatalogValidationError(
+            "This uData CSV route does not accept query parameters in the pinned parser.",
+            operation=ROOT_OPERATION,
+            platform="udata",
+            safe_action="Omit the query argument for this export route.",
+        )
     return _request("GET", _with_query(path, query))
 
 
-def datasets_csv_request(query: SiteCatalogQuery | None = None) -> tuple[str, str, dict[str, str], None]:
+def datasets_csv_request(query: SiteDatasetCsvQuery | None = None) -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/datasets.csv."""
     return csv_request("datasets", query)
 
 
-def resources_csv_request(query: SiteCatalogQuery | None = None) -> tuple[str, str, dict[str, str], None]:
+def resources_csv_request(query: SiteDatasetCsvQuery | None = None) -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/resources.csv."""
     return csv_request("resources", query)
 
 
-def organizations_csv_request(query: SiteCatalogQuery | None = None) -> tuple[str, str, dict[str, str], None]:
+def organizations_csv_request(query: SiteOrganizationCsvQuery | None = None) -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/organizations.csv."""
     return csv_request("organizations", query)
 
 
-def reuses_csv_request(query: SiteCatalogQuery | None = None) -> tuple[str, str, dict[str, str], None]:
+def reuses_csv_request() -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/reuses.csv."""
-    return csv_request("reuses", query)
+    return csv_request("reuses")
 
 
-def dataservices_csv_request(query: SiteCatalogQuery | None = None) -> tuple[str, str, dict[str, str], None]:
+def dataservices_csv_request() -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/dataservices.csv."""
-    return csv_request("dataservices", query)
+    return csv_request("dataservices")
 
 
 def harvests_csv_request() -> tuple[str, str, dict[str, str], None]:
@@ -241,9 +271,66 @@ def parse_site_profile(payload: object, *, operation: str = ROOT_OPERATION) -> S
         ) from error
 
 
-def _media_type(value: str | None, fallback: str) -> str:
-    negotiated = (value or fallback).split(";", 1)[0].strip().lower()
-    return negotiated
+def response_media_type(
+    headers: Mapping[str, str],
+    *,
+    operation: str,
+    status_code: int,
+    expected_media_type: str | None = None,
+) -> str:
+    """Read exactly one non-blank Content-Type value without inventing metadata."""
+    values = [value for key, value in headers.items() if key.lower() == "content-type"]
+    if len(values) != 1 or not values[0].strip() or "," in values[0]:
+        raise NativeCatalogError(
+            "The uData response must supply exactly one non-blank Content-Type header.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        )
+    if expected_media_type is None:
+        return values[0]
+    return _media_type(values[0], expected_media_type, operation=operation, status_code=status_code)
+
+
+def _media_type(value: str | None, expected: str, *, operation: str, status_code: int) -> str:
+    if value is None:
+        raise NativeCatalogError(
+            "The uData response omits its Content-Type header.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        )
+    parts = [part.strip() for part in value.split(";")]
+    media_type = parts[0].lower()
+    if not media_type or _MEDIA_TYPE.fullmatch(media_type) is None or "," in media_type:
+        raise NativeCatalogError(
+            "The uData response contains an invalid Content-Type header.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        )
+    parameters: set[str] = set()
+    for parameter in parts[1:]:
+        key, separator, parameter_value = parameter.partition("=")
+        key = key.strip().lower()
+        if not separator or key != "charset" or parameter_value.strip().lower() != "utf-8" or key in parameters:
+            raise NativeCatalogError(
+                "The uData response contains unsupported or duplicate Content-Type parameters.",
+                operation=operation,
+                platform="udata",
+                status_code=status_code,
+            )
+        parameters.add(key)
+    expected_type = expected.split(";", 1)[0].strip().lower()
+    if media_type != expected_type:
+        raise NativeCatalogError(
+            "The uData site document media type differs from its route contract.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+            metadata={"media_type": media_type},
+        )
+    return media_type
 
 
 def parse_document(
@@ -274,16 +361,12 @@ def parse_document(
             platform="udata",
             status_code=status_code,
         ) from error
-    media_type = _media_type(response_media_type, expected_media_type)
-    expected = expected_media_type.split(";", 1)[0].strip().lower()
-    if media_type != expected:
-        raise NativeCatalogError(
-            "The uData site document media type differs from its route contract.",
-            operation=operation,
-            platform="udata",
-            status_code=status_code,
-            metadata={"media_type": media_type},
-        )
+    media_type = _media_type(
+        response_media_type,
+        expected_media_type,
+        operation=operation,
+        status_code=status_code,
+    )
     digest = hashlib.sha256(body).hexdigest()
     metadata = {"media_type": media_type, "size_bytes": len(body), "sha256": digest}
     return SiteDocument(
@@ -294,6 +377,126 @@ def parse_document(
         sha256=digest,
         metadata=metadata,
         data=data,
+        format=fmt,
+    )
+
+
+def digest_stream_document(
+    response: RuntimeStreamResponse,
+    *,
+    endpoint: str,
+    expected_media_type: str,
+    max_bytes: int,
+    sink: Callable[[bytes], None] | None = None,
+    fmt: str | None = None,
+    operation: str = ROOT_OPERATION,
+) -> SiteDocument:
+    """Digest a bounded synchronous export while forwarding each verified chunk to a sink."""
+    if type(max_bytes) is not int or max_bytes < 1:
+        raise ValueError("uData root export limits must be positive integers.")
+    digest = hashlib.sha256()
+    decoder = getincrementaldecoder("utf-8")()
+    size_bytes = 0
+    try:
+        media_type = response_media_type(
+            response.headers,
+            operation=operation,
+            status_code=response.status_code,
+            expected_media_type=expected_media_type,
+        )
+        for chunk in response:
+            next_size = size_bytes + len(chunk)
+            if next_size > max_bytes:
+                raise NativeCatalogError(
+                    "The uData site export exceeds its configured byte limit.",
+                    operation=operation,
+                    platform="udata",
+                    status_code=response.status_code,
+                )
+            decoder.decode(chunk)
+            digest.update(chunk)
+            if sink is not None:
+                sink(chunk)
+            size_bytes = next_size
+        decoder.decode(b"", final=True)
+    except UnicodeDecodeError as error:
+        raise NativeCatalogError(
+            "The uData site document is not valid UTF-8.",
+            operation=operation,
+            platform="udata",
+            status_code=response.status_code,
+        ) from error
+    finally:
+        response.close()
+    metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
+    return SiteDocument(
+        endpoint=endpoint,
+        media_type=media_type,
+        status_code=response.status_code,
+        size_bytes=size_bytes,
+        sha256=digest.hexdigest(),
+        metadata=metadata,
+        format=fmt,
+    )
+
+
+async def digest_stream_document_async(
+    response: AsyncRuntimeStreamResponse,
+    *,
+    endpoint: str,
+    expected_media_type: str,
+    max_bytes: int,
+    sink: Callable[[bytes], Awaitable[None] | None] | None = None,
+    fmt: str | None = None,
+    operation: str = ROOT_OPERATION,
+) -> SiteDocument:
+    """Digest a bounded asynchronous export while forwarding each verified chunk to a sink."""
+    if type(max_bytes) is not int or max_bytes < 1:
+        raise ValueError("uData root export limits must be positive integers.")
+    digest = hashlib.sha256()
+    decoder = getincrementaldecoder("utf-8")()
+    size_bytes = 0
+    try:
+        media_type = response_media_type(
+            response.headers,
+            operation=operation,
+            status_code=response.status_code,
+            expected_media_type=expected_media_type,
+        )
+        async for chunk in response:
+            next_size = size_bytes + len(chunk)
+            if next_size > max_bytes:
+                raise NativeCatalogError(
+                    "The uData site export exceeds its configured byte limit.",
+                    operation=operation,
+                    platform="udata",
+                    status_code=response.status_code,
+                )
+            decoder.decode(chunk)
+            digest.update(chunk)
+            if sink is not None:
+                result = sink(chunk)
+                if result is not None:
+                    await result
+            size_bytes = next_size
+        decoder.decode(b"", final=True)
+    except UnicodeDecodeError as error:
+        raise NativeCatalogError(
+            "The uData site document is not valid UTF-8.",
+            operation=operation,
+            platform="udata",
+            status_code=response.status_code,
+        ) from error
+    finally:
+        await response.aclose()
+    metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
+    return SiteDocument(
+        endpoint=endpoint,
+        media_type=media_type,
+        status_code=response.status_code,
+        size_bytes=size_bytes,
+        sha256=digest.hexdigest(),
+        metadata=metadata,
         format=fmt,
     )
 
@@ -341,6 +544,8 @@ def parse_redirect(
     endpoint: str,
     origin: str,
     expected_path: str | None = None,
+    expected_path_prefix: str | None = None,
+    expected_query: str | None = None,
     operation: str = ROOT_OPERATION,
 ) -> SiteDocument:
     """Decode a same-origin uData redirect into bounded metadata."""
@@ -359,7 +564,15 @@ def parse_redirect(
             platform="udata",
             status_code=status_code,
         )
-    target = urlsplit(location)
+    try:
+        target = urlsplit(urljoin(origin + "/", location))
+    except ValueError as error:
+        raise NativeCatalogError(
+            "The uData root redirect contains an invalid target URL.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        ) from error
     configured = urlsplit(origin)
     if target.username or target.password or target.fragment:
         raise NativeCatalogError(
@@ -368,16 +581,38 @@ def parse_redirect(
             platform="udata",
             status_code=status_code,
         )
-    if target.scheme and target.scheme != configured.scheme or target.netloc and target.netloc != configured.netloc:
+    if target.scheme.lower() != configured.scheme.lower() or target.netloc.lower() != configured.netloc.lower():
         raise NativeCatalogError(
             "The uData root redirect points outside the configured deployment origin.",
             operation=operation,
             platform="udata",
             status_code=status_code,
         )
-    if expected_path is not None and target.path != expected_path:
+    route = urlsplit(endpoint)
+    required_path = route.path if expected_path is None else expected_path
+    required_query = route.query if expected_query is None else expected_query
+    if target.path != required_path and (
+        expected_path_prefix is None or not target.path.startswith(expected_path_prefix)
+    ):
         raise NativeCatalogError(
             "The uData root redirect target does not match its route contract.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        )
+    if parse_qsl(target.query, keep_blank_values=True) != parse_qsl(required_query, keep_blank_values=True):
+        raise NativeCatalogError(
+            "The uData root redirect query does not match its route contract.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        )
+    if any(
+        any(part in key.lower() for part in _SENSITIVE_QUERY_PARTS)
+        for key, _ in parse_qsl(target.query, keep_blank_values=True)
+    ):
+        raise NativeCatalogError(
+            "The uData root redirect contains a sensitive query component.",
             operation=operation,
             platform="udata",
             status_code=status_code,
@@ -414,6 +649,9 @@ __all__ = [
     "ROOT_OPERATIONS",
     "csv_request",
     "data_portal_request",
+    "digest_stream_document",
+    "digest_stream_document_async",
+    "SiteDatasetCsvQuery",
     "datasets_csv_request",
     "dataservices_csv_request",
     "get_site_request",
@@ -428,6 +666,7 @@ __all__ = [
     "rdf_catalog_format_request",
     "rdf_catalog_request",
     "resources_csv_request",
+    "response_media_type",
     "reuses_csv_request",
     "set_site_request",
     "site_data_portal_request",

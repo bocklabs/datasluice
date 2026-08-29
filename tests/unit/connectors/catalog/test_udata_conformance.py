@@ -3,11 +3,42 @@
 from __future__ import annotations
 
 import importlib
+import json
+from pathlib import Path
+from typing import cast
 
 import pytest
 
 import tests.unit.connectors.catalog.test_udata_datasets as dataset_tests
 import tests.unit.connectors.catalog.test_udata_root_profile as root_profile_tests
+from datasluice.connectors.catalog.udata.models.root_profile import (
+    SiteDatasetCatalogQuery,
+    SiteDatasetCsvQuery,
+    SiteOrganizationCsvQuery,
+    SitePatchInput,
+)
+from datasluice.connectors.catalog.udata.wire import root_profile as root_wire
+
+_ROOT_CONTRACT_PATH = (
+    Path(__file__).parents[4]
+    / "src"
+    / "datasluice"
+    / "contracts"
+    / "catalog"
+    / "fixtures"
+    / "udata"
+    / "root_profile.json"
+)
+
+
+def _root_contract() -> dict[str, object]:
+    document = json.loads(_ROOT_CONTRACT_PATH.read_text(encoding="utf-8"))
+    assert document["schema_version"] == "1.0"
+    assert document["platform"] == "udata"
+    assert document["profile_version"] == "17.6.0"
+    assert document["source_commit"] == "0546582058d84706812a1c37387576efc4e5ad1f"
+    return document
+
 
 ASSIGNED_ROWS: dict[int, str] = {
     39: "test_row39_list_datasets_exact_wire_and_projection",
@@ -143,6 +174,52 @@ def test_assigned_rows_match_the_coverage_dataset_scope() -> None:
 
 def test_root_rows_match_the_coverage_root_profile_scope() -> None:
     assert sorted(ROOT_ROWS) == list(range(183, 196))
+
+
+def test_root_contract_drives_independent_wire_shape_evidence() -> None:
+    document = _root_contract()
+    rows = cast(list[dict[str, object]], document["rows"])
+    assert [cast(int, row["row"]) for row in rows] == list(range(183, 196))
+    builders = {
+        183: lambda: root_wire.get_site_request(),
+        184: lambda: root_wire.set_site_request(SitePatchInput(title="contract")),
+        185: lambda: root_wire.data_portal_request("json"),
+        186: lambda: root_wire.rdf_catalog_request(),
+        187: lambda: root_wire.rdf_catalog_format_request("json"),
+        188: lambda: root_wire.datasets_csv_request(),
+        189: lambda: root_wire.resources_csv_request(),
+        190: lambda: root_wire.organizations_csv_request(),
+        191: lambda: root_wire.reuses_csv_request(),
+        192: lambda: root_wire.dataservices_csv_request(),
+        193: lambda: root_wire.harvests_csv_request(),
+        194: lambda: root_wire.tags_csv_request(),
+        195: lambda: root_wire.jsonld_context_request(),
+    }
+    for row in rows:
+        row_number = cast(int, row["row"])
+        built = builders[row_number]()
+        expected_path = cast(str, row["path"]).replace("<format>", "json")
+        assert built[0] == row["method"]
+        assert built[1] == expected_path
+
+
+def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> None:
+    document = _root_contract()
+    rows = cast(list[dict[str, object]], document["rows"])
+    schemas = {cast(int, row["row"]): row.get("query_schema") for row in rows}
+    assert schemas[186] == "dataset_catalog"
+    assert schemas[187] == "dataset_catalog"
+    assert schemas[188] == "dataset_csv"
+    assert schemas[189] == "dataset_csv"
+    assert schemas[190] == "organization_csv"
+    assert schemas[191] == "none"
+    assert root_wire.rdf_catalog_request(SiteDatasetCatalogQuery(filters={"tag": ("one", "two")}))[1].endswith(
+        "tag=one&tag=two"
+    )
+    assert root_wire.datasets_csv_request(SiteDatasetCsvQuery(filters={"format": ("csv", "json")}))[1].endswith(
+        "format=csv&format=json"
+    )
+    assert root_wire.organizations_csv_request(SiteOrganizationCsvQuery(name="Evidence"))[1].endswith("name=Evidence")
 
 
 def test_conformance_module_imports_isolated() -> None:

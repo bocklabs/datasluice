@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
@@ -179,6 +179,98 @@ class RuntimeResponse:
         return hash((self.status_code, self.retry_after))
 
 
+@dataclass(slots=True)
+class RuntimeStreamResponse:
+    """One closeable synchronous response whose bytes are yielded incrementally."""
+
+    status_code: int
+    headers: Mapping[str, str]
+    chunks: Iterator[bytes] = field(repr=False)
+    close_callback: Callable[[], None] = field(repr=False)
+    retry_after: float | None = None
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.status_code) is not int or not 100 <= self.status_code <= 599:
+            raise ValueError("Runtime stream response status codes must be valid HTTP status codes.")
+        if self.headers is None or not isinstance(self.headers, Mapping):
+            raise ValueError("Runtime stream response headers must be a mapping of string names to string values.")
+        headers = dict(self.headers)
+        if not all(isinstance(key, str) and key and isinstance(value, str) for key, value in headers.items()):
+            raise ValueError("Runtime stream response headers must contain non-empty string names and string values.")
+        if not callable(self.close_callback):
+            raise ValueError("Runtime stream responses require a close callback.")
+        if self.retry_after is not None and (
+            type(self.retry_after) not in (int, float) or not math.isfinite(self.retry_after) or self.retry_after < 0
+        ):
+            raise ValueError("Runtime stream response Retry-After must be a finite non-negative number.")
+        self.headers = MappingProxyType(headers)
+        if self.retry_after is not None:
+            self.retry_after = float(self.retry_after)
+
+    def __iter__(self) -> Iterator[bytes]:
+        for chunk in self.chunks:
+            if not isinstance(chunk, bytes):
+                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+            if chunk:
+                yield chunk
+
+    def close(self) -> None:
+        """Release the stream resource exactly once."""
+        if not self._closed:
+            self._closed = True
+            self.close_callback()
+
+
+@dataclass(slots=True)
+class AsyncRuntimeStreamResponse:
+    """One closeable asynchronous response whose bytes are yielded incrementally."""
+
+    status_code: int
+    headers: Mapping[str, str]
+    chunks: AsyncIterator[bytes] = field(repr=False)
+    close_callback: Callable[[], Awaitable[None] | None] = field(repr=False)
+    retry_after: float | None = None
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.status_code) is not int or not 100 <= self.status_code <= 599:
+            raise ValueError("Async runtime stream response status codes must be valid HTTP status codes.")
+        if self.headers is None or not isinstance(self.headers, Mapping):
+            raise ValueError(
+                "Async runtime stream response headers must be a mapping of string names to string values."
+            )
+        headers = dict(self.headers)
+        if not all(isinstance(key, str) and key and isinstance(value, str) for key, value in headers.items()):
+            raise ValueError(
+                "Async runtime stream response headers must contain non-empty string names and string values."
+            )
+        if not callable(self.close_callback):
+            raise ValueError("Async runtime stream responses require a close callback.")
+        if self.retry_after is not None and (
+            type(self.retry_after) not in (int, float) or not math.isfinite(self.retry_after) or self.retry_after < 0
+        ):
+            raise ValueError("Async runtime stream response Retry-After must be a finite non-negative number.")
+        self.headers = MappingProxyType(headers)
+        if self.retry_after is not None:
+            self.retry_after = float(self.retry_after)
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        async for chunk in self.chunks:
+            if not isinstance(chunk, bytes):
+                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+            if chunk:
+                yield chunk
+
+    async def aclose(self) -> None:
+        """Release the asynchronous stream resource exactly once."""
+        if not self._closed:
+            self._closed = True
+            result = self.close_callback()
+            if result is not None:
+                await result
+
+
 class TransportFailure(RuntimeError):
     """A connectivity failure distinct from an HTTP status outcome."""
 
@@ -191,3 +283,10 @@ class CatalogTransport(Protocol):
 
     def close(self) -> None:
         """Release transport resources."""
+
+
+class StreamingCatalogTransport(CatalogTransport, Protocol):
+    """Synchronous transport port that can expose a response body incrementally."""
+
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        """Send one request without pre-buffering its response body."""

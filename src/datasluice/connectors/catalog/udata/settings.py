@@ -7,12 +7,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
+from datasluice.connectors.catalog.udata.models.root_profile import ControlledStackAttestation
 from datasluice.domain.catalog.auth import CredentialResolver, UDataCredential
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.capability import AsyncProbeRunner, ProbeRunner
 from datasluice.runtime.clients import AsyncCatalogTransport
-from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
+from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS, DEFAULT_ROOT_EXPORT_MAX_BYTES
 from datasluice.runtime.resilience import BreakerRegistry
 from datasluice.runtime.transport.base import CatalogTransport
 
@@ -83,6 +84,8 @@ class UDataClientSettings:
     probe_runner: ProbeRunner | None = None
     async_probe_runner: AsyncProbeRunner | None = None
     capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
+    root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES
+    controlled_stack_attestation: ControlledStackAttestation | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", normalize_origin(self.base_url))
@@ -119,6 +122,12 @@ class UDataClientSettings:
             or self.capability_cache_ttl < 0
         ):
             raise ValueError("Capability cache TTL must be a finite non-negative number.")
+        if type(self.root_export_max_bytes) is not int or self.root_export_max_bytes < 1:
+            raise ValueError("uData root export byte limits must be positive integers.")
+        if self.controlled_stack_attestation is not None and not isinstance(
+            self.controlled_stack_attestation, ControlledStackAttestation
+        ):
+            raise TypeError("uData controlled stack evidence must use ControlledStackAttestation.")
 
     @property
     def owns_sync_transport(self) -> bool:

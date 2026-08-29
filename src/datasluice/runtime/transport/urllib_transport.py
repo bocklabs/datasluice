@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ssl
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
+from email.message import Message
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException, HTTPMessage
 from typing import IO
@@ -26,6 +28,7 @@ from datasluice.runtime.transport.base import (
     RedirectPolicy,
     RuntimeRequest,
     RuntimeResponse,
+    RuntimeStreamResponse,
     TransportFailure,
     drop_body_transfer_headers,
     redirect_method_and_body,
@@ -160,7 +163,7 @@ class UrllibCatalogTransport(CatalogTransport):
                 )
                 try:
                     status = response.status
-                    headers = dict(response.headers.items())
+                    headers = _header_map(response.headers)
                     body = response.read()
                 finally:
                     close = getattr(response, "close", None)
@@ -168,7 +171,7 @@ class UrllibCatalogTransport(CatalogTransport):
                         close()
             except HTTPError as exc:
                 try:
-                    status, headers, body = exc.code, dict(exc.headers.items()), exc.read()
+                    status, headers, body = exc.code, _header_map(exc.headers), exc.read()
                 finally:
                     exc.close()
             except HTTPException as exc:
@@ -220,6 +223,47 @@ class UrllibCatalogTransport(CatalogTransport):
         """Mark the transport closed; urllib has no persistent pool."""
         self._closed = True
 
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        """Open one no-follow response without pre-buffering its body."""
+        if self._closed:
+            raise TransportFailure("The urllib catalog transport is closed.")
+        if request.files:
+            raise TransportFailure(
+                "Multipart requests require the httpx transport; install datasluice[http] or inject an httpx transport."
+            )
+        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
+            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        try:
+            response = self._opener.open(
+                Request(request.url, data=request.body, headers=dict(request.headers), method=request.method),
+                timeout=min(self._budget.read, self._budget.total),
+            )
+            status = response.status
+            headers = dict(response.headers.items())
+        except HTTPError as exc:
+            response = exc
+            status = exc.code
+            headers = _header_map(exc.headers)
+        except HTTPException as exc:
+            raise TransportFailure("urllib lost the catalog connection before streaming its response.") from exc
+        except (URLError, OSError) as exc:
+            raise TransportFailure("urllib could not open the catalog response stream.") from exc
+
+        def chunks() -> Iterator[bytes]:
+            try:
+                while chunk := response.read(64 * 1024):
+                    yield chunk
+            except (HTTPException, OSError) as exc:
+                raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
+
+        return RuntimeStreamResponse(
+            status_code=status,
+            headers=headers,
+            chunks=chunks(),
+            close_callback=response.close,
+            retry_after=_retry_after(_header(headers, "retry-after")),
+        )
+
     def _retains_credentials(self, current_url: str, next_url: str) -> bool:
         """Decide whether credential-bearing headers survive this hop."""
         scope = self._credential_scope
@@ -229,5 +273,17 @@ class UrllibCatalogTransport(CatalogTransport):
         return scope.send_on_redirect and scheme in scope.allowed_schemes and host in scope.allowed_hosts
 
 
-def _header(headers: dict[str, str], name: str) -> str | None:
+def _header_map(headers: Mapping[str, str] | Message[str, str]) -> dict[str, str]:
+    """Preserve duplicate response headers as comma-joined values."""
+    result: dict[str, str] = {}
+    for key, value in headers.items():
+        existing = next((name for name in result if name.lower() == key.lower()), None)
+        if existing is None:
+            result[key] = value
+        else:
+            result[existing] = f"{result[existing]},{value}"
+    return result
+
+
+def _header(headers: Mapping[str, str], name: str) -> str | None:
     return next((value for key, value in headers.items() if key.lower() == name), None)

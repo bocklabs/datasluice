@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import cast
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.root_profile import (
+    ControlledStackAttestation,
     SiteCatalogQuery,
     SiteDocument,
     SiteMutationResult,
@@ -29,7 +30,13 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     NativeCatalogError,
 )
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import (
+    AsyncRuntimeStreamResponse,
+    RuntimeRequest,
+    RuntimeResponse,
+    RuntimeStreamResponse,
+    TransportFailure,
+)
 
 _ORIGIN = "http://127.0.0.1:5640"
 _SITE_URL = f"{_ORIGIN}/api/1/site/"
@@ -37,6 +44,24 @@ _CREDENTIAL = UDataCredential(api_key="site-key")
 _PERMISSIONS = EffectivePermissions.for_credential(
     _CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
 )
+
+
+def _attestation(*, site_id: str = "site") -> ControlledStackAttestation:
+    return ControlledStackAttestation.from_verified_values(
+        origin=_ORIGIN,
+        source_commit="0546582058d84706812a1c37387576efc4e5ad1f",
+        compose_sha256="f34538ffeab0de25dd5a8c0ce3984b2f2e6d56356fe3f095dbc593f8fdec23c7",
+        dockerfile_sha256="6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b",
+        image_digests=(
+            "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+            "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+            "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+            "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+            "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+        ),
+        nonce="unit-test-stack",
+        site_id=site_id,
+    )
 
 
 def _site_body(*, title: str = "uData") -> dict[str, object]:
@@ -77,6 +102,16 @@ class RouterTransport:
         except KeyError as error:
             raise AssertionError(f"unexpected request {(request.method, request.url)}") from error
 
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        response = self.send(request)
+        return RuntimeStreamResponse(
+            response.status_code,
+            response.headers,
+            iter((response.body,)),
+            lambda: None,
+            response.retry_after,
+        )
+
     def close(self) -> None:
         self.close_count += 1
 
@@ -96,6 +131,20 @@ class AsyncRouterTransport:
         except KeyError as error:
             raise AssertionError(f"unexpected request {(request.method, request.url)}") from error
 
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        response = await self.send(request)
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield response.body
+
+        return AsyncRuntimeStreamResponse(
+            response.status_code,
+            response.headers,
+            chunks(),
+            lambda: None,
+            response.retry_after,
+        )
+
     async def aclose(self) -> None:
         self.close_count += 1
 
@@ -105,6 +154,7 @@ def _sync_client(
     *,
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
+    attestation: ControlledStackAttestation | None = None,
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = RouterTransport(routes)
     client = SyncUDataClient(
@@ -112,6 +162,7 @@ def _sync_client(
         declared_udata_profile(),
         origin=origin,
         credentials=credential,
+        controlled_stack_attestation=_attestation() if attestation is None else attestation,
         owns_transport=False,
     )
     return transport, client
@@ -122,6 +173,7 @@ def _async_client(
     *,
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
+    attestation: ControlledStackAttestation | None = None,
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
     client = AsyncUDataClient(
@@ -129,6 +181,7 @@ def _async_client(
         declared_udata_profile(),
         origin=origin,
         credentials=credential,
+        controlled_stack_attestation=_attestation() if attestation is None else attestation,
         owns_transport=False,
     )
     return transport, client
@@ -136,7 +189,7 @@ def _async_client(
 
 def _routes(*responses: tuple[str, str, RuntimeResponse]) -> dict[tuple[str, str], RuntimeResponse]:
     result = {(method, url): response for method, url, response in responses}
-    result.setdefault(("GET", _SITE_URL), _json_response(200, _site_body()))
+    result.setdefault(("GET", _SITE_URL), _json_response(200, _site_body(), {"Content-Type": "application/json"}))
     return result
 
 
@@ -158,7 +211,9 @@ def _receipt_from(error: BaseException) -> MutationReceipt:
 
 
 def test_row183_get_site_decodes_a_lossless_typed_profile() -> None:
-    transport, client = _sync_client(_routes(("GET", _SITE_URL, _json_response(200, _site_body()))))
+    transport, client = _sync_client(
+        _routes(("GET", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
+    )
     with client:
         profile = client.root_profile.get()
 
@@ -176,7 +231,11 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     patch_url = _SITE_URL
     transport, client = _sync_client(
         _routes(
-            ("PATCH", patch_url, _json_response(200, _site_body(title="Changed"))),
+            (
+                "PATCH",
+                patch_url,
+                _json_response(200, _site_body(title="Changed"), {"Content-Type": "application/json"}),
+            ),
         ),
         credential=_CREDENTIAL,
     )
@@ -190,12 +249,14 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert isinstance(result, SiteMutationResult)
     assert result.profile is not None and result.profile.title == "Changed"
     assert result.receipt.outcome == "succeeded"
+    assert result.receipt.target.value == "site"
+    assert result.receipt.audit_metadata["controlled_evidence_digest"] == _attestation().evidence_digest
     patch_request = transport.requests[-1]
     assert patch_request.method == "PATCH"
     assert json.loads(patch_request.body or b"") == {"title": "Changed", "configs": None}
     assert patch_request.headers["Content-Type"] == "application/json"
     assert patch_request.headers["X-API-KEY"] == "site-key"
-    assert len(transport.requests) == 2
+    assert len(transport.requests) == 3
 
 
 def test_site_patch_omits_unset_fields_but_retains_explicit_null() -> None:
@@ -343,7 +404,9 @@ def test_root_invalid_format_is_rejected_before_site_probe() -> None:
 def test_root_malformed_profile_maps_to_typed_error() -> None:
     payload = _site_body()
     payload["title"] = 42
-    transport, client = _sync_client(_routes(("GET", _SITE_URL, _json_response(200, payload))))
+    transport, client = _sync_client(
+        _routes(("GET", _SITE_URL, _json_response(200, payload, {"Content-Type": "application/json"})))
+    )
     with client, pytest.raises(CatalogValidationError) as excinfo:
         client.root_profile.get()
 
@@ -412,7 +475,44 @@ def test_set_site_maps_423_to_non_retryable_deployment_disabled_with_receipt() -
     assert error.capability_state == "deployment-disabled"
     assert error.metadata["status_code"] == 423
     assert _receipt_from(error).outcome == "failed"
-    assert [request.method for request in transport.requests] == ["GET", "PATCH"]
+    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
+
+
+def test_set_site_denial_does_not_poison_the_root_read_capability() -> None:
+    transport, client = _sync_client(
+        _routes(("PATCH", _SITE_URL, _json_response(423, None))),
+        credential=_CREDENTIAL,
+    )
+    with client:
+        with pytest.raises(CatalogUnavailableError):
+            client.root_profile.set_site(
+                SitePatchInput(title="read-only"),
+                permissions=_PERMISSIONS,
+                mutation_policy=_site_policy(),
+            )
+        assert client.root_profile.get().id == "site"
+
+    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH", "GET"]
+
+
+def test_set_site_requires_verified_attestation_before_any_dispatch() -> None:
+    transport = RouterTransport(_routes())
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=_ORIGIN,
+        credentials=_CREDENTIAL,
+        owns_transport=False,
+    )
+    with client, pytest.raises(CatalogValidationError) as excinfo:
+        client.root_profile.set_site(
+            SitePatchInput(title="unattested"),
+            permissions=_PERMISSIONS,
+            mutation_policy=_site_policy(),
+        )
+
+    assert _receipt_from(excinfo.value).outcome == "rejected"
+    assert transport.requests == []
 
 
 def test_root_mutation_does_not_retry_after_transport_failure() -> None:
@@ -421,7 +521,7 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
             self.requests.append(request)
             if request.method == "PATCH":
                 raise TransportFailure("connection dropped after dispatch")
-            return _json_response(200, _site_body())
+            return _json_response(200, _site_body(), {"Content-Type": "application/json"})
 
     transport = FailingTransport({})
     client = SyncUDataClient(
@@ -429,6 +529,7 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
         declared_udata_profile(),
         origin=_ORIGIN,
         credentials=_CREDENTIAL,
+        controlled_stack_attestation=_attestation(),
         owns_transport=False,
     )
     with client, pytest.raises(TransportFailure):
@@ -438,7 +539,7 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
             mutation_policy=_site_policy(),
         )
 
-    assert [request.method for request in transport.requests] == ["GET", "PATCH"]
+    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
 
 
 def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
@@ -457,7 +558,7 @@ def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
 
 
 def test_root_profile_wire_operations_use_the_existing_broad_capability_identity() -> None:
-    assert wire.ROOT_OPERATIONS["set_site"] == "udata/api-v1.set-site"
+    assert wire.ROOT_OPERATIONS["set_site"] == "udata/api-v1.set_site"
     assert all(
         operation == wire.ROOT_OPERATION for name, operation in wire.ROOT_OPERATIONS.items() if name != "set_site"
     )

@@ -1,0 +1,115 @@
+{
+  "schema_version": "1.0",
+  "platform": "udata",
+  "profile_version": "17.6.0",
+  "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+  "rows": [
+    {
+      "row": 183,
+      "operation": "udata.v1.get_site",
+      "method": "GET",
+      "path": "/api/1/site/",
+      "response_media_type": "application/json"
+    },
+    {
+      "row": 184,
+      "operation": "udata.v1.set_site",
+      "method": "PATCH",
+      "path": "/api/1/site/",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "controlled_only": true
+    },
+    {
+      "row": 185,
+      "operation": "udata.v1.SiteDataPortal_get",
+      "method": "GET",
+      "path": "/api/1/site/data.<format>",
+      "redirect_path": "/api/1/site/catalog.<format>"
+    },
+    {
+      "row": 186,
+      "operation": "udata.v1.SiteRdfCatalog_get",
+      "method": "GET",
+      "path": "/api/1/site/catalog",
+      "redirect_path": "/api/1/site/catalog.<format>",
+      "query_schema": "dataset_catalog"
+    },
+    {
+      "row": 187,
+      "operation": "udata.v1.SiteRdfCatalogFormat_get",
+      "method": "GET",
+      "path": "/api/1/site/catalog.<format>",
+      "response_media_type": "format-selected-rdf",
+      "query_schema": "dataset_catalog"
+    },
+    {
+      "row": 188,
+      "operation": "udata.v1.SiteDatasetsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/datasets.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "dataset_csv"
+    },
+    {
+      "row": 189,
+      "operation": "udata.v1.SiteResourcesCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/resources.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "dataset_csv"
+    },
+    {
+      "row": 190,
+      "operation": "udata.v1.SiteOrganizationsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/organizations.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "organization_csv"
+    },
+    {
+      "row": 191,
+      "operation": "udata.v1.SiteReusesCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/reuses.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "none"
+    },
+    {
+      "row": 192,
+      "operation": "udata.v1.SiteDataservicesCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/dataservices.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "none"
+    },
+    {
+      "row": 193,
+      "operation": "udata.v1.SiteHarvestsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/harvests.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "none"
+    },
+    {
+      "row": 194,
+      "operation": "udata.v1.SiteTagsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/tags.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "none"
+    },
+    {
+      "row": 195,
+      "operation": "udata.v1.SiteJsonLdContext_get",
+      "method": "GET",
+      "path": "/api/1/site/context.jsonld",
+      "response_media_type": "application/ld+json"
+    }
+  ],
+  "controlled_evidence": {
+    "required": true,
+    "mutation_origin": "http://127.0.0.1:5640",
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f"
+  }
+}

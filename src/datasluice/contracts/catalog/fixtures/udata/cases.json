@@ -8,6 +8,18 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "deployment-disabled"
+    },
+    {
       "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
       "outcome": "optional"
     },

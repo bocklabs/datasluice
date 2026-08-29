@@ -13,6 +13,7 @@ _EVIDENCE_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/eviden
 _CASES_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/cases.json"
 _EXPECTED_OPERATION_IDS = {
     "udata/api-v1.root-and-effective-profile-probe",
+    "udata/api-v1.set_site",
     "udata/api-v1.dataset-list-search-show-create-update-delete",
     "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
     "udata/api-v1.organizations-and-memberships",
@@ -43,6 +44,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
 
 
 _DATASET_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.set_site",
     "udata/api-v1.list-datasets",
     "udata/api-v1.create-dataset",
     "udata/api-v1.recent-datasets-atom",

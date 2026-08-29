@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import cast
+from urllib.parse import urlsplit
 
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 
 ROOT_OPERATION = "udata/api-v1.root-and-effective-profile-probe"
+SET_SITE_OPERATION = "udata/api-v1.set_site"
 SITE_RESOURCE_KIND = ResourceKind("site")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _VERSION = re.compile(r"^[0-9]+[.][0-9]+[.][0-9]+$")
 _SITE_STRING_FIELDS = frozenset({"id", "title", "version"})
 _SITE_LIST_FIELDS = frozenset({"keywords", "datasets_blocs", "reuses_blocs", "dataservices_blocs"})
@@ -21,7 +25,7 @@ _SITE_MAPPING_FIELDS = frozenset({"configs", "themes", "settings", "metrics"})
 _SITE_FIELDS = _SITE_STRING_FIELDS | _SITE_LIST_FIELDS | _SITE_MAPPING_FIELDS | frozenset({"feed_size"})
 _PATCH_LIST_FIELDS = frozenset({"keywords", "datasets_blocs", "reuses_blocs", "dataservices_blocs"})
 _PATCH_MAPPING_FIELDS = frozenset({"configs", "themes", "settings"})
-_CATALOG_FILTERS = frozenset(
+_DATASET_CATALOG_FILTERS = frozenset(
     {
         "tag",
         "license",
@@ -48,6 +52,43 @@ _CATALOG_FILTERS = frozenset(
     }
 )
 _CATALOG_SORTS = frozenset({"title", "created", "last_update", "reuses", "followers", "views"})
+_DATASET_BOOLEAN_FILTERS = frozenset({"featured", "archived", "deleted", "private"})
+_ORGANIZATION_CSV_SORTS = frozenset({"name", "reuses", "datasets", "followers", "views", "created", "last_modified"})
+_DATASET_CSV_FILTERS = frozenset(
+    {
+        "tag",
+        "badge",
+        "organization",
+        "organization_name",
+        "owner",
+        "license",
+        "geozone",
+        "granularity",
+        "format",
+        "schema",
+        "temporal_coverage",
+        "featured",
+        "topic",
+        "access_type",
+        "format_family",
+        "producer_type",
+        "last_update_range",
+    }
+)
+_DATASET_CSV_REPEATABLE_FILTERS = frozenset({"tag", "granularity", "format", "schema"})
+_DATASET_CSV_BOOLEAN_FILTERS = frozenset({"featured"})
+_DATASET_CSV_LAST_UPDATE_RANGES = frozenset({"last_30_days", "last_12_months", "last_3_years"})
+_CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
+_CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
+_CONTROLLED_COMPOSE_SHA256 = "f34538ffeab0de25dd5a8c0ce3984b2f2e6d56356fe3f095dbc593f8fdec23c7"
+_CONTROLLED_DOCKERFILE_SHA256 = "6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b"
+_CONTROLLED_IMAGE_DIGESTS = (
+    "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+    "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+    "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+    "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+    "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+)
 
 
 def _freeze_mapping(value: Mapping[str, object], path: str) -> Mapping[str, object]:
@@ -79,6 +120,91 @@ def _validate_blocks(value: object, field_name: str, *, allow_none: bool = False
         raise ValueError(f"uData site {field_name} must be a tuple of JSON objects.")
     for item in value:
         _freeze_mapping(item, f"udata.site.{field_name}")
+
+
+@dataclass(frozen=True, slots=True)
+class ControlledStackAttestation:
+    """Evidence identity required before a uData site mutation can dispatch."""
+
+    origin: str = field(repr=False)
+    source_commit: str
+    compose_sha256: str
+    dockerfile_sha256: str
+    image_digests: tuple[str, ...]
+    nonce_sha256: str = field(repr=False)
+    site_id: str
+
+    def __post_init__(self) -> None:
+        if self.origin != _CONTROLLED_ORIGIN:
+            raise ValueError("Controlled uData evidence must use the approved loopback origin.")
+        if _COMMIT.fullmatch(self.source_commit) is None or self.source_commit != _CONTROLLED_SOURCE_COMMIT:
+            raise ValueError("Controlled uData evidence must use the pinned source commit.")
+        if self.compose_sha256 != _CONTROLLED_COMPOSE_SHA256:
+            raise ValueError("Controlled uData evidence must use the approved compose identity.")
+        if self.dockerfile_sha256 != _CONTROLLED_DOCKERFILE_SHA256:
+            raise ValueError("Controlled uData evidence must use the approved image build identity.")
+        if not isinstance(self.image_digests, tuple) or self.image_digests != _CONTROLLED_IMAGE_DIGESTS:
+            raise ValueError("Controlled uData evidence must use the approved dependency image identities.")
+        if _SHA256.fullmatch(self.nonce_sha256) is None:
+            raise ValueError("Controlled uData evidence must contain a nonce digest.")
+        if not isinstance(self.site_id, str) or not self.site_id:
+            raise ValueError("Controlled uData evidence must identify the target site.")
+        parsed = urlsplit(self.origin)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.port != 5640
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Controlled uData evidence must identify the approved loopback transport target.")
+
+    @classmethod
+    def from_verified_values(
+        cls,
+        *,
+        origin: str,
+        source_commit: str,
+        compose_sha256: str,
+        dockerfile_sha256: str,
+        image_digests: tuple[str, ...],
+        nonce: str,
+        site_id: str,
+    ) -> ControlledStackAttestation:
+        """Create an attestation while retaining only the nonce digest."""
+        if not isinstance(nonce, str) or not nonce:
+            raise ValueError("Controlled uData evidence requires a non-empty stack nonce.")
+        return cls(
+            origin=origin,
+            source_commit=source_commit,
+            compose_sha256=compose_sha256,
+            dockerfile_sha256=dockerfile_sha256,
+            image_digests=image_digests,
+            nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
+            site_id=site_id,
+        )
+
+    @property
+    def evidence_digest(self) -> str:
+        """Return a stable digest of the non-secret controlled-stack identity."""
+        value = "|".join(
+            (
+                self.source_commit,
+                self.compose_sha256,
+                self.dockerfile_sha256,
+                *self.image_digests,
+                self.nonce_sha256,
+                self.site_id,
+            )
+        )
+        return hashlib.sha256(value.encode()).hexdigest()
+
+    def matches(self, *, origin: str, site_id: str) -> bool:
+        """Return whether this evidence binds the current transport and decoded site."""
+        return self.origin == origin == _CONTROLLED_ORIGIN and self.site_id == site_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,9 +366,9 @@ UNSET = _UnsetValue()
 class SitePatchInput:
     """Presence-aware PATCH input for the writable uData site fields."""
 
-    title: str | None | _UnsetValue = UNSET
+    title: str | _UnsetValue = UNSET
     keywords: tuple[str, ...] | None | _UnsetValue = UNSET
-    feed_size: int | None | _UnsetValue = UNSET
+    feed_size: int | _UnsetValue = UNSET
     configs: Mapping[str, object] | None | _UnsetValue = UNSET
     themes: Mapping[str, object] | None | _UnsetValue = UNSET
     settings: Mapping[str, object] | None | _UnsetValue = UNSET
@@ -333,8 +459,8 @@ class SitePatchInput:
 
 
 @dataclass(frozen=True, slots=True)
-class SiteCatalogQuery:
-    """Typed query parameters shared by root RDF catalog and CSV reads."""
+class SiteDatasetCatalogQuery:
+    """Exact dataset-filter schema shared only by the RDF and dataset CSV routes."""
 
     q: str | None = None
     sort: str | None = None
@@ -357,17 +483,22 @@ class SiteCatalogQuery:
             if not isinstance(self.filters, Mapping):
                 raise ValueError("uData site catalog filters must be a mapping.")
             for key, value in self.filters.items():
-                if key not in _CATALOG_FILTERS:
-                    raise ValueError(f"Unknown uData site catalog filter: {key}.")
+                if key not in _DATASET_CATALOG_FILTERS:
+                    raise ValueError(f"Unknown uData site dataset-catalog filter: {key}.")
                 if isinstance(value, tuple):
+                    if key != "tag":
+                        raise ValueError("Only the uData dataset-catalog tag filter is repeatable.")
                     if not value or not all(isinstance(item, str) and item for item in value):
-                        raise ValueError("uData site catalog repeated filters require non-empty strings.")
-                elif type(value) is not bool and (not isinstance(value, str) or not value):
-                    raise ValueError("uData site catalog filters require strings, booleans, or string tuples.")
-            object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_catalog.filters"))
+                        raise ValueError("uData site dataset-catalog repeated tags require non-empty strings.")
+                elif type(value) is bool:
+                    if key not in _DATASET_BOOLEAN_FILTERS:
+                        raise ValueError(f"uData site dataset-catalog filter {key!r} is not boolean.")
+                elif not isinstance(value, str) or not value:
+                    raise ValueError("uData site dataset-catalog scalar filters require non-empty strings.")
+            object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_dataset_catalog.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
-        """Encode catalog parameters in stable order with repeated filter keys."""
+        """Encode the pinned dataset-catalog parser fields in stable order."""
         params = [("page", str(self.page)), ("page_size", str(self.page_size))]
         if self.q is not None:
             params.append(("q", self.q))
@@ -380,6 +511,104 @@ class SiteCatalogQuery:
                 params.extend((key, item) for item in value)
             else:
                 params.append((key, cast(str, value)))
+        return params
+
+
+@dataclass(frozen=True, slots=True)
+class SiteDatasetCsvQuery:
+    """Exact DatasetSearch query schema used by datasets and resources CSV routes."""
+
+    q: str | None = None
+    sort: str | None = None
+    page: int = 1
+    page_size: int = 20
+    filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("uData dataset CSV page must be a positive integer.")
+        if type(self.page_size) is not int or self.page_size < 1:
+            raise ValueError("uData dataset CSV page_size must be a positive integer.")
+        if self.q is not None and (not isinstance(self.q, str) or not self.q):
+            raise ValueError("uData dataset CSV q must be a non-empty string when supplied.")
+        if self.sort is not None:
+            sort_key = self.sort[1:] if self.sort.startswith("-") else self.sort
+            if not self.sort or sort_key not in {"created", "last_update", "reuses", "followers", "views"}:
+                raise ValueError("uData dataset CSV sort must be a documented value.")
+        if self.filters is not None:
+            if not isinstance(self.filters, Mapping):
+                raise ValueError("uData dataset CSV filters must be a mapping.")
+            for key, value in self.filters.items():
+                if key not in _DATASET_CSV_FILTERS:
+                    raise ValueError(f"Unknown uData dataset CSV filter: {key}.")
+                if key == "last_update_range" and (
+                    not isinstance(value, str) or value not in _DATASET_CSV_LAST_UPDATE_RANGES
+                ):
+                    raise ValueError("uData dataset CSV last_update_range must be a documented range choice.")
+                if isinstance(value, tuple):
+                    if (
+                        key not in _DATASET_CSV_REPEATABLE_FILTERS
+                        or not value
+                        or not all(isinstance(item, str) and item for item in value)
+                    ):
+                        raise ValueError("Only documented dataset CSV list filters may repeat non-empty strings.")
+                elif type(value) is bool:
+                    if key not in _DATASET_CSV_BOOLEAN_FILTERS:
+                        raise ValueError(f"uData dataset CSV filter {key!r} is not boolean.")
+                elif not isinstance(value, str) or not value:
+                    raise ValueError("uData dataset CSV scalar filters require non-empty strings.")
+            object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_dataset_csv.filters"))
+
+    def query_params(self) -> list[tuple[str, str]]:
+        """Encode the pinned DatasetSearch parser fields in stable order."""
+        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
+        if self.q is not None:
+            params.append(("q", self.q))
+        if self.sort is not None:
+            params.append(("sort", self.sort))
+        for key, value in sorted((self.filters or {}).items()):
+            if isinstance(value, bool):
+                params.append((key, "true" if value else "false"))
+            elif isinstance(value, tuple):
+                params.extend((key, item) for item in value)
+            else:
+                params.append((key, cast(str, value)))
+        return params
+
+
+@dataclass(frozen=True, slots=True)
+class SiteOrganizationCsvQuery:
+    """Exact organization CSV query schema accepted by the pinned organization parser."""
+
+    q: str | None = None
+    sort: str | None = None
+    page: int = 1
+    page_size: int = 20
+    badge: str | None = None
+    name: str | None = None
+    business_number_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("uData organization CSV page must be a positive integer.")
+        if type(self.page_size) is not int or self.page_size < 1:
+            raise ValueError("uData organization CSV page_size must be a positive integer.")
+        for field_name in ("q", "badge", "name", "business_number_id"):
+            value = getattr(self, field_name)
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"uData organization CSV {field_name} must be a non-empty string when supplied.")
+        if self.sort is not None:
+            sort_key = self.sort[1:] if self.sort.startswith("-") else self.sort
+            if not self.sort or sort_key not in _ORGANIZATION_CSV_SORTS:
+                raise ValueError("uData organization CSV sort must be a documented value.")
+
+    def query_params(self) -> list[tuple[str, str]]:
+        """Encode the pinned organization parser fields in stable order."""
+        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
+        for key in ("q", "sort", "badge", "name", "business_number_id"):
+            value = getattr(self, key)
+            if value is not None:
+                params.append((key, value))
         return params
 
 
@@ -438,8 +667,9 @@ class SiteDocument:
 SiteExport = SiteDocument
 SiteRedirect = SiteDocument
 SiteJsonLdContext = SiteDocument
-SiteRdfQuery = SiteCatalogQuery
-SiteExportQuery = SiteCatalogQuery
+SiteCatalogQuery = SiteDatasetCatalogQuery
+SiteRdfQuery = SiteDatasetCatalogQuery
+SiteExportQuery = SiteDatasetCatalogQuery
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,16 +704,21 @@ SitePatchResult = SiteMutationResult
 SiteMutationOutcome = MutationReceipt
 
 __all__ = [
+    "ControlledStackAttestation",
     "ROOT_OPERATION",
+    "SET_SITE_OPERATION",
     "SITE_RESOURCE_KIND",
     "UNSET",
     "SiteCatalogQuery",
+    "SiteDatasetCatalogQuery",
+    "SiteDatasetCsvQuery",
     "SiteDocument",
     "SiteExport",
     "SiteExportQuery",
     "SiteJsonLdContext",
     "SiteMutationOutcome",
     "SiteMutationResult",
+    "SiteOrganizationCsvQuery",
     "SitePatchInput",
     "SitePatchResult",
     "SiteProfile",

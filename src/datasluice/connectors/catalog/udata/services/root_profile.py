@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Never, cast
+from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.models.root_profile import (
     ROOT_OPERATION,
+    SET_SITE_OPERATION,
     SITE_RESOURCE_KIND,
+    ControlledStackAttestation,
     SiteCatalogQuery,
+    SiteDatasetCsvQuery,
     SiteDocument,
     SiteMutationResult,
+    SiteOrganizationCsvQuery,
     SitePatchInput,
     SiteProfile,
 )
@@ -33,9 +38,8 @@ from datasluice.runtime.transport.base import TransportFailure
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
 
-_CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
-_SITE_TARGET = "site"
 _CSV_MEDIA_TYPE = "text/csv"
+_UNKNOWN_SITE = "unknown"
 
 
 def _operation_id(operation: str) -> OperationId:
@@ -117,13 +121,24 @@ def _policy_metadata(policy: MutationPolicy | None) -> dict[str, object]:
     }
 
 
-def _build_receipt(policy: MutationPolicy | None, outcome: str, *, status_code: int, mutation: str) -> MutationReceipt:
+def _build_receipt(
+    policy: MutationPolicy | None,
+    outcome: str,
+    *,
+    status_code: int,
+    mutation: str,
+    target: str,
+    attestation: ControlledStackAttestation | None = None,
+) -> MutationReceipt:
+    metadata = {"mutation": mutation, "status_code": status_code, "policy": _policy_metadata(policy)}
+    if attestation is not None:
+        metadata["controlled_evidence_digest"] = attestation.evidence_digest
     return build_mutation_receipt(
-        _operation_id(wire.ROOT_OPERATIONS["set_site"]),
-        CatalogId(platform=CatalogPlatform.UDATA, resource_kind=SITE_RESOURCE_KIND, value=_SITE_TARGET),
+        _operation_id(SET_SITE_OPERATION),
+        CatalogId(platform=CatalogPlatform.UDATA, resource_kind=SITE_RESOURCE_KIND, value=target),
         _receipt_policy(policy),
         outcome,
-        {"mutation": mutation, "status_code": status_code, "policy": _policy_metadata(policy)},
+        metadata,
     )
 
 
@@ -168,18 +183,32 @@ def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> Never
     raise _attach_receipt(error, receipt)
 
 
-def _require_controlled_origin(origin: str, operation: str) -> None:
-    if origin != _CONTROLLED_ORIGIN:
+def _require_controlled_attestation(
+    attestation: ControlledStackAttestation | None,
+    *,
+    origin: str,
+    operation: str,
+    site_id: str | None = None,
+) -> None:
+    if not isinstance(attestation, ControlledStackAttestation):
         raise CatalogValidationError(
-            "uData site PATCH is restricted to the seeded loopback evidence stack.",
+            "uData site PATCH requires verified controlled-stack evidence.",
             operation=operation,
             platform="udata",
-            safe_action=f"Use the controlled deployment origin {_CONTROLLED_ORIGIN} for site mutations.",
+            safe_action="Provide a verified controlled-stack attestation before attempting a site mutation.",
+        )
+    expected_site_id = attestation.site_id if site_id is None else site_id
+    if not attestation.matches(origin=origin, site_id=expected_site_id):
+        raise CatalogValidationError(
+            "uData site PATCH evidence does not match the configured target.",
+            operation=operation,
+            platform="udata",
+            safe_action="Use evidence from the approved disposable stack and decoded site target.",
         )
 
 
-def _enforce_patch_policy(policy: MutationPolicy | None) -> None:
-    operation = wire.ROOT_OPERATIONS["set_site"]
+def _enforce_patch_policy(policy: MutationPolicy | None, *, target: str) -> None:
+    operation = SET_SITE_OPERATION
 
     def reject(message: str, action: str) -> Never:
         raise ForbiddenError(
@@ -197,10 +226,10 @@ def _enforce_patch_policy(policy: MutationPolicy | None) -> None:
             "The uData site PATCH is not explicitly confirmed.",
             "Pass ConfirmationPolicy(confirmed=True, operation=..., target='site').",
         )
-    if confirmation.operation != operation or confirmation.target != _SITE_TARGET:
+    if confirmation.operation != operation or confirmation.target != target:
         reject(
-            "uData site confirmation must be bound to the set_site operation and singleton site target.",
-            "Pass ConfirmationPolicy(confirmed=True, operation='udata/api-v1.set-site', target='site').",
+            "uData site confirmation must be bound to the set_site operation and decoded site target.",
+            "Pass ConfirmationPolicy with the set_site operation and the decoded site identifier.",
         )
     if policy.destructive:
         reject(
@@ -230,6 +259,8 @@ def _mutating(
     policy: MutationPolicy | None,
     dispatch: Callable[[], tuple[int, object, object]],
     decode: Callable[[object], SiteProfile | None],
+    target: Callable[[], str],
+    evidence: Callable[[], ControlledStackAttestation | None],
 ) -> SiteMutationResult:
     response: object | None = None
     try:
@@ -241,9 +272,13 @@ def _mutating(
             _mutation_outcome(error, response),
             status_code=_error_status(error, response),
             mutation="set_site",
+            target=target(),
+            attestation=evidence(),
         )
         _raise_with_receipt(error, receipt)
-    receipt = _build_receipt(policy, "succeeded", status_code=status, mutation="set_site")
+    receipt = _build_receipt(
+        policy, "succeeded", status_code=status, mutation="set_site", target=target(), attestation=evidence()
+    )
     return SiteMutationResult(receipt=receipt, profile=profile)
 
 
@@ -251,6 +286,8 @@ async def _amutating(
     policy: MutationPolicy | None,
     dispatch: Callable[[], Awaitable[tuple[int, object, object]]],
     decode: Callable[[object], SiteProfile | None],
+    target: Callable[[], str],
+    evidence: Callable[[], ControlledStackAttestation | None],
 ) -> SiteMutationResult:
     response: object | None = None
     try:
@@ -262,9 +299,13 @@ async def _amutating(
             _mutation_outcome(error, response),
             status_code=_error_status(error, response),
             mutation="set_site",
+            target=target(),
+            attestation=evidence(),
         )
         _raise_with_receipt(error, receipt)
-    receipt = _build_receipt(policy, "succeeded", status_code=status, mutation="set_site")
+    receipt = _build_receipt(
+        policy, "succeeded", status_code=status, mutation="set_site", target=target(), attestation=evidence()
+    )
     return SiteMutationResult(receipt=receipt, profile=profile)
 
 
@@ -273,7 +314,7 @@ def _decode_profile(payload: object) -> SiteProfile:
 
 
 def _decode_patch(payload: object) -> SiteProfile | None:
-    return None if payload is None else _decode_profile(payload)
+    return None if payload is None else wire.parse_site_profile(payload, operation=SET_SITE_OPERATION)
 
 
 def _parse_redirect(
@@ -282,6 +323,7 @@ def _parse_redirect(
     endpoint: str,
     origin: str,
     expected_path: str | None = None,
+    expected_path_prefix: str | None = None,
 ) -> SiteDocument:
     return wire.parse_redirect(
         status_code=status,
@@ -289,12 +331,10 @@ def _parse_redirect(
         endpoint=endpoint,
         origin=origin,
         expected_path=expected_path,
+        expected_path_prefix=expected_path_prefix,
+        expected_query=urlsplit(endpoint).query,
         operation=ROOT_OPERATION,
     )
-
-
-def _content_type(headers: Mapping[str, str]) -> str | None:
-    return next((value for key, value in headers.items() if key.lower() == "content-type"), None)
 
 
 class SyncRootProfileService:
@@ -311,8 +351,14 @@ class SyncRootProfileService:
     def get(self) -> SiteProfile:
         """GET /api/1/site/ (row 183)."""
         method, path, headers, _ = wire.get_site_request()
-        _, payload, _ = self._client._root_call(
+        status, payload, response = self._client._root_call(
             method=method, path=path, owning_operation=ROOT_OPERATION, headers=headers
+        )
+        wire.response_media_type(
+            response.headers,
+            operation=ROOT_OPERATION,
+            status_code=status,
+            expected_media_type="application/json",
         )
         return _decode_profile(payload)
 
@@ -324,10 +370,13 @@ class SyncRootProfileService:
         mutation_policy: MutationPolicy | None = None,
     ) -> SiteMutationResult:
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
-        operation = wire.ROOT_OPERATIONS["set_site"]
+        operation = SET_SITE_OPERATION
+        attestation = getattr(self._client, "_controlled_stack_attestation", None)
+        target_id = attestation.site_id if isinstance(attestation, ControlledStackAttestation) else _UNKNOWN_SITE
 
         def dispatch() -> tuple[int, object, object]:
-            _require_controlled_origin(self._client._origin, operation)
+            nonlocal target_id
+            _require_controlled_attestation(attestation, origin=self._client._origin, operation=operation)
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
                     "uData site PATCH requires SitePatchInput.",
@@ -336,19 +385,34 @@ class SyncRootProfileService:
                     safe_action="Pass a typed SitePatchInput.",
                 )
             resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
-            _enforce_patch_policy(mutation_policy)
+            _enforce_patch_policy(mutation_policy, target=target_id)
+            current = self.get()
+            _require_controlled_attestation(
+                attestation, origin=self._client._origin, operation=operation, site_id=current.site_id
+            )
+            target_id = current.site_id
+            _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
-            return self._client._root_call(
+            status, payload, response = self._client._root_call(
                 method=method,
                 path=path,
-                owning_operation=ROOT_OPERATION,
+                owning_operation=operation,
                 headers=headers,
                 json_body=body,
                 credential=resolved,
+                permissions=permissions,
                 idempotency_policy=IdempotencyPolicy(),
             )
+            if response.body:
+                wire.response_media_type(
+                    response.headers,
+                    operation=operation,
+                    status_code=status,
+                    expected_media_type="application/json",
+                )
+            return status, payload, response
 
-        return _mutating(mutation_policy, dispatch, _decode_patch)
+        return _mutating(mutation_policy, dispatch, _decode_patch, lambda: target_id, lambda: attestation)
 
     def data_portal(self, fmt: str) -> SiteDocument:
         """GET /api/1/site/data.<format> (row 185)."""
@@ -375,79 +439,95 @@ class SyncRootProfileService:
             raw_text=True,
             redirect_mode=True,
         )
-        return _parse_redirect(status, value, path, self._client._origin)
+        return _parse_redirect(
+            status,
+            value,
+            path,
+            self._client._origin,
+            expected_path_prefix="/api/1/site/catalog.",
+        )
 
-    def rdf_catalog_format(self, fmt: str, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    def rdf_catalog_format(
+        self,
+        fmt: str,
+        query: SiteCatalogQuery | None = None,
+        *,
+        sink: Callable[[bytes], None] | None = None,
+    ) -> SiteDocument:
         """GET /api/1/site/catalog.<format> (row 187)."""
         method, path, headers, _ = wire.rdf_catalog_format_request(fmt, query or SiteCatalogQuery())
-        status, value, response = self._client._root_call(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
-        )
-        if status in {301, 302, 303, 307, 308}:
-            return _parse_redirect(status, value, path, self._client._origin)
-        return wire.parse_document(
-            cast(bytes, value),
+        response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
+        if response.status_code in {301, 302, 303, 307, 308}:
+            try:
+                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+            finally:
+                response.close()
+        return wire.digest_stream_document(
+            response,
             endpoint=path,
             expected_media_type=wire.media_type_for_format(fmt),
-            response_media_type=_content_type(response.headers),
-            status_code=status,
+            max_bytes=self._client._root_export_max_bytes,
+            sink=sink,
             fmt=fmt,
             operation=ROOT_OPERATION,
         )
 
-    def _csv(self, name: str, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    def _csv(
+        self,
+        name: str,
+        query: SiteDatasetCsvQuery | SiteOrganizationCsvQuery | None = None,
+        *,
+        sink: Callable[[bytes], None] | None = None,
+    ) -> SiteDocument:
         method, path, headers, _ = wire.csv_request(name, query)
-        status, value, response = self._client._root_call(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
-        )
-        if status in {301, 302, 303, 307, 308}:
-            return _parse_redirect(status, value, path, self._client._origin)
-        return wire.parse_document(
-            cast(bytes, value),
+        response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
+        if response.status_code in {301, 302, 303, 307, 308}:
+            try:
+                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+            finally:
+                response.close()
+        return wire.digest_stream_document(
+            response,
             endpoint=path,
             expected_media_type=_CSV_MEDIA_TYPE,
-            response_media_type=_content_type(response.headers),
-            status_code=status,
+            max_bytes=self._client._root_export_max_bytes,
+            sink=sink,
             operation=ROOT_OPERATION,
         )
 
-    def datasets_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    def datasets_csv(
+        self, query: SiteDatasetCsvQuery | None = None, *, sink: Callable[[bytes], None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/datasets.csv (row 188)."""
-        return self._csv("datasets", query)
+        return self._csv("datasets", query, sink=sink)
 
-    def resources_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    def resources_csv(
+        self, query: SiteDatasetCsvQuery | None = None, *, sink: Callable[[bytes], None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/resources.csv (row 189)."""
-        return self._csv("resources", query)
+        return self._csv("resources", query, sink=sink)
 
-    def organizations_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    def organizations_csv(
+        self, query: SiteOrganizationCsvQuery | None = None, *, sink: Callable[[bytes], None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/organizations.csv (row 190)."""
-        return self._csv("organizations", query)
+        return self._csv("organizations", query, sink=sink)
 
-    def reuses_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    def reuses_csv(self, *, sink: Callable[[bytes], None] | None = None) -> SiteDocument:
         """GET /api/1/site/reuses.csv (row 191)."""
-        return self._csv("reuses", query)
+        return self._csv("reuses", sink=sink)
 
-    def dataservices_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    def dataservices_csv(self, *, sink: Callable[[bytes], None] | None = None) -> SiteDocument:
         """GET /api/1/site/dataservices.csv (row 192)."""
-        return self._csv("dataservices", query)
+        return self._csv("dataservices", sink=sink)
 
-    def harvests_csv(self) -> SiteDocument:
+    def harvests_csv(self, *, sink: Callable[[bytes], None] | None = None) -> SiteDocument:
         """GET /api/1/site/harvests.csv (row 193)."""
-        return self._csv("harvests")
+        return self._csv("harvests", sink=sink)
 
-    def tags_csv(self) -> SiteDocument:
+    def tags_csv(self, *, sink: Callable[[bytes], None] | None = None) -> SiteDocument:
         """GET /api/1/site/tags.csv (row 194)."""
-        return self._csv("tags")
+        return self._csv("tags", sink=sink)
 
     def jsonld_context(self) -> SiteDocument:
         """GET /api/1/site/context.jsonld (row 195)."""
@@ -462,7 +542,12 @@ class SyncRootProfileService:
         return wire.parse_jsonld_context(
             cast(bytes, body),
             endpoint=path,
-            response_media_type=_content_type(response.headers),
+            response_media_type=wire.response_media_type(
+                response.headers,
+                operation=ROOT_OPERATION,
+                status_code=status,
+                expected_media_type="application/ld+json",
+            ),
             status_code=status,
             operation=ROOT_OPERATION,
         )
@@ -499,8 +584,14 @@ class AsyncRootProfileService:
     async def get(self) -> SiteProfile:
         """GET /api/1/site/ (row 183)."""
         method, path, headers, _ = wire.get_site_request()
-        _, payload, _ = await self._client._root_call_async(
+        status, payload, response = await self._client._root_call_async(
             method=method, path=path, owning_operation=ROOT_OPERATION, headers=headers
+        )
+        wire.response_media_type(
+            response.headers,
+            operation=ROOT_OPERATION,
+            status_code=status,
+            expected_media_type="application/json",
         )
         return _decode_profile(payload)
 
@@ -512,10 +603,13 @@ class AsyncRootProfileService:
         mutation_policy: MutationPolicy | None = None,
     ) -> SiteMutationResult:
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
-        operation = wire.ROOT_OPERATIONS["set_site"]
+        operation = SET_SITE_OPERATION
+        attestation = getattr(self._client, "_controlled_stack_attestation", None)
+        target_id = attestation.site_id if isinstance(attestation, ControlledStackAttestation) else _UNKNOWN_SITE
 
         async def dispatch() -> tuple[int, object, object]:
-            _require_controlled_origin(self._client._origin, operation)
+            nonlocal target_id
+            _require_controlled_attestation(attestation, origin=self._client._origin, operation=operation)
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
                     "uData site PATCH requires SitePatchInput.",
@@ -525,19 +619,34 @@ class AsyncRootProfileService:
                 )
             resolved = await self._client._resolved_credential_async()
             _require_mutation_permission(resolved, operation, permissions)
-            _enforce_patch_policy(mutation_policy)
+            _enforce_patch_policy(mutation_policy, target=target_id)
+            current = await self.get()
+            _require_controlled_attestation(
+                attestation, origin=self._client._origin, operation=operation, site_id=current.site_id
+            )
+            target_id = current.site_id
+            _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
-            return await self._client._root_call_async(
+            status, payload, response = await self._client._root_call_async(
                 method=method,
                 path=path,
-                owning_operation=ROOT_OPERATION,
+                owning_operation=operation,
                 headers=headers,
                 json_body=body,
                 credential=resolved,
+                permissions=permissions,
                 idempotency_policy=IdempotencyPolicy(),
             )
+            if response.body:
+                wire.response_media_type(
+                    response.headers,
+                    operation=operation,
+                    status_code=status,
+                    expected_media_type="application/json",
+                )
+            return status, payload, response
 
-        return await _amutating(mutation_policy, dispatch, _decode_patch)
+        return await _amutating(mutation_policy, dispatch, _decode_patch, lambda: target_id, lambda: attestation)
 
     async def data_portal(self, fmt: str) -> SiteDocument:
         """GET /api/1/site/data.<format> (row 185)."""
@@ -563,79 +672,102 @@ class AsyncRootProfileService:
             raw_text=True,
             redirect_mode=True,
         )
-        return _parse_redirect(status, value, path, self._client._origin)
+        return _parse_redirect(
+            status,
+            value,
+            path,
+            self._client._origin,
+            expected_path_prefix="/api/1/site/catalog.",
+        )
 
-    async def rdf_catalog_format(self, fmt: str, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    async def rdf_catalog_format(
+        self,
+        fmt: str,
+        query: SiteCatalogQuery | None = None,
+        *,
+        sink: Callable[[bytes], Awaitable[None] | None] | None = None,
+    ) -> SiteDocument:
         """GET /api/1/site/catalog.<format> (row 187)."""
         method, path, headers, _ = wire.rdf_catalog_format_request(fmt, query or SiteCatalogQuery())
-        status, value, response = await self._client._root_call_async(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
+        response = await self._client._root_stream_call_async(
+            path=path, owning_operation=ROOT_OPERATION, headers=headers
         )
-        if status in {301, 302, 303, 307, 308}:
-            return _parse_redirect(status, value, path, self._client._origin)
-        return wire.parse_document(
-            cast(bytes, value),
+        if response.status_code in {301, 302, 303, 307, 308}:
+            try:
+                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+            finally:
+                await response.aclose()
+        return await wire.digest_stream_document_async(
+            response,
             endpoint=path,
             expected_media_type=wire.media_type_for_format(fmt),
-            response_media_type=_content_type(response.headers),
-            status_code=status,
+            max_bytes=self._client._root_export_max_bytes,
+            sink=sink,
             fmt=fmt,
             operation=ROOT_OPERATION,
         )
 
-    async def _csv(self, name: str, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    async def _csv(
+        self,
+        name: str,
+        query: SiteDatasetCsvQuery | SiteOrganizationCsvQuery | None = None,
+        *,
+        sink: Callable[[bytes], Awaitable[None] | None] | None = None,
+    ) -> SiteDocument:
         method, path, headers, _ = wire.csv_request(name, query)
-        status, value, response = await self._client._root_call_async(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
+        response = await self._client._root_stream_call_async(
+            path=path, owning_operation=ROOT_OPERATION, headers=headers
         )
-        if status in {301, 302, 303, 307, 308}:
-            return _parse_redirect(status, value, path, self._client._origin)
-        return wire.parse_document(
-            cast(bytes, value),
+        if response.status_code in {301, 302, 303, 307, 308}:
+            try:
+                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+            finally:
+                await response.aclose()
+        return await wire.digest_stream_document_async(
+            response,
             endpoint=path,
             expected_media_type=_CSV_MEDIA_TYPE,
-            response_media_type=_content_type(response.headers),
-            status_code=status,
+            max_bytes=self._client._root_export_max_bytes,
+            sink=sink,
             operation=ROOT_OPERATION,
         )
 
-    async def datasets_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    async def datasets_csv(
+        self, query: SiteDatasetCsvQuery | None = None, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/datasets.csv (row 188)."""
-        return await self._csv("datasets", query)
+        return await self._csv("datasets", query, sink=sink)
 
-    async def resources_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    async def resources_csv(
+        self, query: SiteDatasetCsvQuery | None = None, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/resources.csv (row 189)."""
-        return await self._csv("resources", query)
+        return await self._csv("resources", query, sink=sink)
 
-    async def organizations_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    async def organizations_csv(
+        self,
+        query: SiteOrganizationCsvQuery | None = None,
+        *,
+        sink: Callable[[bytes], Awaitable[None] | None] | None = None,
+    ) -> SiteDocument:
         """GET /api/1/site/organizations.csv (row 190)."""
-        return await self._csv("organizations", query)
+        return await self._csv("organizations", query, sink=sink)
 
-    async def reuses_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    async def reuses_csv(self, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None) -> SiteDocument:
         """GET /api/1/site/reuses.csv (row 191)."""
-        return await self._csv("reuses", query)
+        return await self._csv("reuses", sink=sink)
 
-    async def dataservices_csv(self, query: SiteCatalogQuery | None = None) -> SiteDocument:
+    async def dataservices_csv(self, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None) -> SiteDocument:
         """GET /api/1/site/dataservices.csv (row 192)."""
-        return await self._csv("dataservices", query)
+        return await self._csv("dataservices", sink=sink)
 
-    async def harvests_csv(self) -> SiteDocument:
+    async def harvests_csv(self, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None) -> SiteDocument:
         """GET /api/1/site/harvests.csv (row 193)."""
-        return await self._csv("harvests")
+        return await self._csv("harvests", sink=sink)
 
-    async def tags_csv(self) -> SiteDocument:
+    async def tags_csv(self, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None) -> SiteDocument:
         """GET /api/1/site/tags.csv (row 194)."""
-        return await self._csv("tags")
+        return await self._csv("tags", sink=sink)
 
     async def jsonld_context(self) -> SiteDocument:
         """GET /api/1/site/context.jsonld (row 195)."""
@@ -646,7 +778,12 @@ class AsyncRootProfileService:
         return wire.parse_jsonld_context(
             cast(bytes, body),
             endpoint=path,
-            response_media_type=_content_type(response.headers),
+            response_media_type=wire.response_media_type(
+                response.headers,
+                operation=ROOT_OPERATION,
+                status_code=status,
+                expected_media_type="application/ld+json",
+            ),
             status_code=status,
             operation=ROOT_OPERATION,
         )

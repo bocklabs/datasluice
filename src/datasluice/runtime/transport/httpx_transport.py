@@ -9,9 +9,11 @@ from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport.base import (
+    AsyncRuntimeStreamResponse,
     RedirectPolicy,
     RuntimeRequest,
     RuntimeResponse,
+    RuntimeStreamResponse,
     TransportFailure,
     drop_body_transfer_headers,
     redirect_method_and_body,
@@ -134,6 +136,39 @@ class HttpxCatalogTransport:
             self._closed = True
             self._client.close()
 
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        """Send one no-follow request while leaving its response body unbuffered."""
+        if self._closed:
+            raise TransportFailure("The httpx catalog transport is closed.")
+        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
+            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        try:
+            if request.files:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(drop_body_transfer_headers(request.headers)),
+                    data=None,
+                    files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
+                )
+            else:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(request.headers),
+                    content=request.body,
+                )
+            response = self._client.send(prepared, stream=True, follow_redirects=False)
+        except self._httpx.HTTPError as exc:
+            raise TransportFailure("httpx could not open the catalog response stream.") from exc
+        return RuntimeStreamResponse(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            chunks=response.iter_bytes(),
+            close_callback=response.close,
+            retry_after=_retry_after(response.headers.get("retry-after")),
+        )
+
 
 class AsyncHttpxCatalogTransport:
     """Optional pooled asynchronous httpx transport."""
@@ -238,6 +273,39 @@ class AsyncHttpxCatalogTransport:
         if not self._closed:
             self._closed = True
             await self._client.aclose()
+
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        """Send one no-follow request while leaving its response body unbuffered."""
+        if self._closed:
+            raise TransportFailure("The async httpx catalog transport is closed.")
+        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
+            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        try:
+            if request.files:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(drop_body_transfer_headers(request.headers)),
+                    data=None,
+                    files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
+                )
+            else:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(request.headers),
+                    content=request.body,
+                )
+            response = await self._client.send(prepared, stream=True, follow_redirects=False)
+        except self._httpx.HTTPError as exc:
+            raise TransportFailure("httpx could not open the catalog response stream.") from exc
+        return AsyncRuntimeStreamResponse(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            chunks=response.aiter_bytes(),
+            close_callback=response.aclose,
+            retry_after=_retry_after(response.headers.get("retry-after")),
+        )
 
 
 def _retains_credentials(scope: CredentialScope | None, current_url: str, next_url: str) -> bool:

@@ -20,6 +20,7 @@ from datasluice.connectors.catalog.udata.mapping import (
     shape_dataset_page,
     unimplemented_family,
 )
+from datasluice.connectors.catalog.udata.models.root_profile import ControlledStackAttestation
 from datasluice.connectors.catalog.udata.probes import (
     AsyncSiteVersionGate,
     SiteVersion,
@@ -77,16 +78,19 @@ from datasluice.runtime.constants import (
     DEFAULT_BREAKER_COOLDOWN_SECONDS,
     DEFAULT_BREAKER_FAILURE_THRESHOLD,
     DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
+    DEFAULT_ROOT_EXPORT_MAX_BYTES,
 )
 from datasluice.runtime.defaults import create_default_async_transport, create_default_sync_transport
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.extras import require_extra
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import (
+    AsyncRuntimeStreamResponse,
     CatalogTransport,
     RedirectPolicy,
     RuntimeRequest,
     RuntimeResponse,
+    RuntimeStreamResponse,
     TransportFailure,
 )
 
@@ -244,6 +248,8 @@ class _UDataClientCore:
         clock: Callable[[], float] = monotonic,
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
+        root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES,
+        controlled_stack_attestation: ControlledStackAttestation | None = None,
         owns_transport: bool = True,
         site_gate: SiteVersionGate | AsyncSiteVersionGate | None = None,
         probe_runner: ProbeRunner | None = None,
@@ -292,6 +298,14 @@ class _UDataClientCore:
             failure_threshold=breaker_failure_threshold, cooldown=breaker_cooldown, clock=clock
         )
         self._max_attempts = max_attempts
+        if type(root_export_max_bytes) is not int or root_export_max_bytes < 1:
+            raise ValueError("uData root export byte limits must be positive integers.")
+        self._root_export_max_bytes = root_export_max_bytes
+        if controlled_stack_attestation is not None and not isinstance(
+            controlled_stack_attestation, ControlledStackAttestation
+        ):
+            raise TypeError("uData controlled stack evidence must use ControlledStackAttestation.")
+        self._controlled_stack_attestation = controlled_stack_attestation
         self._clock = clock
         self._emitter = emitter or EventEmitter()
         self._closed = False
@@ -353,7 +367,7 @@ class _UDataClientCore:
     def _validate_status(
         self,
         owning_id: OperationId,
-        response: RuntimeResponse,
+        response: RuntimeResponse | RuntimeStreamResponse | AsyncRuntimeStreamResponse,
         *,
         redirect_mode: bool = False,
         credential_scope: str = "anonymous",
@@ -448,6 +462,8 @@ class SyncUDataClient(_UDataClientCore):
         retry_sleep: Callable[[float], None] = sleep,
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
+        root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES,
+        controlled_stack_attestation: ControlledStackAttestation | None = None,
         owns_transport: bool = True,
         probe_runner: ProbeRunner | None = None,
     ) -> None:
@@ -466,6 +482,8 @@ class SyncUDataClient(_UDataClientCore):
             clock=clock,
             emitter=emitter,
             capability_cache_ttl=capability_cache_ttl,
+            root_export_max_bytes=root_export_max_bytes,
+            controlled_stack_attestation=controlled_stack_attestation,
             owns_transport=owns_transport,
             probe_runner=probe_runner,
         )
@@ -647,6 +665,77 @@ class SyncUDataClient(_UDataClientCore):
             allow_retry=allow_retry,
         )
 
+    def _root_stream_call(
+        self,
+        *,
+        path: str,
+        owning_operation: str,
+        headers: Mapping[str, str] | None = None,
+        credential: object | None = None,
+    ) -> RuntimeStreamResponse:
+        """Open one guarded no-follow root response without buffering its bytes."""
+        if self._closed:
+            raise RuntimeError("The synchronous uData client is closed.")
+        owning_id = _operation_id_from(owning_operation)
+        self._require_site_version()
+        resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
+        scope = _credential_scope(resolved_credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._site_gate.invalidate()
+            self._credential_scope = scope
+        effective = self._capabilities.resolve(owning_id, credential_scope=scope)
+        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        request_headers = dict(headers or {})
+        request_headers.update(_auth_headers(resolved_credential))
+        request = RuntimeRequest(
+            method="GET",
+            url=self._origin + path,
+            headers=request_headers,
+            redirect_policy=RedirectPolicy.NO_FOLLOW,
+        )
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        sync_transport = cast(CatalogTransport, self._transport)
+        send_stream = getattr(sync_transport, "send_stream", None)
+        if not callable(send_stream):
+            raise CatalogValidationError(
+                "The uData export requires a streaming catalog transport.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                safe_action="Use the default transport or inject one implementing send_stream.",
+            )
+        key = _circuit_key(request, self._credentials)
+        if not self._breakers.admit(key):
+            self._emit(owning_id, "breaker_open")
+            raise CatalogUnavailableError(
+                "The catalog origin circuit is open after consecutive transport failures.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                capability_state="unavailable",
+                safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
+            )
+        before = self._breakers.inspect(key)
+        try:
+            response = cast(RuntimeStreamResponse, send_stream(request))
+        except TransportFailure:
+            after = self._breakers.record_transport_failure(key)
+            self._emit_breaker_change(owning_id, before.open, after.open)
+            self._emit(owning_id, "failed")
+            raise
+        after = self._breakers.record_response(key, response.status_code)
+        self._emit_breaker_change(owning_id, before.open, after.open)
+        try:
+            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
+        except BaseException:
+            response.close()
+            self._emit(owning_id, "failed")
+            raise
+        self._emit(owning_id, "succeeded")
+        return response
+
     def _dispatch(
         self,
         operation: CatalogOperationRequest,
@@ -773,6 +862,8 @@ class AsyncUDataClient(_UDataClientCore):
         retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
+        root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES,
+        controlled_stack_attestation: ControlledStackAttestation | None = None,
         owns_transport: bool = True,
         async_probe_runner: AsyncProbeRunner | None = None,
     ) -> None:
@@ -791,6 +882,8 @@ class AsyncUDataClient(_UDataClientCore):
             clock=clock,
             emitter=emitter,
             capability_cache_ttl=capability_cache_ttl,
+            root_export_max_bytes=root_export_max_bytes,
+            controlled_stack_attestation=controlled_stack_attestation,
             owns_transport=owns_transport,
             async_probe_runner=async_probe_runner,
             async_gate=True,
@@ -1058,6 +1151,79 @@ class AsyncUDataClient(_UDataClientCore):
             allow_retry=allow_retry,
         )
 
+    async def _root_stream_call_async(
+        self,
+        *,
+        path: str,
+        owning_operation: str,
+        headers: Mapping[str, str] | None = None,
+        credential: object | None = None,
+    ) -> AsyncRuntimeStreamResponse:
+        """Open one guarded no-follow async root response without buffering its bytes."""
+        if self._closed:
+            raise RuntimeError("The asynchronous uData client is closed.")
+        owning_id = _operation_id_from(owning_operation)
+        await self.site_version()
+        resolved_credential = (
+            credential if credential is not None else await _refreshed_credential_async(self._credentials)
+        )
+        scope = _credential_scope(resolved_credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._site_gate.invalidate()
+            self._credential_scope = scope
+        effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
+        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        request_headers = dict(headers or {})
+        request_headers.update(_auth_headers(resolved_credential))
+        request = RuntimeRequest(
+            method="GET",
+            url=self._origin + path,
+            headers=request_headers,
+            redirect_policy=RedirectPolicy.NO_FOLLOW,
+        )
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        async_transport = cast(AsyncCatalogTransport, self._transport)
+        send_stream = getattr(async_transport, "send_stream", None)
+        if not callable(send_stream):
+            raise CatalogValidationError(
+                "The uData export requires a streaming catalog transport.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                safe_action="Use the default transport or inject one implementing send_stream.",
+            )
+        key = _circuit_key(request, self._credentials)
+        if not self._breakers.admit(key):
+            self._emit(owning_id, "breaker_open")
+            raise CatalogUnavailableError(
+                "The catalog origin circuit is open after consecutive transport failures.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                capability_state="unavailable",
+                safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
+            )
+        before = self._breakers.inspect(key)
+        try:
+            response = cast(AsyncRuntimeStreamResponse, await send_stream(request))
+        except TransportFailure:
+            after = self._breakers.record_transport_failure(key)
+            self._emit_breaker_change(owning_id, before.open, after.open)
+            self._emit(owning_id, "failed")
+            raise
+        after = self._breakers.record_response(key, response.status_code)
+        self._emit_breaker_change(owning_id, before.open, after.open)
+        try:
+            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
+        except BaseException:
+            await response.aclose()
+            self._emit(owning_id, "failed")
+            raise
+        self._emit(owning_id, "succeeded")
+        return response
+
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""
         if not self._closed:
@@ -1103,6 +1269,8 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
         max_attempts=settings.max_attempts,
         retry_sleep=settings.retry_sleep if settings.retry_sleep is not None else sleep,
         capability_cache_ttl=settings.capability_cache_ttl,
+        root_export_max_bytes=settings.root_export_max_bytes,
+        controlled_stack_attestation=settings.controlled_stack_attestation,
         owns_transport=owns_transport,
         probe_runner=settings.probe_runner,
     )
@@ -1132,6 +1300,8 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
         max_attempts=settings.max_attempts,
         retry_sleep=settings.async_retry_sleep if settings.async_retry_sleep is not None else asyncio.sleep,
         capability_cache_ttl=settings.capability_cache_ttl,
+        root_export_max_bytes=settings.root_export_max_bytes,
+        controlled_stack_attestation=settings.controlled_stack_attestation,
         owns_transport=owns_transport,
         async_probe_runner=settings.async_probe_runner,
     )
