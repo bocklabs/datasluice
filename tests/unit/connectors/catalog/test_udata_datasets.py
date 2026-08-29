@@ -740,6 +740,73 @@ def test_cr03_destructive_calls_are_never_auto_retried() -> None:
     assert _receipt_from(excinfo.value).outcome == "failed"
 
 
+@pytest.mark.parametrize(
+    "idempotency",
+    [
+        pytest.param(IdempotencyPolicy(safe=True), id="safe"),
+        pytest.param(IdempotencyPolicy(explicit_retry_opt_in=True), id="explicit-retry-opt-in"),
+    ],
+)
+def test_cr01_retry_enabled_idempotency_is_rejected_before_sync_mutation_dispatch(
+    idempotency: IdempotencyPolicy,
+) -> None:
+    delete_url = "http://127.0.0.1:5640/api/1/datasets/abc/"
+    transport, client = _sync_client_with_transport(
+        _site_first({("DELETE", delete_url): (503, {"message": "retryable"})}), _USER_CREDENTIAL
+    )
+    policy = MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.delete-dataset", target="abc"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+        idempotency=idempotency,
+    )
+
+    with client:
+        with pytest.raises(ForbiddenError) as raised:
+            client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=policy)
+
+    assert _receipt_from(raised.value).outcome == "rejected"
+    assert [request for request in transport.requests if request.url == delete_url] == []
+
+
+@pytest.mark.parametrize(
+    "idempotency",
+    [
+        pytest.param(IdempotencyPolicy(safe=True), id="safe"),
+        pytest.param(IdempotencyPolicy(explicit_retry_opt_in=True), id="explicit-retry-opt-in"),
+    ],
+)
+def test_cr01_retry_enabled_idempotency_is_rejected_before_async_mutation_dispatch(
+    idempotency: IdempotencyPolicy,
+) -> None:
+    delete_url = "http://127.0.0.1:5640/api/1/datasets/abc/"
+    transport = RouterAsyncTransport(_site_first({("DELETE", delete_url): (503, {"message": "retryable"})}))
+    client = AsyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=_USER_CREDENTIAL,
+        owns_transport=False,
+    )
+    policy = MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.delete-dataset", target="abc"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+        idempotency=idempotency,
+    )
+
+    async def run() -> ForbiddenError:
+        async with client:
+            with pytest.raises(ForbiddenError) as raised:
+                await client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=policy)
+        return raised.value
+
+    error = asyncio.run(run())
+
+    assert _receipt_from(error).outcome == "rejected"
+    assert [request for request in transport.requests if request.url == delete_url] == []
+
+
 def test_cr04_capability_evidence_stays_scoped_to_its_route() -> None:
     routes = _site_first(
         {

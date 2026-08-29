@@ -957,10 +957,10 @@ def _enforce_mutation_policy(
             "The stock uData API has no conditional concurrency token support.",
             "Pass ConcurrencyPolicy(overwrite=True) for unconditional writes.",
         )
-    if policy.idempotency.key is not None:
+    if policy.idempotency.allows_retry():
         _reject(
-            "The stock uData API does not support idempotency-key retry authorization.",
-            "Retry without an idempotency key or use an endpoint with documented server-side deduplication.",
+            "The stock uData API does not support retrying dataset mutations safely.",
+            "Leave the idempotency policy at its non-retrying default.",
         )
     if destructive:
         if not policy.destructive:
@@ -973,11 +973,6 @@ def _enforce_mutation_policy(
             "A standard dataset mutation cannot carry a destructive policy tier.",
             "Pass MutationPolicy(destructive=False, ...).",
         )
-
-
-def _mutation_retry_allowed(policy: MutationPolicy | None) -> bool:
-    """Return the caller-authorized retry instruction for one mutation."""
-    return isinstance(policy, MutationPolicy) and (policy.idempotency.safe or policy.idempotency.explicit_retry_opt_in)
 
 
 def _decode_mutation_extras(payload: object, operation: str) -> Mapping[str, object]:
