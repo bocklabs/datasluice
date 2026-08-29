@@ -1158,6 +1158,17 @@ def test_wr01_rdf_encodes_once_and_rejects_dot_segments() -> None:
         wire.rdf_request("..", None)
 
 
+def test_wr01_rdf_format_rejects_overlong_credential_shaped_extensions_without_echo() -> None:
+    credential_shaped_format = "api_key_" + "A" * 128
+
+    with pytest.raises(CatalogValidationError) as raised:
+        wire.media_type_for_format(credential_shaped_format)
+
+    message = str(raised.value)
+    assert message == "The uData RDF format is invalid."
+    assert credential_shaped_format not in message
+
+
 def test_wr01_suggestion_ids_remain_raw_for_later_request_encoding() -> None:
     routes = _site_first(
         {("GET", "http://127.0.0.1:5640/api/1/datasets/suggest/?q=ab&size=3"): [{"id": "a b", "title": "T"}]}

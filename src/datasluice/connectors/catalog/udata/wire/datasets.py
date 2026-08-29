@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import cast
 from urllib.parse import quote, urlencode
@@ -456,21 +457,21 @@ def media_type_for_format(fmt: str) -> str:
     media_type = RDF_FORMAT_MEDIA_TYPES.get(extension)
     if media_type is None:
         raise CatalogValidationError(
-            f"The uData RDF format {extension!r} has no stock media type.",
+            "The uData RDF format is unsupported.",
             operation=_DATASETS_OPERATION_ID,
             platform=PLATFORM.value,
-            safe_action=f"Use one of the stock extensions: {sorted(RDF_FORMAT_MEDIA_TYPES)}.",
+            safe_action="Use a stock uData RDF extension.",
         )
     return media_type
 
 
 def _format_extension(fmt: object) -> str:
-    if not isinstance(fmt, str) or not fmt or "/" in fmt or "." in fmt or not fmt.isascii():
+    if not isinstance(fmt, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,16}", fmt) is None:
         raise CatalogValidationError(
-            "The uData RDF format must be a short ASCII extension such as rdf, ttl, or jsonld.",
+            "The uData RDF format is invalid.",
             operation=_DATASETS_OPERATION_ID,
             platform=PLATFORM.value,
-            safe_action="Pass a short RDF extension without slashes or dots.",
+            safe_action="Use a short ASCII uData RDF extension.",
         )
     return fmt.lower()
 
