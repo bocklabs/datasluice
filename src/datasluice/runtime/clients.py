@@ -54,7 +54,13 @@ from datasluice.runtime.constants import (
 )
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import (
+    AsyncRuntimeStreamResponse,
+    CatalogTransport,
+    RuntimeRequest,
+    RuntimeResponse,
+    TransportFailure,
+)
 from datasluice.runtime.transport.user_agent import build_user_agent
 
 
@@ -66,6 +72,13 @@ class AsyncCatalogTransport(Protocol):
 
     async def aclose(self) -> None:
         """Release asynchronous resources."""
+
+
+class AsyncStreamingCatalogTransport(AsyncCatalogTransport, Protocol):
+    """Asynchronous transport port that can expose a response body incrementally."""
+
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        """Send one request without pre-buffering its response body."""
 
 
 def _revealed(value: object) -> str:

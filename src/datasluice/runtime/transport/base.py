@@ -105,6 +105,7 @@ class RuntimeRequest:
     body: bytes | None = field(default=None, repr=False)
     files: tuple[UploadPart, ...] = field(default=(), repr=False)
     redirect_policy: RedirectPolicy = RedirectPolicy.FOLLOW
+    max_response_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.method, str) or not self.method:
@@ -121,6 +122,10 @@ class RuntimeRequest:
             raise ValueError("Runtime requests cannot carry a byte body and multipart parts together.")
         if not isinstance(self.redirect_policy, RedirectPolicy):
             raise ValueError("Runtime request redirect policies must use RedirectPolicy.")
+        if self.max_response_bytes is not None and (
+            type(self.max_response_bytes) is not int or self.max_response_bytes < 1
+        ):
+            raise ValueError("Runtime request response limits must be positive integers when supplied.")
         if self.headers is None or not isinstance(self.headers, Mapping):
             raise ValueError("Runtime request headers must be a mapping of string names to string values.")
         headers = dict(self.headers)
@@ -188,6 +193,7 @@ class RuntimeStreamResponse:
     chunks: Iterator[bytes] = field(repr=False)
     close_callback: Callable[[], None] = field(repr=False)
     retry_after: float | None = None
+    failure_callback: Callable[[BaseException], None] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -221,6 +227,11 @@ class RuntimeStreamResponse:
             self._closed = True
             self.close_callback()
 
+    def fail(self, error: BaseException) -> None:
+        """Report a failure discovered while consuming the stream."""
+        if self.failure_callback is not None:
+            self.failure_callback(error)
+
 
 @dataclass(slots=True)
 class AsyncRuntimeStreamResponse:
@@ -231,6 +242,7 @@ class AsyncRuntimeStreamResponse:
     chunks: AsyncIterator[bytes] = field(repr=False)
     close_callback: Callable[[], Awaitable[None] | None] = field(repr=False)
     retry_after: float | None = None
+    failure_callback: Callable[[BaseException], Awaitable[None] | None] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -267,6 +279,13 @@ class AsyncRuntimeStreamResponse:
         if not self._closed:
             self._closed = True
             result = self.close_callback()
+            if result is not None:
+                await result
+
+    async def fail(self, error: BaseException) -> None:
+        """Report a failure discovered while consuming the stream."""
+        if self.failure_callback is not None:
+            result = self.failure_callback(error)
             if result is not None:
                 await result
 

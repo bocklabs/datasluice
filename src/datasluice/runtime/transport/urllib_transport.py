@@ -12,6 +12,7 @@ from typing import IO
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import (
+    HTTPDefaultErrorHandler,
     HTTPErrorProcessor,
     HTTPHandler,
     HTTPRedirectHandler,
@@ -114,6 +115,7 @@ def _build_opener(context: ssl.SSLContext) -> OpenerDirector:
     """Assemble an opener restricted to plain HTTP(S), with no file or FTP access."""
     opener = OpenerDirector()
     opener.add_handler(_NoRedirect())
+    opener.add_handler(HTTPDefaultErrorHandler())
     opener.add_handler(HTTPErrorProcessor())
     opener.add_handler(HTTPHandler())
     opener.add_handler(HTTPSHandler(context=context))
@@ -164,14 +166,18 @@ class UrllibCatalogTransport(CatalogTransport):
                 try:
                     status = response.status
                     headers = _header_map(response.headers)
-                    body = response.read()
+                    body = _read_response_body(response, current.max_response_bytes)
                 finally:
                     close = getattr(response, "close", None)
                     if callable(close):
                         close()
             except HTTPError as exc:
                 try:
-                    status, headers, body = exc.code, _header_map(exc.headers), exc.read()
+                    status, headers, body = (
+                        exc.code,
+                        _header_map(exc.headers),
+                        _read_response_body(exc, current.max_response_bytes),
+                    )
                 finally:
                     exc.close()
             except HTTPException as exc:
@@ -216,6 +222,7 @@ class UrllibCatalogTransport(CatalogTransport):
                 body=next_body,
                 files=next_files,
                 redirect_policy=current.redirect_policy,
+                max_response_bytes=current.max_response_bytes,
             )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
@@ -239,7 +246,7 @@ class UrllibCatalogTransport(CatalogTransport):
                 timeout=min(self._budget.read, self._budget.total),
             )
             status = response.status
-            headers = dict(response.headers.items())
+            headers = _header_map(response.headers)
         except HTTPError as exc:
             response = exc
             status = exc.code
@@ -283,6 +290,30 @@ def _header_map(headers: Mapping[str, str] | Message[str, str]) -> dict[str, str
         else:
             result[existing] = f"{result[existing]},{value}"
     return result
+
+
+def _read_response_body(response: object, max_bytes: int | None) -> bytes:
+    """Read a response body with an optional incremental byte ceiling."""
+    read = getattr(response, "read", None)
+    if not callable(read):
+        raise TransportFailure("urllib returned a response without a readable body.")
+    if max_bytes is None:
+        body = read()
+        if not isinstance(body, bytes):
+            raise TransportFailure("urllib returned a non-byte catalog response body.")
+        return body
+    parts: list[bytes] = []
+    size = 0
+    while True:
+        chunk = read(64 * 1024)
+        if not isinstance(chunk, bytes):
+            raise TransportFailure("urllib yielded a non-byte catalog response chunk.")
+        if not chunk:
+            return b"".join(parts)
+        size += len(chunk)
+        if size > max_bytes:
+            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        parts.append(chunk)
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:

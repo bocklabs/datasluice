@@ -20,7 +20,8 @@ class MockResponse:
 
         Attributes:
             status: HTTP status code.
-            headers: Response headers (e.g. ``{"Location": ...}``).
+    headers: Response headers (e.g. ``{"Location": ...}``).
+            extra_headers: Additional raw header pairs, including duplicate names.
             body: Raw response bytes.
             chunk_size: When set, the handler emits the body using HTTP/1.1
                 ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
@@ -33,6 +34,7 @@ class MockResponse:
 
     status: int = 200
     headers: dict[str, str] = field(default_factory=dict)
+    extra_headers: tuple[tuple[str, str], ...] = ()
     body: bytes = b"OK"
     chunk_size: int | None = None
 
@@ -73,6 +75,9 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
             if name.lower() in ("content-length", "transfer-encoding"):
                 continue
             self.send_header(name, value)
+        for name, value in resp.extra_headers:
+            if name.lower() not in ("content-length", "transfer-encoding"):
+                self.send_header(name, value)
         if resp.chunk_size is not None:
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()

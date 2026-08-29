@@ -12,15 +12,21 @@ from datasluice.domain.catalog.auth import CredentialResolver, UDataCredential
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.capability import AsyncProbeRunner, ProbeRunner
-from datasluice.runtime.clients import AsyncCatalogTransport
+from datasluice.runtime.clients import AsyncCatalogTransport, AsyncStreamingCatalogTransport
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS, DEFAULT_ROOT_EXPORT_MAX_BYTES
 from datasluice.runtime.resilience import BreakerRegistry
-from datasluice.runtime.transport.base import CatalogTransport
+from datasluice.runtime.transport.base import CatalogTransport, StreamingCatalogTransport
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
-type SyncTransportOverride = CatalogTransport | Callable[[], CatalogTransport]
-type AsyncTransportOverride = AsyncCatalogTransport | Callable[[], AsyncCatalogTransport]
+type SyncTransportOverride = (
+    CatalogTransport | StreamingCatalogTransport | Callable[[], CatalogTransport | StreamingCatalogTransport]
+)
+type AsyncTransportOverride = (
+    AsyncCatalogTransport
+    | AsyncStreamingCatalogTransport
+    | Callable[[], AsyncCatalogTransport | AsyncStreamingCatalogTransport]
+)
 
 
 def normalize_origin(value: str) -> str:
@@ -128,6 +134,10 @@ class UDataClientSettings:
             self.controlled_stack_attestation, ControlledStackAttestation
         ):
             raise TypeError("uData controlled stack evidence must use ControlledStackAttestation.")
+        if self.controlled_stack_attestation is not None and (
+            self.sync_transport is not None or self.async_transport is not None
+        ):
+            raise ValueError("Controlled uData evidence requires the client-owned stock transport.")
 
     @property
     def owns_sync_transport(self) -> bool:

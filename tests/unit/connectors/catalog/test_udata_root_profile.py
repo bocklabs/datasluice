@@ -4,20 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Mapping
-from typing import cast
+from collections.abc import AsyncIterator, Generator, Mapping
+from typing import Any, cast
 
 import pytest
 
-from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.clients import (
+    AsyncUDataClient,
+    SyncUDataClient,
+    declared_udata_profile,
+)
 from datasluice.connectors.catalog.udata.models.root_profile import (
     ControlledStackAttestation,
     SiteCatalogQuery,
+    SiteDataserviceCsvQuery,
+    SiteDatasetCsvQuery,
     SiteDocument,
     SiteMutationResult,
+    SiteOrganizationCsvQuery,
     SitePatchInput,
     SiteProfile,
+    SiteReuseCsvQuery,
 )
+from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
@@ -30,6 +39,7 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     NativeCatalogError,
 )
+from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
     RuntimeRequest,
@@ -47,7 +57,7 @@ _PERMISSIONS = EffectivePermissions.for_credential(
 
 
 def _attestation(*, site_id: str = "site") -> ControlledStackAttestation:
-    return ControlledStackAttestation.from_verified_values(
+    return ControlledStackAttestation._from_verified_values(
         origin=_ORIGIN,
         source_commit="0546582058d84706812a1c37387576efc4e5ad1f",
         compose_sha256="f34538ffeab0de25dd5a8c0ce3984b2f2e6d56356fe3f095dbc593f8fdec23c7",
@@ -155,6 +165,8 @@ def _sync_client(
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
     attestation: ControlledStackAttestation | None = None,
+    emitter: EventEmitter | None = None,
+    root_export_max_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = RouterTransport(routes)
     client = SyncUDataClient(
@@ -163,6 +175,9 @@ def _sync_client(
         origin=origin,
         credentials=credential,
         controlled_stack_attestation=_attestation() if attestation is None else attestation,
+        _controlled_transport=True,
+        emitter=emitter,
+        root_export_max_bytes=root_export_max_bytes,
         owns_transport=False,
     )
     return transport, client
@@ -174,6 +189,8 @@ def _async_client(
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
     attestation: ControlledStackAttestation | None = None,
+    emitter: EventEmitter | None = None,
+    root_export_max_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
     client = AsyncUDataClient(
@@ -182,6 +199,9 @@ def _async_client(
         origin=origin,
         credentials=credential,
         controlled_stack_attestation=_attestation() if attestation is None else attestation,
+        _controlled_transport=True,
+        emitter=emitter,
+        root_export_max_bytes=root_export_max_bytes,
         owns_transport=False,
     )
     return transport, client
@@ -303,6 +323,17 @@ def test_site_rdf_catalog_preserves_accept_and_catalog_pagination_query() -> Non
     assert redirect.location == location
 
 
+def test_site_rdf_catalog_accepts_upstream_default_query_order() -> None:
+    catalog_url = f"{_ORIGIN}/api/1/site/catalog"
+    location = f"{_ORIGIN}/api/1/site/catalog.json?page_size=100&page=1"
+    transport, client = _sync_client(_routes(("GET", catalog_url, _json_response(302, None, {"Location": location}))))
+    with client:
+        redirect = client.root_profile.rdf_catalog()
+
+    assert redirect.location == location
+    assert transport.requests[-1].url == catalog_url
+
+
 def test_site_rdf_catalog_format_returns_bounded_document_metadata() -> None:
     url = f"{_ORIGIN}/api/1/site/catalog.json?page=1&page_size=100"
     body = b'{"@context": {}}'
@@ -334,6 +365,28 @@ def test_site_csv_exports_have_exact_paths_and_bounded_stream_metadata(method_na
     _assert_csv_export(method_name, path)
 
 
+def test_root_export_forwards_chunks_to_the_caller_sink_and_enforces_the_limit() -> None:
+    url = f"{_ORIGIN}/api/1/site/datasets.csv"
+    body = b"id\n123\n"
+    received: list[bytes] = []
+    _, client = _sync_client(
+        _routes(("GET", url, _json_response(200, body, {"Content-Type": "text/csv"}))),
+        root_export_max_bytes=len(body),
+    )
+    with client:
+        document = client.root_profile.datasets_csv(sink=received.append)
+
+    assert b"".join(received) == body
+    assert document.size_bytes == len(body)
+
+    _, limited_client = _sync_client(
+        _routes(("GET", url, _json_response(200, body, {"Content-Type": "text/csv"}))),
+        root_export_max_bytes=len(body) - 1,
+    )
+    with limited_client, pytest.raises(NativeCatalogError, match="byte limit"):
+        limited_client.root_profile.datasets_csv()
+
+
 def _assert_csv_export(method_name: str, path: str) -> None:
     url = f"{_ORIGIN}{path}"
     body = b'"id";"title"\n"one";"A"\n'
@@ -347,6 +400,89 @@ def _assert_csv_export(method_name: str, path: str) -> None:
     assert document.media_type == "text/csv"
     assert document.payload["size_bytes"] == len(body)
     assert transport.requests[-1].url == url
+
+
+def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None:
+    class FailingStreamTransport(RouterTransport):
+        def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+            self.requests.append(request)
+
+            def chunks() -> Generator[bytes, None, None]:
+                yield b"id\n"
+                raise TransportFailure("stream interrupted")
+
+            return RuntimeStreamResponse(
+                200,
+                {"Content-Type": "text/csv"},
+                chunks(),
+                lambda: None,
+            )
+
+    events = []
+    transport = FailingStreamTransport(_routes())
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=_ORIGIN,
+        emitter=EventEmitter(sinks=(events.append,)),
+        owns_transport=False,
+        _controlled_transport=True,
+    )
+    with client, pytest.raises(TransportFailure):
+        client.root_profile.datasets_csv()
+
+    assert events[-1].outcome == "failed"
+    assert not any(event.outcome == "succeeded" for event in events if event.operation_id == wire.ROOT_OPERATION)
+
+
+def test_async_site_patch_matches_sync_target_and_receipt_contract() -> None:
+    transport, client = _async_client(
+        _routes(
+            (
+                "PATCH",
+                _SITE_URL,
+                _json_response(200, _site_body(title="Changed"), {"Content-Type": "application/json"}),
+            )
+        ),
+        credential=_CREDENTIAL,
+    )
+
+    async def run() -> SiteMutationResult:
+        async with client:
+            return await client.root_profile.set_site(
+                SitePatchInput(title="Changed"),
+                permissions=_PERMISSIONS,
+                mutation_policy=_site_policy(),
+            )
+
+    result = asyncio.run(run())
+    assert result.profile is not None and result.profile.site_id == "site"
+    assert result.receipt.target.value == "site"
+    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
+
+
+def test_root_profile_rejects_oversized_buffered_json() -> None:
+    payload = _site_body()
+    transport, client = _sync_client(
+        _routes(("GET", _SITE_URL, _json_response(200, payload, {"Content-Type": "application/json"}))),
+        root_export_max_bytes=4,
+    )
+    with client, pytest.raises(NativeCatalogError, match="byte limit"):
+        client.root_profile.get()
+
+    assert [request.url for request in transport.requests] == [_SITE_URL, _SITE_URL]
+
+
+@pytest.mark.parametrize(
+    "headers",
+    ({}, {"Content-Type": ""}, {"Content-Type": "application/json,text/plain"}, {"Content-Type": "text/plain"}),
+)
+def test_site_profile_requires_one_exact_response_media_type(headers: Mapping[str, str]) -> None:
+    transport, client = _sync_client(_routes(("GET", _SITE_URL, _json_response(200, _site_body(), headers))))
+    with client, pytest.raises(NativeCatalogError):
+        client.root_profile.get()
+
+    assert [request.url for request in transport.requests] == [_SITE_URL, _SITE_URL]
 
 
 def test_row188_site_datasets_csv() -> None:
@@ -391,6 +527,22 @@ def test_row195_jsonld_context_decodes_json_without_retaining_raw_bytes() -> Non
     assert document.media_type == "application/ld+json"
     assert "body" not in document.to_dict()
     assert transport.requests[-1].url == url
+
+
+@pytest.mark.parametrize("fmt", ("rdf", "owl"))
+def test_rdf_xml_aliases_are_supported(fmt: str) -> None:
+    assert wire.media_type_for_format(fmt) == "application/rdf+xml"
+
+
+def test_route_specific_csv_query_models_do_not_share_dataset_filters() -> None:
+    with pytest.raises(TypeError):
+        cast(Any, SiteOrganizationCsvQuery)(name="org", page_size=2)
+    with pytest.raises(ValueError):
+        SiteDatasetCsvQuery(filters={"last_update_range": "not-a-range"})
+    assert wire.reuses_csv_request(SiteReuseCsvQuery(filters={"tag": ("one", "two")}))[1].endswith("tag=one&tag=two")
+    assert wire.dataservices_csv_request(SiteDataserviceCsvQuery(filters={"tag": ("one", "two")}))[1].endswith(
+        "tag=one&tag=two"
+    )
 
 
 def test_root_invalid_format_is_rejected_before_site_probe() -> None:
@@ -515,6 +667,19 @@ def test_set_site_requires_verified_attestation_before_any_dispatch() -> None:
     assert transport.requests == []
 
 
+def test_factory_injected_transport_cannot_authorize_site_mutation() -> None:
+    transport = RouterTransport(_routes())
+    with pytest.raises(ValueError):
+        UDataClientSettings(
+            base_url=_ORIGIN,
+            credential=_CREDENTIAL,
+            sync_transport=transport,
+            controlled_stack_attestation=_attestation(),
+        )
+
+    assert transport.requests == []
+
+
 def test_root_mutation_does_not_retry_after_transport_failure() -> None:
     class FailingTransport(RouterTransport):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
@@ -530,6 +695,7 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
         origin=_ORIGIN,
         credentials=_CREDENTIAL,
         controlled_stack_attestation=_attestation(),
+        _controlled_transport=True,
         owns_transport=False,
     )
     with client, pytest.raises(TransportFailure):

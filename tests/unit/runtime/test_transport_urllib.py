@@ -24,10 +24,17 @@ class _FakeResponse:
         self.status = status
         self.headers = headers
         self._body = body
+        self._offset = 0
         self.closed = False
 
-    def read(self) -> bytes:
-        return self._body
+    def read(self, size: int | None = None) -> bytes:
+        if size is None:
+            chunk = self._body[self._offset :]
+            self._offset = len(self._body)
+            return chunk
+        chunk = self._body[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
 
     def close(self) -> None:
         self.closed = True
@@ -85,9 +92,72 @@ def test_urllib_no_follow_returns_the_original_redirect_without_contacting_its_t
     assert response.closed
 
 
+def test_urllib_real_socket_no_follow_returns_the_original_redirect() -> None:
+    server, base_url = start_test_server()
+    server.responses = {
+        "/origin": MockResponse(status=302, headers={"Location": f"{base_url}/target"}, body=b"redirect"),
+        "/target": MockResponse(status=200, body=b"target"),
+    }
+    transport = UrllibCatalogTransport()
+    try:
+        response = transport.send(RuntimeRequest("GET", f"{base_url}/origin", redirect_policy=RedirectPolicy.NO_FOLLOW))
+    finally:
+        transport.close()
+        server.shutdown()
+        server.server_close()
+
+    assert response.status_code == 302
+    assert server.captured_paths == ["/origin"]
+
+
+def test_urllib_real_socket_stream_no_follow_returns_the_original_redirect() -> None:
+    server, base_url = start_test_server()
+    server.responses = {
+        "/origin": MockResponse(status=302, headers={"Location": f"{base_url}/target"}, body=b"redirect"),
+        "/target": MockResponse(status=200, body=b"target"),
+    }
+    transport = UrllibCatalogTransport()
+    try:
+        response = transport.send_stream(
+            RuntimeRequest("GET", f"{base_url}/origin", redirect_policy=RedirectPolicy.NO_FOLLOW)
+        )
+        assert response.status_code == 302
+        response.close()
+    finally:
+        transport.close()
+        server.shutdown()
+        server.server_close()
+
+    assert server.captured_paths == ["/origin"]
+
+
+def test_urllib_real_socket_stream_preserves_duplicate_response_headers() -> None:
+    server, base_url = start_test_server(
+        {
+            "/export": MockResponse(
+                headers={"Content-Type": "text/csv"},
+                extra_headers=(("Content-Type", "application/json"),),
+                body=b"id\n1\n",
+            )
+        }
+    )
+    transport = UrllibCatalogTransport()
+    try:
+        response = transport.send_stream(
+            RuntimeRequest("GET", f"{base_url}/export", redirect_policy=RedirectPolicy.NO_FOLLOW)
+        )
+        assert response.headers["Content-Type"] == "text/csv,application/json"
+        response.close()
+    finally:
+        transport.close()
+        server.shutdown()
+        server.server_close()
+
+
 def test_urllib_wraps_incomplete_response_reads_and_closes_response() -> None:
     class _IncompleteResponse(_FakeResponse):
-        def read(self) -> bytes:
+        def read(self, size: int | None = None) -> bytes:
+            del size
             raise IncompleteRead(b"partial", 10)
 
     response = _IncompleteResponse(200, {})

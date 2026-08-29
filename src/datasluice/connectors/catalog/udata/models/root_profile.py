@@ -60,6 +60,7 @@ _DATASET_CSV_FILTERS = frozenset(
         "badge",
         "organization",
         "organization_name",
+        "organization_badge",
         "owner",
         "license",
         "geozone",
@@ -78,6 +79,15 @@ _DATASET_CSV_FILTERS = frozenset(
 _DATASET_CSV_REPEATABLE_FILTERS = frozenset({"tag", "granularity", "format", "schema"})
 _DATASET_CSV_BOOLEAN_FILTERS = frozenset({"featured"})
 _DATASET_CSV_LAST_UPDATE_RANGES = frozenset({"last_30_days", "last_12_months", "last_3_years"})
+_ACCESS_TYPES = frozenset({"open", "open_with_account", "restricted"})
+_FORMAT_FAMILIES = frozenset({"tabular", "machine_readable", "geographical", "documents", "other"})
+_PRODUCER_TYPES = frozenset({"public-service", "association", "company", "local-authority", "user", "not-specified"})
+_OBJECT_ID_FILTERS = frozenset({"organization", "owner", "geozone", "topic", "dataservice", "reuse"})
+_DATASET_CSV_OBJECT_ID_FILTERS = frozenset({"organization", "owner", "geozone", "topic"})
+_REUSE_CSV_SORTS = frozenset({"title", "created", "datasets", "followers", "views"})
+_REUSE_CSV_FILTERS = frozenset({"dataset", "dataservice", "tag", "organization_badge"})
+_DATASERVICE_CSV_SORTS = frozenset({"title", "created", "last_modified", "followers", "views"})
+_DATASERVICE_CSV_FILTERS = frozenset({"tag", "contact_point", "dataset", "organization_badge", "topic", "reuse"})
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "f34538ffeab0de25dd5a8c0ce3984b2f2e6d56356fe3f095dbc593f8fdec23c7"
@@ -89,6 +99,7 @@ _CONTROLLED_IMAGE_DIGESTS = (
     "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
     "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
 )
+_ATTESTATION_SEAL = object()
 
 
 def _freeze_mapping(value: Mapping[str, object], path: str) -> Mapping[str, object]:
@@ -122,7 +133,12 @@ def _validate_blocks(value: object, field_name: str, *, allow_none: bool = False
         _freeze_mapping(item, f"udata.site.{field_name}")
 
 
-@dataclass(frozen=True, slots=True)
+def _validate_object_id(value: str, field_name: str) -> None:
+    if re.fullmatch(r"[0-9a-fA-F]{24}", value) is None:
+        raise ValueError(f"uData {field_name} filters require a valid object identifier.")
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class ControlledStackAttestation:
     """Evidence identity required before a uData site mutation can dispatch."""
 
@@ -134,7 +150,30 @@ class ControlledStackAttestation:
     nonce_sha256: str = field(repr=False)
     site_id: str
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        origin: str,
+        source_commit: str,
+        compose_sha256: str,
+        dockerfile_sha256: str,
+        image_digests: tuple[str, ...],
+        nonce_sha256: str,
+        site_id: str,
+        _seal: object | None = None,
+    ) -> None:
+        if _seal is not _ATTESTATION_SEAL:
+            raise TypeError("Controlled uData attestations must come from the verified evidence constructor.")
+        object.__setattr__(self, "origin", origin)
+        object.__setattr__(self, "source_commit", source_commit)
+        object.__setattr__(self, "compose_sha256", compose_sha256)
+        object.__setattr__(self, "dockerfile_sha256", dockerfile_sha256)
+        object.__setattr__(self, "image_digests", image_digests)
+        object.__setattr__(self, "nonce_sha256", nonce_sha256)
+        object.__setattr__(self, "site_id", site_id)
+        self._validate()
+
+    def _validate(self) -> None:
         if self.origin != _CONTROLLED_ORIGIN:
             raise ValueError("Controlled uData evidence must use the approved loopback origin.")
         if _COMMIT.fullmatch(self.source_commit) is None or self.source_commit != _CONTROLLED_SOURCE_COMMIT:
@@ -163,7 +202,7 @@ class ControlledStackAttestation:
             raise ValueError("Controlled uData evidence must identify the approved loopback transport target.")
 
     @classmethod
-    def from_verified_values(
+    def _from_verified_values(
         cls,
         *,
         origin: str,
@@ -185,6 +224,7 @@ class ControlledStackAttestation:
             image_digests=image_digests,
             nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
             site_id=site_id,
+            _seal=_ATTESTATION_SEAL,
         )
 
     @property
@@ -495,6 +535,11 @@ class SiteDatasetCatalogQuery:
                         raise ValueError(f"uData site dataset-catalog filter {key!r} is not boolean.")
                 elif not isinstance(value, str) or not value:
                     raise ValueError("uData site dataset-catalog scalar filters require non-empty strings.")
+                else:
+                    if key in _OBJECT_ID_FILTERS:
+                        _validate_object_id(value, key)
+                    if key == "access_type" and value not in _ACCESS_TYPES:
+                        raise ValueError("uData site dataset-catalog access_type is not documented.")
             object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_dataset_catalog.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
@@ -557,6 +602,15 @@ class SiteDatasetCsvQuery:
                         raise ValueError(f"uData dataset CSV filter {key!r} is not boolean.")
                 elif not isinstance(value, str) or not value:
                     raise ValueError("uData dataset CSV scalar filters require non-empty strings.")
+                else:
+                    if key in _DATASET_CSV_OBJECT_ID_FILTERS:
+                        _validate_object_id(value, key)
+                    if key == "access_type" and value not in _ACCESS_TYPES:
+                        raise ValueError("uData dataset CSV access_type is not documented.")
+                    if key == "format_family" and value not in _FORMAT_FAMILIES:
+                        raise ValueError("uData dataset CSV format_family is not documented.")
+                    if key == "producer_type" and value not in _PRODUCER_TYPES:
+                        raise ValueError("uData dataset CSV producer_type is not documented.")
             object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_dataset_csv.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
@@ -581,33 +635,112 @@ class SiteOrganizationCsvQuery:
     """Exact organization CSV query schema accepted by the pinned organization parser."""
 
     q: str | None = None
-    sort: str | None = None
-    page: int = 1
-    page_size: int = 20
     badge: str | None = None
     name: str | None = None
     business_number_id: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1:
-            raise ValueError("uData organization CSV page must be a positive integer.")
-        if type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("uData organization CSV page_size must be a positive integer.")
         for field_name in ("q", "badge", "name", "business_number_id"):
             value = getattr(self, field_name)
             if value is not None and (not isinstance(value, str) or not value):
                 raise ValueError(f"uData organization CSV {field_name} must be a non-empty string when supplied.")
-        if self.sort is not None:
-            sort_key = self.sort[1:] if self.sort.startswith("-") else self.sort
-            if not self.sort or sort_key not in _ORGANIZATION_CSV_SORTS:
-                raise ValueError("uData organization CSV sort must be a documented value.")
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the pinned organization parser fields in stable order."""
-        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
-        for key in ("q", "sort", "badge", "name", "business_number_id"):
+        params: list[tuple[str, str]] = []
+        for key in ("q", "badge", "name", "business_number_id"):
             value = getattr(self, key)
             if value is not None:
+                params.append((key, value))
+        return params
+
+
+@dataclass(frozen=True, slots=True)
+class SiteReuseCsvQuery:
+    """Exact generated Reuse index query schema used by the reuse CSV route."""
+
+    q: str | None = None
+    sort: str | None = None
+    filters: Mapping[str, str | tuple[str, ...]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.q is not None and (not isinstance(self.q, str) or not self.q):
+            raise ValueError("uData reuse CSV q must be a non-empty string when supplied.")
+        if self.sort is not None:
+            sort_key = self.sort[1:] if self.sort.startswith("-") else self.sort
+            if not self.sort or sort_key not in _REUSE_CSV_SORTS:
+                raise ValueError("uData reuse CSV sort must be a documented value.")
+        if self.filters is not None:
+            if not isinstance(self.filters, Mapping):
+                raise ValueError("uData reuse CSV filters must be a mapping.")
+            for key, value in self.filters.items():
+                if key not in _REUSE_CSV_FILTERS:
+                    raise ValueError(f"Unknown uData reuse CSV filter: {key}.")
+                if isinstance(value, tuple):
+                    if key != "tag" or not value or not all(isinstance(item, str) and item for item in value):
+                        raise ValueError("Only the uData reuse CSV tag filter may repeat non-empty strings.")
+                elif not isinstance(value, str) or not value:
+                    raise ValueError("uData reuse CSV filters require non-empty strings.")
+                elif key in {"dataset", "dataservice"}:
+                    _validate_object_id(value, key)
+            object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_reuse_csv.filters"))
+
+    def query_params(self) -> list[tuple[str, str]]:
+        """Encode the generated Reuse index parser fields in stable order."""
+        params: list[tuple[str, str]] = []
+        if self.q is not None:
+            params.append(("q", self.q))
+        if self.sort is not None:
+            params.append(("sort", self.sort))
+        for key, value in sorted((self.filters or {}).items()):
+            if isinstance(value, tuple):
+                params.extend((key, item) for item in value)
+            else:
+                params.append((key, value))
+        return params
+
+
+@dataclass(frozen=True, slots=True)
+class SiteDataserviceCsvQuery:
+    """Exact generated Dataservice index query schema used by its CSV route."""
+
+    q: str | None = None
+    sort: str | None = None
+    filters: Mapping[str, str | tuple[str, ...]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.q is not None and (not isinstance(self.q, str) or not self.q):
+            raise ValueError("uData dataservice CSV q must be a non-empty string when supplied.")
+        if self.sort is not None:
+            sort_key = self.sort[1:] if self.sort.startswith("-") else self.sort
+            if not self.sort or sort_key not in _DATASERVICE_CSV_SORTS:
+                raise ValueError("uData dataservice CSV sort must be a documented value.")
+        if self.filters is not None:
+            if not isinstance(self.filters, Mapping):
+                raise ValueError("uData dataservice CSV filters must be a mapping.")
+            for key, value in self.filters.items():
+                if key not in _DATASERVICE_CSV_FILTERS:
+                    raise ValueError(f"Unknown uData dataservice CSV filter: {key}.")
+                if isinstance(value, tuple):
+                    if key != "tag" or not value or not all(isinstance(item, str) and item for item in value):
+                        raise ValueError("Only the uData dataservice CSV tag filter may repeat non-empty strings.")
+                elif not isinstance(value, str) or not value:
+                    raise ValueError("uData dataservice CSV filters require non-empty strings.")
+                elif key in {"contact_point", "dataset", "topic", "reuse"}:
+                    _validate_object_id(value, key)
+            object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_dataservice_csv.filters"))
+
+    def query_params(self) -> list[tuple[str, str]]:
+        """Encode the generated Dataservice index parser fields in stable order."""
+        params: list[tuple[str, str]] = []
+        if self.q is not None:
+            params.append(("q", self.q))
+        if self.sort is not None:
+            params.append(("sort", self.sort))
+        for key, value in sorted((self.filters or {}).items()):
+            if isinstance(value, tuple):
+                params.extend((key, item) for item in value)
+            else:
                 params.append((key, value))
         return params
 
@@ -724,4 +857,6 @@ __all__ = [
     "SiteProfile",
     "SiteRedirect",
     "SiteRdfQuery",
+    "SiteReuseCsvQuery",
+    "SiteDataserviceCsvQuery",
 ]

@@ -13,12 +13,14 @@ from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit
 from datasluice.connectors.catalog.udata.models.root_profile import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
+    SiteDataserviceCsvQuery,
     SiteDatasetCatalogQuery,
     SiteDatasetCsvQuery,
     SiteDocument,
     SiteOrganizationCsvQuery,
     SitePatchInput,
     SiteProfile,
+    SiteReuseCsvQuery,
 )
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
@@ -53,6 +55,8 @@ ROOT_OPERATIONS = {
 _SITE_PATH = "/api/1/site/"
 _FORMAT_MEDIA_TYPES = {
     "xml": "application/rdf+xml",
+    "rdf": "application/rdf+xml",
+    "owl": "application/rdf+xml",
     "n3": "text/n3",
     "ttl": "application/x-turtle",
     "turtle": "application/x-turtle",
@@ -88,7 +92,13 @@ _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _MEDIA_TYPE = re.compile(r"^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
 _SENSITIVE_QUERY_PARTS = frozenset({"api_key", "apikey", "token", "secret", "password", "credential", "signature"})
 
-type SiteRootQuery = SiteDatasetCatalogQuery | SiteDatasetCsvQuery | SiteOrganizationCsvQuery
+type SiteRootQuery = (
+    SiteDatasetCatalogQuery
+    | SiteDatasetCsvQuery
+    | SiteDataserviceCsvQuery
+    | SiteOrganizationCsvQuery
+    | SiteReuseCsvQuery
+)
 
 
 def _format_extension(value: object) -> str:
@@ -208,7 +218,21 @@ def csv_request(name: str, query: SiteRootQuery | None = None) -> tuple[str, str
             platform="udata",
             safe_action="Use the route-specific organization query model.",
         )
-    if name not in {"datasets", "resources", "organizations"} and query is not None:
+    if name == "reuses" and query is not None and not isinstance(query, SiteReuseCsvQuery):
+        raise CatalogValidationError(
+            "The uData reuse CSV route requires SiteReuseCsvQuery.",
+            operation=ROOT_OPERATION,
+            platform="udata",
+            safe_action="Use the route-specific reuse query model.",
+        )
+    if name == "dataservices" and query is not None and not isinstance(query, SiteDataserviceCsvQuery):
+        raise CatalogValidationError(
+            "The uData dataservice CSV route requires SiteDataserviceCsvQuery.",
+            operation=ROOT_OPERATION,
+            platform="udata",
+            safe_action="Use the route-specific dataservice query model.",
+        )
+    if name not in {"datasets", "resources", "organizations", "reuses", "dataservices"} and query is not None:
         raise CatalogValidationError(
             "This uData CSV route does not accept query parameters in the pinned parser.",
             operation=ROOT_OPERATION,
@@ -233,14 +257,14 @@ def organizations_csv_request(query: SiteOrganizationCsvQuery | None = None) -> 
     return csv_request("organizations", query)
 
 
-def reuses_csv_request() -> tuple[str, str, dict[str, str], None]:
+def reuses_csv_request(query: SiteReuseCsvQuery | None = None) -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/reuses.csv."""
-    return csv_request("reuses")
+    return csv_request("reuses", query)
 
 
-def dataservices_csv_request() -> tuple[str, str, dict[str, str], None]:
+def dataservices_csv_request(query: SiteDataserviceCsvQuery | None = None) -> tuple[str, str, dict[str, str], None]:
     """Build GET /api/1/site/dataservices.csv."""
-    return csv_request("dataservices")
+    return csv_request("dataservices", query)
 
 
 def harvests_csv_request() -> tuple[str, str, dict[str, str], None]:
@@ -333,6 +357,14 @@ def _media_type(value: str | None, expected: str, *, operation: str, status_code
     return media_type
 
 
+def _query_multimap(value: str) -> dict[str, tuple[str, ...]]:
+    """Normalize query pairs without making repeated-key order significant."""
+    values: dict[str, list[str]] = {}
+    for key, item in parse_qsl(value, keep_blank_values=True):
+        values.setdefault(key, []).append(item)
+    return {key: tuple(sorted(items)) for key, items in values.items()}
+
+
 def parse_document(
     body: bytes,
     *,
@@ -420,12 +452,17 @@ def digest_stream_document(
             size_bytes = next_size
         decoder.decode(b"", final=True)
     except UnicodeDecodeError as error:
-        raise NativeCatalogError(
+        failure = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
             operation=operation,
             platform="udata",
             status_code=response.status_code,
-        ) from error
+        )
+        response.fail(failure)
+        raise failure from error
+    except BaseException as error:
+        response.fail(error)
+        raise
     finally:
         response.close()
     metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
@@ -481,12 +518,17 @@ async def digest_stream_document_async(
             size_bytes = next_size
         decoder.decode(b"", final=True)
     except UnicodeDecodeError as error:
-        raise NativeCatalogError(
+        failure = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
             operation=operation,
             platform="udata",
             status_code=response.status_code,
-        ) from error
+        )
+        await response.fail(failure)
+        raise failure from error
+    except BaseException as error:
+        await response.fail(error)
+        raise
     finally:
         await response.aclose()
     metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
@@ -600,7 +642,13 @@ def parse_redirect(
             platform="udata",
             status_code=status_code,
         )
-    if parse_qsl(target.query, keep_blank_values=True) != parse_qsl(required_query, keep_blank_values=True):
+    target_query = _query_multimap(target.query)
+    required_query_map = _query_multimap(required_query)
+    default_catalog_query = {"page": ("1",), "page_size": ("100",)}
+    query_matches = target_query == required_query_map
+    if route.path == f"{_SITE_PATH}catalog" and not required_query:
+        query_matches = target_query == default_catalog_query
+    if not query_matches:
         raise NativeCatalogError(
             "The uData root redirect query does not match its route contract.",
             operation=operation,

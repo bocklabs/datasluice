@@ -96,7 +96,7 @@ def _verify_controlled_stack_identity() -> ControlledStackAttestation:
         or f"UDATA_COMMIT={_EXPECTED_UDATA_COMMIT}" not in dockerfile_text
     ):
         pytest.fail("controlled uData build is missing an approved image or source digest")
-    return ControlledStackAttestation.from_verified_values(
+    return ControlledStackAttestation._from_verified_values(
         origin=ORIGIN,
         source_commit=_EXPECTED_UDATA_COMMIT,
         compose_sha256=sha256(compose_text.encode()).hexdigest(),

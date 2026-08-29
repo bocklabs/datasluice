@@ -3,6 +3,84 @@
   "platform": "udata",
   "profile_version": "17.6.0",
   "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+  "redirect_query_policy": {
+    "comparison": "normalized-key-to-values-multimap",
+    "catalog_defaults": {
+      "page": "1",
+      "page_size": "100"
+    }
+  },
+  "query_schemas": {
+    "dataset_catalog": {
+      "defaults": {
+        "page": 1,
+        "page_size": 100
+      },
+      "repeatable": ["tag"],
+      "boolean": ["featured", "archived", "deleted", "private"],
+      "choices": {
+        "access_type": ["open", "open_with_account", "restricted"]
+      }
+    },
+    "dataset_csv": {
+      "defaults": {
+        "page": 1,
+        "page_size": 20
+      },
+      "repeatable": ["tag", "granularity", "format", "schema"],
+      "boolean": ["featured"],
+      "choices": {
+        "access_type": ["open", "open_with_account", "restricted"],
+        "format_family": ["tabular", "machine_readable", "geographical", "documents", "other"],
+        "last_update_range": ["last_30_days", "last_12_months", "last_3_years"],
+        "producer_type": ["public-service", "association", "company", "local-authority", "user", "not-specified"]
+      }
+    },
+    "organization_csv": {
+      "repeatable": [],
+      "scalar": ["q", "badge", "name", "business_number_id"]
+    },
+    "reuse_csv": {
+      "repeatable": ["tag"],
+      "scalar": ["q", "sort", "dataset", "dataservice", "organization_badge"]
+    },
+    "dataservice_csv": {
+      "repeatable": ["tag"],
+      "scalar": ["q", "sort", "contact_point", "dataset", "organization_badge", "topic", "reuse"]
+    }
+  },
+  "failure_cases": [
+    {
+      "id": "root_invalid_format_pre_dispatch",
+      "modes": ["sync", "async"],
+      "expected": "typed-validation-before-transport"
+    },
+    {
+      "id": "root_external_redirect",
+      "modes": ["sync", "async"],
+      "expected": "typed-rejection-before-target-request"
+    },
+    {
+      "id": "root_missing_or_conflicting_media",
+      "modes": ["sync", "async"],
+      "expected": "typed-media-rejection"
+    },
+    {
+      "id": "root_export_limit_and_close",
+      "modes": ["sync", "async"],
+      "expected": "bounded-consumption-and-deterministic-close"
+    },
+    {
+      "id": "root_set_site_denial_isolated",
+      "modes": ["sync", "async"],
+      "expected": "mutation-capability-does-not-poison-reads"
+    },
+    {
+      "id": "root_async_parity",
+      "modes": ["sync", "async"],
+      "expected": "equivalent-wire-and-error-contract"
+    }
+  ],
   "rows": [
     {
       "row": 183,
@@ -25,7 +103,8 @@
       "operation": "udata.v1.SiteDataPortal_get",
       "method": "GET",
       "path": "/api/1/site/data.<format>",
-      "redirect_path": "/api/1/site/catalog.<format>"
+      "redirect_path": "/api/1/site/catalog.<format>",
+      "formats": ["xml", "rdf", "owl", "n3", "ttl", "turtle", "nt", "json", "jsonld", "trig"]
     },
     {
       "row": 186,
@@ -41,6 +120,7 @@
       "method": "GET",
       "path": "/api/1/site/catalog.<format>",
       "response_media_type": "format-selected-rdf",
+      "formats": ["xml", "rdf", "owl", "n3", "ttl", "turtle", "nt", "json", "jsonld", "trig"],
       "query_schema": "dataset_catalog"
     },
     {
@@ -73,7 +153,7 @@
       "method": "GET",
       "path": "/api/1/site/reuses.csv",
       "response_media_type": "text/csv",
-      "query_schema": "none"
+      "query_schema": "reuse_csv"
     },
     {
       "row": 192,
@@ -81,7 +161,7 @@
       "method": "GET",
       "path": "/api/1/site/dataservices.csv",
       "response_media_type": "text/csv",
-      "query_schema": "none"
+      "query_schema": "dataservice_csv"
     },
     {
       "row": 193,

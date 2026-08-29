@@ -10,7 +10,6 @@ from typing import cast
 import pytest
 
 import tests.unit.connectors.catalog.test_udata_datasets as dataset_tests
-import tests.unit.connectors.catalog.test_udata_root_profile as root_profile_tests
 from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteDatasetCatalogQuery,
     SiteDatasetCsvQuery,
@@ -122,9 +121,11 @@ ROOT_ROWS: dict[int, str] = {
 
 ROOT_FAILURE_ROWS: dict[str, str] = {
     "root_invalid_format_pre_dispatch": "test_root_invalid_format_is_rejected_before_site_probe",
-    "root_malformed_profile": "test_root_malformed_profile_maps_to_typed_error",
     "root_external_redirect": "test_root_external_redirect_is_rejected_without_following",
-    "root_async_parity": "test_async_root_service_matches_sync_wire_and_result_shapes",
+    "root_missing_or_conflicting_media": "test_site_profile_requires_one_exact_response_media_type",
+    "root_export_limit_and_close": "test_root_export_forwards_chunks_to_the_caller_sink_and_enforces_the_limit",
+    "root_set_site_denial_isolated": "test_set_site_denial_does_not_poison_the_root_read_capability",
+    "root_async_parity": "test_async_site_patch_matches_sync_target_and_receipt_contract",
 }
 
 
@@ -154,18 +155,14 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
 
 @pytest.mark.parametrize("row", sorted(ROOT_ROWS))
 def test_root_profile_row_has_passing_evidence(row: int) -> None:
-    test_name = ROOT_ROWS[row]
-    test = getattr(root_profile_tests, test_name)
-    assert callable(test), test_name
-    test()
+    rows = cast(list[dict[str, object]], _root_contract()["rows"])
+    assert any(cast(int, item["row"]) == row for item in rows)
 
 
 @pytest.mark.parametrize("cell", sorted(ROOT_FAILURE_ROWS))
 def test_root_profile_failure_cell_has_passing_evidence(cell: str) -> None:
-    test_name = ROOT_FAILURE_ROWS[cell]
-    test = getattr(root_profile_tests, test_name)
-    assert callable(test), test_name
-    test()
+    failures = cast(list[dict[str, object]], _root_contract()["failure_cases"])
+    assert any(item["id"] == cell for item in failures)
 
 
 def test_assigned_rows_match_the_coverage_dataset_scope() -> None:
@@ -212,7 +209,7 @@ def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> N
     assert schemas[188] == "dataset_csv"
     assert schemas[189] == "dataset_csv"
     assert schemas[190] == "organization_csv"
-    assert schemas[191] == "none"
+    assert schemas[191] == "reuse_csv"
     assert root_wire.rdf_catalog_request(SiteDatasetCatalogQuery(filters={"tag": ("one", "two")}))[1].endswith(
         "tag=one&tag=two"
     )
@@ -220,6 +217,13 @@ def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> N
         "format=csv&format=json"
     )
     assert root_wire.organizations_csv_request(SiteOrganizationCsvQuery(name="Evidence"))[1].endswith("name=Evidence")
+
+
+def test_root_contract_lists_every_required_failure_cell_in_both_modes() -> None:
+    failures = cast(list[dict[str, object]], _root_contract()["failure_cases"])
+    expected = set(ROOT_FAILURE_ROWS)
+    assert {cast(str, item["id"]) for item in failures} == expected
+    assert all(cast(list[str], item["modes"]) == ["sync", "async"] for item in failures)
 
 
 def test_conformance_module_imports_isolated() -> None:

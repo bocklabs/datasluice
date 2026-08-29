@@ -12,12 +12,14 @@ from datasluice.connectors.catalog.udata.models.root_profile import (
     SITE_RESOURCE_KIND,
     ControlledStackAttestation,
     SiteCatalogQuery,
+    SiteDataserviceCsvQuery,
     SiteDatasetCsvQuery,
     SiteDocument,
     SiteMutationResult,
     SiteOrganizationCsvQuery,
     SitePatchInput,
     SiteProfile,
+    SiteReuseCsvQuery,
 )
 from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
@@ -189,8 +191,9 @@ def _require_controlled_attestation(
     origin: str,
     operation: str,
     site_id: str | None = None,
+    transport_bound: bool,
 ) -> None:
-    if not isinstance(attestation, ControlledStackAttestation):
+    if not transport_bound or not isinstance(attestation, ControlledStackAttestation):
         raise CatalogValidationError(
             "uData site PATCH requires verified controlled-stack evidence.",
             operation=operation,
@@ -352,7 +355,11 @@ class SyncRootProfileService:
         """GET /api/1/site/ (row 183)."""
         method, path, headers, _ = wire.get_site_request()
         status, payload, response = self._client._root_call(
-            method=method, path=path, owning_operation=ROOT_OPERATION, headers=headers
+            method=method,
+            path=path,
+            owning_operation=ROOT_OPERATION,
+            headers=headers,
+            max_response_bytes=self._client._root_export_max_bytes,
         )
         wire.response_media_type(
             response.headers,
@@ -376,7 +383,12 @@ class SyncRootProfileService:
 
         def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
-            _require_controlled_attestation(attestation, origin=self._client._origin, operation=operation)
+            _require_controlled_attestation(
+                attestation,
+                origin=self._client._origin,
+                operation=operation,
+                transport_bound=self._client._controlled_transport,
+            )
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
                     "uData site PATCH requires SitePatchInput.",
@@ -388,7 +400,11 @@ class SyncRootProfileService:
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = self.get()
             _require_controlled_attestation(
-                attestation, origin=self._client._origin, operation=operation, site_id=current.site_id
+                attestation,
+                origin=self._client._origin,
+                operation=operation,
+                site_id=current.site_id,
+                transport_bound=self._client._controlled_transport,
             )
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
@@ -475,7 +491,11 @@ class SyncRootProfileService:
     def _csv(
         self,
         name: str,
-        query: SiteDatasetCsvQuery | SiteOrganizationCsvQuery | None = None,
+        query: SiteDatasetCsvQuery
+        | SiteDataserviceCsvQuery
+        | SiteOrganizationCsvQuery
+        | SiteReuseCsvQuery
+        | None = None,
         *,
         sink: Callable[[bytes], None] | None = None,
     ) -> SiteDocument:
@@ -513,13 +533,17 @@ class SyncRootProfileService:
         """GET /api/1/site/organizations.csv (row 190)."""
         return self._csv("organizations", query, sink=sink)
 
-    def reuses_csv(self, *, sink: Callable[[bytes], None] | None = None) -> SiteDocument:
+    def reuses_csv(
+        self, query: SiteReuseCsvQuery | None = None, *, sink: Callable[[bytes], None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/reuses.csv (row 191)."""
-        return self._csv("reuses", sink=sink)
+        return self._csv("reuses", query, sink=sink)
 
-    def dataservices_csv(self, *, sink: Callable[[bytes], None] | None = None) -> SiteDocument:
+    def dataservices_csv(
+        self, query: SiteDataserviceCsvQuery | None = None, *, sink: Callable[[bytes], None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/dataservices.csv (row 192)."""
-        return self._csv("dataservices", sink=sink)
+        return self._csv("dataservices", query, sink=sink)
 
     def harvests_csv(self, *, sink: Callable[[bytes], None] | None = None) -> SiteDocument:
         """GET /api/1/site/harvests.csv (row 193)."""
@@ -538,6 +562,7 @@ class SyncRootProfileService:
             owning_operation=ROOT_OPERATION,
             headers=headers,
             raw_text=True,
+            max_response_bytes=self._client._root_export_max_bytes,
         )
         return wire.parse_jsonld_context(
             cast(bytes, body),
@@ -585,7 +610,11 @@ class AsyncRootProfileService:
         """GET /api/1/site/ (row 183)."""
         method, path, headers, _ = wire.get_site_request()
         status, payload, response = await self._client._root_call_async(
-            method=method, path=path, owning_operation=ROOT_OPERATION, headers=headers
+            method=method,
+            path=path,
+            owning_operation=ROOT_OPERATION,
+            headers=headers,
+            max_response_bytes=self._client._root_export_max_bytes,
         )
         wire.response_media_type(
             response.headers,
@@ -609,7 +638,12 @@ class AsyncRootProfileService:
 
         async def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
-            _require_controlled_attestation(attestation, origin=self._client._origin, operation=operation)
+            _require_controlled_attestation(
+                attestation,
+                origin=self._client._origin,
+                operation=operation,
+                transport_bound=self._client._controlled_transport,
+            )
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
                     "uData site PATCH requires SitePatchInput.",
@@ -622,7 +656,11 @@ class AsyncRootProfileService:
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = await self.get()
             _require_controlled_attestation(
-                attestation, origin=self._client._origin, operation=operation, site_id=current.site_id
+                attestation,
+                origin=self._client._origin,
+                operation=operation,
+                site_id=current.site_id,
+                transport_bound=self._client._controlled_transport,
             )
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
@@ -710,7 +748,11 @@ class AsyncRootProfileService:
     async def _csv(
         self,
         name: str,
-        query: SiteDatasetCsvQuery | SiteOrganizationCsvQuery | None = None,
+        query: SiteDatasetCsvQuery
+        | SiteDataserviceCsvQuery
+        | SiteOrganizationCsvQuery
+        | SiteReuseCsvQuery
+        | None = None,
         *,
         sink: Callable[[bytes], Awaitable[None] | None] | None = None,
     ) -> SiteDocument:
@@ -753,13 +795,20 @@ class AsyncRootProfileService:
         """GET /api/1/site/organizations.csv (row 190)."""
         return await self._csv("organizations", query, sink=sink)
 
-    async def reuses_csv(self, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None) -> SiteDocument:
+    async def reuses_csv(
+        self, query: SiteReuseCsvQuery | None = None, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None
+    ) -> SiteDocument:
         """GET /api/1/site/reuses.csv (row 191)."""
-        return await self._csv("reuses", sink=sink)
+        return await self._csv("reuses", query, sink=sink)
 
-    async def dataservices_csv(self, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None) -> SiteDocument:
+    async def dataservices_csv(
+        self,
+        query: SiteDataserviceCsvQuery | None = None,
+        *,
+        sink: Callable[[bytes], Awaitable[None] | None] | None = None,
+    ) -> SiteDocument:
         """GET /api/1/site/dataservices.csv (row 192)."""
-        return await self._csv("dataservices", sink=sink)
+        return await self._csv("dataservices", query, sink=sink)
 
     async def harvests_csv(self, *, sink: Callable[[bytes], Awaitable[None] | None] | None = None) -> SiteDocument:
         """GET /api/1/site/harvests.csv (row 193)."""
@@ -773,7 +822,12 @@ class AsyncRootProfileService:
         """GET /api/1/site/context.jsonld (row 195)."""
         method, path, headers, _ = wire.jsonld_context_request()
         status, body, response = await self._client._root_call_async(
-            method=method, path=path, owning_operation=ROOT_OPERATION, headers=headers, raw_text=True
+            method=method,
+            path=path,
+            owning_operation=ROOT_OPERATION,
+            headers=headers,
+            raw_text=True,
+            max_response_bytes=self._client._root_export_max_bytes,
         )
         return wire.parse_jsonld_context(
             cast(bytes, body),
