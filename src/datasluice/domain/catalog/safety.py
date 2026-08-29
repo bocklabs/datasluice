@@ -13,10 +13,15 @@ class ConfirmationPolicy:
     """Explicit caller confirmation required for destructive work."""
 
     confirmed: bool = False
+    operation: str | None = None
+    target: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.confirmed) is not bool:
             raise ValueError("Mutation confirmation must be a boolean.")
+        for value, name in ((self.operation, "operation"), (self.target, "target")):
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"Mutation confirmation {name} must be a non-empty string when supplied.")
 
 
 @dataclass(frozen=True, slots=True)

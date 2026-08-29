@@ -10,18 +10,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Protocol, cast, runtime_checkable
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
+    CredentialClassification,
     DeclaredCapabilityProfile,
     EffectiveCapabilityProfile,
     EffectiveCapabilityState,
     EffectiveOperationCapability,
     ProbeEvidence,
     ProbeResponseClass,
+    RoleClassification,
 )
 from datasluice.errors.catalog import (
     CatalogError,
@@ -61,6 +63,7 @@ class _SyncFlight:
     event: threading.Event
     profile: EffectiveCapabilityProfile | None = None
     error: BaseException | None = None
+    cancelled: bool = False
 
 
 class EffectiveCapabilityCache:
@@ -72,6 +75,8 @@ class EffectiveCapabilityCache:
         probe_runner: ProbeRunner | None = None,
         *,
         async_probe_runner: AsyncProbeRunner | None = None,
+        namespace: str = "default",
+        deployment_origin: str | None = None,
         ttl_seconds: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         clock: Callable[[], float] = monotonic,
     ) -> None:
@@ -83,12 +88,18 @@ class EffectiveCapabilityCache:
         self._baseline = _baseline_profile(profile)
         self._probe_runner = probe_runner
         self._async_probe_runner = async_probe_runner
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError("Capability cache namespaces must be non-empty strings.")
+        self._namespace = namespace
+        self._deployment_origin = (
+            _normalize_deployment_origin(deployment_origin) if deployment_origin is not None else None
+        )
         self._ttl_seconds = float(ttl_seconds)
         self._clock = clock
         self._lock = threading.Lock()
-        self._entries: dict[OperationId, _CacheEntry] = {}
-        self._sync_flights: dict[OperationId, _SyncFlight] = {}
-        self._async_flights: dict[OperationId, asyncio.Future[EffectiveCapabilityProfile]] = {}
+        self._entries: dict[tuple[str, str, str, OperationId], _CacheEntry] = {}
+        self._sync_flights: dict[tuple[str, str, str, OperationId], _SyncFlight] = {}
+        self._async_flights: dict[tuple[str, str, str, OperationId], asyncio.Future[EffectiveCapabilityProfile]] = {}
 
     @property
     def baseline_profile(self) -> EffectiveCapabilityProfile:
@@ -100,22 +111,24 @@ class EffectiveCapabilityCache:
         """Return the caller-owned synchronous probe runner, or ``None``."""
         return self._probe_runner
 
-    def resolve(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
+    def resolve(self, operation_id: OperationId, *, credential_scope: str = "anonymous") -> EffectiveCapabilityProfile:
         """Resolve one operation, probing it once per fresh cache interval."""
         self._validate_operation_id(operation_id)
+        self._validate_scope(credential_scope)
+        cache_key = self._cache_key(operation_id, credential_scope)
         with self._lock:
-            cached = self._fresh_entry(operation_id)
+            cached = self._fresh_entry(cache_key)
             if cached is not None:
                 return cached.profile
         if operation_id not in self._declared_profile.operations or self._probe_runner is None:
             return self._baseline
 
         with self._lock:
-            flight = self._sync_flights.get(operation_id)
+            flight = self._sync_flights.get(cache_key)
             leader = flight is None
             if leader:
                 flight = _SyncFlight(event=threading.Event())
-                self._sync_flights[operation_id] = flight
+                self._sync_flights[cache_key] = flight
         if not leader:
             flight.event.wait()
             if flight.error is not None:
@@ -125,26 +138,37 @@ class EffectiveCapabilityCache:
             return flight.profile
 
         try:
-            effective = self._resolve_from_runner(operation_id)
+            effective = self._resolve_from_runner(operation_id, credential_scope=credential_scope)
             completed_at = self._clock()
         except BaseException as exc:
             with self._lock:
                 flight.error = self._follower_failure(operation_id, exc)
-                self._sync_flights.pop(operation_id, None)
+                self._sync_flights.pop(cache_key, None)
                 flight.event.set()
             raise
         with self._lock:
-            self._entries[operation_id] = _CacheEntry(profile=effective, timestamp=completed_at)
+            if flight.cancelled:
+                self._sync_flights.pop(cache_key, None)
+                if flight.error is None:
+                    flight.error = self._invalidation_error(operation_id)
+                if not flight.event.is_set():
+                    flight.event.set()
+                raise flight.error
+            self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
             flight.profile = effective
-            self._sync_flights.pop(operation_id, None)
+            self._sync_flights.pop(cache_key, None)
             flight.event.set()
         return effective
 
-    async def resolve_async(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
+    async def resolve_async(
+        self, operation_id: OperationId, *, credential_scope: str = "anonymous"
+    ) -> EffectiveCapabilityProfile:
         """Resolve one operation through an async runner with single-flight sharing."""
         self._validate_operation_id(operation_id)
+        self._validate_scope(credential_scope)
+        cache_key = self._cache_key(operation_id, credential_scope)
         with self._lock:
-            cached = self._fresh_entry(operation_id)
+            cached = self._fresh_entry(cache_key)
             if cached is not None:
                 return cached.profile
         if operation_id not in self._declared_profile.operations or self._async_probe_runner is None:
@@ -152,45 +176,53 @@ class EffectiveCapabilityCache:
 
         loop = asyncio.get_running_loop()
         with self._lock:
-            flight = self._async_flights.get(operation_id)
+            flight = self._async_flights.get(cache_key)
             leader = flight is None
             if leader:
                 flight = loop.create_future()
-                self._async_flights[operation_id] = flight
+                self._async_flights[cache_key] = flight
         if not leader:
             return await flight
 
         try:
-            effective = await self._resolve_from_async_runner(operation_id)
+            effective = await self._resolve_from_async_runner(operation_id, credential_scope=credential_scope)
             completed_at = self._clock()
         except BaseException as exc:
             with self._lock:
-                self._async_flights.pop(operation_id, None)
+                self._async_flights.pop(cache_key, None)
                 if not flight.done():
                     flight.set_exception(self._follower_failure(operation_id, exc))
                     flight.exception()
             raise
         with self._lock:
-            self._entries[operation_id] = _CacheEntry(profile=effective, timestamp=completed_at)
-            self._async_flights.pop(operation_id, None)
+            if flight.cancelled():
+                self._async_flights.pop(cache_key, None)
+                raise self._invalidation_error(operation_id)
+            self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
+            self._async_flights.pop(cache_key, None)
             if not flight.done():
                 flight.set_result(effective)
         return effective
 
-    def peek(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
+    def peek(self, operation_id: OperationId, *, credential_scope: str = "anonymous") -> EffectiveCapabilityProfile:
         """Return a fresh cached profile or the declared baseline without probing."""
         self._validate_operation_id(operation_id)
+        self._validate_scope(credential_scope)
+        cache_key = self._cache_key(operation_id, credential_scope)
         with self._lock:
-            cached = self._fresh_entry(operation_id)
+            cached = self._fresh_entry(cache_key)
             return cached.profile if cached is not None else self._baseline
 
     def record_response(
         self,
         operation_id: OperationId,
         response_class: ProbeResponseClass,
+        *,
+        credential_scope: str = "anonymous",
     ) -> EffectiveCapabilityProfile:
         """Record a bounded origin response as the operation's effective state."""
         self._validate_operation_id(operation_id)
+        self._validate_scope(credential_scope)
         if not isinstance(response_class, ProbeResponseClass):
             raise ValueError("Capability response classes must use ProbeResponseClass.")
         state = {
@@ -203,15 +235,22 @@ class EffectiveCapabilityCache:
         }[response_class]
         effective = self._profile_with_state(operation_id, state)
         with self._lock:
-            self._entries[operation_id] = _CacheEntry(profile=effective, timestamp=self._clock())
+            self._entries[self._cache_key(operation_id, credential_scope)] = _CacheEntry(
+                profile=effective, timestamp=self._clock()
+            )
         return effective
 
-    def record_evidence(self, evidence: ProbeEvidence) -> EffectiveCapabilityProfile:
+    def record_evidence(
+        self, evidence: ProbeEvidence, *, credential_scope: str = "anonymous"
+    ) -> EffectiveCapabilityProfile:
         """Validate and record runner evidence without dispatching an operation."""
-        self._validate_evidence(evidence.operation_id, evidence)
+        self._validate_scope(credential_scope)
+        self._validate_evidence(evidence.operation_id, evidence, credential_scope=credential_scope)
         effective = self._profile_from_evidence(evidence.operation_id, evidence)
         with self._lock:
-            self._entries[evidence.operation_id] = _CacheEntry(profile=effective, timestamp=self._clock())
+            self._entries[self._cache_key(evidence.operation_id, credential_scope)] = _CacheEntry(
+                profile=effective, timestamp=self._clock()
+            )
         return effective
 
     def invalidate(self, operation_id: OperationId | None = None) -> None:
@@ -221,8 +260,30 @@ class EffectiveCapabilityCache:
         with self._lock:
             if operation_id is None:
                 self._entries.clear()
+                for key, flight in self._sync_flights.items():
+                    flight.cancelled = True
+                    flight.error = self._invalidation_error(key[3])
+                    flight.event.set()
+                self._sync_flights.clear()
+                for flight in self._async_flights.values():
+                    if not flight.done():
+                        flight.cancel()
+                self._async_flights.clear()
             else:
-                self._entries.pop(operation_id, None)
+                keys = [key for key in self._entries if key[3] == operation_id]
+                for key in keys:
+                    self._entries.pop(key, None)
+                for key, flight in tuple(self._sync_flights.items()):
+                    if key[3] == operation_id:
+                        flight.cancelled = True
+                        flight.error = self._invalidation_error(operation_id)
+                        flight.event.set()
+                        self._sync_flights.pop(key, None)
+                for key, flight in tuple(self._async_flights.items()):
+                    if key[3] == operation_id:
+                        if not flight.done():
+                            flight.cancel()
+                        self._async_flights.pop(key, None)
 
     def _follower_failure(self, operation_id: OperationId, exc: BaseException) -> BaseException:
         """Convert leader cancellation into a typed failure shared with waiting followers."""
@@ -236,16 +297,25 @@ class EffectiveCapabilityCache:
             )
         return exc
 
-    def _fresh_entry(self, operation_id: OperationId) -> _CacheEntry | None:
-        entry = self._entries.get(operation_id)
+    def _invalidation_error(self, operation_id: OperationId) -> CatalogUnavailableError:
+        return CatalogUnavailableError(
+            "Capability evidence was invalidated before the probe completed.",
+            operation=str(operation_id),
+            platform=operation_id.platform,
+            capability_state="unavailable",
+            safe_action="Retry the operation to obtain fresh deployment and credential evidence.",
+        )
+
+    def _fresh_entry(self, cache_key: tuple[str, str, str, OperationId]) -> _CacheEntry | None:
+        entry = self._entries.get(cache_key)
         if entry is None:
             return None
         if self._clock() - entry.timestamp >= self._ttl_seconds:
-            self._entries.pop(operation_id, None)
+            self._entries.pop(cache_key, None)
             return None
         return entry
 
-    def _resolve_from_runner(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
+    def _resolve_from_runner(self, operation_id: OperationId, *, credential_scope: str) -> EffectiveCapabilityProfile:
         runner = self._probe_runner
         if runner is None:
             return self._baseline
@@ -254,21 +324,23 @@ class EffectiveCapabilityCache:
             if inspect.isawaitable(result):
                 raise TypeError("Synchronous capability runners cannot return awaitables.")
             evidence = cast(ProbeEvidence, result)
-            self._validate_evidence(operation_id, evidence)
+            self._validate_evidence(operation_id, evidence, credential_scope=credential_scope)
         except CatalogValidationError:
             raise
         except (TypeError, ValueError) as exc:
             raise self._invalid_evidence_error(operation_id) from exc
         return self._profile_from_evidence(operation_id, evidence)
 
-    async def _resolve_from_async_runner(self, operation_id: OperationId) -> EffectiveCapabilityProfile:
+    async def _resolve_from_async_runner(
+        self, operation_id: OperationId, *, credential_scope: str
+    ) -> EffectiveCapabilityProfile:
         runner = self._async_probe_runner
         if runner is None:
             return self._baseline
         try:
             result = runner.probe(operation_id)
             evidence = await result if inspect.isawaitable(result) else result
-            self._validate_evidence(operation_id, evidence)
+            self._validate_evidence(operation_id, evidence, credential_scope=credential_scope)
         except CatalogValidationError:
             raise
         except (TypeError, ValueError) as exc:
@@ -292,11 +364,26 @@ class EffectiveCapabilityCache:
         )
         return EffectiveCapabilityProfile(declared_profile=self._declared_profile, capabilities=capabilities)
 
-    def _validate_evidence(self, operation_id: OperationId, evidence: ProbeEvidence) -> None:
+    def _validate_evidence(self, operation_id: OperationId, evidence: ProbeEvidence, *, credential_scope: str) -> None:
         if not isinstance(evidence, ProbeEvidence):
             raise TypeError("Capability probe runners must return ProbeEvidence.")
         if evidence.operation_id != operation_id:
             raise ValueError("Capability probe evidence must match the requested operation.")
+        evidence_scope = getattr(evidence, "credential_scope", None)
+        if credential_scope != "anonymous" and evidence_scope != credential_scope:
+            raise ValueError("Capability probe evidence must match the resolved credential scope.")
+        if credential_scope == "anonymous" and evidence_scope not in (None, "anonymous"):
+            raise ValueError("Anonymous capability probes cannot carry authenticated credential evidence.")
+        credential_classification = getattr(evidence, "credential_classification", None)
+        if credential_scope == "anonymous" and credential_classification is not CredentialClassification.ANONYMOUS:
+            raise ValueError("Anonymous capability probes must carry anonymous credential evidence.")
+        if credential_scope != "anonymous" and credential_classification is CredentialClassification.ANONYMOUS:
+            raise ValueError("Authenticated capability probes must carry authenticated credential evidence.")
+        if (
+            credential_scope != "anonymous"
+            and getattr(evidence, "role_classification", None) is RoleClassification.ANONYMOUS
+        ):
+            raise ValueError("Authenticated capability probes cannot carry anonymous role evidence.")
         try:
             parsed = urlsplit(evidence.deployment_url)
         except ValueError as exc:
@@ -310,6 +397,9 @@ class EffectiveCapabilityCache:
             or parsed.fragment
         ):
             raise ValueError("Capability probe evidence must contain a sanitized HTTPS deployment URL.")
+        evidence_origin = urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), "", "", ""))
+        if self._deployment_origin is not None and evidence_origin != self._deployment_origin:
+            raise ValueError("Capability probe evidence must match the configured deployment origin.")
 
     def _invalid_evidence_error(self, operation_id: OperationId) -> CatalogValidationError:
         return CatalogValidationError(
@@ -323,6 +413,27 @@ class EffectiveCapabilityCache:
     def _validate_operation_id(self, operation_id: OperationId) -> None:
         if not isinstance(operation_id, OperationId):
             raise TypeError("Capability cache operations require an OperationId.")
+
+    def _validate_scope(self, credential_scope: str) -> None:
+        if not isinstance(credential_scope, str) or not credential_scope:
+            raise ValueError("Capability cache credential scopes must be non-empty strings.")
+
+    def _cache_key(self, operation_id: OperationId, credential_scope: str) -> tuple[str, str, str, OperationId]:
+        return self._namespace, self._deployment_origin or "", credential_scope, operation_id
+
+
+def _normalize_deployment_origin(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Capability cache deployment origins must be sanitized HTTP(S) origins.")
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), "", "", ""))
 
 
 def build_catalog_operation_guard(

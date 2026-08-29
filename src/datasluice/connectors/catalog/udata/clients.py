@@ -30,6 +30,7 @@ from datasluice.connectors.catalog.udata.settings import UDataClientSettings, no
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions
+from datasluice.domain.catalog.auth import credential_scope as _credential_scope
 from datasluice.domain.catalog.models import ResultEnvelope
 from datasluice.domain.catalog.operations import (
     Atomicity,
@@ -85,7 +86,11 @@ from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, 
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
 
-_STATUS_RESPONSE_CLASSES = {401: ProbeResponseClass.UNAUTHORIZED, 403: ProbeResponseClass.FORBIDDEN}
+_STATUS_RESPONSE_CLASSES = {
+    401: ProbeResponseClass.UNAUTHORIZED,
+    403: ProbeResponseClass.FORBIDDEN,
+    423: ProbeResponseClass.DEPLOYMENT_DISABLED,
+}
 
 
 def _operation_id_from(value: str) -> OperationId:
@@ -146,7 +151,7 @@ def _origin_checked_runner(runner: ProbeRunner, origin: str) -> ProbeRunner:
                 raise CatalogValidationError(
                     "Capability probe evidence does not match the configured deployment origin.",
                     operation=str(operation_id),
-                    platform=origin,
+                    platform=PLATFORM.value,
                     safe_action="Configure a probe runner scoped to the client origin.",
                 )
             return evidence
@@ -164,20 +169,12 @@ def _origin_checked_async_runner(runner: AsyncProbeRunner, origin: str) -> Async
                 raise CatalogValidationError(
                     "Capability probe evidence does not match the configured deployment origin.",
                     operation=str(operation_id),
-                    platform=origin,
+                    platform=PLATFORM.value,
                     safe_action="Configure a probe runner scoped to the client origin.",
                 )
             return evidence
 
     return _CheckedAsync()  # type: ignore[return-value]
-
-
-def _credential_scope(credentials: object | None) -> str:
-    """Return a stable scope for credential-identity keyed caches."""
-    import hashlib
-
-    material = "" if credentials is None else str(id(credentials))
-    return hashlib.sha256(material.encode()).hexdigest()
 
 
 def _enforce_caller_guards(operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> None:
@@ -187,6 +184,15 @@ def _enforce_caller_guards(operation: CatalogOperationRequest, guard: CatalogOpe
             f"{operation.operation_id}."
         )
     guard.require_allowed()
+
+
+def _response_header(response: RuntimeResponse, name: str) -> str | None:
+    """Read one response header without depending on its casing."""
+    wanted = name.lower()
+    for key, value in response.headers.items():
+        if key.lower() == wanted:
+            return value
+    return None
 
 
 def _page_request(
@@ -235,6 +241,8 @@ class _UDataClientCore:
             async_probe_runner=(
                 _origin_checked_async_runner(async_probe_runner, checked_origin) if async_probe_runner else None
             ),
+            namespace=checked_origin,
+            deployment_origin=checked_origin,
             ttl_seconds=capability_cache_ttl,
             clock=clock,
         )
@@ -328,15 +336,15 @@ class _UDataClientCore:
         response: RuntimeResponse,
         *,
         redirect_mode: bool = False,
+        credential_scope: str = "anonymous",
     ) -> None:
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
             return
         if 200 <= response.status_code < 300:
             return
-        if response.status_code in {401, 403}:
+        if response.status_code in {401, 403, 423}:
             self._capabilities.record_response(
-                owning_id,
-                ProbeResponseClass.UNAUTHORIZED if response.status_code == 401 else ProbeResponseClass.FORBIDDEN,
+                owning_id, _STATUS_RESPONSE_CLASSES[response.status_code], credential_scope=credential_scope
             )
         raise map_catalog_error(
             NativeCatalogError(
@@ -348,12 +356,13 @@ class _UDataClientCore:
             )
         )
 
-    def _decode(self, owning_id: OperationId, response: RuntimeResponse) -> ResultEnvelope[UDataResultItem]:
+    def _decode(
+        self, owning_id: OperationId, response: RuntimeResponse, *, credential_scope: str = "anonymous"
+    ) -> ResultEnvelope[UDataResultItem]:
         if not 200 <= response.status_code < 300:
-            if response.status_code in {401, 403}:
+            if response.status_code in _STATUS_RESPONSE_CLASSES:
                 self._capabilities.record_response(
-                    owning_id,
-                    ProbeResponseClass.UNAUTHORIZED if response.status_code == 401 else ProbeResponseClass.FORBIDDEN,
+                    owning_id, _STATUS_RESPONSE_CLASSES[response.status_code], credential_scope=credential_scope
                 )
             raise map_catalog_error(
                 NativeCatalogError(
@@ -377,7 +386,11 @@ class _UDataClientCore:
     def capability(self, operation_id: str) -> str:
         """Return the cached effective classification without dispatching transport I/O."""
         operation = _operation_id_from(operation_id)
-        state = self._capabilities.peek(operation).guard(operation).state
+        state = (
+            self._capabilities.peek(operation, credential_scope=_credential_scope(self._credentials))
+            .guard(operation)
+            .state
+        )
         return _capability_value(state)
 
     def invalidate(self, operation_id: str | OperationId | None = None) -> None:
@@ -472,6 +485,8 @@ class SyncUDataClient(_UDataClientCore):
         raw_text: bool = False,
         redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
+        credential: object | None = None,
+        idempotency_policy: IdempotencyPolicy | None = None,
         allow_retry: bool = False,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
@@ -479,17 +494,27 @@ class SyncUDataClient(_UDataClientCore):
             raise RuntimeError("The synchronous uData client is closed.")
         owning_id = _operation_id_from(owning_operation)
         self._require_site_version()
-        effective = self._capabilities.resolve(owning_id)
-        guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
-        guard.require_allowed()
-        credential = _refreshed_credential(self._credentials)
-        scope = _credential_scope(credential)
+        resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
+        scope = _credential_scope(resolved_credential)
         if scope != self._credential_scope:
             self._capabilities.invalidate()
             self._site_gate.invalidate()
             self._credential_scope = scope
-        headers = _auth_headers(credential)
-        body = json.dumps(json_body).encode() if json_body is not None else None
+        effective = self._capabilities.resolve(owning_id, credential_scope=scope)
+        guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
+        guard.require_allowed()
+        headers = _auth_headers(resolved_credential)
+        if idempotency_policy is not None and idempotency_policy.key is not None:
+            headers["Idempotency-Key"] = idempotency_policy.key
+        try:
+            body = json.dumps(json_body, allow_nan=False).encode() if json_body is not None else None
+        except (TypeError, ValueError) as exc:
+            raise NativeCatalogError(
+                "Catalog mutation input could not be serialized as JSON.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                metadata={"phase": "serialization"},
+            ) from exc
         if body is not None:
             headers = {"Content-Type": "application/json", **headers}
         request = RuntimeRequest(method=method, url=self._origin + path, headers=headers, body=body)
@@ -522,7 +547,8 @@ class SyncUDataClient(_UDataClientCore):
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=method == "GET" or allow_retry),
+                idempotency=idempotency_policy
+                or IdempotencyPolicy(safe=method == "GET", explicit_retry_opt_in=allow_retry),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -533,29 +559,35 @@ class SyncUDataClient(_UDataClientCore):
         except Exception:
             self._emit(owning_id, "failed")
             raise
-        self._validate_status(owning_id, response, redirect_mode=redirect_mode)
-        self._emit(owning_id, "succeeded")
+        self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
-            location = response.headers.get("Location") or response.headers.get("location")
+            location = _response_header(response, "location")
             if not location:
                 raise NativeCatalogError(
                     "The uData redirect response omits its Location header.",
                     operation=str(owning_id),
                     platform=PLATFORM.value,
+                    status_code=response.status_code,
                 )
             return response.status_code, dict(response.headers), response
         if raw_text:
+            self._emit(owning_id, "succeeded")
             return response.status_code, response.body, response
         if not response.body:
+            self._emit(owning_id, "succeeded")
             return response.status_code, None, response
         try:
-            return response.status_code, json.loads(response.body), response
+            payload = json.loads(response.body)
         except (TypeError, ValueError) as exc:
             raise NativeCatalogError(
                 "Catalog operation returned an invalid JSON result.",
                 operation=str(owning_id),
                 platform=PLATFORM.value,
+                status_code=response.status_code,
+                metadata={"ambiguous": json_body is not None and method != "GET"},
             ) from exc
+        self._emit(owning_id, "succeeded")
+        return response.status_code, payload, response
 
     def _dispatch(
         self,
@@ -570,9 +602,14 @@ class SyncUDataClient(_UDataClientCore):
         if operation.operation_id != owning_id:
             raise unimplemented_family(str(operation.operation_id))
         self._require_site_version()
-        effective = self._capabilities.resolve(owning_id)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
         credential = _refreshed_credential(self._credentials)
+        scope = _credential_scope(credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._site_gate.invalidate()
+            self._credential_scope = scope
+        effective = self._capabilities.resolve(owning_id, credential_scope=scope)
+        build_catalog_operation_guard(owning_id, effective).require_allowed()
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
         if credential is not None:
@@ -619,7 +656,7 @@ class SyncUDataClient(_UDataClientCore):
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
             ).run(send)
-            result = self._decode(owning_id, response)
+            result = self._decode(owning_id, response, credential_scope=scope)
         except BudgetExhaustedError:
             self._emit(
                 owning_id,
@@ -735,9 +772,14 @@ class AsyncUDataClient(_UDataClientCore):
         if operation.operation_id != owning_id:
             raise unimplemented_family(str(operation.operation_id))
         await self.site_version()
-        effective = await self._capabilities.resolve_async(owning_id)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
         credential = await _refreshed_credential_async(self._credentials)
+        scope = _credential_scope(credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._site_gate.invalidate()
+            self._credential_scope = scope
+        effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
+        build_catalog_operation_guard(owning_id, effective).require_allowed()
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
         if credential is not None:
@@ -784,7 +826,7 @@ class AsyncUDataClient(_UDataClientCore):
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
             ).run_async(send, sleep=self._retry_sleep)
-            result = self._decode(owning_id, response)
+            result = self._decode(owning_id, response, credential_scope=scope)
         except BudgetExhaustedError:
             self._emit(
                 owning_id,
@@ -814,6 +856,8 @@ class AsyncUDataClient(_UDataClientCore):
         raw_text: bool = False,
         redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
+        credential: object | None = None,
+        idempotency_policy: IdempotencyPolicy | None = None,
         allow_retry: bool = False,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
@@ -821,17 +865,29 @@ class AsyncUDataClient(_UDataClientCore):
             raise RuntimeError("The asynchronous uData client is closed.")
         owning_id = _operation_id_from(owning_operation)
         await self.site_version()
-        effective = await self._capabilities.resolve_async(owning_id)
-        guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
-        guard.require_allowed()
-        credential = await _refreshed_credential_async(self._credentials)
-        scope = _credential_scope(credential)
+        resolved_credential = (
+            credential if credential is not None else await _refreshed_credential_async(self._credentials)
+        )
+        scope = _credential_scope(resolved_credential)
         if scope != self._credential_scope:
             self._capabilities.invalidate()
             self._site_gate.invalidate()
             self._credential_scope = scope
-        headers = _auth_headers(credential)
-        body = json.dumps(json_body).encode() if json_body is not None else None
+        effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
+        guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
+        guard.require_allowed()
+        headers = _auth_headers(resolved_credential)
+        if idempotency_policy is not None and idempotency_policy.key is not None:
+            headers["Idempotency-Key"] = idempotency_policy.key
+        try:
+            body = json.dumps(json_body, allow_nan=False).encode() if json_body is not None else None
+        except (TypeError, ValueError) as exc:
+            raise NativeCatalogError(
+                "Catalog mutation input could not be serialized as JSON.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                metadata={"phase": "serialization"},
+            ) from exc
         if body is not None:
             headers = {"Content-Type": "application/json", **headers}
         request = RuntimeRequest(method=method, url=self._origin + path, headers=headers, body=body)
@@ -864,7 +920,8 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=method == "GET" or allow_retry),
+                idempotency=idempotency_policy
+                or IdempotencyPolicy(safe=method == "GET", explicit_retry_opt_in=allow_retry),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
@@ -875,10 +932,9 @@ class AsyncUDataClient(_UDataClientCore):
         except Exception:
             self._emit(owning_id, "failed")
             raise
-        self._validate_status(owning_id, response, redirect_mode=redirect_mode)
-        self._emit(owning_id, "succeeded")
+        self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
-            location = response.headers.get("Location") or response.headers.get("location")
+            location = _response_header(response, "location")
             if not location:
                 raise NativeCatalogError(
                     "The uData redirect response omits its Location header.",
@@ -887,17 +943,23 @@ class AsyncUDataClient(_UDataClientCore):
                 )
             return response.status_code, dict(response.headers), response
         if raw_text:
+            self._emit(owning_id, "succeeded")
             return response.status_code, response.body, response
         if not response.body:
+            self._emit(owning_id, "succeeded")
             return response.status_code, None, response
         try:
-            return response.status_code, json.loads(response.body), response
+            payload = json.loads(response.body)
         except (TypeError, ValueError) as exc:
             raise NativeCatalogError(
                 "Catalog operation returned an invalid JSON result.",
                 operation=str(owning_id),
                 platform=PLATFORM.value,
+                status_code=response.status_code,
+                metadata={"ambiguous": json_body is not None and method != "GET"},
             ) from exc
+        self._emit(owning_id, "succeeded")
+        return response.status_code, payload, response
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""

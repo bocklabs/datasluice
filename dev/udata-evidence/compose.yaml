@@ -15,6 +15,7 @@ services:
       HOME: /tmp
       UDATA_SECRET_KEY: ${UDATA_SECRET_KEY:?set a disposable local secret in .env}
       UDATA_API_TOKEN_SECRET: ${UDATA_API_TOKEN_SECRET:?set a disposable local secret in .env}
+      UDATA_EVIDENCE_STACK_NONCE: ${UDATA_EVIDENCE_STACK_NONCE:?set a disposable stack nonce in .env}
     depends_on:
       mongo:
         condition: service_healthy

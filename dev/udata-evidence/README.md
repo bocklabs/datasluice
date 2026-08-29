@@ -2,7 +2,7 @@
 
 This stack is exclusively for disposable, loopback-controlled evidence. It must never be pointed at a public deployment.
 
-1. Create `dev/udata-evidence/.env` with three distinct random disposable local values for `UDATA_SECRET_KEY`, `UDATA_API_TOKEN_SECRET`, and `MINIO_ROOT_PASSWORD`; do not commit it.
+1. Create `dev/udata-evidence/.env` with four distinct random disposable local values for `UDATA_SECRET_KEY`, `UDATA_API_TOKEN_SECRET`, `MINIO_ROOT_PASSWORD`, and `UDATA_EVIDENCE_STACK_NONCE`; do not commit it.
 2. Verify every image digest against approved release evidence, build the app from the exact upstream commit in `Dockerfile`, and start the stack with `docker compose --env-file .env -f dev/udata-evidence/compose.yaml up --build -d`. The stock server runs through `udata serve`; uData 17.6 has no `udata run` command.
 3. Seed deterministic administrator, organization-administrator, and regular-user roles only through `uv run python dev/udata-evidence/seeds/seed.py --origin http://127.0.0.1:5640`.
 4. Capture sanitized metadata only with `uv run python scripts/capture_udata_stack_evidence.py --origin http://127.0.0.1:5640 --version 17.6.0 --output /tmp/udata-evidence.json`.

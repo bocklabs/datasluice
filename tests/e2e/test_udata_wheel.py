@@ -70,9 +70,14 @@ sys.path.insert(0, sys.argv[1])
 import datasluice
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
+from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
+from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
 
 op_id = next(
@@ -93,10 +98,13 @@ class Transport:
         if url.endswith("/api/1/site/"):
             body = json.dumps({"feed_size": 0, "id": "s", "keywords": [], "metrics": {},
                                "title": "uData", "version": self.version}).encode()
+        elif request.method == "POST":
+            body = json.dumps({"id": "wheel-created", "title": "Wheel dataset", "slug": "wheel-dataset",
+                               "description": "d", "private": False}).encode()
         else:
             body = json.dumps({"data": [{"id": "abc", "title": "T"}], "next_page": None, "page": 1,
                                "page_size": 20, "previous_page": None, "total": 1}).encode()
-        return RuntimeResponse(status_code=200, headers={}, body=body)
+        return RuntimeResponse(status_code=201 if request.method == "POST" else 200, headers={}, body=body)
 
     def close(self):
         self.close_count += 1
@@ -122,15 +130,32 @@ client.close()
 
 import asyncio
 async_transport = AsyncTransport()
+async_credential = UDataCredential(api_key="wheel-key")
 async_client = create_async_client(
-    UDataClientSettings(base_url="http://127.0.0.1:5640", async_transport=async_transport)
+    UDataClientSettings(
+        base_url="http://127.0.0.1:5640", async_transport=async_transport, credential=async_credential
+    )
 )
 async def run_async():
     async with async_client as active:
         page = await active.datasets.list()
-        return page.items[0].id.value
-async_result = asyncio.run(run_async())
+        permissions = EffectivePermissions.for_credential(async_credential, platform=CatalogPlatform.UDATA)
+        created = await active.datasets.create(
+            DatasetCreateInput(title="Wheel dataset", description="d"),
+            permissions=permissions,
+            mutation_policy=MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.create-dataset", target="Wheel dataset"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        return page.items[0].id.value, created
+async_result, created = asyncio.run(run_async())
 assert async_result == "abc"
+assert created.record.id.value == "wheel-created"
+assert created.receipt.outcome == "succeeded"
+assert created.receipt.audit_metadata["status_code"] == 201
 recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
@@ -140,9 +165,28 @@ assert recorded == [
 assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/datasets/",
 ]
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
+
+class MalformedTransport(Transport):
+    def send(self, request):
+        if request.url.endswith("/api/1/datasets/abc/"):
+            self.requests.append(request.url)
+            return RuntimeResponse(status_code=200, headers={}, body=b"{")
+        return Transport.send(self, request)
+
+malformed = create_sync_client(
+    UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=MalformedTransport())
+)
+try:
+    malformed.datasets.get("abc")
+except NativeCatalogError as error:
+    assert error.status_code == 200
+else:
+    raise AssertionError("malformed installed-wheel response was accepted")
+malformed.close()
 
 
 

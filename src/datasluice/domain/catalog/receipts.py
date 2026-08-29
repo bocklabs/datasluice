@@ -10,7 +10,7 @@ from datasluice.domain.catalog.models import _contract_error, _freeze_json, _obj
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 
 _ATOMICITIES = frozenset({"atomic", "independent"})
-_OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "skipped"})
+_OUTCOMES = frozenset({"succeeded", "rejected", "failed", "cancelled", "ambiguous", "skipped"})
 _SENSITIVE_KEY_PARTS = (
     "authorization",
     "credential",

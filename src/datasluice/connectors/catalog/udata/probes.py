@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 import threading
 from collections.abc import Callable
@@ -11,6 +10,7 @@ from time import monotonic
 from typing import Literal
 
 from datasluice.connectors.catalog.udata.settings import normalize_origin
+from datasluice.domain.catalog.auth import credential_scope
 from datasluice.errors.catalog import CatalogUnavailableError, NativeCatalogError, map_catalog_error
 from datasluice.runtime.clients import AsyncCatalogTransport
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest
@@ -20,8 +20,6 @@ SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"
 _VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\Z")
 _SITE_KEYS = frozenset({"feed_size", "id", "keywords", "metrics", "title", "version"})
 _VERSION_STATE = Literal["exact", "missing", "malformed", "ambiguous"]
-
-_CREDENTIAL_SCOPE_SALT = b"udata-site-gate-v1"
 
 
 class UDataVersionError(CatalogUnavailableError):
@@ -129,12 +127,6 @@ def require_exact_version(observed: SiteVersion, pinned_version: str) -> SiteVer
     return observed
 
 
-def _credential_scope(credentials: object | None) -> str:
-    """Return a stable, non-reversible scope for credential-identity caching."""
-    material = "" if credentials is None else str(id(credentials))
-    return hashlib.sha256(_CREDENTIAL_SCOPE_SALT + material.encode()).hexdigest()
-
-
 class SiteVersionGate:
     """Anonymous-first exact-version gate caching one evidence entry per caller identity.
 
@@ -168,7 +160,7 @@ class SiteVersionGate:
             UDataVersionError: When the deployment fails the exact-version gate.
             NativeCatalogError: When the probe transport or JSON decode fails.
         """
-        scope = _credential_scope(credentials)
+        scope = credential_scope(credentials)
         with self._lock:
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:
@@ -240,7 +232,7 @@ class AsyncSiteVersionGate(SiteVersionGate):
 
     async def require_current_async(self, credentials: object | None) -> SiteVersion:
         """Return cached evidence or dispatch one anonymous async site probe."""
-        scope = _credential_scope(credentials)
+        scope = credential_scope(credentials)
         with self._lock:
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:

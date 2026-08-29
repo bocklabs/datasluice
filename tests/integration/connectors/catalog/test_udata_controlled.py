@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -26,6 +28,17 @@ if _parsed.scheme != "http" or _parsed.hostname != "127.0.0.1" or _parsed.port !
     )
 
 ORIGIN = "http://127.0.0.1:5640"
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_COMPOSE_FILE = _REPO_ROOT / "dev" / "udata-evidence" / "compose.yaml"
+_ENV_FILE = _COMPOSE_FILE.with_name(".env")
+_EXPECTED_UDATA_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
+_EXPECTED_IMAGE_DIGESTS = (
+    "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+    "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+    "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+    "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+    "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+)
 
 pytestmark = [
     pytest.mark.udata_controlled,
@@ -40,6 +53,46 @@ _FAMILY_OPERATION_ID = next(
     for op_id in declared_udata_profile().operations
     if op_id.method == "dataset-list-search-show-create-update-delete"
 )
+
+
+def _compose_read(*args: str) -> str:
+    completed = subprocess.run(
+        ["docker", "compose", "--env-file", str(_ENV_FILE), "-f", str(_COMPOSE_FILE), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.fail("controlled stack identity could not be verified")
+    return completed.stdout.strip()
+
+
+def _verify_controlled_stack_identity() -> None:
+    nonce = os.environ.get("UDATA_EVIDENCE_STACK_NONCE")
+    if not nonce or not _ENV_FILE.is_file():
+        pytest.fail("controlled mutations require a stack nonce and dev/udata-evidence/.env")
+    services = _compose_read("ps", "--status", "running", "--services").splitlines()
+    expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
+    if len(services) != len(expected_services) or set(services) != expected_services:
+        pytest.fail("controlled stack identity does not match the approved compose services")
+    if _compose_read("port", "udata", "7000") != "127.0.0.1:5640":
+        pytest.fail("controlled uData service is not bound to the fixed loopback port")
+    if _compose_read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD") != _EXPECTED_UDATA_COMMIT:
+        pytest.fail("controlled uData service is not built from the approved source commit")
+    if _compose_read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
+        pytest.fail("controlled uData service nonce does not match the caller-selected stack")
+    compose_text = _COMPOSE_FILE.read_text(encoding="utf-8")
+    if any(digest not in compose_text for digest in _EXPECTED_IMAGE_DIGESTS):
+        pytest.fail("controlled compose file is missing an approved dependency digest")
+    dockerfile_text = _COMPOSE_FILE.with_name("Dockerfile").read_text(encoding="utf-8")
+    if (
+        "ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1"
+        not in dockerfile_text
+        or "python:3.13-slim-bookworm@sha256:b6bd71b0dd3811ddbcbc523ec2965fd1e1bcfdf7a20ab24679273d3bee726129"
+        not in dockerfile_text
+        or f"UDATA_COMMIT={_EXPECTED_UDATA_COMMIT}" not in dockerfile_text
+    ):
+        pytest.fail("controlled uData build is missing an approved image or source digest")
 
 
 def test_controlled_stack_proves_exact_version_then_one_dataset_read() -> None:
@@ -73,6 +126,7 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
     token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
     if not token:
         pytest.skip("controlled mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    _verify_controlled_stack_identity()
     from datasluice.connectors.catalog.udata.models.datasets import (
         DatasetCreateInput,
         DatasetDeleteOptions,
@@ -81,8 +135,11 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
     from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
     from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 
-    permissions = EffectivePermissions(platform=CatalogPlatform.UDATA, authenticated=True, roles=frozenset({"admin"}))
-    settings = UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    settings = UDataClientSettings(base_url=ORIGIN, credential=credential)
     dataset_id: str | None = None
     cleanup_outcome = None
     cleanup_error: Exception | None = None
@@ -90,13 +147,28 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
         assert client.site_version().version == "17.6.0"
         try:
             record = client.datasets.create(
-                DatasetCreateInput(title="Evidence dataset", description="d"), permissions=permissions
+                DatasetCreateInput(title="Evidence dataset", description="d"),
+                permissions=permissions,
+                mutation_policy=MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.create-dataset", target="Evidence dataset"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
             )
             record_value = record.record
             assert record_value is not None
             dataset_id = record_value.id.value
             updated = client.datasets.update(
-                dataset_id, DatasetUpdateInput(title="Evidence dataset v2"), permissions=permissions
+                dataset_id,
+                DatasetUpdateInput(title="Evidence dataset v2"),
+                permissions=permissions,
+                mutation_policy=MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.update-dataset", target=dataset_id
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
             )
             assert updated.record is not None
             assert updated.record.payload["title"] == "Evidence dataset v2"
@@ -108,7 +180,9 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
                         permissions,
                         DatasetDeleteOptions(),
                         MutationPolicy(
-                            confirmation=ConfirmationPolicy(confirmed=True),
+                            confirmation=ConfirmationPolicy(
+                                confirmed=True, operation="udata/api-v1.delete-dataset", target=dataset_id
+                            ),
                             concurrency=ConcurrencyPolicy(overwrite=True),
                         ),
                     )
@@ -117,7 +191,8 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
                     cleanup_error = error
 
     assert cleanup_error is None, f"controlled cleanup failed for {dataset_id}: {cleanup_error}"
-    assert cleanup_outcome is not None and cleanup_outcome.status_code == 204
+    assert cleanup_outcome is not None
+    assert cleanup_outcome.audit_metadata["status_code"] == 204
 
 
 def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import _DATASETS_OPERATION_ID, PLATFORM
@@ -17,7 +18,7 @@ from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetUpdateInput,
 )
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord
+from datasluice.domain.catalog.models import NativeRecord, _freeze_json
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 DATASET_OPERATIONS = {
@@ -42,22 +43,200 @@ DATASET_OPERATIONS = {
 
 _DATASET_PATH = "/api/1/datasets/"
 _DATASET_V2_PATH = "/api/2/datasets/"
+_DATASET_STRING_FIELDS = frozenset(
+    {
+        "id",
+        "title",
+        "acronym",
+        "slug",
+        "description",
+        "description_short",
+        "created",
+        "created_at",
+        "last_modified",
+        "last_update",
+        "deleted",
+        "archived",
+        "frequency",
+        "frequency_date",
+        "license",
+        "access_type",
+        "authorization_request_url",
+        "access_type_reason_category",
+        "access_type_reason",
+        "uri",
+        "page",
+    }
+)
+_DATASET_BOOLEAN_FIELDS = frozenset({"private", "featured"})
+_DATASET_MAPPING_FIELDS = frozenset(
+    {
+        "organization",
+        "owner",
+        "metrics",
+        "extras",
+        "harvest",
+        "temporal_coverage",
+        "spatial",
+        "schema",
+        "quality",
+        "internal",
+        "permissions",
+    }
+)
+_DATASET_LIST_FIELDS = frozenset(
+    {"tags", "resources", "community_resources", "badges", "access_audiences", "contact_points"}
+)
+_DATASET_DETAIL_FIELDS = frozenset(
+    {
+        "id",
+        "title",
+        "acronym",
+        "slug",
+        "description",
+        "description_short",
+        "created",
+        "created_at",
+        "last_modified",
+        "last_update",
+        "private",
+        "featured",
+        "deleted",
+        "archived",
+        "frequency",
+        "frequency_date",
+        "license",
+        "access_type",
+        "access_audiences",
+        "authorization_request_url",
+        "access_type_reason_category",
+        "access_type_reason",
+        "uri",
+        "page",
+        "organization",
+        "owner",
+        "metrics",
+        "extras",
+        "harvest",
+        "temporal_coverage",
+        "spatial",
+        "schema",
+        "quality",
+        "internal",
+        "permissions",
+        "tags",
+        "resources",
+        "community_resources",
+        "badges",
+        "contact_points",
+    }
+)
+
+
+def _invalid_field(field: str, operation: str, expected: str) -> CatalogValidationError:
+    return CatalogValidationError(
+        f"The uData dataset field {field!r} must be {expected}.",
+        operation=operation,
+        platform=PLATFORM.value,
+        safe_action="Verify the response against the pinned source oracle.",
+    )
+
+
+def _validate_json_value(value: object, *, operation: str, path: str) -> None:
+    if value is None or type(value) is bool or type(value) is int or isinstance(value, str):
+        return
+    if isinstance(value, float):
+        import math
+
+        if math.isfinite(value):
+            return
+        raise _invalid_field(path, operation, "a finite JSON value")
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            if not isinstance(key, str) or not key:
+                raise _invalid_field(path, operation, "an object with string keys")
+            _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+        return
+    if isinstance(value, list):
+        for index, nested in enumerate(value):
+            _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
+        return
+    raise _invalid_field(path, operation, "a JSON value")
+
+
+def _validate_nested_string_fields(
+    value: Mapping[str, object], fields: frozenset[str], *, operation: str, path: str
+) -> None:
+    for field in fields:
+        nested = value.get(field)
+        if nested is not None and (not isinstance(nested, str) or not nested):
+            raise _invalid_field(f"{path}.{field}", operation, "a non-empty string or null")
+
+
+def _validate_dataset_nested_fields(payload: Mapping[str, object], *, operation: str) -> None:
+    for field in ("organization", "owner"):
+        value = payload.get(field)
+        if isinstance(value, Mapping):
+            _validate_nested_string_fields(value, frozenset({"id", "name", "slug"}), operation=operation, path=field)
+    for field in ("schema", "temporal_coverage"):
+        value = payload.get(field)
+        if isinstance(value, Mapping):
+            _validate_nested_string_fields(
+                value,
+                frozenset({"name", "version", "url", "start", "end"}),
+                operation=operation,
+                path=field,
+            )
+    for field in ("resources", "badges", "community_resources", "access_audiences", "contact_points"):
+        value = payload.get(field)
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                if isinstance(item, Mapping):
+                    _validate_nested_string_fields(
+                        item,
+                        frozenset({"id", "title", "name", "slug", "url"}),
+                        operation=operation,
+                        path=f"{field}[{index}]",
+                    )
+
+
+def _validate_dataset_fields(payload: Mapping[str, object], *, operation: str, detail: bool) -> None:
+    required = ("id", "title", "slug") if detail else ("id",)
+    for field in required:
+        value = payload.get(field)
+        if not isinstance(value, str) or not value:
+            raise _invalid_field(field, operation, "a non-empty string")
+    for field, value in payload.items():
+        if field in _DATASET_STRING_FIELDS:
+            if value is not None and (not isinstance(value, str) or not value):
+                raise _invalid_field(field, operation, "a non-empty string or null")
+        elif field in _DATASET_BOOLEAN_FIELDS:
+            if type(value) is not bool:
+                raise _invalid_field(field, operation, "a boolean")
+        elif field in _DATASET_MAPPING_FIELDS:
+            if value is not None and not isinstance(value, Mapping):
+                raise _invalid_field(field, operation, "an object or null")
+        elif field in _DATASET_LIST_FIELDS:
+            if not isinstance(value, list):
+                raise _invalid_field(field, operation, "a list")
+            if field == "tags" and not all(isinstance(tag, str) and tag for tag in value):
+                raise _invalid_field(field, operation, "a list of non-empty strings")
+            if field != "tags" and not all(isinstance(item, Mapping) for item in value):
+                raise _invalid_field(field, operation, "a list of objects")
+        _validate_json_value(value, operation=operation, path=field)
+    _validate_dataset_nested_fields(payload, operation=operation)
 
 
 def _native_dataset(payload: Mapping[str, object], *, operation: str) -> NativeRecord:
-    identifier = payload.get("id")
-    if not isinstance(identifier, str) or not identifier:
-        raise CatalogValidationError(
-            "The uData dataset document requires a non-empty string id.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned source oracle.",
-        )
+    identifier = cast(str, payload["id"])
+    known = {key: value for key, value in payload.items() if key in _DATASET_DETAIL_FIELDS}
+    extensions = {"udata.dataset": {key: value for key, value in payload.items() if key not in _DATASET_DETAIL_FIELDS}}
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
         id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=identifier),
-        payload=dict(payload),
+        payload=known,
+        extensions=extensions,
     )
 
 
@@ -103,18 +282,18 @@ def atom_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], Non
 def rdf_request(dataset_id: str, fmt: str | None) -> tuple[str, str, dict[str, str], None]:
     """Encode GET /api/1/datasets/<id>[/rdf|/rdf.<format>]; validates the format allowlist."""
     identifier = _path_segment(_required_id(dataset_id))
-    if fmt is not None:
-        media_type_for_format(fmt)
     if fmt is None:
-        return "GET", f"{_DATASET_PATH}{_path_segment(identifier)}/rdf", {}, None
-    if not isinstance(fmt, str) or not fmt or "/" in fmt or "." in fmt:
+        return "GET", f"{_DATASET_PATH}{identifier}/rdf", {}, None
+    extension = _format_extension(fmt)
+    media_type_for_format(extension)
+    if "/" in extension or "." in extension:
         raise CatalogValidationError(
             "The uData RDF format must be a short extension such as rdf, ttl, or jsonld.",
             operation=_DATASETS_OPERATION_ID,
             platform=PLATFORM.value,
             safe_action="Pass a short RDF extension without slashes.",
         )
-    return "GET", f"{_DATASET_PATH}{_path_segment(identifier)}/rdf.{_path_segment(fmt)}", {}, None
+    return "GET", f"{_DATASET_PATH}{identifier}/rdf.{_path_segment(extension)}", {}, None
 
 
 def list_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], None]:
@@ -179,31 +358,7 @@ def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATIO
             platform=PLATFORM.value,
             safe_action="Verify the response against the pinned source oracle.",
         )
-    for field in ("id", "title", "slug"):
-        value = payload.get(field)
-        if not isinstance(value, str) or not value:
-            raise CatalogValidationError(
-                f"The uData dataset document requires a non-empty string {field!r}.",
-                operation=operation,
-                platform=PLATFORM.value,
-                safe_action="Verify the response against the pinned source oracle.",
-            )
-    private = payload.get("private")
-    if private is not None and type(private) is not bool:
-        raise CatalogValidationError(
-            "The uData dataset document field 'private' must be a boolean.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned source oracle.",
-        )
-    tags = payload.get("tags")
-    if tags is not None and (not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags)):
-        raise CatalogValidationError(
-            "The uData dataset document field 'tags' must be a list of strings.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned source oracle.",
-        )
+    _validate_dataset_fields(payload, operation=operation, detail=True)
     return _native_dataset(payload, operation=operation)
 
 
@@ -218,10 +373,11 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
         )
     records = []
     for item in payload:
+        _validate_dataset_fields(item, operation=operation, detail=False)
         title = item.get("title")
-        if title is not None and not isinstance(title, str):
+        if not isinstance(title, str) or not title:
             raise CatalogValidationError(
-                "The uData suggestion field 'title' must be a string.",
+                "The uData suggestion requires a non-empty string title.",
                 operation=operation,
                 platform=PLATFORM.value,
                 safe_action="Verify the response against the pinned source oracle.",
@@ -235,40 +391,72 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
                     resource_kind=ResourceKind.DATASET,
                     value=_required_id(item.get("id"), operation=operation),
                 ),
-                payload=dict(item),
+                payload={key: value for key, value in item.items() if key in _DATASET_DETAIL_FIELDS},
+                extensions={
+                    "udata.dataset": {key: value for key, value in item.items() if key not in _DATASET_DETAIL_FIELDS}
+                },
             )
         )
     return tuple(records)
 
 
-def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> dict[str, object]:
-    """Decode a v2 extras document."""
-    if not isinstance(payload, dict):
+def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> Mapping[str, object]:
+    """Decode a v2 extras document with typed value validation."""
+    if not isinstance(payload, Mapping):
         raise CatalogValidationError(
             "The uData extras response must be a JSON object.",
             operation=operation,
             platform=PLATFORM.value,
             safe_action="Verify the response against the pinned source oracle.",
         )
-    return dict(payload)
+    for key, value in payload.items():
+        _validate_json_value(value, operation=operation, path=key)
+    frozen = _freeze_json(payload, "udata.dataset_extras")
+    if not isinstance(frozen, Mapping):
+        raise CatalogValidationError(
+            "The uData extras response must be a JSON object.",
+            operation=operation,
+            platform=PLATFORM.value,
+            safe_action="Verify the response against the pinned source oracle.",
+        )
+    return frozen
 
 
 RDF_FORMAT_MEDIA_TYPES = {
     "rdf": "application/rdf+xml",
     "xml": "application/rdf+xml",
-    "ttl": "text/turtle",
+    "ttl": "application/x-turtle",
+    "turtle": "application/x-turtle",
     "nt": "application/n-triples",
     "n3": "text/n3",
+    "json": "application/ld+json",
     "jsonld": "application/ld+json",
+    "trig": "application/trig",
 }
+
+_APPROVED_TEXT_MEDIA_TYPES = frozenset(
+    {
+        "application/atom+xml",
+        "application/json",
+        "application/ld+json",
+        "application/n-triples",
+        "application/rdf+xml",
+        "application/trig",
+        "application/x-turtle",
+        "text/n3",
+        "text/turtle",
+        "text/xml",
+    }
+)
 
 
 def media_type_for_format(fmt: str) -> str:
     """Return the stock media type for one RDF format extension."""
-    media_type = RDF_FORMAT_MEDIA_TYPES.get(fmt)
+    extension = _format_extension(fmt)
+    media_type = RDF_FORMAT_MEDIA_TYPES.get(extension)
     if media_type is None:
         raise CatalogValidationError(
-            f"The uData RDF format {fmt!r} has no stock media type.",
+            f"The uData RDF format {extension!r} has no stock media type.",
             operation=_DATASETS_OPERATION_ID,
             platform=PLATFORM.value,
             safe_action=f"Use one of the stock extensions: {sorted(RDF_FORMAT_MEDIA_TYPES)}.",
@@ -276,40 +464,54 @@ def media_type_for_format(fmt: str) -> str:
     return media_type
 
 
-def parse_text_document(body: bytes, media_type: str, *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
+def _format_extension(fmt: object) -> str:
+    if not isinstance(fmt, str) or not fmt or "/" in fmt or "." in fmt or not fmt.isascii():
+        raise CatalogValidationError(
+            "The uData RDF format must be a short ASCII extension such as rdf, ttl, or jsonld.",
+            operation=_DATASETS_OPERATION_ID,
+            platform=PLATFORM.value,
+            safe_action="Pass a short RDF extension without slashes or dots.",
+        )
+    return fmt.lower()
+
+
+def parse_text_document(
+    body: bytes, media_type: str, *, response_media_type: str | None = None, operation: str = _DATASETS_OPERATION_ID
+) -> NativeRecord:
     """Bound a non-JSON document (atom/rdf) into a typed native record.
 
-    The document body is the requested operation result, retained with its
-    validated media type, byte size, and digest for caller-side verification.
+    The no-raw-body contract is preserved: only the approved media type, byte
+    count, and SHA-256 digest are retained — never the document content.
     """
     import hashlib
 
-    max_bytes = 4 * 1024 * 1024
-    if len(body) > max_bytes:
+    if not isinstance(body, bytes):
         raise NativeCatalogError(
-            "The uData text document exceeds the bounded retention limit.",
+            "The uData document body must be buffered bytes.",
             operation=operation,
             platform=PLATFORM.value,
-            metadata={"safe_action": "Request a more specific document format or range."},
         )
     try:
-        text = body.decode("utf-8")
+        body.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise NativeCatalogError(
             "The uData text document is not valid UTF-8.",
             operation=operation,
             platform=PLATFORM.value,
         ) from exc
+    negotiated = (response_media_type or media_type).split(";", 1)[0].strip().lower()
+    if negotiated not in _APPROVED_TEXT_MEDIA_TYPES:
+        raise NativeCatalogError(
+            f"The uData document media type {negotiated!r} is not an approved text contract.",
+            operation=operation,
+            platform=PLATFORM.value,
+            metadata={"safe_action": f"Request one of the approved media types: {media_type}."},
+        )
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
-        id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{media_type}"),
-        payload={
-            "media_type": media_type,
-            "body": text,
-            "size_bytes": len(body),
-            "sha256": hashlib.sha256(body).hexdigest(),
-        },
+        id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{negotiated}"),
+        payload={"media_type": negotiated, "size_bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()},
     )
 
 

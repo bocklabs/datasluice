@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from datasluice.domain.catalog.receipts import MutationReceipt
+
 if TYPE_CHECKING:
     from datasluice.domain.catalog.models import NativeRecord
 
@@ -43,17 +45,17 @@ _RESERVED_CREATE_FIELDS = frozenset({"title", "description", "private", "tags"})
 _RESERVED_UPDATE_FIELDS = frozenset({"title", "description", "private", "tags"})
 
 
-def _freeze_json(value: object) -> object:
+def _freeze_json(value: object, path: str = "udata.input") -> object:
     """Freeze a strictly JSON-safe structure into immutable equivalents."""
     if isinstance(value, Mapping):
         frozen: dict[str, object] = {}
         for key, item in value.items():
             if not isinstance(key, str):
                 raise ValueError("uData input mappings require string keys.")
-            frozen[key] = _freeze_json(item)
+            frozen[key] = _freeze_json(item, f"{path}.{key}")
         return MappingProxyType(frozen)
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze_json(item) for item in value)
+        return tuple(_freeze_json(item, f"{path}[]") for item in value)
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
@@ -88,6 +90,29 @@ def _optional_text(value: object, field: str) -> str | None:
     return value
 
 
+def _validate_sort(value: object, field: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field} sort must be a non-empty string.")
+    key = value[1:] if value.startswith("-") else value
+    if key.startswith("-") or key not in _V1_LIST_SORTS:
+        raise ValueError(f"{field} sort must be one of {sorted(_V1_LIST_SORTS)} with optional '-'.")
+
+
+def _validate_filters(value: Mapping[str, object], allowed: frozenset[str], field: str) -> None:
+    for key, item in value.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError(f"{field} filter names must be non-empty strings.")
+        if key not in allowed:
+            raise ValueError(f"Unknown {field} filters: {[key]}.")
+        if isinstance(item, tuple):
+            if not item or not all(isinstance(part, str) and part for part in item):
+                raise ValueError(f"{field} repeated filters must contain non-empty strings.")
+        elif type(item) is bool:
+            continue
+        elif not isinstance(item, str) or not item:
+            raise ValueError(f"{field} filter values must be strings, booleans, or string tuples.")
+
+
 @dataclass(frozen=True, slots=True)
 class DatasetListQuery:
     """The pinned v1/v2 dataset collection query surface.
@@ -109,17 +134,13 @@ class DatasetListQuery:
         if type(self.page_size) is not int or self.page_size < 1:
             raise ValueError("Dataset list page_size must be a positive integer.")
         if self.sort is not None:
-            key = self.sort.lstrip("-")
-            if key not in _V1_LIST_SORTS:
-                raise ValueError(f"Dataset list sort must be one of {sorted(_V1_LIST_SORTS)} with optional '-'.")
+            _validate_sort(self.sort, "Dataset list")
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("Dataset list q must be a string when supplied.")
         if self.filters is not None:
             if not isinstance(self.filters, Mapping):
                 raise ValueError("Dataset list filters must be a mapping.")
-            unknown = set(self.filters) - _V1_LIST_FILTERS
-            if unknown:
-                raise ValueError(f"Unknown dataset list filters: {sorted(unknown)}.")
+            _validate_filters(self.filters, _V1_LIST_FILTERS, "dataset list")
             object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
 
     def query_params(self) -> list[tuple[str, str]]:
@@ -295,37 +316,6 @@ class DatasetExtrasDelete:
         return list(self.keys)
 
 
-@dataclass(frozen=True, slots=True)
-class DatasetMutationOutcome:
-    """A redacted mutation receipt for one dataset transition.
-
-    Receipts retain only bounded metadata: operation identity, dataset
-    identity, wire status, and outcome kind. Bodies and credentials never
-    enter receipts (D-07/D-11).
-    """
-
-    operation_id: str
-    dataset_id: str
-    status_code: int
-    outcome: str
-
-    def __post_init__(self) -> None:
-        for name in ("operation_id", "dataset_id", "outcome"):
-            _required_text(getattr(self, name), name)
-        if type(self.status_code) is not int or not 0 <= self.status_code <= 599:
-            raise ValueError("Dataset mutation receipt requires a valid HTTP status code.")
-
-    def to_dict(self) -> dict[str, object]:
-        """Return the bounded redacted receipt projection for error metadata."""
-        return {
-            "schema_version": 1,
-            "operation_id": self.operation_id,
-            "dataset_id": self.dataset_id,
-            "status_code": self.status_code,
-            "outcome": self.outcome,
-        }
-
-
 _V2_SEARCH_FILTERS = frozenset(
     {
         "tag",
@@ -367,20 +357,18 @@ class DatasetSearchQuery:
         if type(self.page_size) is not int or self.page_size < 1:
             raise ValueError("Dataset search page_size must be a positive integer.")
         if self.sort is not None:
-            key = self.sort.lstrip("-")
-            if key not in _V1_LIST_SORTS:
-                raise ValueError(f"Dataset search sort must be one of {sorted(_V1_LIST_SORTS)} with optional '-'.")
+            _validate_sort(self.sort, "Dataset search")
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("Dataset search q must be a string when supplied.")
         if self.filters is not None:
             if not isinstance(self.filters, Mapping):
                 raise ValueError("Dataset search filters must be a mapping.")
-            unknown = set(self.filters) - _V2_SEARCH_FILTERS
-            if unknown:
-                raise ValueError(f"Unknown dataset search filters: {sorted(unknown)}.")
             range_value = self.filters.get("last_update_range")
-            if range_value is not None and range_value not in _V2_SEARCH_LAST_UPDATE_RANGES:
+            if range_value is not None and (
+                not isinstance(range_value, str) or range_value not in _V2_SEARCH_LAST_UPDATE_RANGES
+            ):
                 raise ValueError("Dataset search last_update_range must be a documented range choice.")
+            _validate_filters(self.filters, _V2_SEARCH_FILTERS, "dataset search")
             object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
 
     def query_params(self) -> list[tuple[str, str]]:
@@ -408,6 +396,35 @@ class DatasetMutationResult:
     typed errors carrying the same bounded receipt in their metadata.
     """
 
-    receipt: DatasetMutationOutcome
+    receipt: MutationReceipt
     record: NativeRecord | None = None
     extras: Mapping[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt, MutationReceipt):
+            raise ValueError("uData mutation results require a shared mutation receipt.")
+        if self.record is not None:
+            from datasluice.domain.catalog.models import NativeRecord as NativeRecordType
+
+            if not isinstance(self.record, NativeRecordType):
+                raise ValueError("uData mutation result records require NativeRecord.")
+        if self.extras is not None:
+            if not isinstance(self.extras, Mapping):
+                raise ValueError("uData mutation result extras require a mapping.")
+            frozen = _freeze_json(dict(self.extras), "udata.dataset_mutation_result.extras")
+            if not isinstance(frozen, Mapping):
+                raise ValueError("uData mutation result extras require a mapping.")
+            object.__setattr__(self, "extras", frozen)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the immutable mutation result as a fresh JSON-safe mapping."""
+        return {
+            "schema_version": 1,
+            "kind": "udata_dataset_mutation_result",
+            "receipt": self.receipt.to_dict(),
+            "record": self.record.to_dict() if self.record is not None else None,
+            "extras": _thaw_json(self.extras) if self.extras is not None else None,
+        }
+
+
+DatasetMutationOutcome = MutationReceipt

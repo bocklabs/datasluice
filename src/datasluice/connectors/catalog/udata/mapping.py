@@ -5,10 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import DatasetRecord, NativeRecord, PageInfo, ResultEnvelope
+from datasluice.domain.catalog.models import DatasetRecord, NativeRecord, PageInfo, PlatformMetadata, ResultEnvelope
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 PLATFORM = CatalogPlatform.UDATA
@@ -51,14 +52,72 @@ class NativePage:
                 raise ValueError(f"Native page field {field_name} must decode to a string URL or None.")
 
 
-def _int_field(payload: Mapping[str, object], field_name: str) -> int | None:
+@dataclass(frozen=True, slots=True)
+class NativePageMetadata:
+    """Immutable native pagination metadata retained alongside normalized cursors."""
+
+    present_fields: frozenset[str]
+    page: int | None
+    page_size: int | None
+    previous_page: str | None
+    next_page: str | None
+    total: int | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.present_fields, frozenset) or not self.present_fields.issubset(NATIVE_PAGE_FIELDS):
+            raise ValueError("Native page metadata presence must use the declared pager fields.")
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the native pager metadata as a JSON-safe projection."""
+        return {
+            "present_fields": sorted(self.present_fields),
+            "page": self.page,
+            "page_size": self.page_size,
+            "previous_page": self.previous_page,
+            "next_page": self.next_page,
+            "total": self.total,
+        }
+
+
+class UDataPageEnvelope(ResultEnvelope[UDataResultItem]):
+    """A result envelope carrying typed native pagination beside normalized paging."""
+
+    native_page: NativePageMetadata
+
+    def __init__(
+        self,
+        *,
+        items: tuple[UDataResultItem, ...],
+        page: PageInfo | None,
+        platform: PlatformMetadata,
+        native_page: NativePageMetadata,
+    ) -> None:
+        super().__init__(items=items, page=page, platform=platform)
+        if not isinstance(native_page, NativePageMetadata):
+            raise ValueError("uData result envelopes require typed native page metadata.")
+        object.__setattr__(self, "native_page", native_page)
+
+
+def _int_field(payload: Mapping[str, object], field_name: str, *, operation: str, minimum: int) -> int | None:
     value = payload.get(field_name)
     if value is None:
         return None
-    if type(value) is not int:
+    if type(value) is not int or value < minimum:
         raise CatalogValidationError(
-            f"The uData page field {field_name!r} must be an integer or null.",
-            operation=_DATASETS_OPERATION_ID,
+            f"The uData page field {field_name!r} must be an integer of at least {minimum} or null.",
+            operation=operation,
+            platform=PLATFORM.value,
+            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
+        )
+    return value
+
+
+def _link_field(payload: Mapping[str, object], field_name: str, *, operation: str) -> str | None:
+    value = _string_field(payload, field_name, operation=operation)
+    if value is not None and not value:
+        raise CatalogValidationError(
+            f"The uData page field {field_name!r} must be a non-empty URL or null.",
+            operation=operation,
             platform=PLATFORM.value,
             safe_action="Verify the deployment serves the stock uData v1 page envelope.",
         )
@@ -112,11 +171,11 @@ def parse_native_page(payload: object, *, operation: str = _DATASETS_OPERATION_I
     return NativePage(
         items=tuple(dict(item) for item in items_raw),
         present_fields=frozenset(field for field in NATIVE_PAGE_FIELDS if field in payload),
-        page=_int_field(payload, "page"),
-        page_size=_int_field(payload, "page_size"),
-        previous_page=_string_field(payload, "previous_page", operation=operation),
-        next_page=_string_field(payload, "next_page", operation=operation),
-        total=_int_field(payload, "total"),
+        page=_int_field(payload, "page", operation=operation, minimum=1),
+        page_size=_int_field(payload, "page_size", operation=operation, minimum=1),
+        previous_page=_link_field(payload, "previous_page", operation=operation),
+        next_page=_link_field(payload, "next_page", operation=operation),
+        total=_int_field(payload, "total", operation=operation, minimum=0),
     )
 
 
@@ -126,14 +185,10 @@ def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATAS
     Raises:
         CatalogValidationError: When the item omits its identity.
     """
-    identifier = item.get("id")
-    if not isinstance(identifier, str) or not identifier:
-        raise CatalogValidationError(
-            "The uData dataset summary requires a non-empty string id.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action="Verify the page items against the pinned source oracle.",
-        )
+    from datasluice.connectors.catalog.udata.wire.datasets import _validate_dataset_fields
+
+    _validate_dataset_fields(item, operation=operation, detail=False)
+    identifier = cast(str, item["id"])
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
@@ -174,14 +229,26 @@ def normalized_dataset(record: NativeRecord) -> DatasetRecord:
     )
 
 
-def shape_dataset_page(page: NativePage, *, operation: str = _DATASETS_OPERATION_ID) -> ResultEnvelope[UDataResultItem]:
+def shape_dataset_page(page: NativePage, *, operation: str = _DATASETS_OPERATION_ID) -> UDataPageEnvelope:
     """Shape one decoded native page into the typed result envelope."""
     records = tuple(parse_dataset_summary(item, operation=operation) for item in page.items)
     page_info = None
     if page.page is not None:
         next_cursor = str(page.page + 1) if page.next_page is not None else None
         page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
-    return ResultEnvelope(items=records, page=page_info)
+    native_page = NativePageMetadata(
+        present_fields=page.present_fields,
+        page=page.page,
+        page_size=page.page_size,
+        previous_page=page.previous_page,
+        next_page=page.next_page,
+        total=page.total,
+    )
+    metadata = PlatformMetadata(
+        platform=PLATFORM,
+        extensions={"udata.page": native_page.to_dict()},
+    )
+    return UDataPageEnvelope(items=records, page=page_info, platform=metadata, native_page=native_page)
 
 
 def unimplemented_family(operation: str) -> NativeCatalogError:
