@@ -19,7 +19,8 @@ from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPoli
 from datasluice.errors.catalog import CatalogError, CatalogUnavailableError, CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
-if os.environ.get("GSD_TDD_RED") != "1":
+_RUN_RED = os.environ.get("GSD_TDD_RED") == "1"
+if not _RUN_RED:
     pytest.skip("Root profile RED tests run explicitly before implementation.", allow_module_level=True)
 
 _clients: Any = importlib.import_module("datasluice.connectors.catalog.udata.clients")
@@ -33,6 +34,7 @@ SiteDocument: Any = _root_profile.SiteDocument
 SiteMutationResult: Any = _root_profile.SiteMutationResult
 SitePatchInput: Any = _root_profile.SitePatchInput
 SiteProfile: Any = _root_profile.SiteProfile
+
 
 _ORIGIN = "http://127.0.0.1:5640"
 _SITE_URL = f"{_ORIGIN}/api/1/site/"
