@@ -3,43 +3,40 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
-import os
 from collections.abc import Mapping
-from typing import Any
+from typing import cast
 
 import pytest
 
+from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.models.root_profile import (
+    SiteCatalogQuery,
+    SiteDocument,
+    SiteMutationResult,
+    SitePatchInput,
+    SiteProfile,
+)
+from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogError, CatalogUnavailableError, CatalogValidationError, ForbiddenError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-
-_RUN_RED = os.environ.get("GSD_TDD_RED") == "1"
-if not _RUN_RED:
-    pytest.skip("Root profile RED tests run explicitly before implementation.", allow_module_level=True)
-
-_clients: Any = importlib.import_module("datasluice.connectors.catalog.udata.clients")
-_root_profile: Any = importlib.import_module("datasluice.connectors.catalog.udata.models.root_profile")
-wire: Any = importlib.import_module("datasluice.connectors.catalog.udata.wire.root_profile")
-AsyncUDataClient: Any = _clients.AsyncUDataClient
-SyncUDataClient: Any = _clients.SyncUDataClient
-declared_udata_profile: Any = _clients.declared_udata_profile
-SiteCatalogQuery: Any = _root_profile.SiteCatalogQuery
-SiteDocument: Any = _root_profile.SiteDocument
-SiteMutationResult: Any = _root_profile.SiteMutationResult
-SitePatchInput: Any = _root_profile.SitePatchInput
-SiteProfile: Any = _root_profile.SiteProfile
-
+from datasluice.errors.catalog import (
+    CatalogUnavailableError,
+    CatalogValidationError,
+    ForbiddenError,
+    NativeCatalogError,
+)
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
 
 _ORIGIN = "http://127.0.0.1:5640"
 _SITE_URL = f"{_ORIGIN}/api/1/site/"
 _CREDENTIAL = UDataCredential(api_key="site-key")
-_PERMISSIONS = EffectivePermissions.for_credential(_CREDENTIAL, platform=CatalogPlatform.UDATA)
+_PERMISSIONS = EffectivePermissions.for_credential(
+    _CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+)
 
 
 def _site_body(*, title: str = "uData") -> dict[str, object]:
@@ -170,7 +167,8 @@ def test_row183_get_site_decodes_a_lossless_typed_profile() -> None:
     assert profile.title == "uData"
     assert profile.version == "17.6.0"
     assert profile.payload["portal_extension"] == {"enabled": True}
-    assert profile.to_dict()["payload"]["metrics"] == {"datasets": 1}
+    profile_payload = cast(dict[str, object], profile.to_dict()["payload"])
+    assert profile_payload["metrics"] == {"datasets": 1}
     assert [request.url for request in transport.requests] == [_SITE_URL, _SITE_URL]
 
 
@@ -230,7 +228,7 @@ def test_site_data_portal_redirect_is_typed_and_same_origin() -> None:
 
 
 def test_site_rdf_catalog_preserves_accept_and_catalog_pagination_query() -> None:
-    catalog_url = f"{_ORIGIN}/api/1/site/catalog"
+    catalog_url = f"{_ORIGIN}/api/1/site/catalog?page=2&page_size=5&q=air+quality"
     location = f"{_ORIGIN}/api/1/site/catalog.json?page=2&page_size=5&q=air+quality"
     transport, client = _sync_client(_routes(("GET", catalog_url, _json_response(302, None, {"Location": location}))))
     with client:
@@ -272,6 +270,10 @@ def test_site_rdf_catalog_format_returns_bounded_document_metadata() -> None:
     ],
 )
 def test_site_csv_exports_have_exact_paths_and_bounded_stream_metadata(method_name: str, path: str) -> None:
+    _assert_csv_export(method_name, path)
+
+
+def _assert_csv_export(method_name: str, path: str) -> None:
     url = f"{_ORIGIN}{path}"
     body = b'"id";"title"\n"one";"A"\n'
     transport, client = _sync_client(
@@ -284,6 +286,34 @@ def test_site_csv_exports_have_exact_paths_and_bounded_stream_metadata(method_na
     assert document.media_type == "text/csv"
     assert document.payload["size_bytes"] == len(body)
     assert transport.requests[-1].url == url
+
+
+def test_row188_site_datasets_csv() -> None:
+    _assert_csv_export("datasets_csv", "/api/1/site/datasets.csv")
+
+
+def test_row189_site_resources_csv() -> None:
+    _assert_csv_export("resources_csv", "/api/1/site/resources.csv")
+
+
+def test_row190_site_organizations_csv() -> None:
+    _assert_csv_export("organizations_csv", "/api/1/site/organizations.csv")
+
+
+def test_row191_site_reuses_csv() -> None:
+    _assert_csv_export("reuses_csv", "/api/1/site/reuses.csv")
+
+
+def test_row192_site_dataservices_csv() -> None:
+    _assert_csv_export("dataservices_csv", "/api/1/site/dataservices.csv")
+
+
+def test_row193_site_harvests_csv() -> None:
+    _assert_csv_export("harvests_csv", "/api/1/site/harvests.csv")
+
+
+def test_row194_site_tags_csv() -> None:
+    _assert_csv_export("tags_csv", "/api/1/site/tags.csv")
 
 
 def test_row195_jsonld_context_decodes_json_without_retaining_raw_bytes() -> None:
@@ -300,6 +330,36 @@ def test_row195_jsonld_context_decodes_json_without_retaining_raw_bytes() -> Non
     assert document.media_type == "application/ld+json"
     assert "body" not in document.to_dict()
     assert transport.requests[-1].url == url
+
+
+def test_root_invalid_format_is_rejected_before_site_probe() -> None:
+    transport, client = _sync_client(_routes())
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.data_portal("yaml")
+
+    assert transport.requests == []
+
+
+def test_root_malformed_profile_maps_to_typed_error() -> None:
+    payload = _site_body()
+    payload["title"] = 42
+    transport, client = _sync_client(_routes(("GET", _SITE_URL, _json_response(200, payload))))
+    with client, pytest.raises(CatalogValidationError) as excinfo:
+        client.root_profile.get()
+
+    assert excinfo.value.operation == wire.ROOT_OPERATION
+    assert [request.url for request in transport.requests] == [_SITE_URL, _SITE_URL]
+
+
+def test_root_external_redirect_is_rejected_without_following() -> None:
+    url = f"{_ORIGIN}/api/1/site/data.json"
+    transport, client = _sync_client(
+        _routes(("GET", url, _json_response(302, None, {"Location": "https://other.example/site/catalog.json"})))
+    )
+    with client, pytest.raises(NativeCatalogError):
+        client.root_profile.data_portal("json")
+
+    assert [request.url for request in transport.requests] == [_SITE_URL, url]
 
 
 def test_set_site_rejects_public_origins_before_any_dispatch_and_keeps_receipt() -> None:
@@ -360,12 +420,7 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             self.requests.append(request)
             if request.method == "PATCH":
-                raise CatalogError(
-                    "transport failed",
-                    operation=wire.ROOT_OPERATIONS["set_site"],
-                    platform="udata",
-                    safe_action="retry",
-                )
+                raise TransportFailure("connection dropped after dispatch")
             return _json_response(200, _site_body())
 
     transport = FailingTransport({})
@@ -376,7 +431,7 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
         credentials=_CREDENTIAL,
         owns_transport=False,
     )
-    with client, pytest.raises(CatalogError):
+    with client, pytest.raises(TransportFailure):
         client.root_profile.set_site(
             SitePatchInput(title="once"),
             permissions=_PERMISSIONS,
@@ -393,7 +448,7 @@ def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
 
     async def run() -> SiteDocument:
         async with client:
-            return client.root_profile.datasets_csv()
+            return await client.root_profile.datasets_csv()
 
     document = asyncio.run(run())
     assert isinstance(document, SiteDocument)
@@ -402,7 +457,10 @@ def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
 
 
 def test_root_profile_wire_operations_use_the_existing_broad_capability_identity() -> None:
-    assert all(operation == wire.ROOT_OPERATION for operation in wire.ROOT_OPERATIONS.values())
+    assert wire.ROOT_OPERATIONS["set_site"] == "udata/api-v1.set-site"
+    assert all(
+        operation == wire.ROOT_OPERATION for name, operation in wire.ROOT_OPERATIONS.items() if name != "set_site"
+    )
     assert next(
         operation
         for operation in declared_udata_profile().operations
@@ -413,7 +471,7 @@ def test_root_profile_wire_operations_use_the_existing_broad_capability_identity
 def test_root_profile_models_are_typed_and_immutable() -> None:
     profile = SiteProfile.from_payload(_site_body())
     with pytest.raises(TypeError):
-        profile.payload["title"] = "changed"  # type: ignore[index]
+        dict.__setitem__(cast(dict[str, object], profile.payload), "title", "changed")
 
     assert isinstance(profile.catalog_id.value, str)
     assert isinstance(profile.to_dict(), dict)
