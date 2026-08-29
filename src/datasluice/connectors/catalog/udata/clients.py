@@ -26,6 +26,7 @@ from datasluice.connectors.catalog.udata.probes import (
     SiteVersionGate,
 )
 from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+from datasluice.connectors.catalog.udata.services.root_profile import AsyncRootProfileService, SyncRootProfileService
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings, normalize_origin
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -461,6 +462,11 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the complete typed dataset service."""
         return SyncDatasetsService(self)
 
+    @property
+    def root_profile(self) -> SyncRootProfileService:
+        """Expose the complete typed root-profile service."""
+        return SyncRootProfileService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -481,6 +487,7 @@ class SyncUDataClient(_UDataClientCore):
         path: str,
         owning_operation: str,
         query: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
         redirect_mode: bool = False,
@@ -503,9 +510,10 @@ class SyncUDataClient(_UDataClientCore):
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
         guard.require_allowed()
-        headers = _auth_headers(resolved_credential)
+        request_headers = dict(headers or {})
+        request_headers.update(_auth_headers(resolved_credential))
         if idempotency_policy is not None and idempotency_policy.key is not None:
-            headers["Idempotency-Key"] = idempotency_policy.key
+            request_headers["Idempotency-Key"] = idempotency_policy.key
         try:
             body = json.dumps(json_body, allow_nan=False).encode() if json_body is not None else None
         except (TypeError, ValueError) as exc:
@@ -516,8 +524,8 @@ class SyncUDataClient(_UDataClientCore):
                 metadata={"phase": "serialization"},
             ) from exc
         if body is not None:
-            headers = {"Content-Type": "application/json", **headers}
-        request = RuntimeRequest(method=method, url=self._origin + path, headers=headers, body=body)
+            request_headers = {"Content-Type": "application/json", **request_headers}
+        request = RuntimeRequest(method=method, url=self._origin + path, headers=request_headers, body=body)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         sync_transport = cast(CatalogTransport, self._transport)
@@ -588,6 +596,38 @@ class SyncUDataClient(_UDataClientCore):
             ) from exc
         self._emit(owning_id, "succeeded")
         return response.status_code, payload, response
+
+    def _root_call(
+        self,
+        *,
+        method: str,
+        path: str,
+        owning_operation: str,
+        query: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+        json_body: object = None,
+        raw_text: bool = False,
+        redirect_mode: bool = False,
+        permissions: EffectivePermissions | None = None,
+        credential: object | None = None,
+        idempotency_policy: IdempotencyPolicy | None = None,
+        allow_retry: bool = False,
+    ) -> tuple[int, object, RuntimeResponse]:
+        """Run one root-profile request through the shared guarded transport seam."""
+        return self._dataset_call(
+            method=method,
+            path=path,
+            owning_operation=owning_operation,
+            query=query,
+            headers=headers,
+            json_body=json_body,
+            raw_text=raw_text,
+            redirect_mode=redirect_mode,
+            permissions=permissions,
+            credential=credential,
+            idempotency_policy=idempotency_policy,
+            allow_retry=allow_retry,
+        )
 
     def _dispatch(
         self,
@@ -752,6 +792,11 @@ class AsyncUDataClient(_UDataClientCore):
         """Expose the complete typed dataset service."""
         return AsyncDatasetsService(self)
 
+    @property
+    def root_profile(self) -> AsyncRootProfileService:
+        """Expose the complete typed root-profile service."""
+        return AsyncRootProfileService(self)
+
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[UDataResultItem]:
@@ -852,6 +897,7 @@ class AsyncUDataClient(_UDataClientCore):
         path: str,
         owning_operation: str,
         query: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
         redirect_mode: bool = False,
@@ -876,9 +922,10 @@ class AsyncUDataClient(_UDataClientCore):
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
         guard.require_allowed()
-        headers = _auth_headers(resolved_credential)
+        request_headers = dict(headers or {})
+        request_headers.update(_auth_headers(resolved_credential))
         if idempotency_policy is not None and idempotency_policy.key is not None:
-            headers["Idempotency-Key"] = idempotency_policy.key
+            request_headers["Idempotency-Key"] = idempotency_policy.key
         try:
             body = json.dumps(json_body, allow_nan=False).encode() if json_body is not None else None
         except (TypeError, ValueError) as exc:
@@ -889,8 +936,8 @@ class AsyncUDataClient(_UDataClientCore):
                 metadata={"phase": "serialization"},
             ) from exc
         if body is not None:
-            headers = {"Content-Type": "application/json", **headers}
-        request = RuntimeRequest(method=method, url=self._origin + path, headers=headers, body=body)
+            request_headers = {"Content-Type": "application/json", **request_headers}
+        request = RuntimeRequest(method=method, url=self._origin + path, headers=request_headers, body=body)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         async_transport = cast(AsyncCatalogTransport, self._transport)
@@ -960,6 +1007,38 @@ class AsyncUDataClient(_UDataClientCore):
             ) from exc
         self._emit(owning_id, "succeeded")
         return response.status_code, payload, response
+
+    async def _root_call_async(
+        self,
+        *,
+        method: str,
+        path: str,
+        owning_operation: str,
+        query: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+        json_body: object = None,
+        raw_text: bool = False,
+        redirect_mode: bool = False,
+        permissions: EffectivePermissions | None = None,
+        credential: object | None = None,
+        idempotency_policy: IdempotencyPolicy | None = None,
+        allow_retry: bool = False,
+    ) -> tuple[int, object, RuntimeResponse]:
+        """Run one async root-profile request through the shared transport seam."""
+        return await self._dataset_call_async(
+            method=method,
+            path=path,
+            owning_operation=owning_operation,
+            query=query,
+            headers=headers,
+            json_body=json_body,
+            raw_text=raw_text,
+            redirect_mode=redirect_mode,
+            permissions=permissions,
+            credential=credential,
+            idempotency_policy=idempotency_policy,
+            allow_retry=allow_retry,
+        )
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""

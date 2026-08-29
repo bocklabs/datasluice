@@ -1,4 +1,4 @@
-"""Dataset-family conformance ledger: every assigned COVERAGE row carries evidence."""
+"""uData family conformance ledgers: every assigned COVERAGE row carries evidence."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import importlib
 import pytest
 
 import tests.unit.connectors.catalog.test_udata_datasets as dataset_tests
+import tests.unit.connectors.catalog.test_udata_root_profile as root_profile_tests
 
 ASSIGNED_ROWS: dict[int, str] = {
     39: "test_row39_list_datasets_exact_wire_and_projection",
@@ -72,6 +73,29 @@ FAILURE_ROWS: dict[str, str] = {
     "dataset_sync_async_parity": "test_async_dataset_service_matches_sync_wire_exactly",
 }
 
+ROOT_ROWS: dict[int, str] = {
+    183: "test_row183_get_site_decodes_a_lossless_typed_profile",
+    184: "test_row184_set_site_uses_patch_presence_and_exact_confirmation",
+    185: "test_site_data_portal_redirect_is_typed_and_same_origin",
+    186: "test_site_rdf_catalog_preserves_accept_and_catalog_pagination_query",
+    187: "test_site_rdf_catalog_format_returns_bounded_document_metadata",
+    188: "test_row188_site_datasets_csv",
+    189: "test_row189_site_resources_csv",
+    190: "test_row190_site_organizations_csv",
+    191: "test_row191_site_reuses_csv",
+    192: "test_row192_site_dataservices_csv",
+    193: "test_row193_site_harvests_csv",
+    194: "test_row194_site_tags_csv",
+    195: "test_row195_jsonld_context_decodes_json_without_retaining_raw_bytes",
+}
+
+ROOT_FAILURE_ROWS: dict[str, str] = {
+    "root_invalid_format_pre_dispatch": "test_root_invalid_format_is_rejected_before_site_probe",
+    "root_malformed_profile": "test_root_malformed_profile_maps_to_typed_error",
+    "root_external_redirect": "test_root_external_redirect_is_rejected_without_following",
+    "root_async_parity": "test_async_root_service_matches_sync_wire_and_result_shapes",
+}
+
 
 @pytest.mark.parametrize("row", sorted(ASSIGNED_ROWS))
 def test_dataset_row_has_passing_evidence(row: int) -> None:
@@ -97,8 +121,28 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
     test()
 
 
+@pytest.mark.parametrize("row", sorted(ROOT_ROWS))
+def test_root_profile_row_has_passing_evidence(row: int) -> None:
+    test_name = ROOT_ROWS[row]
+    test = getattr(root_profile_tests, test_name)
+    assert callable(test), test_name
+    test()
+
+
+@pytest.mark.parametrize("cell", sorted(ROOT_FAILURE_ROWS))
+def test_root_profile_failure_cell_has_passing_evidence(cell: str) -> None:
+    test_name = ROOT_FAILURE_ROWS[cell]
+    test = getattr(root_profile_tests, test_name)
+    assert callable(test), test_name
+    test()
+
+
 def test_assigned_rows_match_the_coverage_dataset_scope() -> None:
     assert sorted(ASSIGNED_ROWS) == [39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 67, 75, 76, 77, 78, 79, 80]
+
+
+def test_root_rows_match_the_coverage_root_profile_scope() -> None:
+    assert sorted(ROOT_ROWS) == list(range(183, 196))
 
 
 def test_conformance_module_imports_isolated() -> None:

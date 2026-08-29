@@ -15,7 +15,9 @@ from datasluice.connectors.catalog.udata.clients import (
     declared_udata_profile,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
+from datasluice.connectors.catalog.udata.models.root_profile import SitePatchInput
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
+from datasluice.connectors.catalog.udata.wire.root_profile import ROOT_OPERATIONS
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogPlatform
 
@@ -193,6 +195,38 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
     assert cleanup_error is None, f"controlled cleanup failed for {dataset_id}: {cleanup_error}"
     assert cleanup_outcome is not None
     assert cleanup_outcome.audit_metadata["status_code"] == 204
+
+
+def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    _verify_controlled_stack_identity()
+    from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
+    from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        before = client.root_profile.get()
+        result = client.root_profile.set_site(
+            SitePatchInput(title=before.title),
+            permissions=permissions,
+            mutation_policy=MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True,
+                    operation=ROOT_OPERATIONS["set_site"],
+                    target="site",
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+
+    assert result.profile is not None and result.profile.title == before.title
+    assert result.receipt.outcome == "succeeded"
+    assert result.receipt.audit_metadata["status_code"] in {200, 204}
 
 
 def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> None:

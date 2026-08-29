@@ -53,6 +53,8 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(tmp_path: Pa
 
     for module in ("settings.py", "clients.py", "probes.py", "mapping.py", "live.py", "factory.py", "connector.py"):
         assert (package / module).is_file(), module
+    for module in ("models/root_profile.py", "wire/root_profile.py", "services/root_profile.py"):
+        assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
     assert not (profiles / "udata-17.3.json").exists()
 
