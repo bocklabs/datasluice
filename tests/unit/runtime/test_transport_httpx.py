@@ -13,6 +13,7 @@ httpx = pytest.importorskip("httpx")
 
 from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import (
+    RedirectPolicy,
     RuntimeRequest,
     TransportFailure,
 )
@@ -38,6 +39,27 @@ def test_httpx_transport_maps_injected_response() -> None:
     assert response.body == b"fixture"
     assert response.retry_after == 2
     assert seen[0].headers["X-Test"] == "yes"
+
+
+def test_httpx_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.host == "origin.test":
+            return httpx.Response(302, headers={"Location": "https://target.test/secret"})
+        pytest.fail("the redirect target must not receive a request")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        response = transport.send(
+            RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW)
+        )
+    finally:
+        transport.close()
+
+    assert response.status_code == 302
+    assert seen == ["https://origin.test/root"]
 
 
 def test_httpx_transport_parses_retry_after_http_date_form() -> None:
@@ -357,6 +379,29 @@ def test_httpx_credential_scope_follows_downgraded_redirect_and_strips_authoriza
     assert seen[1].url.scheme == "http"
     assert seen[1].url.host == "other.test"
     assert "authorization" not in seen[1].headers
+
+
+def test_async_httpx_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.host == "origin.test":
+            return httpx.Response(302, headers={"Location": "https://target.test/secret"})
+        pytest.fail("the redirect target must not receive a request")
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            response = await transport.send(
+                RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW)
+            )
+        finally:
+            await transport.aclose()
+        assert response.status_code == 302
+
+    asyncio.run(send())
+    assert seen == ["https://origin.test/root"]
 
 
 def test_async_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() -> None:

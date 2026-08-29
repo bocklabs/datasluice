@@ -13,7 +13,7 @@ import pytest
 from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
-from datasluice.runtime.transport.base import RuntimeRequest, TransportFailure
+from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest, TransportFailure
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 from tests.helpers.catalog_transport import AsyncLoopbackTransport, SyncLoopbackTransport
 from tests.helpers.http_server import MockResponse, start_test_server
@@ -68,6 +68,20 @@ def test_urllib_uses_read_budget_and_closes_completed_responses() -> None:
     transport.send(RuntimeRequest("GET", "https://example.test/data"))
 
     assert opener.timeouts == [7]
+    assert response.closed
+
+
+def test_urllib_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
+    response = _FakeResponse(302, {"Location": "https://target.test/secret"})
+    opener = _RecordingOpener([response])
+    transport = UrllibCatalogTransport()
+    cast(Any, transport)._opener = opener
+
+    result = transport.send(RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW))
+
+    assert result.status_code == 302
+    assert len(opener.requests) == 1
+    assert opener.requests[0].full_url == "https://origin.test/root"
     assert response.closed
 
 

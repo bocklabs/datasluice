@@ -23,6 +23,7 @@ from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport.base import (
     CatalogTransport,
+    RedirectPolicy,
     RuntimeRequest,
     RuntimeResponse,
     TransportFailure,
@@ -174,6 +175,13 @@ class UrllibCatalogTransport(CatalogTransport):
                 raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
             except (URLError, OSError) as exc:
                 raise TransportFailure("urllib could not complete the catalog request.") from exc
+            if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
+                return RuntimeResponse(
+                    status_code=status,
+                    headers=headers,
+                    body=body,
+                    retry_after=_retry_after(_header(headers, "retry-after")),
+                )
             location = next((value for key, value in headers.items() if key.lower() == "location"), None)
             if status not in _REDIRECT_CODES or location is None:
                 return RuntimeResponse(
@@ -204,6 +212,7 @@ class UrllibCatalogTransport(CatalogTransport):
                 headers=headers_for_next,
                 body=next_body,
                 files=next_files,
+                redirect_policy=current.redirect_policy,
             )
         raise TransportFailure("Catalog redirect limit exceeded.")
 

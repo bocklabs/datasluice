@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 
@@ -16,6 +17,13 @@ SENSITIVE_REDIRECT_HEADERS = frozenset(
 
 _HOP_BODYLESS_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding"})
 _POST_TO_GET_STATUSES = frozenset({301, 302})
+
+
+class RedirectPolicy(StrEnum):
+    """Declare whether a transport may follow an HTTP redirect."""
+
+    FOLLOW = "follow"
+    NO_FOLLOW = "no-follow"
 
 
 def strip_sensitive_redirect_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -96,6 +104,7 @@ class RuntimeRequest:
     headers: Mapping[str, str] = field(default_factory=dict, repr=False)
     body: bytes | None = field(default=None, repr=False)
     files: tuple[UploadPart, ...] = field(default=(), repr=False)
+    redirect_policy: RedirectPolicy = RedirectPolicy.FOLLOW
 
     def __post_init__(self) -> None:
         if not isinstance(self.method, str) or not self.method:
@@ -110,6 +119,8 @@ class RuntimeRequest:
             raise ValueError("Runtime request multipart parts must be UploadPart instances.")
         if self.body is not None and self.files:
             raise ValueError("Runtime requests cannot carry a byte body and multipart parts together.")
+        if not isinstance(self.redirect_policy, RedirectPolicy):
+            raise ValueError("Runtime request redirect policies must use RedirectPolicy.")
         if self.headers is None or not isinstance(self.headers, Mapping):
             raise ValueError("Runtime request headers must be a mapping of string names to string values.")
         headers = dict(self.headers)

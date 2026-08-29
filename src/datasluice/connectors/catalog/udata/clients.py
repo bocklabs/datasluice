@@ -82,7 +82,13 @@ from datasluice.runtime.defaults import create_default_async_transport, create_d
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.extras import require_extra
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import (
+    CatalogTransport,
+    RedirectPolicy,
+    RuntimeRequest,
+    RuntimeResponse,
+    TransportFailure,
+)
 
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
@@ -194,6 +200,19 @@ def _response_header(response: RuntimeResponse, name: str) -> str | None:
         if key.lower() == wanted:
             return value
     return None
+
+
+def _decode_redirect_response(owning_id: OperationId, response: RuntimeResponse) -> tuple[int, dict[str, str]]:
+    """Return the original redirect headers or raise one parity-stable route error."""
+    location = _response_header(response, "location")
+    if not location:
+        raise NativeCatalogError(
+            "The uData redirect response omits its Location header.",
+            operation=str(owning_id),
+            platform=PLATFORM.value,
+            status_code=response.status_code,
+        )
+    return response.status_code, dict(response.headers)
 
 
 def _page_request(
@@ -525,7 +544,13 @@ class SyncUDataClient(_UDataClientCore):
             ) from exc
         if body is not None:
             request_headers = {"Content-Type": "application/json", **request_headers}
-        request = RuntimeRequest(method=method, url=self._origin + path, headers=request_headers, body=body)
+        request = RuntimeRequest(
+            method=method,
+            url=self._origin + path,
+            headers=request_headers,
+            body=body,
+            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
+        )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         sync_transport = cast(CatalogTransport, self._transport)
@@ -569,15 +594,8 @@ class SyncUDataClient(_UDataClientCore):
             raise
         self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
-            location = _response_header(response, "location")
-            if not location:
-                raise NativeCatalogError(
-                    "The uData redirect response omits its Location header.",
-                    operation=str(owning_id),
-                    platform=PLATFORM.value,
-                    status_code=response.status_code,
-                )
-            return response.status_code, dict(response.headers), response
+            status_code, response_headers = _decode_redirect_response(owning_id, response)
+            return status_code, response_headers, response
         if raw_text:
             self._emit(owning_id, "succeeded")
             return response.status_code, response.body, response
@@ -937,7 +955,13 @@ class AsyncUDataClient(_UDataClientCore):
             ) from exc
         if body is not None:
             request_headers = {"Content-Type": "application/json", **request_headers}
-        request = RuntimeRequest(method=method, url=self._origin + path, headers=request_headers, body=body)
+        request = RuntimeRequest(
+            method=method,
+            url=self._origin + path,
+            headers=request_headers,
+            body=body,
+            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
+        )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         async_transport = cast(AsyncCatalogTransport, self._transport)
@@ -981,14 +1005,8 @@ class AsyncUDataClient(_UDataClientCore):
             raise
         self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
-            location = _response_header(response, "location")
-            if not location:
-                raise NativeCatalogError(
-                    "The uData redirect response omits its Location header.",
-                    operation=str(owning_id),
-                    platform=PLATFORM.value,
-                )
-            return response.status_code, dict(response.headers), response
+            status_code, response_headers = _decode_redirect_response(owning_id, response)
+            return status_code, response_headers, response
         if raw_text:
             self._emit(owning_id, "succeeded")
             return response.status_code, response.body, response

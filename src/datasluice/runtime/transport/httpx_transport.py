@@ -9,6 +9,7 @@ from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport.base import (
+    RedirectPolicy,
     RuntimeRequest,
     RuntimeResponse,
     TransportFailure,
@@ -85,6 +86,13 @@ class HttpxCatalogTransport:
                     )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
+            if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
+                return RuntimeResponse(
+                    response.status_code,
+                    dict(response.headers),
+                    response.content,
+                    _retry_after(response.headers.get("retry-after")),
+                )
             location = response.headers.get("location")
             if not response.is_redirect or location is None:
                 return RuntimeResponse(
@@ -110,7 +118,14 @@ class HttpxCatalogTransport:
             )
             if next_body is None and not next_files:
                 headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(next_method, next_url, headers, next_body, next_files)
+            current = RuntimeRequest(
+                next_method,
+                next_url,
+                headers,
+                next_body,
+                next_files,
+                current.redirect_policy,
+            )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     def close(self) -> None:
@@ -176,6 +191,13 @@ class AsyncHttpxCatalogTransport:
                     )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
+            if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
+                return RuntimeResponse(
+                    response.status_code,
+                    dict(response.headers),
+                    response.content,
+                    _retry_after(response.headers.get("retry-after")),
+                )
             location = response.headers.get("location")
             if not response.is_redirect or location is None:
                 return RuntimeResponse(
@@ -201,7 +223,14 @@ class AsyncHttpxCatalogTransport:
             )
             if next_body is None and not next_files:
                 headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(next_method, next_url, headers, next_body, next_files)
+            current = RuntimeRequest(
+                next_method,
+                next_url,
+                headers,
+                next_body,
+                next_files,
+                current.redirect_policy,
+            )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     async def aclose(self) -> None:
