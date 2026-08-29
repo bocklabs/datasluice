@@ -79,6 +79,7 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
         DatasetUpdateInput,
     )
     from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
+    from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 
     permissions = EffectivePermissions(platform=CatalogPlatform.UDATA, authenticated=True, roles=frozenset({"admin"}))
     settings = UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))
@@ -91,15 +92,27 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
             record = client.datasets.create(
                 DatasetCreateInput(title="Evidence dataset", description="d"), permissions=permissions
             )
-            dataset_id = record.id.value
+            record_value = record.record
+            assert record_value is not None
+            dataset_id = record_value.id.value
             updated = client.datasets.update(
                 dataset_id, DatasetUpdateInput(title="Evidence dataset v2"), permissions=permissions
             )
-            assert updated.payload["title"] == "Evidence dataset v2"
+            assert updated.record is not None
+            assert updated.record.payload["title"] == "Evidence dataset v2"
         finally:
             if dataset_id is not None:
                 try:
-                    cleanup_outcome = client.datasets.delete(dataset_id, permissions, DatasetDeleteOptions())
+                    cleanup_result = client.datasets.delete(
+                        dataset_id,
+                        permissions,
+                        DatasetDeleteOptions(),
+                        MutationPolicy(
+                            confirmation=ConfirmationPolicy(confirmed=True),
+                            concurrency=ConcurrencyPolicy(overwrite=True),
+                        ),
+                    )
+                    cleanup_outcome = cleanup_result.receipt
                 except Exception as error:
                     cleanup_error = error
 

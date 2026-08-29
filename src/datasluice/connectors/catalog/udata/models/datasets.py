@@ -5,6 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.models import NativeRecord
 
 _V1_LIST_SORTS = frozenset({"title", "created", "last_update", "reuses", "followers", "views"})
 _V1_LIST_FILTERS = frozenset(
@@ -40,14 +44,34 @@ _RESERVED_UPDATE_FIELDS = frozenset({"title", "description", "private", "tags"})
 
 
 def _freeze_json(value: object) -> object:
-    """Freeze a JSON-safe structure into immutable equivalents."""
+    """Freeze a strictly JSON-safe structure into immutable equivalents."""
     if isinstance(value, Mapping):
-        return MappingProxyType({str(key): _freeze_json(item) for key, item in value.items()})
+        frozen: dict[str, object] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("uData input mappings require string keys.")
+            frozen[key] = _freeze_json(item)
+        return MappingProxyType(frozen)
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(item) for item in value)
-    if value is None or isinstance(value, (str, bool, int, float)):
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        import math
+
+        if not math.isfinite(value):
+            raise ValueError("uData input mappings require finite JSON numbers.")
         return value
     raise ValueError(f"uData input mappings accept JSON-safe values only, got {type(value).__name__}.")
+
+
+def _thaw_json(value: object) -> object:
+    """Thaw a frozen structure into ordinary JSON containers for serialization."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw_json(item) for item in value]
+    return value
 
 
 def _required_text(value: object, field: str) -> str:
@@ -149,7 +173,8 @@ class DatasetCreateInput:
         }
         if self.tags:
             body["tags"] = list(self.tags)
-        body.update(self.fields or {})
+        for key, value in (self.fields or {}).items():
+            body[key] = _thaw_json(value)
         return body
 
 
@@ -195,7 +220,8 @@ class DatasetUpdateInput:
             body["private"] = self.private
         if self.tags is not None:
             body["tags"] = list(self.tags)
-        body.update(self.fields or {})
+        for key, value in (self.fields or {}).items():
+            body[key] = _thaw_json(value)
         return body
 
 
@@ -246,7 +272,7 @@ class DatasetExtrasUpdate:
 
     def payload(self) -> dict[str, object]:
         """Encode the exact extras JSON body."""
-        return dict(self.values)
+        return {key: _thaw_json(value) for key, value in self.values.items()}
 
     @property
     def removal_keys(self) -> list[str]:
@@ -372,3 +398,16 @@ class DatasetSearchQuery:
             else:
                 params.append((key, _required_text(value, key)))
         return params
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetMutationResult:
+    """The unified mutation outcome: a redacted receipt plus any returned value.
+
+    Every dataset mutation produces this result on success; failures raise
+    typed errors carrying the same bounded receipt in their metadata.
+    """
+
+    receipt: DatasetMutationOutcome
+    record: NativeRecord | None = None
+    extras: Mapping[str, object] | None = None

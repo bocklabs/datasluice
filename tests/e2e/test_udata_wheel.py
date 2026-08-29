@@ -69,7 +69,7 @@ import json, sys
 sys.path.insert(0, sys.argv[1])
 import datasluice
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
-from datasluice.connectors.catalog.udata.clients import create_sync_client, declared_udata_profile
+from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -101,6 +101,14 @@ class Transport:
     def close(self):
         self.close_count += 1
 
+
+class AsyncTransport(Transport):
+    async def send(self, request):
+        return Transport.send(self, request)
+
+    async def aclose(self):
+        self.close_count += 1
+
 transport = Transport()
 client = create_sync_client(UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport))
 assert client.site_version().version == "17.6.0"
@@ -111,12 +119,28 @@ envelope = client.datasets_list(
 service_page = client.datasets.list()
 assert service_page.items[0].id.value == "abc"
 client.close()
+
+import asyncio
+async_transport = AsyncTransport()
+async_client = create_async_client(
+    UDataClientSettings(base_url="http://127.0.0.1:5640", async_transport=async_transport)
+)
+async def run_async():
+    async with async_client as active:
+        page = await active.datasets.list()
+        return page.items[0].id.value
+async_result = asyncio.run(run_async())
+assert async_result == "abc"
 recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
 ], recorded
+assert [getattr(r, "url", r) for r in async_transport.requests] == [
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+]
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
 

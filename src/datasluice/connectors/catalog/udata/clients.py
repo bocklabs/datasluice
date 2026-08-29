@@ -45,6 +45,7 @@ from datasluice.domain.catalog.operations import (
 from datasluice.domain.catalog.profiles import (
     DeclaredCapabilityProfile,
     EffectiveCapabilityProfile,
+    ProbeEvidence,
     ProbeResponseClass,
 )
 from datasluice.domain.catalog.resilience import TimeBudget
@@ -135,6 +136,50 @@ def declared_udata_profile() -> DeclaredCapabilityProfile:
     )
 
 
+def _origin_checked_runner(runner: ProbeRunner, origin: str) -> ProbeRunner:
+    """Wrap a probe runner so only same-origin evidence is accepted."""
+
+    class _Checked:
+        def probe(self, operation_id: OperationId) -> ProbeEvidence:
+            evidence = runner.probe(operation_id)
+            if not evidence.deployment_url.startswith(origin + "/") and evidence.deployment_url != origin:
+                raise CatalogValidationError(
+                    "Capability probe evidence does not match the configured deployment origin.",
+                    operation=str(operation_id),
+                    platform=origin,
+                    safe_action="Configure a probe runner scoped to the client origin.",
+                )
+            return evidence
+
+    return _Checked()  # type: ignore[return-value]
+
+
+def _origin_checked_async_runner(runner: AsyncProbeRunner, origin: str) -> AsyncProbeRunner:
+    """Wrap an async probe runner so only same-origin evidence is accepted."""
+
+    class _CheckedAsync:
+        async def probe(self, operation_id: OperationId) -> ProbeEvidence:
+            evidence = await runner.probe(operation_id)
+            if not evidence.deployment_url.startswith(origin + "/") and evidence.deployment_url != origin:
+                raise CatalogValidationError(
+                    "Capability probe evidence does not match the configured deployment origin.",
+                    operation=str(operation_id),
+                    platform=origin,
+                    safe_action="Configure a probe runner scoped to the client origin.",
+                )
+            return evidence
+
+    return _CheckedAsync()  # type: ignore[return-value]
+
+
+def _credential_scope(credentials: object | None) -> str:
+    """Return a stable scope for credential-identity keyed caches."""
+    import hashlib
+
+    material = "" if credentials is None else str(id(credentials))
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
 def _enforce_caller_guards(operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> None:
     if guard.operation_id != operation.operation_id:
         raise ValueError(
@@ -177,14 +222,19 @@ class _UDataClientCore:
         site_gate: SiteVersionGate | AsyncSiteVersionGate | None = None,
         probe_runner: ProbeRunner | None = None,
         async_probe_runner: AsyncProbeRunner | None = None,
+        async_gate: bool = False,
     ) -> None:
         self._transport = transport
+        self._credential_scope = _credential_scope(credentials)
         self._owns_transport = owns_transport
         self._origin = normalize_origin(origin)
+        checked_origin = self._origin
         self._capabilities = EffectiveCapabilityCache(
             profile,
-            probe_runner=probe_runner,
-            async_probe_runner=async_probe_runner,
+            probe_runner=_origin_checked_runner(probe_runner, checked_origin) if probe_runner else None,
+            async_probe_runner=(
+                _origin_checked_async_runner(async_probe_runner, checked_origin) if async_probe_runner else None
+            ),
             ttl_seconds=capability_cache_ttl,
             clock=clock,
         )
@@ -192,11 +242,11 @@ class _UDataClientCore:
         pinned = self._profile.declared_profile.profile_version
         if site_gate is not None:
             self._site_gate: SiteVersionGate | AsyncSiteVersionGate = site_gate
-        elif not hasattr(transport, "aclose"):
+        elif not async_gate:
             self._site_gate = SiteVersionGate(
                 pinned_version=pinned,
                 origin=self._origin,
-                transport=transport,
+                transport=cast(CatalogTransport, transport),
                 ttl_seconds=capability_cache_ttl,
                 clock=clock,
             )
@@ -222,6 +272,14 @@ class _UDataClientCore:
     def transport(self) -> CatalogTransport | AsyncCatalogTransport:
         """Expose the underlying transport as the public introspection seam."""
         return self._transport
+
+    def _resolved_credential(self) -> object | None:
+        """Resolve the current credential once for pre-dispatch validation."""
+        return _refreshed_credential(self._credentials)
+
+    async def _resolved_credential_async(self) -> object | None:
+        """Resolve the current credential asynchronously for pre-dispatch validation."""
+        return await _refreshed_credential_async(self._credentials)
 
     @property
     def credentials(self) -> object | None:
@@ -414,6 +472,7 @@ class SyncUDataClient(_UDataClientCore):
         raw_text: bool = False,
         redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
+        allow_retry: bool = False,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
@@ -424,6 +483,11 @@ class SyncUDataClient(_UDataClientCore):
         guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
         guard.require_allowed()
         credential = _refreshed_credential(self._credentials)
+        scope = _credential_scope(credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._site_gate.invalidate()
+            self._credential_scope = scope
         headers = _auth_headers(credential)
         body = json.dumps(json_body).encode() if json_body is not None else None
         if body is not None:
@@ -458,7 +522,7 @@ class SyncUDataClient(_UDataClientCore):
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=method == "GET"),
+                idempotency=IdempotencyPolicy(safe=method == "GET" or allow_retry),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -471,10 +535,17 @@ class SyncUDataClient(_UDataClientCore):
             raise
         self._validate_status(owning_id, response, redirect_mode=redirect_mode)
         self._emit(owning_id, "succeeded")
-        if redirect_mode:
+        if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
+            location = response.headers.get("Location") or response.headers.get("location")
+            if not location:
+                raise NativeCatalogError(
+                    "The uData redirect response omits its Location header.",
+                    operation=str(owning_id),
+                    platform=PLATFORM.value,
+                )
             return response.status_code, dict(response.headers), response
         if raw_text:
-            return response.status_code, response.body.decode("utf-8"), response
+            return response.status_code, response.body, response
         if not response.body:
             return response.status_code, None, response
         try:
@@ -627,6 +698,7 @@ class AsyncUDataClient(_UDataClientCore):
             capability_cache_ttl=capability_cache_ttl,
             owns_transport=owns_transport,
             async_probe_runner=async_probe_runner,
+            async_gate=True,
         )
 
     async def site_version(self) -> SiteVersion:
@@ -742,6 +814,7 @@ class AsyncUDataClient(_UDataClientCore):
         raw_text: bool = False,
         redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
+        allow_retry: bool = False,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
@@ -752,6 +825,11 @@ class AsyncUDataClient(_UDataClientCore):
         guard = build_catalog_operation_guard(owning_id, effective, permissions=permissions)
         guard.require_allowed()
         credential = await _refreshed_credential_async(self._credentials)
+        scope = _credential_scope(credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._site_gate.invalidate()
+            self._credential_scope = scope
         headers = _auth_headers(credential)
         body = json.dumps(json_body).encode() if json_body is not None else None
         if body is not None:
@@ -786,7 +864,7 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=method == "GET"),
+                idempotency=IdempotencyPolicy(safe=method == "GET" or allow_retry),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
@@ -799,10 +877,17 @@ class AsyncUDataClient(_UDataClientCore):
             raise
         self._validate_status(owning_id, response, redirect_mode=redirect_mode)
         self._emit(owning_id, "succeeded")
-        if redirect_mode:
+        if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
+            location = response.headers.get("Location") or response.headers.get("location")
+            if not location:
+                raise NativeCatalogError(
+                    "The uData redirect response omits its Location header.",
+                    operation=str(owning_id),
+                    platform=PLATFORM.value,
+                )
             return response.status_code, dict(response.headers), response
         if raw_text:
-            return response.status_code, response.body.decode("utf-8"), response
+            return response.status_code, response.body, response
         if not response.body:
             return response.status_code, None, response
         try:

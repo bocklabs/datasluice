@@ -72,13 +72,13 @@ def update_request(
     dataset_id: str, client_input: DatasetUpdateInput
 ) -> tuple[str, str, dict[str, str], dict[str, object]]:
     """Encode PUT /api/1/datasets/<id>/."""
-    identifier = _required_id(dataset_id)
+    identifier = _path_segment(_required_id(dataset_id))
     return "PUT", f"{_DATASET_PATH}{identifier}/", {}, client_input.payload()
 
 
 def delete_request(dataset_id: str, options: DatasetDeleteOptions) -> tuple[str, str, dict[str, str], None]:
     """Encode DELETE /api/1/datasets/<id>/."""
-    identifier = _required_id(dataset_id)
+    identifier = _path_segment(_required_id(dataset_id))
     query = _query(options.query_params())
     path = f"{_DATASET_PATH}{identifier}/" + (f"?{query}" if query else "")
     return "DELETE", path, {}, None
@@ -86,7 +86,7 @@ def delete_request(dataset_id: str, options: DatasetDeleteOptions) -> tuple[str,
 
 def featured_request(dataset_id: str, featured: bool) -> tuple[str, str, dict[str, str], None]:
     """Encode POST/DELETE /api/1/datasets/<id>/featured/."""
-    identifier = _required_id(dataset_id)
+    identifier = _path_segment(_required_id(dataset_id))
     return ("POST" if featured else "DELETE"), f"{_DATASET_PATH}{identifier}/featured/", {}, None
 
 
@@ -101,10 +101,12 @@ def atom_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], Non
 
 
 def rdf_request(dataset_id: str, fmt: str | None) -> tuple[str, str, dict[str, str], None]:
-    """Encode GET /api/1/datasets/<id>[/rdf|/rdf.<format>]."""
-    identifier = _required_id(dataset_id)
+    """Encode GET /api/1/datasets/<id>[/rdf|/rdf.<format>]; validates the format allowlist."""
+    identifier = _path_segment(_required_id(dataset_id))
+    if fmt is not None:
+        media_type_for_format(fmt)
     if fmt is None:
-        return "GET", f"{_DATASET_PATH}{identifier}/rdf", {}, None
+        return "GET", f"{_DATASET_PATH}{_path_segment(identifier)}/rdf", {}, None
     if not isinstance(fmt, str) or not fmt or "/" in fmt or "." in fmt:
         raise CatalogValidationError(
             "The uData RDF format must be a short extension such as rdf, ttl, or jsonld.",
@@ -112,7 +114,7 @@ def rdf_request(dataset_id: str, fmt: str | None) -> tuple[str, str, dict[str, s
             platform=PLATFORM.value,
             safe_action="Pass a short RDF extension without slashes.",
         )
-    return "GET", f"{_DATASET_PATH}{identifier}/rdf.{quote(fmt, safe='')}", {}, None
+    return "GET", f"{_DATASET_PATH}{_path_segment(identifier)}/rdf.{_path_segment(fmt)}", {}, None
 
 
 def list_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], None]:
@@ -132,12 +134,12 @@ def v2_list_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], 
 
 def v2_get_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
     """Encode GET /api/2/datasets/<id>/."""
-    return "GET", f"{_DATASET_V2_PATH}{_required_id(dataset_id)}/", {}, None
+    return "GET", f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/", {}, None
 
 
 def v2_extras_get_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
     """Encode GET /api/2/datasets/<id>/extras/."""
-    return "GET", f"{_DATASET_V2_PATH}{_required_id(dataset_id)}/extras/", {}, None
+    return "GET", f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/extras/", {}, None
 
 
 def v2_extras_put_request(
@@ -146,7 +148,7 @@ def v2_extras_put_request(
     """Encode PUT /api/2/datasets/<id>/extras/."""
     return (
         "PUT",
-        f"{_DATASET_V2_PATH}{_required_id(dataset_id)}/extras/",
+        f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/extras/",
         {},
         client_input.payload(),
     )
@@ -158,7 +160,7 @@ def v2_extras_delete_request(
     """Encode DELETE /api/2/datasets/<id>/extras/."""
     return (
         "DELETE",
-        f"{_DATASET_V2_PATH}{_required_id(dataset_id)}/extras/",
+        f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/extras/",
         {},
         client_input.payload(),
     )
@@ -179,13 +181,29 @@ def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATIO
         )
     for field in ("id", "title", "slug"):
         value = payload.get(field)
-        if value is not None and not isinstance(value, str):
+        if not isinstance(value, str) or not value:
             raise CatalogValidationError(
-                f"The uData dataset document field {field!r} must be a string.",
+                f"The uData dataset document requires a non-empty string {field!r}.",
                 operation=operation,
                 platform=PLATFORM.value,
                 safe_action="Verify the response against the pinned source oracle.",
             )
+    private = payload.get("private")
+    if private is not None and type(private) is not bool:
+        raise CatalogValidationError(
+            "The uData dataset document field 'private' must be a boolean.",
+            operation=operation,
+            platform=PLATFORM.value,
+            safe_action="Verify the response against the pinned source oracle.",
+        )
+    tags = payload.get("tags")
+    if tags is not None and (not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags)):
+        raise CatalogValidationError(
+            "The uData dataset document field 'tags' must be a list of strings.",
+            operation=operation,
+            platform=PLATFORM.value,
+            safe_action="Verify the response against the pinned source oracle.",
+        )
     return _native_dataset(payload, operation=operation)
 
 
@@ -266,6 +284,14 @@ def parse_text_document(body: bytes, media_type: str, *, operation: str = _DATAS
     """
     import hashlib
 
+    max_bytes = 4 * 1024 * 1024
+    if len(body) > max_bytes:
+        raise NativeCatalogError(
+            "The uData text document exceeds the bounded retention limit.",
+            operation=operation,
+            platform=PLATFORM.value,
+            metadata={"safe_action": "Request a more specific document format or range."},
+        )
     try:
         text = body.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -288,6 +314,7 @@ def parse_text_document(body: bytes, media_type: str, *, operation: str = _DATAS
 
 
 def _required_id(value: object, *, operation: str = _DATASETS_OPERATION_ID) -> str:
+    """Validate one raw dataset identifier without altering its spelling."""
     if not isinstance(value, str) or not value:
         raise CatalogValidationError(
             "The uData dataset identifier must be a non-empty string.",
@@ -295,14 +322,19 @@ def _required_id(value: object, *, operation: str = _DATASETS_OPERATION_ID) -> s
             platform=PLATFORM.value,
             safe_action="Pass the dataset id or slug from a prior read.",
         )
-    if any(character in value for character in "/?#"):
+    if any(character in value for character in "/?#") or value in {".", ".."}:
         raise CatalogValidationError(
-            "The uData dataset identifier must be a single unescaped path segment.",
+            "The uData dataset identifier must be a single non-dot path segment.",
             operation=operation,
             platform=PLATFORM.value,
             safe_action="Pass the raw dataset id or slug; separators are encoded automatically.",
         )
-    return quote(value, safe="")
+    return value
+
+
+def _path_segment(identifier: str) -> str:
+    """Encode one validated identifier at the request boundary."""
+    return quote(identifier, safe="")
 
 
 def _query(pairs: list[tuple[str, str]]) -> str:

@@ -31,7 +31,7 @@ class NativePage:
     present_fields: frozenset[str]
     page: int | None
     page_size: int | None
-    previous_page: int | None
+    previous_page: str | None
     next_page: str | None
     total: int | None
 
@@ -41,12 +41,14 @@ class NativePage:
         unknown = self.present_fields - set(NATIVE_PAGE_FIELDS)
         if unknown:
             raise ValueError(f"Native page presence tracks only the declared pager fields: {sorted(unknown)}")
-        for field_name in ("page", "page_size", "previous_page", "total"):
+        for field_name in ("page", "page_size", "total"):
             value = getattr(self, field_name)
             if value is not None and type(value) is not int:
                 raise ValueError(f"Native page field {field_name} must decode to an integer or None.")
-        if self.next_page is not None and not isinstance(self.next_page, str):
-            raise ValueError("Native page field next_page must decode to a string or None.")
+        for field_name in ("previous_page", "next_page"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"Native page field {field_name} must decode to a string URL or None.")
 
 
 def _int_field(payload: Mapping[str, object], field_name: str) -> int | None:
@@ -57,6 +59,20 @@ def _int_field(payload: Mapping[str, object], field_name: str) -> int | None:
         raise CatalogValidationError(
             f"The uData page field {field_name!r} must be an integer or null.",
             operation=_DATASETS_OPERATION_ID,
+            platform=PLATFORM.value,
+            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
+        )
+    return value
+
+
+def _string_field(payload: Mapping[str, object], field_name: str, *, operation: str) -> str | None:
+    value = payload.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CatalogValidationError(
+            f"The uData page field {field_name!r} must be a string URL or null.",
+            operation=operation,
             platform=PLATFORM.value,
             safe_action="Verify the deployment serves the stock uData v1 page envelope.",
         )
@@ -93,21 +109,13 @@ def parse_native_page(payload: object, *, operation: str = _DATASETS_OPERATION_I
             platform=PLATFORM.value,
             safe_action="Verify the deployment serves the stock uData v1 page envelope.",
         )
-    next_page = payload.get("next_page")
-    if next_page is not None and not isinstance(next_page, str):
-        raise CatalogValidationError(
-            "The uData page field 'next_page' must be a string URL or null.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
-        )
     return NativePage(
         items=tuple(dict(item) for item in items_raw),
         present_fields=frozenset(field for field in NATIVE_PAGE_FIELDS if field in payload),
         page=_int_field(payload, "page"),
         page_size=_int_field(payload, "page_size"),
-        previous_page=_int_field(payload, "previous_page"),
-        next_page=next_page,
+        previous_page=_string_field(payload, "previous_page", operation=operation),
+        next_page=_string_field(payload, "next_page", operation=operation),
         total=_int_field(payload, "total"),
     )
 
