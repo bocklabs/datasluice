@@ -5,24 +5,38 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import pytest
 
 import tests.unit.connectors.catalog.test_udata_datasets as dataset_tests
+from datasluice.connectors.catalog.udata.clients import (
+    AsyncUDataClient,
+    SyncUDataClient,
+    create_async_client,
+    create_sync_client,
+    declared_udata_profile,
+)
 from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteDataserviceCsvQuery,
     SiteDatasetCatalogQuery,
     SiteDatasetCsvQuery,
-    SiteDocument,
     SiteOrganizationCsvQuery,
     SitePatchInput,
     SiteReuseCsvQuery,
 )
+from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.connectors.catalog.udata.wire import root_profile as root_wire
-from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
+from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.runtime.transport.base import (
+    AsyncRuntimeStreamResponse,
+    RuntimeRequest,
+    RuntimeResponse,
+    RuntimeStreamResponse,
+)
 
 _ROOT_CONTRACT_PATH = (
     Path(__file__).parents[4]
@@ -34,6 +48,9 @@ _ROOT_CONTRACT_PATH = (
     / "udata"
     / "root_profile.json"
 )
+_ORIGIN = "http://127.0.0.1:5640"
+_SITE_PATH = "/api/1/site/"
+_SITE_BODY = {"id": "site", "title": "uData", "version": "17.6.0"}
 
 
 def _root_contract() -> dict[str, object]:
@@ -109,30 +126,190 @@ FAILURE_ROWS: dict[str, str] = {
     "dataset_sync_async_parity": "test_async_dataset_service_matches_sync_wire_exactly",
 }
 
-ROOT_ROWS: dict[int, str] = {
-    183: "test_row183_get_site_decodes_a_lossless_typed_profile",
-    184: "test_row184_set_site_uses_patch_presence_and_exact_confirmation",
-    185: "test_site_data_portal_redirect_is_typed_and_same_origin",
-    186: "test_site_rdf_catalog_preserves_accept_and_catalog_pagination_query",
-    187: "test_site_rdf_catalog_format_returns_bounded_document_metadata",
-    188: "test_row188_site_datasets_csv",
-    189: "test_row189_site_resources_csv",
-    190: "test_row190_site_organizations_csv",
-    191: "test_row191_site_reuses_csv",
-    192: "test_row192_site_dataservices_csv",
-    193: "test_row193_site_harvests_csv",
-    194: "test_row194_site_tags_csv",
-    195: "test_row195_jsonld_context_decodes_json_without_retaining_raw_bytes",
-}
+ROOT_ROW_NUMBERS = frozenset(range(183, 196))
+ROOT_FAILURE_IDS = frozenset(
+    {
+        "root_invalid_format_pre_dispatch",
+        "root_external_redirect",
+        "root_missing_or_conflicting_media",
+        "root_export_limit_and_close",
+        "root_set_site_denial_isolated",
+        "root_async_parity",
+    }
+)
 
-ROOT_FAILURE_ROWS: dict[str, str] = {
-    "root_invalid_format_pre_dispatch": "test_root_invalid_format_is_rejected_before_site_probe",
-    "root_external_redirect": "test_root_external_redirect_is_rejected_without_following",
-    "root_missing_or_conflicting_media": "test_site_profile_requires_one_exact_response_media_type",
-    "root_export_limit_and_close": "test_root_export_forwards_chunks_to_the_caller_sink_and_enforces_the_limit",
-    "root_set_site_denial_isolated": "test_set_site_denial_does_not_poison_the_root_read_capability",
-    "root_async_parity": "test_async_site_patch_matches_sync_target_and_receipt_contract",
-}
+
+class _FixtureSyncTransport:
+    def __init__(self, responder: Callable[[RuntimeRequest], RuntimeResponse]) -> None:
+        self._responder = responder
+        self.requests: list[RuntimeRequest] = []
+        self.stream_close_count = 0
+
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        self.requests.append(request)
+        return self._responder(request)
+
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        response = self.send(request)
+        return RuntimeStreamResponse(
+            response.status_code,
+            response.headers,
+            iter((response.body,)),
+            self._close_stream,
+            response.retry_after,
+        )
+
+    def _close_stream(self) -> None:
+        self.stream_close_count += 1
+
+    def close(self) -> None:
+        pass
+
+
+class _FixtureAsyncTransport:
+    def __init__(self, responder: Callable[[RuntimeRequest], RuntimeResponse]) -> None:
+        self._responder = responder
+        self.requests: list[RuntimeRequest] = []
+        self.stream_close_count = 0
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        self.requests.append(request)
+        return self._responder(request)
+
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        response = await self.send(request)
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield response.body
+
+        return AsyncRuntimeStreamResponse(
+            response.status_code,
+            response.headers,
+            chunks(),
+            self._close_stream,
+            response.retry_after,
+        )
+
+    def _close_stream(self) -> None:
+        self.stream_close_count += 1
+
+    async def aclose(self) -> None:
+        pass
+
+
+def _site_response(headers: dict[str, str] | None = None) -> RuntimeResponse:
+    return RuntimeResponse(
+        status_code=200,
+        headers={"Content-Type": "application/json"} if headers is None else headers,
+        body=json.dumps(_SITE_BODY).encode(),
+    )
+
+
+def _fixture_row_responder(row: dict[str, object]) -> Callable[[RuntimeRequest], RuntimeResponse]:
+    expected_path = cast(str, row["path"]).replace("<format>", "json")
+    row_number = cast(int, row["row"])
+
+    def responder(request: RuntimeRequest) -> RuntimeResponse:
+        request_path = urlsplit(request.url).path
+        if request_path == _SITE_PATH:
+            return _site_response()
+        assert request.method == row["method"]
+        assert request_path == expected_path
+        if row_number == 185:
+            return RuntimeResponse(
+                status_code=302,
+                headers={"Location": f"{_ORIGIN}/api/1/site/catalog.json"},
+                body=b"",
+            )
+        if row_number == 186:
+            return RuntimeResponse(
+                status_code=302,
+                headers={"Location": f"{_ORIGIN}/api/1/site/catalog.json?page=1&page_size=100"},
+                body=b"",
+            )
+        if row_number in {187, 195}:
+            return RuntimeResponse(
+                status_code=200,
+                headers={"Content-Type": "application/ld+json"},
+                body=b'{"@context": {}}',
+            )
+        return RuntimeResponse(
+            status_code=200,
+            headers={"Content-Type": "text/csv"},
+            body=b"id,title\nsite,uData\n",
+        )
+
+    return responder
+
+
+def _sync_root_client(
+    responder: Callable[[RuntimeRequest], RuntimeResponse], *, root_export_max_bytes: int = 1024
+) -> tuple[_FixtureSyncTransport, SyncUDataClient]:
+    transport = _FixtureSyncTransport(responder)
+    return transport, SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=_ORIGIN,
+        root_export_max_bytes=root_export_max_bytes,
+        owns_transport=False,
+    )
+
+
+def _async_root_client(
+    responder: Callable[[RuntimeRequest], RuntimeResponse], *, root_export_max_bytes: int = 1024
+) -> tuple[_FixtureAsyncTransport, AsyncUDataClient]:
+    transport = _FixtureAsyncTransport(responder)
+    return transport, AsyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=_ORIGIN,
+        root_export_max_bytes=root_export_max_bytes,
+        owns_transport=False,
+    )
+
+
+def _sync_fixture_operation(client: SyncUDataClient, operation: str) -> object:
+    service = client.root_profile
+    operations: dict[str, Callable[[], object]] = {
+        "udata.v1.get_site": service.get,
+        "udata.v1.SiteDataPortal_get": lambda: service.data_portal("json"),
+        "udata.v1.SiteRdfCatalog_get": service.rdf_catalog,
+        "udata.v1.SiteRdfCatalogFormat_get": lambda: service.rdf_catalog_format("json"),
+        "udata.v1.SiteDatasetsCsv_get": service.datasets_csv,
+        "udata.v1.SiteResourcesCsv_get": service.resources_csv,
+        "udata.v1.SiteOrganizationsCsv_get": service.organizations_csv,
+        "udata.v1.SiteReusesCsv_get": service.reuses_csv,
+        "udata.v1.SiteDataservicesCsv_get": service.dataservices_csv,
+        "udata.v1.SiteHarvestsCsv_get": service.harvests_csv,
+        "udata.v1.SiteTagsCsv_get": service.tags_csv,
+        "udata.v1.SiteJsonLdContext_get": service.jsonld_context,
+    }
+    return operations[operation]()
+
+
+async def _async_fixture_operation(client: AsyncUDataClient, operation: str) -> object:
+    service = client.root_profile
+    operations: dict[str, Callable[[], object]] = {
+        "udata.v1.get_site": service.get,
+        "udata.v1.SiteDataPortal_get": lambda: service.data_portal("json"),
+        "udata.v1.SiteRdfCatalog_get": service.rdf_catalog,
+        "udata.v1.SiteRdfCatalogFormat_get": lambda: service.rdf_catalog_format("json"),
+        "udata.v1.SiteDatasetsCsv_get": service.datasets_csv,
+        "udata.v1.SiteResourcesCsv_get": service.resources_csv,
+        "udata.v1.SiteOrganizationsCsv_get": service.organizations_csv,
+        "udata.v1.SiteReusesCsv_get": service.reuses_csv,
+        "udata.v1.SiteDataservicesCsv_get": service.dataservices_csv,
+        "udata.v1.SiteHarvestsCsv_get": service.harvests_csv,
+        "udata.v1.SiteTagsCsv_get": service.tags_csv,
+        "udata.v1.SiteJsonLdContext_get": service.jsonld_context,
+    }
+    result = operations[operation]()
+    return await cast(Any, result)
+
+
+def _root_read_rows() -> list[dict[str, object]]:
+    rows = cast(list[dict[str, object]], _root_contract()["rows"])
+    return [row for row in rows if not row.get("controlled_only", False)]
 
 
 @pytest.mark.parametrize("row", sorted(ASSIGNED_ROWS))
@@ -161,47 +338,66 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
 
 def test_root_profile_rows_are_exhaustively_declared() -> None:
     rows = cast(list[dict[str, object]], _root_contract()["rows"])
-    assert {cast(int, item["row"]) for item in rows} == set(ROOT_ROWS)
+    assert {cast(int, item["row"]) for item in rows} == ROOT_ROW_NUMBERS
+    assert [row for row in rows if row.get("controlled_only")] == [
+        {
+            "row": 184,
+            "operation": "udata.v1.set_site",
+            "method": "PATCH",
+            "path": "/api/1/site/",
+            "request_media_type": "application/json",
+            "response_media_type": "application/json",
+            "controlled_only": True,
+        }
+    ]
 
 
 def test_root_profile_failure_cells_are_exhaustively_declared() -> None:
     failures = cast(list[dict[str, object]], _root_contract()["failure_cases"])
-    assert {cast(str, item["id"]) for item in failures} == set(ROOT_FAILURE_ROWS)
+    assert {cast(str, item["id"]) for item in failures} == ROOT_FAILURE_IDS
 
 
 def test_assigned_rows_match_the_coverage_dataset_scope() -> None:
     assert sorted(ASSIGNED_ROWS) == [39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 67, 75, 76, 77, 78, 79, 80]
 
 
-def test_root_rows_match_the_coverage_root_profile_scope() -> None:
-    assert sorted(ROOT_ROWS) == list(range(183, 196))
+@pytest.mark.parametrize("row", _root_read_rows(), ids=lambda row: f"row-{row['row']}")
+def test_root_contract_executes_each_non_mutating_service_row_in_both_modes(row: dict[str, object]) -> None:
+    operation = cast(str, row["operation"])
+    expected_path = cast(str, row["path"]).replace("<format>", "json")
+    sync_transport, sync_client = _sync_root_client(_fixture_row_responder(row))
+    with sync_client:
+        sync_value = _sync_fixture_operation(sync_client, operation)
 
+    async_transport, async_client = _async_root_client(_fixture_row_responder(row))
 
-def test_root_contract_drives_independent_wire_shape_evidence() -> None:
-    document = _root_contract()
-    rows = cast(list[dict[str, object]], document["rows"])
-    assert [cast(int, row["row"]) for row in rows] == list(range(183, 196))
-    builders = {
-        183: lambda: root_wire.get_site_request(),
-        184: lambda: root_wire.set_site_request(SitePatchInput(title="contract")),
-        185: lambda: root_wire.data_portal_request("json"),
-        186: lambda: root_wire.rdf_catalog_request(),
-        187: lambda: root_wire.rdf_catalog_format_request("json"),
-        188: lambda: root_wire.datasets_csv_request(),
-        189: lambda: root_wire.resources_csv_request(),
-        190: lambda: root_wire.organizations_csv_request(),
-        191: lambda: root_wire.reuses_csv_request(),
-        192: lambda: root_wire.dataservices_csv_request(),
-        193: lambda: root_wire.harvests_csv_request(),
-        194: lambda: root_wire.tags_csv_request(),
-        195: lambda: root_wire.jsonld_context_request(),
-    }
-    for row in rows:
-        row_number = cast(int, row["row"])
-        built = builders[row_number]()
-        expected_path = cast(str, row["path"]).replace("<format>", "json")
-        assert built[0] == row["method"]
-        assert built[1] == expected_path
+    async def run_async() -> object:
+        async with async_client:
+            return await _async_fixture_operation(async_client, operation)
+
+    async_value = asyncio.run(run_async())
+
+    for transport in (sync_transport, async_transport):
+        assert [(request.method, urlsplit(request.url).path) for request in transport.requests] == [
+            ("GET", _SITE_PATH),
+            (cast(str, row["method"]), expected_path),
+        ]
+    assert cast(Any, sync_value).to_dict() == cast(Any, async_value).to_dict()
+
+    row_number = cast(int, row["row"])
+    if row_number == 183:
+        assert cast(Any, sync_value).id == "site"
+    elif row_number == 185:
+        assert cast(Any, sync_value).location == f"{_ORIGIN}/api/1/site/catalog.json"
+    elif row_number == 186:
+        assert cast(Any, sync_value).location == f"{_ORIGIN}/api/1/site/catalog.json?page=1&page_size=100"
+    else:
+        expected_media_type = "application/ld+json" if row_number in {187, 195} else "text/csv"
+        assert cast(Any, sync_value).media_type == expected_media_type
+        assert cast(Any, sync_value).size_bytes > 0
+        assert "body" not in cast(Any, sync_value).to_dict()
+    if row_number in {187, 188, 189, 190, 191, 192, 193, 194}:
+        assert sync_transport.stream_close_count == async_transport.stream_close_count == 1
 
 
 def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> None:
@@ -282,63 +478,157 @@ def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> N
         SiteDatasetCatalogQuery(filters={"credit": "ignored"})
 
 
-def test_root_contract_lists_every_required_failure_cell_in_both_modes() -> None:
-    failures = cast(list[dict[str, object]], _root_contract()["failure_cases"])
-    expected = set(ROOT_FAILURE_ROWS)
-    assert {cast(str, item["id"]) for item in failures} == expected
-    assert all(cast(list[str], item["modes"]) == ["sync", "async"] for item in failures)
+@pytest.mark.parametrize(
+    "failure",
+    cast(list[dict[str, object]], _root_contract()["failure_cases"]),
+    ids=lambda failure: cast(str, failure["id"]),
+)
+def test_root_contract_failure_cells_execute_the_declared_sync_async_behavior(failure: dict[str, object]) -> None:
+    failure_id = cast(str, failure["id"])
+    assert failure["modes"] == ["sync", "async"]
 
+    if failure_id == "root_invalid_format_pre_dispatch":
+        sync_transport, sync_client = _sync_root_client(lambda request: _site_response())
+        with sync_client, pytest.raises(CatalogValidationError):
+            sync_client.root_profile.data_portal("yaml")
 
-def test_root_contract_executes_independent_profile_redirect_and_export_decoders() -> None:
-    document = _root_contract()
-    rows = {cast(int, row["row"]): row for row in cast(list[dict[str, object]], document["rows"])}
-    profile = root_wire.parse_site_profile({"id": "site", "title": "uData", "version": "17.6.0"})
-    assert profile.id == "site"
+        async_transport, async_client = _async_root_client(lambda request: _site_response())
 
-    redirect_row = rows[185]
-    location = "http://127.0.0.1:5640/api/1/site/catalog.json"
-    redirect = root_wire.parse_redirect(
-        status_code=302,
-        headers={"Location": location},
-        endpoint=cast(str, redirect_row["path"]).replace("<format>", "json"),
-        origin="http://127.0.0.1:5640",
-        expected_path=cast(str, redirect_row["redirect_path"]).replace("<format>", "json"),
-        operation=root_wire.ROOT_OPERATION,
-    )
-    assert redirect.location == location
+        async def invalid_format() -> None:
+            async with async_client:
+                with pytest.raises(CatalogValidationError):
+                    await async_client.root_profile.data_portal("yaml")
 
-    sync_response = RuntimeStreamResponse(
-        status_code=200,
-        headers={"Content-Type": "text/csv"},
-        chunks=iter((b"id\nsite\n",)),
-        close_callback=lambda: None,
-    )
-    sync_document = root_wire.digest_stream_document(
-        sync_response,
-        endpoint=cast(str, rows[188]["path"]),
-        expected_media_type="text/csv",
-        max_bytes=1024,
-    )
+        asyncio.run(invalid_format())
+        assert sync_transport.requests == async_transport.requests == []
+        return
 
-    async def decode_async() -> SiteDocument:
-        async def chunks() -> AsyncIterator[bytes]:
-            yield b"id\nsite\n"
+    if failure_id == "root_external_redirect":
 
-        async_response = AsyncRuntimeStreamResponse(
-            status_code=200,
-            headers={"Content-Type": "text/csv"},
-            chunks=chunks(),
-            close_callback=lambda: None,
+        def external_redirect(request: RuntimeRequest) -> RuntimeResponse:
+            if urlsplit(request.url).path == _SITE_PATH:
+                return _site_response()
+            return RuntimeResponse(302, {"Location": "https://other.example/site/catalog.json"}, b"")
+
+        sync_transport, sync_client = _sync_root_client(external_redirect)
+        with sync_client, pytest.raises(NativeCatalogError):
+            sync_client.root_profile.data_portal("json")
+
+        async_transport, async_client = _async_root_client(external_redirect)
+
+        async def external_redirect_async() -> None:
+            async with async_client:
+                with pytest.raises(NativeCatalogError):
+                    await async_client.root_profile.data_portal("json")
+
+        asyncio.run(external_redirect_async())
+        for transport in (sync_transport, async_transport):
+            assert [(request.method, urlsplit(request.url).path) for request in transport.requests] == [
+                ("GET", _SITE_PATH),
+                ("GET", "/api/1/site/data.json"),
+            ]
+        return
+
+    if failure_id == "root_missing_or_conflicting_media":
+
+        def missing_media() -> Callable[[RuntimeRequest], RuntimeResponse]:
+            response_count = 0
+
+            def responder(request: RuntimeRequest) -> RuntimeResponse:
+                nonlocal response_count
+                response_count += 1
+                return _site_response() if response_count == 1 else RuntimeResponse(200, {}, b"{}")
+
+            return responder
+
+        sync_transport, sync_client = _sync_root_client(missing_media())
+        with sync_client, pytest.raises(NativeCatalogError):
+            sync_client.root_profile.get()
+
+        async_transport, async_client = _async_root_client(missing_media())
+
+        async def missing_media_async() -> None:
+            async with async_client:
+                with pytest.raises(NativeCatalogError):
+                    await async_client.root_profile.get()
+
+        asyncio.run(missing_media_async())
+        assert len(sync_transport.requests) == len(async_transport.requests) == 2
+        return
+
+    if failure_id == "root_export_limit_and_close":
+
+        def oversized_export(request: RuntimeRequest) -> RuntimeResponse:
+            if urlsplit(request.url).path == _SITE_PATH:
+                return _site_response()
+            return RuntimeResponse(200, {"Content-Type": "text/csv"}, b"id,title\nsite,uData\n")
+
+        sync_transport, sync_client = _sync_root_client(oversized_export, root_export_max_bytes=1)
+        with sync_client, pytest.raises(NativeCatalogError):
+            sync_client.root_profile.datasets_csv()
+
+        async_transport, async_client = _async_root_client(oversized_export, root_export_max_bytes=1)
+
+        async def oversized_export_async() -> None:
+            async with async_client:
+                with pytest.raises(NativeCatalogError):
+                    await async_client.root_profile.datasets_csv()
+
+        asyncio.run(oversized_export_async())
+        assert sync_transport.stream_close_count == async_transport.stream_close_count == 1
+        return
+
+    if failure_id == "root_set_site_denial_isolated":
+
+        def direct_and_factory_sync(client: SyncUDataClient, transport: _FixtureSyncTransport) -> None:
+            with client:
+                with pytest.raises(CatalogValidationError):
+                    client.root_profile.set_site(SitePatchInput(title="unowned"), permissions=None)
+                assert transport.requests == []
+                assert client.root_profile.get().id == "site"
+
+        sync_transport, sync_client = _sync_root_client(lambda request: _site_response())
+        direct_and_factory_sync(sync_client, sync_transport)
+        factory_sync_transport = _FixtureSyncTransport(lambda request: _site_response())
+        factory_sync_client = create_sync_client(
+            UDataClientSettings(base_url=_ORIGIN, sync_transport=factory_sync_transport)
         )
-        return await root_wire.digest_stream_document_async(
-            async_response,
-            endpoint=cast(str, rows[188]["path"]),
-            expected_media_type="text/csv",
-            max_bytes=1024,
-        )
+        direct_and_factory_sync(factory_sync_client, factory_sync_transport)
 
-    async_document = asyncio.run(decode_async())
-    assert sync_document.sha256 == async_document.sha256
+        async def direct_and_factory_async(client: AsyncUDataClient, transport: _FixtureAsyncTransport) -> None:
+            async with client:
+                with pytest.raises(CatalogValidationError):
+                    await client.root_profile.set_site(SitePatchInput(title="unowned"), permissions=None)
+                assert transport.requests == []
+                assert (await client.root_profile.get()).id == "site"
+
+        async_transport, async_client = _async_root_client(lambda request: _site_response())
+        asyncio.run(direct_and_factory_async(async_client, async_transport))
+        factory_async_transport = _FixtureAsyncTransport(lambda request: _site_response())
+        factory_async_client = create_async_client(
+            UDataClientSettings(base_url=_ORIGIN, async_transport=factory_async_transport)
+        )
+        asyncio.run(direct_and_factory_async(factory_async_client, factory_async_transport))
+        return
+
+    if failure_id == "root_async_parity":
+        sync_transport, sync_client = _sync_root_client(lambda request: _site_response())
+        with sync_client:
+            sync_profile = sync_client.root_profile.get()
+
+        async_transport, async_client = _async_root_client(lambda request: _site_response())
+
+        async def async_profile() -> object:
+            async with async_client:
+                return await async_client.root_profile.get()
+
+        assert sync_profile.to_dict() == cast(Any, asyncio.run(async_profile())).to_dict()
+        assert [request.url for request in sync_transport.requests] == [
+            request.url for request in async_transport.requests
+        ]
+        return
+
+    raise AssertionError(f"Unhandled root failure fixture: {failure_id}")
 
 
 def test_conformance_module_imports_isolated() -> None:
