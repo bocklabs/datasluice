@@ -11,7 +11,7 @@ permissions:
 jobs:
   sonarqube:
     name: SonarQube scan
-    runs-on: [self-hosted, bocklabs-gh-runner]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
