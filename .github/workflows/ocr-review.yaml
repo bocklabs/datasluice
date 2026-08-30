@@ -30,7 +30,7 @@ jobs:
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
 
-          llm_extra_body: '{"reasoning_effort": "medium"}'
+          llm_extra_body: '{"reasoning_effort": "max"}'
 
           review_concurrency: '4'
           language: 'English'
