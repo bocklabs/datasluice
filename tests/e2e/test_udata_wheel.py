@@ -82,7 +82,7 @@ from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
-from datasluice.runtime.transport.base import RuntimeResponse
+from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeResponse, RuntimeStreamResponse
 
 op_id = next(
     op
@@ -103,6 +103,9 @@ class Transport:
             body = json.dumps({"feed_size": 0, "id": "s", "keywords": [], "metrics": {},
                                "title": "uData", "version": self.version}).encode()
             headers = {"Content-Type": "application/json"}
+        elif url.endswith(".csv"):
+            body = b"id\\nwheel\\n"
+            headers = {"Content-Type": "text/csv"}
         elif request.method == "POST":
             body = json.dumps({"id": "wheel-created", "title": "Wheel dataset", "slug": "wheel-dataset",
                                "description": "d", "private": False}).encode()
@@ -112,6 +115,10 @@ class Transport:
                                "page_size": 20, "previous_page": None, "total": 1}).encode()
             headers = {}
         return RuntimeResponse(status_code=201 if request.method == "POST" else 200, headers=headers, body=body)
+
+    def send_stream(self, request):
+        response = self.send(request)
+        return RuntimeStreamResponse(response.status_code, response.headers, iter((response.body,)), lambda: None)
 
     def close(self):
         self.close_count += 1
@@ -124,11 +131,21 @@ class AsyncTransport(Transport):
     async def aclose(self):
         self.close_count += 1
 
+    async def send_stream(self, request):
+        response = await self.send(request)
+
+        async def chunks():
+            yield response.body
+
+        return AsyncRuntimeStreamResponse(response.status_code, response.headers, chunks(), lambda: None)
+
 transport = Transport()
 client = create_sync_client(UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport))
 assert client.site_version().version == "17.6.0"
 root_profile = client.root_profile.get()
 assert root_profile.id == "s"
+root_export = client.root_profile.datasets_csv()
+assert root_export.size_bytes == len(b"id\\nwheel\\n")
 envelope = client.datasets_list(
     CatalogOperationRequest(operation_id=op_id, payload={}),
     CatalogOperationGuard(operation_id=op_id),
@@ -149,6 +166,7 @@ async def run_async():
     async with async_client as active:
         page = await active.datasets.list()
         root_profile = await active.root_profile.get()
+        root_export = await active.root_profile.datasets_csv()
         permissions = EffectivePermissions.for_credential(async_credential, platform=CatalogPlatform.UDATA)
         created = await active.datasets.create(
             DatasetCreateInput(title="Wheel dataset", description="d"),
@@ -160,10 +178,11 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )
-        return page.items[0].id.value, root_profile.id, created
-async_result, async_root_id, created = asyncio.run(run_async())
+        return page.items[0].id.value, root_profile.id, root_export.size_bytes, created
+async_result, async_root_id, async_export_size, created = asyncio.run(run_async())
 assert async_result == "abc"
 assert async_root_id == "s"
+assert async_export_size == len(b"id\\nwheel\\n")
 assert created.record.id.value == "wheel-created"
 assert created.receipt.outcome == "succeeded"
 assert created.receipt.audit_metadata["status_code"] == 201
@@ -171,6 +190,7 @@ recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/site/datasets.csv",
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
 ], recorded
@@ -178,6 +198,7 @@ assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/site/datasets.csv",
     "http://127.0.0.1:5640/api/1/datasets/",
 ]
 assert transport.close_count == 0

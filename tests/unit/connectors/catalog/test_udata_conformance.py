@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,11 +16,13 @@ from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteDataserviceCsvQuery,
     SiteDatasetCatalogQuery,
     SiteDatasetCsvQuery,
+    SiteDocument,
     SiteOrganizationCsvQuery,
     SitePatchInput,
     SiteReuseCsvQuery,
 )
 from datasluice.connectors.catalog.udata.wire import root_profile as root_wire
+from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
 
 _ROOT_CONTRACT_PATH = (
     Path(__file__).parents[4]
@@ -155,16 +159,14 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
     test()
 
 
-@pytest.mark.parametrize("row", sorted(ROOT_ROWS))
-def test_root_profile_row_has_passing_evidence(row: int) -> None:
+def test_root_profile_rows_are_exhaustively_declared() -> None:
     rows = cast(list[dict[str, object]], _root_contract()["rows"])
-    assert any(cast(int, item["row"]) == row for item in rows)
+    assert {cast(int, item["row"]) for item in rows} == set(ROOT_ROWS)
 
 
-@pytest.mark.parametrize("cell", sorted(ROOT_FAILURE_ROWS))
-def test_root_profile_failure_cell_has_passing_evidence(cell: str) -> None:
+def test_root_profile_failure_cells_are_exhaustively_declared() -> None:
     failures = cast(list[dict[str, object]], _root_contract()["failure_cases"])
-    assert any(item["id"] == cell for item in failures)
+    assert {cast(str, item["id"]) for item in failures} == set(ROOT_FAILURE_ROWS)
 
 
 def test_assigned_rows_match_the_coverage_dataset_scope() -> None:
@@ -285,6 +287,58 @@ def test_root_contract_lists_every_required_failure_cell_in_both_modes() -> None
     expected = set(ROOT_FAILURE_ROWS)
     assert {cast(str, item["id"]) for item in failures} == expected
     assert all(cast(list[str], item["modes"]) == ["sync", "async"] for item in failures)
+
+
+def test_root_contract_executes_independent_profile_redirect_and_export_decoders() -> None:
+    document = _root_contract()
+    rows = {cast(int, row["row"]): row for row in cast(list[dict[str, object]], document["rows"])}
+    profile = root_wire.parse_site_profile({"id": "site", "title": "uData", "version": "17.6.0"})
+    assert profile.id == "site"
+
+    redirect_row = rows[185]
+    location = "http://127.0.0.1:5640/api/1/site/catalog.json"
+    redirect = root_wire.parse_redirect(
+        status_code=302,
+        headers={"Location": location},
+        endpoint=cast(str, redirect_row["path"]).replace("<format>", "json"),
+        origin="http://127.0.0.1:5640",
+        expected_path=cast(str, redirect_row["redirect_path"]).replace("<format>", "json"),
+        operation=root_wire.ROOT_OPERATION,
+    )
+    assert redirect.location == location
+
+    sync_response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=iter((b"id\nsite\n",)),
+        close_callback=lambda: None,
+    )
+    sync_document = root_wire.digest_stream_document(
+        sync_response,
+        endpoint=cast(str, rows[188]["path"]),
+        expected_media_type="text/csv",
+        max_bytes=1024,
+    )
+
+    async def decode_async() -> SiteDocument:
+        async def chunks() -> AsyncIterator[bytes]:
+            yield b"id\nsite\n"
+
+        async_response = AsyncRuntimeStreamResponse(
+            status_code=200,
+            headers={"Content-Type": "text/csv"},
+            chunks=chunks(),
+            close_callback=lambda: None,
+        )
+        return await root_wire.digest_stream_document_async(
+            async_response,
+            endpoint=cast(str, rows[188]["path"]),
+            expected_media_type="text/csv",
+            max_bytes=1024,
+        )
+
+    async_document = asyncio.run(decode_async())
+    assert sync_document.sha256 == async_document.sha256
 
 
 def test_conformance_module_imports_isolated() -> None:
