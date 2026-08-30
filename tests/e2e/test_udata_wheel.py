@@ -102,13 +102,16 @@ class Transport:
         if url.endswith("/api/1/site/"):
             body = json.dumps({"feed_size": 0, "id": "s", "keywords": [], "metrics": {},
                                "title": "uData", "version": self.version}).encode()
+            headers = {"Content-Type": "application/json"}
         elif request.method == "POST":
             body = json.dumps({"id": "wheel-created", "title": "Wheel dataset", "slug": "wheel-dataset",
                                "description": "d", "private": False}).encode()
+            headers = {"Content-Type": "application/json"}
         else:
             body = json.dumps({"data": [{"id": "abc", "title": "T"}], "next_page": None, "page": 1,
                                "page_size": 20, "previous_page": None, "total": 1}).encode()
-        return RuntimeResponse(status_code=201 if request.method == "POST" else 200, headers={}, body=body)
+            headers = {}
+        return RuntimeResponse(status_code=201 if request.method == "POST" else 200, headers=headers, body=body)
 
     def close(self):
         self.close_count += 1
@@ -124,6 +127,8 @@ class AsyncTransport(Transport):
 transport = Transport()
 client = create_sync_client(UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport))
 assert client.site_version().version == "17.6.0"
+root_profile = client.root_profile.get()
+assert root_profile.id == "s"
 envelope = client.datasets_list(
     CatalogOperationRequest(operation_id=op_id, payload={}),
     CatalogOperationGuard(operation_id=op_id),
@@ -143,6 +148,7 @@ async_client = create_async_client(
 async def run_async():
     async with async_client as active:
         page = await active.datasets.list()
+        root_profile = await active.root_profile.get()
         permissions = EffectivePermissions.for_credential(async_credential, platform=CatalogPlatform.UDATA)
         created = await active.datasets.create(
             DatasetCreateInput(title="Wheel dataset", description="d"),
@@ -154,14 +160,16 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )
-        return page.items[0].id.value, created
-async_result, created = asyncio.run(run_async())
+        return page.items[0].id.value, root_profile.id, created
+async_result, async_root_id, created = asyncio.run(run_async())
 assert async_result == "abc"
+assert async_root_id == "s"
 assert created.record.id.value == "wheel-created"
 assert created.receipt.outcome == "succeeded"
 assert created.receipt.audit_metadata["status_code"] == 201
 recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
+    "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
@@ -169,6 +177,7 @@ assert recorded == [
 assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/",
 ]
 assert transport.close_count == 0

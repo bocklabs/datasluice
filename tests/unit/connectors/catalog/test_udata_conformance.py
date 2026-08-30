@@ -5,16 +5,18 @@ from __future__ import annotations
 import importlib
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 import tests.unit.connectors.catalog.test_udata_datasets as dataset_tests
 from datasluice.connectors.catalog.udata.models.root_profile import (
+    SiteDataserviceCsvQuery,
     SiteDatasetCatalogQuery,
     SiteDatasetCsvQuery,
     SiteOrganizationCsvQuery,
     SitePatchInput,
+    SiteReuseCsvQuery,
 )
 from datasluice.connectors.catalog.udata.wire import root_profile as root_wire
 
@@ -217,6 +219,65 @@ def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> N
         "format=csv&format=json"
     )
     assert root_wire.organizations_csv_request(SiteOrganizationCsvQuery(name="Evidence"))[1].endswith("name=Evidence")
+
+    query_types = {
+        "dataset_catalog": (SiteDatasetCatalogQuery, "title"),
+        "dataset_csv": (SiteDatasetCsvQuery, "created"),
+        "reuse_csv": (SiteReuseCsvQuery, "title"),
+        "dataservice_csv": (SiteDataserviceCsvQuery, "title"),
+    }
+    query_schemas = cast(dict[str, dict[str, object]], document["query_schemas"])
+    object_id_keys = {
+        "license",
+        "organization",
+        "owner",
+        "followed_by",
+        "topic",
+        "dataservice",
+        "reuse",
+        "dataset",
+        "contact_point",
+    }
+    for schema_name, (query_type, sort) in query_types.items():
+        schema = query_schemas[schema_name]
+        filters: dict[str, object] = {}
+        for key in cast(list[str], schema.get("repeatable", [])):
+            filters[key] = ("one", "two")
+        for key in cast(list[str], schema.get("boolean", [])):
+            filters[key] = True
+        choices = cast(dict[str, list[str]], schema.get("choices", {}))
+        for key in cast(list[str], schema.get("scalar", [])):
+            if key in {"q", "sort"}:
+                continue
+            if key in choices:
+                filters[key] = choices[key][0]
+            elif key == "geozone":
+                filters[key] = "country:fr"
+            elif key in object_id_keys:
+                filters[key] = "0123456789abcdef01234567"
+            else:
+                filters[key] = "value"
+        kwargs: dict[str, object] = {"filters": filters}
+        if "defaults" in schema:
+            defaults = cast(dict[str, int], schema["defaults"])
+            kwargs.update(page=defaults["page"], page_size=defaults["page_size"])
+        if "q" in cast(list[str], schema.get("scalar", [])):
+            kwargs["q"] = "query"
+        if "sort" in cast(list[str], schema.get("scalar", [])):
+            kwargs["sort"] = sort
+        query = cast(Any, query_type)(**kwargs)
+        actual_keys = {key for key, _ in query.query_params()}
+        expected_keys = {
+            *cast(list[str], schema.get("repeatable", [])),
+            *cast(list[str], schema.get("boolean", [])),
+            *cast(list[str], schema.get("scalar", [])),
+        }
+        if "defaults" in schema:
+            expected_keys.update({"page", "page_size"})
+        assert actual_keys == expected_keys
+
+    with pytest.raises(ValueError):
+        SiteDatasetCatalogQuery(filters={"credit": "ignored"})
 
 
 def test_root_contract_lists_every_required_failure_cell_in_both_modes() -> None:

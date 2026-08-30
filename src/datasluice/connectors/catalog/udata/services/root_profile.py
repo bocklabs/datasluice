@@ -28,6 +28,7 @@ from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
+    BudgetExhaustedError,
     CatalogValidationError,
     ForbiddenError,
     NativeCatalogError,
@@ -261,15 +262,17 @@ def _enforce_patch_policy(policy: MutationPolicy | None, *, target: str) -> None
 def _mutating(
     policy: MutationPolicy | None,
     dispatch: Callable[[], tuple[int, object, object]],
-    decode: Callable[[object], SiteProfile | None],
+    decode: Callable[[object, object], SiteProfile | None],
     target: Callable[[], str],
     evidence: Callable[[], ControlledStackAttestation | None],
+    emit: Callable[[str], None],
 ) -> SiteMutationResult:
     response: object | None = None
     try:
         status, payload, response = dispatch()
-        profile = decode(payload)
+        profile = decode(payload, response)
     except BaseException as error:
+        emit("failed")
         receipt = _build_receipt(
             policy,
             _mutation_outcome(error, response),
@@ -282,21 +285,24 @@ def _mutating(
     receipt = _build_receipt(
         policy, "succeeded", status_code=status, mutation="set_site", target=target(), attestation=evidence()
     )
+    emit("succeeded")
     return SiteMutationResult(receipt=receipt, profile=profile)
 
 
 async def _amutating(
     policy: MutationPolicy | None,
     dispatch: Callable[[], Awaitable[tuple[int, object, object]]],
-    decode: Callable[[object], SiteProfile | None],
+    decode: Callable[[object, object], SiteProfile | None],
     target: Callable[[], str],
     evidence: Callable[[], ControlledStackAttestation | None],
+    emit: Callable[[str], None],
 ) -> SiteMutationResult:
     response: object | None = None
     try:
         status, payload, response = await dispatch()
-        profile = decode(payload)
+        profile = decode(payload, response)
     except BaseException as error:
+        emit("failed")
         receipt = _build_receipt(
             policy,
             _mutation_outcome(error, response),
@@ -309,6 +315,7 @@ async def _amutating(
     receipt = _build_receipt(
         policy, "succeeded", status_code=status, mutation="set_site", target=target(), attestation=evidence()
     )
+    emit("succeeded")
     return SiteMutationResult(receipt=receipt, profile=profile)
 
 
@@ -316,7 +323,14 @@ def _decode_profile(payload: object) -> SiteProfile:
     return wire.parse_site_profile(payload, operation=ROOT_OPERATION)
 
 
-def _decode_patch(payload: object) -> SiteProfile | None:
+def _decode_patch(payload: object, response: object) -> SiteProfile | None:
+    if getattr(response, "body", b""):
+        wire.response_media_type(
+            cast(Mapping[str, str], getattr(response, "headers", {})),
+            operation=SET_SITE_OPERATION,
+            status_code=cast(int, getattr(response, "status_code", 0)),
+            expected_media_type="application/json",
+        )
     return None if payload is None else wire.parse_site_profile(payload, operation=SET_SITE_OPERATION)
 
 
@@ -340,6 +354,36 @@ def _parse_redirect(
     )
 
 
+def _run_root[T](client: SyncUDataClient, action: Callable[[], T]) -> T:
+    """Emit the root outcome after route-level validation completes."""
+    operation = _operation_id(ROOT_OPERATION)
+    try:
+        result = action()
+    except BudgetExhaustedError:
+        client._emit(operation, "budget_exhausted")
+        raise
+    except BaseException as error:
+        client._emit(operation, "cancelled" if error.__class__.__name__ == "CancelledError" else "failed")
+        raise
+    client._emit(operation, "succeeded")
+    return result
+
+
+async def _run_root_async[T](client: AsyncUDataClient, action: Callable[[], Awaitable[T]]) -> T:
+    """Emit the asynchronous root outcome after route-level validation completes."""
+    operation = _operation_id(ROOT_OPERATION)
+    try:
+        result = await action()
+    except BudgetExhaustedError:
+        client._emit(operation, "budget_exhausted")
+        raise
+    except BaseException as error:
+        client._emit(operation, "cancelled" if error.__class__.__name__ == "CancelledError" else "failed")
+        raise
+    client._emit(operation, "succeeded")
+    return result
+
+
 class SyncRootProfileService:
     """Typed synchronous service for all assigned root-profile rows."""
 
@@ -353,21 +397,26 @@ class SyncRootProfileService:
 
     def get(self) -> SiteProfile:
         """GET /api/1/site/ (row 183)."""
-        method, path, headers, _ = wire.get_site_request()
-        status, payload, response = self._client._root_call(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            max_response_bytes=self._client._root_export_max_bytes,
-        )
-        wire.response_media_type(
-            response.headers,
-            operation=ROOT_OPERATION,
-            status_code=status,
-            expected_media_type="application/json",
-        )
-        return _decode_profile(payload)
+
+        def action() -> SiteProfile:
+            method, path, headers, _ = wire.get_site_request()
+            status, payload, response = self._client._root_call(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            wire.response_media_type(
+                response.headers,
+                operation=ROOT_OPERATION,
+                status_code=status,
+                expected_media_type="application/json",
+            )
+            return _decode_profile(payload)
+
+        return _run_root(self._client, action)
 
     def set_site(
         self,
@@ -418,50 +467,64 @@ class SyncRootProfileService:
                 credential=resolved,
                 permissions=permissions,
                 idempotency_policy=IdempotencyPolicy(),
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
             )
-            if response.body:
-                wire.response_media_type(
-                    response.headers,
-                    operation=operation,
-                    status_code=status,
-                    expected_media_type="application/json",
-                )
             return status, payload, response
 
-        return _mutating(mutation_policy, dispatch, _decode_patch, lambda: target_id, lambda: attestation)
+        return _mutating(
+            mutation_policy,
+            dispatch,
+            _decode_patch,
+            lambda: target_id,
+            lambda: attestation,
+            lambda outcome: self._client._emit(_operation_id(operation), outcome),
+        )
 
     def data_portal(self, fmt: str) -> SiteDocument:
         """GET /api/1/site/data.<format> (row 185)."""
-        method, path, headers, _ = wire.data_portal_request(fmt)
-        status, value, _ = self._client._root_call(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
-        )
-        expected = f"/api/1/site/catalog.{fmt.lower()}"
-        return _parse_redirect(status, value, path, self._client._origin, expected)
+
+        def action() -> SiteDocument:
+            method, path, headers, _ = wire.data_portal_request(fmt)
+            status, value, _ = self._client._root_call(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                raw_text=True,
+                redirect_mode=True,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            expected = f"/api/1/site/catalog.{fmt.lower()}"
+            return _parse_redirect(status, value, path, self._client._origin, expected)
+
+        return _run_root(self._client, action)
 
     def rdf_catalog(self, query: SiteCatalogQuery | None = None, *, accept: str | None = None) -> SiteDocument:
         """GET /api/1/site/catalog (row 186)."""
-        method, path, headers, _ = wire.rdf_catalog_request(query, accept=accept)
-        status, value, _ = self._client._root_call(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
-        )
-        return _parse_redirect(
-            status,
-            value,
-            path,
-            self._client._origin,
-            expected_path_prefix="/api/1/site/catalog.",
-        )
+
+        def action() -> SiteDocument:
+            method, path, headers, _ = wire.rdf_catalog_request(query, accept=accept)
+            status, value, _ = self._client._root_call(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                raw_text=True,
+                redirect_mode=True,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            return _parse_redirect(
+                status,
+                value,
+                path,
+                self._client._origin,
+                expected_path_prefix="/api/1/site/catalog.",
+            )
+
+        return _run_root(self._client, action)
 
     def rdf_catalog_format(
         self,
@@ -475,9 +538,15 @@ class SyncRootProfileService:
         response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-            finally:
-                response.close()
+                try:
+                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+                finally:
+                    response.close()
+            except BaseException:
+                self._client._emit(_operation_id(ROOT_OPERATION), "failed")
+                raise
+            self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
+            return document
         return wire.digest_stream_document(
             response,
             endpoint=path,
@@ -503,9 +572,15 @@ class SyncRootProfileService:
         response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-            finally:
-                response.close()
+                try:
+                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+                finally:
+                    response.close()
+            except BaseException:
+                self._client._emit(_operation_id(ROOT_OPERATION), "failed")
+                raise
+            self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
+            return document
         return wire.digest_stream_document(
             response,
             endpoint=path,
@@ -555,27 +630,32 @@ class SyncRootProfileService:
 
     def jsonld_context(self) -> SiteDocument:
         """GET /api/1/site/context.jsonld (row 195)."""
-        method, path, headers, _ = wire.jsonld_context_request()
-        status, body, response = self._client._root_call(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            max_response_bytes=self._client._root_export_max_bytes,
-        )
-        return wire.parse_jsonld_context(
-            cast(bytes, body),
-            endpoint=path,
-            response_media_type=wire.response_media_type(
-                response.headers,
-                operation=ROOT_OPERATION,
+
+        def action() -> SiteDocument:
+            method, path, headers, _ = wire.jsonld_context_request()
+            status, body, response = self._client._root_call(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                raw_text=True,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            return wire.parse_jsonld_context(
+                cast(bytes, body),
+                endpoint=path,
+                response_media_type=wire.response_media_type(
+                    response.headers,
+                    operation=ROOT_OPERATION,
+                    status_code=status,
+                    expected_media_type="application/ld+json",
+                ),
                 status_code=status,
-                expected_media_type="application/ld+json",
-            ),
-            status_code=status,
-            operation=ROOT_OPERATION,
-        )
+                operation=ROOT_OPERATION,
+            )
+
+        return _run_root(self._client, action)
 
     site_data_portal = data_portal
     site_rdf_catalog = rdf_catalog
@@ -608,21 +688,26 @@ class AsyncRootProfileService:
 
     async def get(self) -> SiteProfile:
         """GET /api/1/site/ (row 183)."""
-        method, path, headers, _ = wire.get_site_request()
-        status, payload, response = await self._client._root_call_async(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            max_response_bytes=self._client._root_export_max_bytes,
-        )
-        wire.response_media_type(
-            response.headers,
-            operation=ROOT_OPERATION,
-            status_code=status,
-            expected_media_type="application/json",
-        )
-        return _decode_profile(payload)
+
+        async def action() -> SiteProfile:
+            method, path, headers, _ = wire.get_site_request()
+            status, payload, response = await self._client._root_call_async(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            wire.response_media_type(
+                response.headers,
+                operation=ROOT_OPERATION,
+                status_code=status,
+                expected_media_type="application/json",
+            )
+            return _decode_profile(payload)
+
+        return await _run_root_async(self._client, action)
 
     async def set_site(
         self,
@@ -674,49 +759,63 @@ class AsyncRootProfileService:
                 credential=resolved,
                 permissions=permissions,
                 idempotency_policy=IdempotencyPolicy(),
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
             )
-            if response.body:
-                wire.response_media_type(
-                    response.headers,
-                    operation=operation,
-                    status_code=status,
-                    expected_media_type="application/json",
-                )
             return status, payload, response
 
-        return await _amutating(mutation_policy, dispatch, _decode_patch, lambda: target_id, lambda: attestation)
+        return await _amutating(
+            mutation_policy,
+            dispatch,
+            _decode_patch,
+            lambda: target_id,
+            lambda: attestation,
+            lambda outcome: self._client._emit(_operation_id(operation), outcome),
+        )
 
     async def data_portal(self, fmt: str) -> SiteDocument:
         """GET /api/1/site/data.<format> (row 185)."""
-        method, path, headers, _ = wire.data_portal_request(fmt)
-        status, value, _ = await self._client._root_call_async(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
-        )
-        return _parse_redirect(status, value, path, self._client._origin, f"/api/1/site/catalog.{fmt.lower()}")
+
+        async def action() -> SiteDocument:
+            method, path, headers, _ = wire.data_portal_request(fmt)
+            status, value, _ = await self._client._root_call_async(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                raw_text=True,
+                redirect_mode=True,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            return _parse_redirect(status, value, path, self._client._origin, f"/api/1/site/catalog.{fmt.lower()}")
+
+        return await _run_root_async(self._client, action)
 
     async def rdf_catalog(self, query: SiteCatalogQuery | None = None, *, accept: str | None = None) -> SiteDocument:
         """GET /api/1/site/catalog (row 186)."""
-        method, path, headers, _ = wire.rdf_catalog_request(query, accept=accept)
-        status, value, _ = await self._client._root_call_async(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            redirect_mode=True,
-        )
-        return _parse_redirect(
-            status,
-            value,
-            path,
-            self._client._origin,
-            expected_path_prefix="/api/1/site/catalog.",
-        )
+
+        async def action() -> SiteDocument:
+            method, path, headers, _ = wire.rdf_catalog_request(query, accept=accept)
+            status, value, _ = await self._client._root_call_async(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                raw_text=True,
+                redirect_mode=True,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            return _parse_redirect(
+                status,
+                value,
+                path,
+                self._client._origin,
+                expected_path_prefix="/api/1/site/catalog.",
+            )
+
+        return await _run_root_async(self._client, action)
 
     async def rdf_catalog_format(
         self,
@@ -732,9 +831,15 @@ class AsyncRootProfileService:
         )
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-            finally:
-                await response.aclose()
+                try:
+                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+                finally:
+                    await response.aclose()
+            except BaseException:
+                self._client._emit(_operation_id(ROOT_OPERATION), "failed")
+                raise
+            self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
+            return document
         return await wire.digest_stream_document_async(
             response,
             endpoint=path,
@@ -762,9 +867,15 @@ class AsyncRootProfileService:
         )
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                return _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-            finally:
-                await response.aclose()
+                try:
+                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
+                finally:
+                    await response.aclose()
+            except BaseException:
+                self._client._emit(_operation_id(ROOT_OPERATION), "failed")
+                raise
+            self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
+            return document
         return await wire.digest_stream_document_async(
             response,
             endpoint=path,
@@ -820,27 +931,32 @@ class AsyncRootProfileService:
 
     async def jsonld_context(self) -> SiteDocument:
         """GET /api/1/site/context.jsonld (row 195)."""
-        method, path, headers, _ = wire.jsonld_context_request()
-        status, body, response = await self._client._root_call_async(
-            method=method,
-            path=path,
-            owning_operation=ROOT_OPERATION,
-            headers=headers,
-            raw_text=True,
-            max_response_bytes=self._client._root_export_max_bytes,
-        )
-        return wire.parse_jsonld_context(
-            cast(bytes, body),
-            endpoint=path,
-            response_media_type=wire.response_media_type(
-                response.headers,
-                operation=ROOT_OPERATION,
+
+        async def action() -> SiteDocument:
+            method, path, headers, _ = wire.jsonld_context_request()
+            status, body, response = await self._client._root_call_async(
+                method=method,
+                path=path,
+                owning_operation=ROOT_OPERATION,
+                headers=headers,
+                raw_text=True,
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            return wire.parse_jsonld_context(
+                cast(bytes, body),
+                endpoint=path,
+                response_media_type=wire.response_media_type(
+                    response.headers,
+                    operation=ROOT_OPERATION,
+                    status_code=status,
+                    expected_media_type="application/ld+json",
+                ),
                 status_code=status,
-                expected_media_type="application/ld+json",
-            ),
-            status_code=status,
-            operation=ROOT_OPERATION,
-        )
+                operation=ROOT_OPERATION,
+            )
+
+        return await _run_root_async(self._client, action)
 
     site_data_portal = data_portal
     site_rdf_catalog = rdf_catalog

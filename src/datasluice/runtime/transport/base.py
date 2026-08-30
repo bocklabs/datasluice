@@ -194,6 +194,7 @@ class RuntimeStreamResponse:
     close_callback: Callable[[], None] = field(repr=False)
     retry_after: float | None = None
     failure_callback: Callable[[BaseException], None] | None = field(default=None, repr=False)
+    completion_callback: Callable[[], None] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -232,6 +233,11 @@ class RuntimeStreamResponse:
         if self.failure_callback is not None:
             self.failure_callback(error)
 
+    def complete(self) -> None:
+        """Report that the caller consumed and validated the complete stream."""
+        if self.completion_callback is not None:
+            self.completion_callback()
+
 
 @dataclass(slots=True)
 class AsyncRuntimeStreamResponse:
@@ -243,6 +249,7 @@ class AsyncRuntimeStreamResponse:
     close_callback: Callable[[], Awaitable[None] | None] = field(repr=False)
     retry_after: float | None = None
     failure_callback: Callable[[BaseException], Awaitable[None] | None] | None = field(default=None, repr=False)
+    completion_callback: Callable[[], Awaitable[None] | None] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -286,6 +293,13 @@ class AsyncRuntimeStreamResponse:
         """Report a failure discovered while consuming the stream."""
         if self.failure_callback is not None:
             result = self.failure_callback(error)
+            if result is not None:
+                await result
+
+    async def complete(self) -> None:
+        """Report that the caller consumed and validated the complete stream."""
+        if self.completion_callback is not None:
+            result = self.completion_callback()
             if result is not None:
                 await result
 

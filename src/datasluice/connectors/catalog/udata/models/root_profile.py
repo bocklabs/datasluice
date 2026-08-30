@@ -43,7 +43,6 @@ _DATASET_CATALOG_FILTERS = frozenset(
         "schema",
         "schema_version",
         "topic",
-        "credit",
         "dataservice",
         "reuse",
         "archived",
@@ -82,12 +81,60 @@ _DATASET_CSV_LAST_UPDATE_RANGES = frozenset({"last_30_days", "last_12_months", "
 _ACCESS_TYPES = frozenset({"open", "open_with_account", "restricted"})
 _FORMAT_FAMILIES = frozenset({"tabular", "machine_readable", "geographical", "documents", "other"})
 _PRODUCER_TYPES = frozenset({"public-service", "association", "company", "local-authority", "user", "not-specified"})
-_OBJECT_ID_FILTERS = frozenset({"organization", "owner", "geozone", "topic", "dataservice", "reuse"})
-_DATASET_CSV_OBJECT_ID_FILTERS = frozenset({"organization", "owner", "geozone", "topic"})
+_OBJECT_ID_FILTERS = frozenset({"license", "organization", "owner", "followed_by", "topic", "dataservice", "reuse"})
+_DATASET_CSV_OBJECT_ID_FILTERS = frozenset({"license", "organization", "owner", "topic"})
 _REUSE_CSV_SORTS = frozenset({"title", "created", "datasets", "followers", "views"})
-_REUSE_CSV_FILTERS = frozenset({"dataset", "dataservice", "tag", "organization_badge"})
+_REUSE_CSV_FILTERS = frozenset(
+    {
+        "dataset",
+        "dataservice",
+        "tag",
+        "organization_badge",
+        "type",
+        "topic",
+        "private",
+        "featured",
+        "owner",
+        "organization",
+    }
+)
 _DATASERVICE_CSV_SORTS = frozenset({"title", "created", "last_modified", "followers", "views"})
-_DATASERVICE_CSV_FILTERS = frozenset({"tag", "contact_point", "dataset", "organization_badge", "topic", "reuse"})
+_DATASERVICE_CSV_FILTERS = frozenset(
+    {
+        "tag",
+        "contact_point",
+        "dataset",
+        "organization_badge",
+        "topic",
+        "reuse",
+        "access_type",
+        "featured",
+        "owner",
+        "organization",
+    }
+)
+_DATASET_BADGES = frozenset({"pivotal-data", "spd", "inspire", "hvd", "sl", "sr"})
+_ORGANIZATION_BADGES = frozenset({"public-service", "certified", "association", "company", "local-authority"})
+_REUSE_TYPES = frozenset({"api", "application", "idea", "news_article", "paper", "post", "visualization", "hardware"})
+_REUSE_TOPICS = frozenset(
+    {
+        "health",
+        "transport_and_mobility",
+        "housing_and_development",
+        "food_and_agriculture",
+        "culture_and_recreation",
+        "economy_and_business",
+        "environment_and_energy",
+        "work_and_training",
+        "politics_and_public_life",
+        "safety_and_security",
+        "education_and_research",
+        "society_and_demography",
+        "law_and_justice",
+        "open_data_tools",
+        "others",
+    }
+)
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "f34538ffeab0de25dd5a8c0ce3984b2f2e6d56356fe3f095dbc593f8fdec23c7"
@@ -136,6 +183,20 @@ def _validate_blocks(value: object, field_name: str, *, allow_none: bool = False
 def _validate_object_id(value: str, field_name: str) -> None:
     if re.fullmatch(r"[0-9a-fA-F]{24}", value) is None:
         raise ValueError(f"uData {field_name} filters require a valid object identifier.")
+
+
+def _validate_geoid(value: str) -> None:
+    if value.count("@") > 1:
+        raise ValueError("uData geozone filters require a valid GeoID.")
+    spatial, _, validity = value.partition("@")
+    spatial = spatial.lower().replace("/", ":")
+    parts = spatial.split(":")
+    if (
+        len(parts) < 2
+        or not all(part and not any(char.isspace() for char in part) for part in parts)
+        or ("@" in value and (not validity or any(char.isspace() for char in validity)))
+    ):
+        raise ValueError("uData geozone filters require a valid GeoID.")
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -536,10 +597,16 @@ class SiteDatasetCatalogQuery:
                 elif not isinstance(value, str) or not value:
                     raise ValueError("uData site dataset-catalog scalar filters require non-empty strings.")
                 else:
-                    if key in _OBJECT_ID_FILTERS:
+                    if key == "geozone":
+                        _validate_geoid(value)
+                    elif key in _OBJECT_ID_FILTERS:
                         _validate_object_id(value, key)
                     if key == "access_type" and value not in _ACCESS_TYPES:
                         raise ValueError("uData site dataset-catalog access_type is not documented.")
+                    if key == "badge" and value not in _DATASET_BADGES:
+                        raise ValueError("uData site dataset-catalog badge is not documented.")
+                    if key == "organization_badge" and value not in _ORGANIZATION_BADGES:
+                        raise ValueError("uData site dataset-catalog organization_badge is not documented.")
             object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_dataset_catalog.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
@@ -603,10 +670,16 @@ class SiteDatasetCsvQuery:
                 elif not isinstance(value, str) or not value:
                     raise ValueError("uData dataset CSV scalar filters require non-empty strings.")
                 else:
-                    if key in _DATASET_CSV_OBJECT_ID_FILTERS:
+                    if key == "geozone":
+                        _validate_geoid(value)
+                    elif key in _DATASET_CSV_OBJECT_ID_FILTERS:
                         _validate_object_id(value, key)
                     if key == "access_type" and value not in _ACCESS_TYPES:
                         raise ValueError("uData dataset CSV access_type is not documented.")
+                    if key == "badge" and value not in _DATASET_BADGES:
+                        raise ValueError("uData dataset CSV badge is not documented.")
+                    if key == "organization_badge" and value not in _ORGANIZATION_BADGES:
+                        raise ValueError("uData dataset CSV organization_badge is not documented.")
                     if key == "format_family" and value not in _FORMAT_FAMILIES:
                         raise ValueError("uData dataset CSV format_family is not documented.")
                     if key == "producer_type" and value not in _PRODUCER_TYPES:
@@ -661,9 +734,15 @@ class SiteReuseCsvQuery:
 
     q: str | None = None
     sort: str | None = None
-    filters: Mapping[str, str | tuple[str, ...]] | None = None
+    page: int = 1
+    page_size: int = 20
+    filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("uData reuse CSV page must be a positive integer.")
+        if type(self.page_size) is not int or self.page_size < 1:
+            raise ValueError("uData reuse CSV page_size must be a positive integer.")
         if self.q is not None and (not isinstance(self.q, str) or not self.q):
             raise ValueError("uData reuse CSV q must be a non-empty string when supplied.")
         if self.sort is not None:
@@ -679,15 +758,24 @@ class SiteReuseCsvQuery:
                 if isinstance(value, tuple):
                     if key != "tag" or not value or not all(isinstance(item, str) and item for item in value):
                         raise ValueError("Only the uData reuse CSV tag filter may repeat non-empty strings.")
+                elif type(value) is bool:
+                    if key not in {"private", "featured"}:
+                        raise ValueError(f"uData reuse CSV filter {key!r} is not boolean.")
                 elif not isinstance(value, str) or not value:
                     raise ValueError("uData reuse CSV filters require non-empty strings.")
-                elif key in {"dataset", "dataservice"}:
+                elif key in {"dataset", "dataservice", "owner", "organization"}:
                     _validate_object_id(value, key)
+                elif key == "type" and value not in _REUSE_TYPES:
+                    raise ValueError("uData reuse CSV type is not documented.")
+                elif key == "topic" and value not in _REUSE_TOPICS:
+                    raise ValueError("uData reuse CSV topic is not documented.")
+                elif key == "organization_badge" and value not in _ORGANIZATION_BADGES:
+                    raise ValueError("uData reuse CSV organization_badge is not documented.")
             object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_reuse_csv.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the generated Reuse index parser fields in stable order."""
-        params: list[tuple[str, str]] = []
+        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
         if self.q is not None:
             params.append(("q", self.q))
         if self.sort is not None:
@@ -695,8 +783,10 @@ class SiteReuseCsvQuery:
         for key, value in sorted((self.filters or {}).items()):
             if isinstance(value, tuple):
                 params.extend((key, item) for item in value)
+            elif isinstance(value, bool):
+                params.append((key, "true" if value else "false"))
             else:
-                params.append((key, value))
+                params.append((key, cast(str, value)))
         return params
 
 
@@ -706,9 +796,15 @@ class SiteDataserviceCsvQuery:
 
     q: str | None = None
     sort: str | None = None
-    filters: Mapping[str, str | tuple[str, ...]] | None = None
+    page: int = 1
+    page_size: int = 20
+    filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("uData dataservice CSV page must be a positive integer.")
+        if type(self.page_size) is not int or self.page_size < 1:
+            raise ValueError("uData dataservice CSV page_size must be a positive integer.")
         if self.q is not None and (not isinstance(self.q, str) or not self.q):
             raise ValueError("uData dataservice CSV q must be a non-empty string when supplied.")
         if self.sort is not None:
@@ -724,15 +820,22 @@ class SiteDataserviceCsvQuery:
                 if isinstance(value, tuple):
                     if key != "tag" or not value or not all(isinstance(item, str) and item for item in value):
                         raise ValueError("Only the uData dataservice CSV tag filter may repeat non-empty strings.")
+                elif type(value) is bool:
+                    if key != "featured":
+                        raise ValueError(f"uData dataservice CSV filter {key!r} is not boolean.")
                 elif not isinstance(value, str) or not value:
                     raise ValueError("uData dataservice CSV filters require non-empty strings.")
-                elif key in {"contact_point", "dataset", "topic", "reuse"}:
+                elif key in {"contact_point", "dataset", "topic", "reuse", "owner", "organization"}:
                     _validate_object_id(value, key)
+                elif key == "access_type" and value not in _ACCESS_TYPES:
+                    raise ValueError("uData dataservice CSV access_type is not documented.")
+                elif key == "organization_badge" and value not in _ORGANIZATION_BADGES:
+                    raise ValueError("uData dataservice CSV organization_badge is not documented.")
             object.__setattr__(self, "filters", _freeze_mapping(self.filters, "udata.site_dataservice_csv.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the generated Dataservice index parser fields in stable order."""
-        params: list[tuple[str, str]] = []
+        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
         if self.q is not None:
             params.append(("q", self.q))
         if self.sort is not None:
@@ -740,8 +843,10 @@ class SiteDataserviceCsvQuery:
         for key, value in sorted((self.filters or {}).items()):
             if isinstance(value, tuple):
                 params.extend((key, item) for item in value)
+            elif isinstance(value, bool):
+                params.append((key, "true" if value else "false"))
             else:
-                params.append((key, value))
+                params.append((key, cast(str, value)))
         return params
 
 

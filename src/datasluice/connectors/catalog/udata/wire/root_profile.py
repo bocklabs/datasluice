@@ -429,6 +429,7 @@ def digest_stream_document(
     digest = hashlib.sha256()
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
+    complete_ready = False
     try:
         media_type = response_media_type(
             response.headers,
@@ -451,6 +452,7 @@ def digest_stream_document(
                 sink(chunk)
             size_bytes = next_size
         decoder.decode(b"", final=True)
+        complete_ready = True
     except UnicodeDecodeError as error:
         failure = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
@@ -465,6 +467,12 @@ def digest_stream_document(
         raise
     finally:
         response.close()
+    if complete_ready:
+        try:
+            response.complete()
+        except BaseException as error:
+            response.fail(error)
+            raise
     metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
     return SiteDocument(
         endpoint=endpoint,
@@ -493,6 +501,7 @@ async def digest_stream_document_async(
     digest = hashlib.sha256()
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
+    complete_ready = False
     try:
         media_type = response_media_type(
             response.headers,
@@ -517,6 +526,7 @@ async def digest_stream_document_async(
                     await result
             size_bytes = next_size
         decoder.decode(b"", final=True)
+        complete_ready = True
     except UnicodeDecodeError as error:
         failure = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
@@ -531,6 +541,12 @@ async def digest_stream_document_async(
         raise
     finally:
         await response.aclose()
+    if complete_ready:
+        try:
+            await response.complete()
+        except BaseException as error:
+            await response.fail(error)
+            raise
     metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
     return SiteDocument(
         endpoint=endpoint,

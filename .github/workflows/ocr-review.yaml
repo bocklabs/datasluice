@@ -30,7 +30,7 @@ jobs:
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
 
-          llm_extra_body: '{"reasoning_effort": "max"}'
+          llm_extra_body: '{"reasoning_effort": "medium"}'
 
           review_concurrency: '4'
           language: 'English'
@@ -42,18 +42,35 @@ jobs:
           upload_artifacts: 'true'
 
           background: >-
-            DataSluice is a Python 3.12+ open-data SDK and CLI for discovery, extraction,
-            format normalization, and pipeline integration against CKAN, data.gouv.fr,
-            Socrata, and custom portals. Preserve public API compatibility and consistent
-            behavior across all portal connectors. Connectors are discovered via the
-            datasluice.connectors entry-points group by the injected runtime
-            PluginManager (no module-level registry, no import side effects; broken
-            third-party plugins are recorded as failures, never fatal). Optional format,
-            storage, and integration dependencies (httpx, fsspec, pyarrow, pandas,
-            polars, openpyxl, zstandard, dlt, duckdb, airflow) must remain lazily
-            imported so the base package works without extras. Prioritize HTTP
-            correctness, pagination, retries, rate limiting, redirect handling, resource
-            and file-descriptor cleanup (streams, readers, clients), credential and
-            secret safety, portal mapping correctness, cache/checksum integrity, sync
-            state correctness, typing, and tests for changed behavior. Avoid style-only
-            findings already covered by Ruff and ty.
+            Review DataSluice as a contract-first Python 3.12+ open-data SDK and CLI.
+            Treat AGENTS.md, pyproject.toml, the applicable public contracts, and the
+            current roadmap/design documentation as context, but review the changed
+            implementation and its relevant call paths. The project is a deliberate
+            clean break: do not preserve retired public surfaces, historical runtime
+            semantics, or automatic adaptation to vendor drift unless the applicable
+            contract explicitly requires it. The shared catalog contract and runtime
+            are authoritative: connector families use typed native service groups
+            behind typed facades and factories, the injected entry-point PluginManager
+            is the only registry, and third-party discovery is opt-in and
+            failure-isolated. Use the existing dual-mode guarded transport/client
+            seams; do not add raw HTTP stacks, module-level registries, import-time
+            side effects, or connector-local compatibility layers. Sync and async
+            paths require intentional parity, context-managed ownership, bounded
+            response/upload handling, cancellation and cleanup guarantees, and correct
+            retry, breaker, timeout, pagination, and redirect behavior. Credentials are
+            explicit by default; capability and authorization checks occur before I/O;
+            redirect handling must not leak credential-bearing headers. Mutations,
+            administration, uploads, and bulk work require target-specific safety
+            policy, concurrency/overwrite intent, appropriate idempotency, redacted
+            immutable receipts, and controlled environments where required. One-time
+            secrets, credentials, raw bodies, private origins, and deployment
+            configuration must not reach logs, events, receipts, artifacts, or
+            committed files. Optional dependencies and integrations remain lazy so the
+            base installation stays lean. Future roadmap work may add connector
+            families, plugin/discovery behavior, developer tooling, and drift/release
+            verification; do not report a future-phase feature as missing from an
+            in-scope change, and do not treat a planned namespace as a runtime
+            capability. Trace changed code through callers and relevant contracts,
+            verify negative paths and error propagation, and report only actionable
+            correctness, security, or maintainability defects; omit style-only findings
+            covered by Ruff or ty.

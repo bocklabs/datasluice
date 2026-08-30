@@ -12,6 +12,8 @@ import pytest
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
     SyncUDataClient,
+    _ControlledAsyncTransport,
+    _ControlledSyncTransport,
     declared_udata_profile,
 )
 from datasluice.connectors.catalog.udata.models.root_profile import (
@@ -169,13 +171,12 @@ def _sync_client(
     root_export_max_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = RouterTransport(routes)
+    bound_attestation = _attestation() if attestation is None else attestation
     client = SyncUDataClient(
-        transport,
+        _ControlledSyncTransport(transport, bound_attestation),
         declared_udata_profile(),
         origin=origin,
         credentials=credential,
-        controlled_stack_attestation=_attestation() if attestation is None else attestation,
-        _controlled_transport=True,
         emitter=emitter,
         root_export_max_bytes=root_export_max_bytes,
         owns_transport=False,
@@ -193,13 +194,12 @@ def _async_client(
     root_export_max_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
+    bound_attestation = _attestation() if attestation is None else attestation
     client = AsyncUDataClient(
-        transport,
+        _ControlledAsyncTransport(transport, bound_attestation),
         declared_udata_profile(),
         origin=origin,
         credentials=credential,
-        controlled_stack_attestation=_attestation() if attestation is None else attestation,
-        _controlled_transport=True,
         emitter=emitter,
         root_export_max_bytes=root_export_max_bytes,
         owns_transport=False,
@@ -426,7 +426,6 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
         origin=_ORIGIN,
         emitter=EventEmitter(sinks=(events.append,)),
         owns_transport=False,
-        _controlled_transport=True,
     )
     with client, pytest.raises(TransportFailure):
         client.root_profile.datasets_csv()
@@ -630,6 +629,23 @@ def test_set_site_maps_423_to_non_retryable_deployment_disabled_with_receipt() -
     assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
 
 
+def test_site_patch_post_dispatch_media_failure_is_ambiguous() -> None:
+    transport, client = _sync_client(
+        _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "text/plain"}))),
+        credential=_CREDENTIAL,
+    )
+    with client, pytest.raises(NativeCatalogError) as excinfo:
+        client.root_profile.set_site(
+            SitePatchInput(title="possibly-written"),
+            permissions=_PERMISSIONS,
+            mutation_policy=_site_policy(),
+        )
+
+    receipt = _receipt_from(excinfo.value)
+    assert receipt.outcome == "ambiguous"
+    assert receipt.audit_metadata["status_code"] == 200
+
+
 def test_set_site_denial_does_not_poison_the_root_read_capability() -> None:
     transport, client = _sync_client(
         _routes(("PATCH", _SITE_URL, _json_response(423, None))),
@@ -667,6 +683,20 @@ def test_set_site_requires_verified_attestation_before_any_dispatch() -> None:
     assert transport.requests == []
 
 
+def test_direct_client_cannot_bind_attestation_to_an_injected_transport() -> None:
+    transport = RouterTransport(_routes())
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        cast(Any, SyncUDataClient)(
+            transport,
+            declared_udata_profile(),
+            origin=_ORIGIN,
+            controlled_stack_attestation=_attestation(),
+            owns_transport=False,
+        )
+
+    assert transport.requests == []
+
+
 def test_factory_injected_transport_cannot_authorize_site_mutation() -> None:
     transport = RouterTransport(_routes())
     with pytest.raises(ValueError):
@@ -689,13 +719,12 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
             return _json_response(200, _site_body(), {"Content-Type": "application/json"})
 
     transport = FailingTransport({})
+    attestation = _attestation()
     client = SyncUDataClient(
-        transport,
+        _ControlledSyncTransport(transport, attestation),
         declared_udata_profile(),
         origin=_ORIGIN,
         credentials=_CREDENTIAL,
-        controlled_stack_attestation=_attestation(),
-        _controlled_transport=True,
         owns_transport=False,
     )
     with client, pytest.raises(TransportFailure):

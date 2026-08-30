@@ -18,8 +18,15 @@
       },
       "repeatable": ["tag"],
       "boolean": ["featured", "archived", "deleted", "private"],
+      "scalar": [
+        "q", "sort", "license", "geozone", "granularity", "temporal_coverage", "access_type",
+        "organization", "badge", "organization_badge", "owner", "followed_by", "format", "schema",
+        "schema_version", "topic", "dataservice", "reuse"
+      ],
       "choices": {
-        "access_type": ["open", "open_with_account", "restricted"]
+        "access_type": ["open", "open_with_account", "restricted"],
+        "badge": ["pivotal-data", "spd", "inspire", "hvd", "sl", "sr"],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"]
       }
     },
     "dataset_csv": {
@@ -29,8 +36,15 @@
       },
       "repeatable": ["tag", "granularity", "format", "schema"],
       "boolean": ["featured"],
+      "scalar": [
+        "q", "sort", "badge", "organization", "organization_name", "organization_badge", "owner", "license",
+        "geozone", "temporal_coverage", "topic", "access_type", "format_family", "producer_type",
+        "last_update_range"
+      ],
       "choices": {
         "access_type": ["open", "open_with_account", "restricted"],
+        "badge": ["pivotal-data", "spd", "inspire", "hvd", "sl", "sr"],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"],
         "format_family": ["tabular", "machine_readable", "geographical", "documents", "other"],
         "last_update_range": ["last_30_days", "last_12_months", "last_3_years"],
         "producer_type": ["public-service", "association", "company", "local-authority", "user", "not-specified"]
@@ -41,12 +55,39 @@
       "scalar": ["q", "badge", "name", "business_number_id"]
     },
     "reuse_csv": {
+      "defaults": {
+        "page": 1,
+        "page_size": 20
+      },
       "repeatable": ["tag"],
-      "scalar": ["q", "sort", "dataset", "dataservice", "organization_badge"]
+      "boolean": ["private", "featured"],
+      "scalar": ["q", "sort", "dataset", "dataservice", "organization_badge", "type", "topic", "owner", "organization"],
+      "choices": {
+        "type": ["api", "application", "idea", "news_article", "paper", "post", "visualization", "hardware"],
+        "topic": [
+          "health", "transport_and_mobility", "housing_and_development", "food_and_agriculture",
+          "culture_and_recreation", "economy_and_business", "environment_and_energy", "work_and_training",
+          "politics_and_public_life", "safety_and_security", "education_and_research", "society_and_demography",
+          "law_and_justice", "open_data_tools", "others"
+        ],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"]
+      }
     },
     "dataservice_csv": {
+      "defaults": {
+        "page": 1,
+        "page_size": 20
+      },
       "repeatable": ["tag"],
-      "scalar": ["q", "sort", "contact_point", "dataset", "organization_badge", "topic", "reuse"]
+      "boolean": ["featured"],
+      "scalar": [
+        "q", "sort", "contact_point", "dataset", "organization_badge", "topic", "reuse", "access_type", "owner",
+        "organization"
+      ],
+      "choices": {
+        "access_type": ["open", "open_with_account", "restricted"],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"]
+      }
     }
   },
   "failure_cases": [

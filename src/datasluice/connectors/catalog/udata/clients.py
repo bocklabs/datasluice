@@ -68,6 +68,7 @@ from datasluice.runtime.capability import (
 )
 from datasluice.runtime.clients import (
     AsyncCatalogTransport,
+    AsyncStreamingCatalogTransport,
     _auth_headers,
     _capability_value,
     _circuit_key,
@@ -91,6 +92,7 @@ from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
+    StreamingCatalogTransport,
     TransportFailure,
 )
 
@@ -230,6 +232,52 @@ def _page_request(
     return RuntimeRequest(method="GET", url=url, headers={}, body=None)
 
 
+class _ControlledSyncTransport:
+    """Bind verified controlled-stack evidence to one synchronous transport."""
+
+    __slots__ = ("_transport", "_attestation")
+
+    def __init__(self, transport: CatalogTransport, attestation: ControlledStackAttestation) -> None:
+        self._transport = transport
+        self._attestation = attestation
+
+    @property
+    def attestation(self) -> ControlledStackAttestation:
+        return self._attestation
+
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return self._transport.send(request)
+
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        return cast(StreamingCatalogTransport, self._transport).send_stream(request)
+
+    def close(self) -> None:
+        self._transport.close()
+
+
+class _ControlledAsyncTransport:
+    """Bind verified controlled-stack evidence to one asynchronous transport."""
+
+    __slots__ = ("_transport", "_attestation")
+
+    def __init__(self, transport: AsyncCatalogTransport, attestation: ControlledStackAttestation) -> None:
+        self._transport = transport
+        self._attestation = attestation
+
+    @property
+    def attestation(self) -> ControlledStackAttestation:
+        return self._attestation
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return await self._transport.send(request)
+
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        return await cast(AsyncStreamingCatalogTransport, self._transport).send_stream(request)
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
 class _UDataClientCore:
     """Shared strict-gate state for the sync and async uData clients."""
 
@@ -249,8 +297,6 @@ class _UDataClientCore:
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES,
-        controlled_stack_attestation: ControlledStackAttestation | None = None,
-        controlled_transport: bool = False,
         owns_transport: bool = True,
         site_gate: SiteVersionGate | AsyncSiteVersionGate | None = None,
         probe_runner: ProbeRunner | None = None,
@@ -302,14 +348,9 @@ class _UDataClientCore:
         if type(root_export_max_bytes) is not int or root_export_max_bytes < 1:
             raise ValueError("uData root export byte limits must be positive integers.")
         self._root_export_max_bytes = root_export_max_bytes
-        if controlled_stack_attestation is not None and not isinstance(
-            controlled_stack_attestation, ControlledStackAttestation
-        ):
-            raise TypeError("uData controlled stack evidence must use ControlledStackAttestation.")
-        self._controlled_stack_attestation = controlled_stack_attestation
-        if type(controlled_transport) is not bool:
-            raise TypeError("uData controlled transport state must be a boolean.")
-        self._controlled_transport = controlled_transport
+        controlled_binding = isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport))
+        self._controlled_stack_attestation = transport.attestation if controlled_binding else None
+        self._controlled_transport = controlled_binding
         self._clock = clock
         self._emitter = emitter or EventEmitter()
         self._closed = False
@@ -467,8 +508,6 @@ class SyncUDataClient(_UDataClientCore):
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES,
-        controlled_stack_attestation: ControlledStackAttestation | None = None,
-        _controlled_transport: bool = False,
         owns_transport: bool = True,
         probe_runner: ProbeRunner | None = None,
     ) -> None:
@@ -488,8 +527,6 @@ class SyncUDataClient(_UDataClientCore):
             emitter=emitter,
             capability_cache_ttl=capability_cache_ttl,
             root_export_max_bytes=root_export_max_bytes,
-            controlled_stack_attestation=controlled_stack_attestation,
-            controlled_transport=_controlled_transport,
             owns_transport=owns_transport,
             probe_runner=probe_runner,
         )
@@ -539,6 +576,7 @@ class SyncUDataClient(_UDataClientCore):
         idempotency_policy: IdempotencyPolicy | None = None,
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
+        emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
@@ -613,40 +651,52 @@ class SyncUDataClient(_UDataClientCore):
                 sleep=self._retry_sleep,
             ).run(send)
         except BudgetExhaustedError:
-            self._emit(owning_id, "budget_exhausted")
+            if emit_success:
+                self._emit(owning_id, "budget_exhausted")
             raise
         except Exception:
-            self._emit(owning_id, "failed")
+            if emit_success:
+                self._emit(owning_id, "failed")
             raise
-        self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
-        if max_response_bytes is not None and len(response.body) > max_response_bytes:
-            raise NativeCatalogError(
-                "Catalog operation returned a response larger than its configured byte limit.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                status_code=response.status_code,
-            )
-        if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
-            status_code, response_headers = _decode_redirect_response(owning_id, response)
-            return status_code, response_headers, response
-        if raw_text:
-            self._emit(owning_id, "succeeded")
-            return response.status_code, response.body, response
-        if not response.body:
-            self._emit(owning_id, "succeeded")
-            return response.status_code, None, response
         try:
-            payload = json.loads(response.body)
-        except (TypeError, ValueError) as exc:
-            raise NativeCatalogError(
-                "Catalog operation returned an invalid JSON result.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                status_code=response.status_code,
-                metadata={"ambiguous": json_body is not None and method != "GET"},
-            ) from exc
-        self._emit(owning_id, "succeeded")
-        return response.status_code, payload, response
+            self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
+            if max_response_bytes is not None and len(response.body) > max_response_bytes:
+                raise NativeCatalogError(
+                    "Catalog operation returned a response larger than its configured byte limit.",
+                    operation=str(owning_id),
+                    platform=PLATFORM.value,
+                    status_code=response.status_code,
+                )
+            if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
+                status_code, response_headers = _decode_redirect_response(owning_id, response)
+                result = status_code, response_headers, response
+            elif raw_text:
+                result = response.status_code, response.body, response
+            elif not response.body:
+                result = response.status_code, None, response
+            else:
+                try:
+                    payload = json.loads(response.body)
+                except (TypeError, ValueError) as exc:
+                    raise NativeCatalogError(
+                        "Catalog operation returned an invalid JSON result.",
+                        operation=str(owning_id),
+                        platform=PLATFORM.value,
+                        status_code=response.status_code,
+                        metadata={"ambiguous": json_body is not None and method != "GET"},
+                    ) from exc
+                result = response.status_code, payload, response
+        except BudgetExhaustedError:
+            if emit_success:
+                self._emit(owning_id, "budget_exhausted")
+            raise
+        except Exception:
+            if emit_success:
+                self._emit(owning_id, "failed")
+            raise
+        if emit_success:
+            self._emit(owning_id, "succeeded")
+        return result
 
     def _root_call(
         self,
@@ -664,6 +714,7 @@ class SyncUDataClient(_UDataClientCore):
         idempotency_policy: IdempotencyPolicy | None = None,
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
+        emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one root-profile request through the shared guarded transport seam."""
         return self._dataset_call(
@@ -680,6 +731,7 @@ class SyncUDataClient(_UDataClientCore):
             idempotency_policy=idempotency_policy,
             allow_retry=allow_retry,
             max_response_bytes=max_response_bytes,
+            emit_success=emit_success,
         )
 
     def _root_stream_call(
@@ -710,6 +762,7 @@ class SyncUDataClient(_UDataClientCore):
             url=self._origin + path,
             headers=request_headers,
             redirect_policy=RedirectPolicy.NO_FOLLOW,
+            max_response_bytes=self._root_export_max_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -740,13 +793,19 @@ class SyncUDataClient(_UDataClientCore):
             self._emit_breaker_change(owning_id, before.open, after.open)
             self._emit(owning_id, "failed")
             raise
-        after = self._breakers.record_response(key, response.status_code)
+        if response.status_code >= 500:
+            after = self._breakers.record_transport_failure(key)
+        elif response.status_code >= 400:
+            after = self._breakers.record_response(key, response.status_code)
+        elif response.status_code >= 300:
+            after = self._breakers.record_success(key)
+        else:
+            after = before
         self._emit_breaker_change(owning_id, before.open, after.open)
         try:
             self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
             if response.status_code in {301, 302, 303, 307, 308}:
                 _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
-                self._emit(owning_id, "succeeded")
                 return response
         except BaseException:
             response.close()
@@ -754,6 +813,7 @@ class SyncUDataClient(_UDataClientCore):
             raise
 
         settled = False
+        consumed = False
 
         def settle_failure(error: BaseException) -> None:
             nonlocal settled
@@ -776,10 +836,19 @@ class SyncUDataClient(_UDataClientCore):
         def settle_success() -> None:
             nonlocal settled
             if not settled:
+                try:
+                    deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+                except BaseException as error:
+                    settle_failure(error)
+                    raise
                 settled = True
+                success_before = self._breakers.inspect(key)
+                success_after = self._breakers.record_success(key)
+                self._emit_breaker_change(owning_id, success_before.open, success_after.open)
                 self._emit(owning_id, "succeeded")
 
         def guarded_chunks() -> Generator[bytes, None, None]:
+            nonlocal consumed
             try:
                 for chunk in response:
                     deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -790,19 +859,19 @@ class SyncUDataClient(_UDataClientCore):
                 settle_failure(error)
                 raise
             else:
-                settle_success()
+                consumed = True
 
         stream_chunks = guarded_chunks()
 
         def close() -> None:
             try:
                 stream_chunks.close()
-            finally:
-                try:
-                    response.close()
-                finally:
-                    if not settled:
-                        settle_failure(RuntimeError("The catalog stream was closed before completion."))
+                response.close()
+            except BaseException as error:
+                settle_failure(error)
+                raise
+            if not settled and not consumed:
+                settle_failure(RuntimeError("The catalog stream was closed before completion."))
 
         return RuntimeStreamResponse(
             status_code=response.status_code,
@@ -811,6 +880,7 @@ class SyncUDataClient(_UDataClientCore):
             close_callback=close,
             retry_after=response.retry_after,
             failure_callback=settle_failure,
+            completion_callback=settle_success,
         )
 
     def _dispatch(
@@ -940,8 +1010,6 @@ class AsyncUDataClient(_UDataClientCore):
         emitter: EventEmitter | None = None,
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES,
-        controlled_stack_attestation: ControlledStackAttestation | None = None,
-        _controlled_transport: bool = False,
         owns_transport: bool = True,
         async_probe_runner: AsyncProbeRunner | None = None,
     ) -> None:
@@ -961,8 +1029,6 @@ class AsyncUDataClient(_UDataClientCore):
             emitter=emitter,
             capability_cache_ttl=capability_cache_ttl,
             root_export_max_bytes=root_export_max_bytes,
-            controlled_stack_attestation=controlled_stack_attestation,
-            controlled_transport=_controlled_transport,
             owns_transport=owns_transport,
             async_probe_runner=async_probe_runner,
             async_gate=True,
@@ -1096,6 +1162,7 @@ class AsyncUDataClient(_UDataClientCore):
         idempotency_policy: IdempotencyPolicy | None = None,
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
+        emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
@@ -1172,40 +1239,52 @@ class AsyncUDataClient(_UDataClientCore):
                 sleep=lambda _: None,
             ).run_async(send, sleep=self._retry_sleep)
         except BudgetExhaustedError:
-            self._emit(owning_id, "budget_exhausted")
+            if emit_success:
+                self._emit(owning_id, "budget_exhausted")
             raise
         except Exception:
-            self._emit(owning_id, "failed")
+            if emit_success:
+                self._emit(owning_id, "failed")
             raise
-        self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
-        if max_response_bytes is not None and len(response.body) > max_response_bytes:
-            raise NativeCatalogError(
-                "Catalog operation returned a response larger than its configured byte limit.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                status_code=response.status_code,
-            )
-        if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
-            status_code, response_headers = _decode_redirect_response(owning_id, response)
-            return status_code, response_headers, response
-        if raw_text:
-            self._emit(owning_id, "succeeded")
-            return response.status_code, response.body, response
-        if not response.body:
-            self._emit(owning_id, "succeeded")
-            return response.status_code, None, response
         try:
-            payload = json.loads(response.body)
-        except (TypeError, ValueError) as exc:
-            raise NativeCatalogError(
-                "Catalog operation returned an invalid JSON result.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                status_code=response.status_code,
-                metadata={"ambiguous": json_body is not None and method != "GET"},
-            ) from exc
-        self._emit(owning_id, "succeeded")
-        return response.status_code, payload, response
+            self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
+            if max_response_bytes is not None and len(response.body) > max_response_bytes:
+                raise NativeCatalogError(
+                    "Catalog operation returned a response larger than its configured byte limit.",
+                    operation=str(owning_id),
+                    platform=PLATFORM.value,
+                    status_code=response.status_code,
+                )
+            if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
+                status_code, response_headers = _decode_redirect_response(owning_id, response)
+                result = status_code, response_headers, response
+            elif raw_text:
+                result = response.status_code, response.body, response
+            elif not response.body:
+                result = response.status_code, None, response
+            else:
+                try:
+                    payload = json.loads(response.body)
+                except (TypeError, ValueError) as exc:
+                    raise NativeCatalogError(
+                        "Catalog operation returned an invalid JSON result.",
+                        operation=str(owning_id),
+                        platform=PLATFORM.value,
+                        status_code=response.status_code,
+                        metadata={"ambiguous": json_body is not None and method != "GET"},
+                    ) from exc
+                result = response.status_code, payload, response
+        except BudgetExhaustedError:
+            if emit_success:
+                self._emit(owning_id, "budget_exhausted")
+            raise
+        except Exception:
+            if emit_success:
+                self._emit(owning_id, "failed")
+            raise
+        if emit_success:
+            self._emit(owning_id, "succeeded")
+        return result
 
     async def _root_call_async(
         self,
@@ -1223,6 +1302,7 @@ class AsyncUDataClient(_UDataClientCore):
         idempotency_policy: IdempotencyPolicy | None = None,
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
+        emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one async root-profile request through the shared transport seam."""
         return await self._dataset_call_async(
@@ -1239,6 +1319,7 @@ class AsyncUDataClient(_UDataClientCore):
             idempotency_policy=idempotency_policy,
             allow_retry=allow_retry,
             max_response_bytes=max_response_bytes,
+            emit_success=emit_success,
         )
 
     async def _root_stream_call_async(
@@ -1271,6 +1352,7 @@ class AsyncUDataClient(_UDataClientCore):
             url=self._origin + path,
             headers=request_headers,
             redirect_policy=RedirectPolicy.NO_FOLLOW,
+            max_response_bytes=self._root_export_max_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -1301,13 +1383,19 @@ class AsyncUDataClient(_UDataClientCore):
             self._emit_breaker_change(owning_id, before.open, after.open)
             self._emit(owning_id, "failed")
             raise
-        after = self._breakers.record_response(key, response.status_code)
+        if response.status_code >= 500:
+            after = self._breakers.record_transport_failure(key)
+        elif response.status_code >= 400:
+            after = self._breakers.record_response(key, response.status_code)
+        elif response.status_code >= 300:
+            after = self._breakers.record_success(key)
+        else:
+            after = before
         self._emit_breaker_change(owning_id, before.open, after.open)
         try:
             self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
             if response.status_code in {301, 302, 303, 307, 308}:
                 _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
-                self._emit(owning_id, "succeeded")
                 return response
         except BaseException:
             await response.aclose()
@@ -1315,6 +1403,7 @@ class AsyncUDataClient(_UDataClientCore):
             raise
 
         settled = False
+        consumed = False
 
         def settle_failure(error: BaseException) -> None:
             nonlocal settled
@@ -1337,10 +1426,19 @@ class AsyncUDataClient(_UDataClientCore):
         def settle_success() -> None:
             nonlocal settled
             if not settled:
+                try:
+                    deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+                except BaseException as error:
+                    settle_failure(error)
+                    raise
                 settled = True
+                success_before = self._breakers.inspect(key)
+                success_after = self._breakers.record_success(key)
+                self._emit_breaker_change(owning_id, success_before.open, success_after.open)
                 self._emit(owning_id, "succeeded")
 
         async def guarded_chunks() -> AsyncGenerator[bytes, None]:
+            nonlocal consumed
             try:
                 async for chunk in response:
                     deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -1349,19 +1447,19 @@ class AsyncUDataClient(_UDataClientCore):
                 settle_failure(error)
                 raise
             else:
-                settle_success()
+                consumed = True
 
         stream_chunks = guarded_chunks()
 
         async def close() -> None:
             try:
                 await stream_chunks.aclose()
-            finally:
-                try:
-                    await response.aclose()
-                finally:
-                    if not settled:
-                        settle_failure(RuntimeError("The catalog stream was closed before completion."))
+                await response.aclose()
+            except BaseException as error:
+                settle_failure(error)
+                raise
+            if not settled and not consumed:
+                settle_failure(RuntimeError("The catalog stream was closed before completion."))
 
         return AsyncRuntimeStreamResponse(
             status_code=response.status_code,
@@ -1370,6 +1468,7 @@ class AsyncUDataClient(_UDataClientCore):
             close_callback=close,
             retry_after=response.retry_after,
             failure_callback=settle_failure,
+            completion_callback=settle_success,
         )
 
     async def aclose(self) -> None:
@@ -1399,6 +1498,8 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
     override = settings.sync_transport
     if override is None:
         transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
+        if settings.controlled_stack_attestation is not None:
+            transport = _ControlledSyncTransport(transport, settings.controlled_stack_attestation)
         owns_transport = True
     elif hasattr(override, "send"):
         transport = cast(CatalogTransport, override)
@@ -1418,8 +1519,6 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
         retry_sleep=settings.retry_sleep if settings.retry_sleep is not None else sleep,
         capability_cache_ttl=settings.capability_cache_ttl,
         root_export_max_bytes=settings.root_export_max_bytes,
-        controlled_stack_attestation=settings.controlled_stack_attestation,
-        _controlled_transport=override is None,
         owns_transport=owns_transport,
         probe_runner=settings.probe_runner,
     )
@@ -1431,6 +1530,8 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
     override = settings.async_transport
     if override is None:
         transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
+        if settings.controlled_stack_attestation is not None:
+            transport = _ControlledAsyncTransport(transport, settings.controlled_stack_attestation)
         owns_transport = True
     elif hasattr(override, "send"):
         transport = cast(AsyncCatalogTransport, override)
@@ -1450,8 +1551,6 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
         retry_sleep=settings.async_retry_sleep if settings.async_retry_sleep is not None else asyncio.sleep,
         capability_cache_ttl=settings.capability_cache_ttl,
         root_export_max_bytes=settings.root_export_max_bytes,
-        controlled_stack_attestation=settings.controlled_stack_attestation,
-        _controlled_transport=override is None,
         owns_transport=owns_transport,
         async_probe_runner=settings.async_probe_runner,
     )

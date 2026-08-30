@@ -60,6 +60,17 @@ def _read_body(response: Any, max_bytes: int | None) -> bytes:
     return bytes(body)
 
 
+async def _read_body_async(response: Any, max_bytes: int | None) -> bytes:
+    if max_bytes is None:
+        return await response.aread()
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        if len(body) + len(chunk) > max_bytes:
+            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        body.extend(chunk)
+    return bytes(body)
+
+
 class HttpxCatalogTransport:
     """Optional pooled synchronous httpx transport."""
 
@@ -182,10 +193,17 @@ class HttpxCatalogTransport:
             response = self._client.send(prepared, stream=True, follow_redirects=False)
         except self._httpx.HTTPError as exc:
             raise TransportFailure("httpx could not open the catalog response stream.") from exc
+
+        def chunks() -> Any:
+            try:
+                yield from response.iter_bytes()
+            except self._httpx.HTTPError as exc:
+                raise TransportFailure("httpx could not read the catalog response stream.") from exc
+
         return RuntimeStreamResponse(
             status_code=response.status_code,
             headers=dict(response.headers),
-            chunks=response.iter_bytes(),
+            chunks=chunks(),
             close_callback=response.close,
             retry_after=_retry_after(response.headers.get("retry-after")),
         )
@@ -238,9 +256,11 @@ class AsyncHttpxCatalogTransport:
                     return RuntimeResponse(
                         response.status_code,
                         dict(response.headers),
-                        _read_body(response, current.max_response_bytes),
+                        await _read_body_async(response, current.max_response_bytes),
                         _retry_after(response.headers.get("retry-after")),
                     )
+                except self._httpx.HTTPError as exc:
+                    raise TransportFailure("httpx could not read the catalog response.") from exc
                 finally:
                     await response.aclose()
             location = response.headers.get("location")
@@ -249,9 +269,11 @@ class AsyncHttpxCatalogTransport:
                     return RuntimeResponse(
                         response.status_code,
                         dict(response.headers),
-                        _read_body(response, current.max_response_bytes),
+                        await _read_body_async(response, current.max_response_bytes),
                         _retry_after(response.headers.get("retry-after")),
                     )
+                except self._httpx.HTTPError as exc:
+                    raise TransportFailure("httpx could not read the catalog response.") from exc
                 finally:
                     await response.aclose()
             try:
@@ -313,10 +335,18 @@ class AsyncHttpxCatalogTransport:
             response = await self._client.send(prepared, stream=True, follow_redirects=False)
         except self._httpx.HTTPError as exc:
             raise TransportFailure("httpx could not open the catalog response stream.") from exc
+
+        async def chunks() -> Any:
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            except self._httpx.HTTPError as exc:
+                raise TransportFailure("httpx could not read the catalog response stream.") from exc
+
         return AsyncRuntimeStreamResponse(
             status_code=response.status_code,
             headers=dict(response.headers),
-            chunks=response.aiter_bytes(),
+            chunks=chunks(),
             close_callback=response.aclose,
             retry_after=_retry_after(response.headers.get("retry-after")),
         )
