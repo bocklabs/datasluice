@@ -14,6 +14,7 @@ from secrets import token_urlsafe
 from flask_security.utils import hash_password
 from udata.app import create_app, standalone
 from udata.core.organization.models import Member
+from udata.core.dataset.models import Dataset
 from udata.models import Organization, User, datastore
 
 app = standalone(create_app())
@@ -45,13 +46,27 @@ with app.app_context():
     elif not organization.is_admin(organization_admin):
         organization.members.append(Member(user=organization_admin, role="admin"))
         organization.save()
+
+    for slug, title in (
+        ("evidence-dataset-alpha", "Evidence dataset alpha"),
+        ("evidence-dataset-beta", "Evidence dataset beta"),
+    ):
+        dataset = Dataset.objects(slug=slug).first()
+        if dataset is None:
+            Dataset(title=title, description="Controlled evidence dataset", organization=organization).save()
 """.strip()
 
 
 def validate_origin(origin: str) -> str:
     """Require the fixed loopback uData evidence origin."""
     parsed = urlparse(origin)
-    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.port != 5640:
+    if (
+        parsed.scheme != "http"
+        or parsed.netloc != "127.0.0.1:5640"
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
         raise ValueError("seeding is limited to http://127.0.0.1:5640")
     return origin
 

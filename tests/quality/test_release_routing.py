@@ -24,8 +24,8 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
-RELEASE_PLEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-please.yml"
+PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yaml"
+RELEASE_PLEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-please.yaml"
 RELEASE_CONFIG = REPO_ROOT / "release-please-config.json"
 RELEASE_MANIFEST = REPO_ROOT / ".release-please-manifest.json"
 REGISTRY_PATH = REPO_ROOT / "providers" / "registry.json"

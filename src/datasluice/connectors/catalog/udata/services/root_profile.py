@@ -6,7 +6,13 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import urlsplit
 
-from datasluice.connectors.catalog.udata.models.root_profile import (
+from datasluice.connectors.catalog.udata.wire import root_profile as wire
+from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform
+from datasluice.domain.catalog.operations import OperationId
+from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
+from datasluice.domain.catalog.udata import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
     SITE_RESOURCE_KIND,
@@ -21,12 +27,6 @@ from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteProfile,
     SiteReuseCsvQuery,
 )
-from datasluice.connectors.catalog.udata.wire import root_profile as wire
-from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
-from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform
-from datasluice.domain.catalog.operations import OperationId
-from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
     CatalogValidationError,

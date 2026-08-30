@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from typing import cast
@@ -287,13 +288,6 @@ def rdf_request(dataset_id: str, fmt: str | None) -> tuple[str, str, dict[str, s
         return "GET", f"{_DATASET_PATH}{identifier}/rdf", {}, None
     extension = _format_extension(fmt)
     media_type_for_format(extension)
-    if "/" in extension or "." in extension:
-        raise CatalogValidationError(
-            "The uData RDF format must be a short extension such as rdf, ttl, or jsonld.",
-            operation=_DATASETS_OPERATION_ID,
-            platform=PLATFORM.value,
-            safe_action="Pass a short RDF extension without slashes.",
-        )
     return "GET", f"{_DATASET_PATH}{identifier}/rdf.{_path_segment(extension)}", {}, None
 
 
@@ -484,8 +478,6 @@ def parse_text_document(
     The no-raw-body contract is preserved: only the approved media type, byte
     count, and SHA-256 digest are retained — never the document content.
     """
-    import hashlib
-
     if not isinstance(body, bytes):
         raise NativeCatalogError(
             "The uData document body must be buffered bytes.",
@@ -508,11 +500,12 @@ def parse_text_document(
             platform=PLATFORM.value,
             metadata={"safe_action": f"Request one of the approved media types: {media_type}."},
         )
+    digest = hashlib.sha256(body).hexdigest()
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
-        id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{negotiated}"),
-        payload={"media_type": negotiated, "size_bytes": len(body), "sha256": hashlib.sha256(body).hexdigest()},
+        id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{operation}:{digest}"),
+        payload={"media_type": negotiated, "size_bytes": len(body), "sha256": digest},
     )
 
 
@@ -542,7 +535,7 @@ def _path_segment(identifier: str) -> str:
 
 def _query(pairs: list[tuple[str, str]]) -> str:
     """Encode query pairs exactly, preserving repeated keys in order."""
-    return urlencode(pairs, doseq=True) if any(isinstance(v, list) for _, v in pairs) else urlencode(pairs)
+    return urlencode(pairs)
 
 
 __all__ = [

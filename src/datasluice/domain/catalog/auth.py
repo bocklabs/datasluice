@@ -144,7 +144,7 @@ def credential_scope(credentials: object | None) -> str:
         return "anonymous"
     dataclass_fields = getattr(credential, "__dataclass_fields__", None)
     if not isinstance(dataclass_fields, dict) or not dataclass_fields:
-        return "anonymous"
+        return f"{type(credential).__name__.lower()}-unrecognized"
     digest = hmac.new(_CREDENTIAL_SCOPE_KEY, digestmod=hashlib.sha256)
     for name in dataclass_fields:
         value = getattr(credential, name)

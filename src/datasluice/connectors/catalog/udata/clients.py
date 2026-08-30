@@ -20,7 +20,6 @@ from datasluice.connectors.catalog.udata.mapping import (
     shape_dataset_page,
     unimplemented_family,
 )
-from datasluice.connectors.catalog.udata.models.root_profile import ControlledStackAttestation
 from datasluice.connectors.catalog.udata.probes import (
     AsyncSiteVersionGate,
     SiteVersion,
@@ -53,6 +52,7 @@ from datasluice.domain.catalog.profiles import (
 )
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
+from datasluice.domain.catalog.udata import ControlledStackAttestation
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
     CatalogUnavailableError,
@@ -315,7 +315,7 @@ class _UDataClientCore:
                 _origin_checked_async_runner(async_probe_runner, checked_origin) if async_probe_runner else None
             ),
             namespace=checked_origin,
-            deployment_origin=checked_origin,
+            deployment_origin=checked_origin if checked_origin.startswith("https://") else None,
             ttl_seconds=capability_cache_ttl,
             clock=clock,
         )
@@ -566,7 +566,6 @@ class SyncUDataClient(_UDataClientCore):
         method: str,
         path: str,
         owning_operation: str,
-        query: Mapping[str, str] | None = None,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
@@ -629,15 +628,21 @@ class SyncUDataClient(_UDataClientCore):
                 safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
             )
 
+        recorded = False
+
         def send() -> RuntimeResponse:
+            nonlocal recorded
+            recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = sync_transport.send(request)
             except TransportFailure:
+                recorded = True
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
             after = self._breakers.record_response(key, response.status_code)
+            recorded = True
             self._emit_breaker_change(owning_id, before.open, after.open)
             return response
 
@@ -658,6 +663,9 @@ class SyncUDataClient(_UDataClientCore):
             if emit_success:
                 self._emit(owning_id, "failed")
             raise
+        finally:
+            if not recorded:
+                self._breakers.release_trial(key)
         try:
             self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
             if max_response_bytes is not None and len(response.body) > max_response_bytes:
@@ -704,7 +712,6 @@ class SyncUDataClient(_UDataClientCore):
         method: str,
         path: str,
         owning_operation: str,
-        query: Mapping[str, str] | None = None,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
@@ -721,7 +728,6 @@ class SyncUDataClient(_UDataClientCore):
             method=method,
             path=path,
             owning_operation=owning_operation,
-            query=query,
             headers=headers,
             json_body=json_body,
             raw_text=raw_text,
@@ -785,32 +791,41 @@ class SyncUDataClient(_UDataClientCore):
                 capability_state="unavailable",
                 safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
             )
-        before = self._breakers.inspect(key)
+        settled = False
         try:
-            response = cast(RuntimeStreamResponse, send_stream(request))
-        except TransportFailure:
-            after = self._breakers.record_transport_failure(key)
+            before = self._breakers.inspect(key)
+            try:
+                response = cast(RuntimeStreamResponse, send_stream(request))
+            except TransportFailure:
+                after = self._breakers.record_transport_failure(key)
+                self._emit_breaker_change(owning_id, before.open, after.open)
+                settled = True
+                self._emit(owning_id, "failed")
+                raise
+            if response.status_code >= 500:
+                after = self._breakers.record_transport_failure(key)
+                settled = True
+            elif response.status_code >= 400:
+                after = self._breakers.record_response(key, response.status_code)
+                settled = True
+            elif response.status_code >= 300:
+                after = self._breakers.record_success(key)
+                settled = True
+            else:
+                after = before
             self._emit_breaker_change(owning_id, before.open, after.open)
-            self._emit(owning_id, "failed")
-            raise
-        if response.status_code >= 500:
-            after = self._breakers.record_transport_failure(key)
-        elif response.status_code >= 400:
-            after = self._breakers.record_response(key, response.status_code)
-        elif response.status_code >= 300:
-            after = self._breakers.record_success(key)
-        else:
-            after = before
-        self._emit_breaker_change(owning_id, before.open, after.open)
-        try:
-            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
-            if response.status_code in {301, 302, 303, 307, 308}:
-                _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
-                return response
-        except BaseException:
-            response.close()
-            self._emit(owning_id, "failed")
-            raise
+            try:
+                self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
+                    return response
+            except BaseException:
+                response.close()
+                self._emit(owning_id, "failed")
+                raise
+        finally:
+            if not settled:
+                self._breakers.release_trial(key)
 
         settled = False
         consumed = False
@@ -1105,17 +1120,23 @@ class AsyncUDataClient(_UDataClientCore):
             )
         attempts = 0
 
+        recorded = False
+
         async def send() -> RuntimeResponse:
             nonlocal attempts
             attempts += 1
+            nonlocal recorded
+            recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = await async_transport.send(request)
             except TransportFailure:
+                recorded = True
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
             after = self._breakers.record_response(key, response.status_code)
+            recorded = True
             self._emit_breaker_change(owning_id, before.open, after.open)
             return response
 
@@ -1138,6 +1159,9 @@ class AsyncUDataClient(_UDataClientCore):
         except Exception:
             self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
             raise
+        finally:
+            if not recorded:
+                self._breakers.release_trial(key)
         self._emit(
             owning_id,
             "succeeded",
@@ -1152,7 +1176,6 @@ class AsyncUDataClient(_UDataClientCore):
         method: str,
         path: str,
         owning_operation: str,
-        query: Mapping[str, str] | None = None,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
@@ -1217,15 +1240,21 @@ class AsyncUDataClient(_UDataClientCore):
                 safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
             )
 
+        recorded = False
+
         async def send() -> RuntimeResponse:
+            nonlocal recorded
+            recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = await async_transport.send(request)
             except TransportFailure:
+                recorded = True
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
             after = self._breakers.record_response(key, response.status_code)
+            recorded = True
             self._emit_breaker_change(owning_id, before.open, after.open)
             return response
 
@@ -1246,6 +1275,9 @@ class AsyncUDataClient(_UDataClientCore):
             if emit_success:
                 self._emit(owning_id, "failed")
             raise
+        finally:
+            if not recorded:
+                self._breakers.release_trial(key)
         try:
             self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=scope)
             if max_response_bytes is not None and len(response.body) > max_response_bytes:
@@ -1292,7 +1324,6 @@ class AsyncUDataClient(_UDataClientCore):
         method: str,
         path: str,
         owning_operation: str,
-        query: Mapping[str, str] | None = None,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
         raw_text: bool = False,
@@ -1309,7 +1340,6 @@ class AsyncUDataClient(_UDataClientCore):
             method=method,
             path=path,
             owning_operation=owning_operation,
-            query=query,
             headers=headers,
             json_body=json_body,
             raw_text=raw_text,
@@ -1375,32 +1405,41 @@ class AsyncUDataClient(_UDataClientCore):
                 capability_state="unavailable",
                 safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
             )
-        before = self._breakers.inspect(key)
+        settled = False
         try:
-            response = cast(AsyncRuntimeStreamResponse, await send_stream(request))
-        except TransportFailure:
-            after = self._breakers.record_transport_failure(key)
+            before = self._breakers.inspect(key)
+            try:
+                response = cast(AsyncRuntimeStreamResponse, await send_stream(request))
+            except TransportFailure:
+                after = self._breakers.record_transport_failure(key)
+                self._emit_breaker_change(owning_id, before.open, after.open)
+                settled = True
+                self._emit(owning_id, "failed")
+                raise
+            if response.status_code >= 500:
+                after = self._breakers.record_transport_failure(key)
+                settled = True
+            elif response.status_code >= 400:
+                after = self._breakers.record_response(key, response.status_code)
+                settled = True
+            elif response.status_code >= 300:
+                after = self._breakers.record_success(key)
+                settled = True
+            else:
+                after = before
             self._emit_breaker_change(owning_id, before.open, after.open)
-            self._emit(owning_id, "failed")
-            raise
-        if response.status_code >= 500:
-            after = self._breakers.record_transport_failure(key)
-        elif response.status_code >= 400:
-            after = self._breakers.record_response(key, response.status_code)
-        elif response.status_code >= 300:
-            after = self._breakers.record_success(key)
-        else:
-            after = before
-        self._emit_breaker_change(owning_id, before.open, after.open)
-        try:
-            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
-            if response.status_code in {301, 302, 303, 307, 308}:
-                _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
-                return response
-        except BaseException:
-            await response.aclose()
-            self._emit(owning_id, "failed")
-            raise
+            try:
+                self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
+                    return response
+            except BaseException:
+                await response.aclose()
+                self._emit(owning_id, "failed")
+                raise
+        finally:
+            if not settled:
+                self._breakers.release_trial(key)
 
         settled = False
         consumed = False

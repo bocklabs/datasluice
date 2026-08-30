@@ -11,6 +11,7 @@ from datasluice.connectors.catalog.udata.probes import (
     parse_site_version,
     require_exact_version,
 )
+from datasluice.domain.catalog.auth import UDataCredential
 
 
 def _site_payload(version: str = "17.6.0") -> dict[str, object]:
@@ -87,3 +88,5 @@ def test_gate_caches_one_anonymous_probe_per_caller_identity() -> None:
     gate.invalidate()
     gate.require_current(None)
     assert transport.calls == 2
+    gate.require_current(UDataCredential(api_key="other-key"))
+    assert transport.calls == 3

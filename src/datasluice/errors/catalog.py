@@ -30,12 +30,10 @@ def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) ->
         if isinstance(node, (list, tuple)):
             return tuple(freeze(item) for item in node)
         if isinstance(node, float):
-            if not isfinite(node):
-                raise ValueError("Catalog error metadata numbers must be finite.")
+            return node if isfinite(node) else redact_string(repr(node))
+        if node is None or isinstance(node, (str, bool)) or isinstance(node, int):
             return node
-        if node is None or isinstance(node, (str, bool)) or type(node) is int:
-            return node
-        raise ValueError("Catalog error metadata values must be JSON-safe.")
+        return redact_string(repr(node))
 
     redacted = redact_mapping(value, _depth=_depth)
     return MappingProxyType({key: freeze(item) for key, item in redacted.items()})

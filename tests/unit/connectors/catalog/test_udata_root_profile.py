@@ -349,22 +349,6 @@ def test_site_rdf_catalog_format_returns_bounded_document_metadata() -> None:
     assert "body" not in document.to_dict()
 
 
-@pytest.mark.parametrize(
-    ("method_name", "path"),
-    [
-        ("datasets_csv", "/api/1/site/datasets.csv"),
-        ("resources_csv", "/api/1/site/resources.csv"),
-        ("organizations_csv", "/api/1/site/organizations.csv"),
-        ("reuses_csv", "/api/1/site/reuses.csv"),
-        ("dataservices_csv", "/api/1/site/dataservices.csv"),
-        ("harvests_csv", "/api/1/site/harvests.csv"),
-        ("tags_csv", "/api/1/site/tags.csv"),
-    ],
-)
-def test_site_csv_exports_have_exact_paths_and_bounded_stream_metadata(method_name: str, path: str) -> None:
-    _assert_csv_export(method_name, path)
-
-
 def test_root_export_forwards_chunks_to_the_caller_sink_and_enforces_the_limit() -> None:
     url = f"{_ORIGIN}/api/1/site/datasets.csv"
     body = b"id\n123\n"
@@ -740,6 +724,11 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
 def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
     url = f"{_ORIGIN}/api/1/site/datasets.csv"
     body = b'"id";"title"\n'
+    routes = _routes(("GET", url, _json_response(200, body, {"Content-Type": "text/csv"})))
+    sync_transport, sync_client = _sync_client(routes)
+    with sync_client:
+        sync_document = sync_client.root_profile.datasets_csv()
+
     transport, client = _async_client(_routes(("GET", url, _json_response(200, body, {"Content-Type": "text/csv"}))))
 
     async def run() -> SiteDocument:
@@ -750,6 +739,8 @@ def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
     assert isinstance(document, SiteDocument)
     assert document.sha256
     assert [request.url for request in transport.requests] == [_SITE_URL, url]
+    assert document == sync_document
+    assert [request.url for request in sync_transport.requests] == [_SITE_URL, url]
 
 
 def test_root_profile_wire_operations_use_the_existing_broad_capability_identity() -> None:

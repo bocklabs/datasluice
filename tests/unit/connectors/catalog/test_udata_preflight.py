@@ -6,32 +6,31 @@ import importlib.util
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-MODULE_PATH = Path(__file__).resolve().parents[4] / "scripts" / "extract_udata_oracle.py"
-_spec = importlib.util.spec_from_file_location("extract_udata_oracle", MODULE_PATH)
-assert _spec is not None and _spec.loader is not None
-oracle = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(oracle)
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
-CAPTURE_PATH = Path(__file__).resolve().parents[4] / "scripts" / "capture_udata_stack_evidence.py"
-_capture_spec = importlib.util.spec_from_file_location("capture_udata_stack_evidence", CAPTURE_PATH)
-assert _capture_spec is not None and _capture_spec.loader is not None
-capture = importlib.util.module_from_spec(_capture_spec)
-_capture_spec.loader.exec_module(capture)
 
-SEED_PATH = Path(__file__).resolve().parents[4] / "dev" / "udata-evidence" / "seeds" / "seed.py"
-_seed_spec = importlib.util.spec_from_file_location("seed_udata_evidence", SEED_PATH)
-assert _seed_spec is not None and _seed_spec.loader is not None
-seed = importlib.util.module_from_spec(_seed_spec)
-_seed_spec.loader.exec_module(seed)
+def _load_checkout_module(module_name: str, path: Path) -> Any:
+    if not path.is_file():
+        pytest.skip(f"{path} requires a full repository checkout", allow_module_level=True)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-ROUTE_CAPTURE_PATH = Path(__file__).resolve().parents[4] / "scripts" / "capture_udata_route_documents.py"
-_route_capture_spec = importlib.util.spec_from_file_location("capture_udata_routes", ROUTE_CAPTURE_PATH)
-assert _route_capture_spec is not None and _route_capture_spec.loader is not None
-route_capture = importlib.util.module_from_spec(_route_capture_spec)
-_route_capture_spec.loader.exec_module(route_capture)
+
+oracle = _load_checkout_module("extract_udata_oracle", _REPO_ROOT / "scripts" / "extract_udata_oracle.py")
+capture = _load_checkout_module(
+    "capture_udata_stack_evidence", _REPO_ROOT / "scripts" / "capture_udata_stack_evidence.py"
+)
+seed = _load_checkout_module("seed_udata_evidence", _REPO_ROOT / "dev" / "udata-evidence" / "seeds" / "seed.py")
+route_capture = _load_checkout_module(
+    "capture_udata_routes", _REPO_ROOT / "scripts" / "capture_udata_route_documents.py"
+)
 
 
 def _write_routes(path: Path, routes: list[dict[str, str]], *, commit: str | None = None) -> None:

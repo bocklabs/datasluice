@@ -22,6 +22,7 @@ from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetUpdateInput,
 )
 from datasluice.connectors.catalog.udata.wire import datasets as wire
+from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import NativeRecord
@@ -29,7 +30,9 @@ from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
+    CatalogConflictError,
     CatalogError,
+    CatalogNotFoundError,
     CatalogUnavailableError,
     CatalogValidationError,
     ForbiddenError,
@@ -116,17 +119,6 @@ class RouterTransport:
         if key not in self._routes:
             raise AssertionError(f"unexpected request {key}")
         return _respond(self._routes[key])
-
-    def _respond(self, body: object) -> RuntimeResponse:
-        if isinstance(body, bytes):
-            return RuntimeResponse(status_code=200, headers={"Content-Type": "application/atom+xml"}, body=body)
-        if isinstance(body, tuple) and body and isinstance(body[0], int):
-            status, payload = body[0], body[1]
-            headers = body[2] if len(body) > 2 else {}
-        else:
-            status, payload, headers = 200, body, {}
-        encoded = b"" if payload is None else payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-        return RuntimeResponse(status_code=status, headers=headers, body=encoded)
 
     def close(self) -> None:
         self.close_count += 1
@@ -423,8 +415,6 @@ def test_dataset_failures_map_to_typed_errors_without_retry_on_client_errors() -
             ("POST", "http://127.0.0.1:5640/api/1/datasets/"): (400, {"errors": {"title": "required"}}),
         }
     )
-    from datasluice.errors.catalog import CatalogConflictError, CatalogNotFoundError, CatalogValidationError
-
     transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
     with client:
         with pytest.raises(CatalogNotFoundError):
@@ -443,10 +433,10 @@ def test_dataset_failures_map_to_typed_errors_without_retry_on_client_errors() -
     audit_metadata = cast(dict[str, object], invalid_receipt["audit_metadata"])
     assert audit_metadata["status_code"] == 400
     assert invalid_receipt["outcome"] == "failed"
-    probes = [r for r in transport.requests if r.url.endswith("/api/1/site/")]
-    assert len(probes) == 1
-    probes = [r for r in transport.requests if r.url.endswith("/api/1/site/")]
-    assert len(probes) == 1
+    assert len([r for r in transport.requests if r.url.endswith("/api/1/site/")]) == 1
+    assert len([r for r in transport.requests if r.url.endswith("/datasets/missing/")]) == 1
+    assert len([r for r in transport.requests if r.url.endswith("/datasets/gone/")]) == 1
+    assert len([r for r in transport.requests if r.method == "POST"]) == 1
 
 
 def test_invalid_inputs_are_rejected_before_any_dispatch() -> None:
@@ -655,9 +645,6 @@ def test_unimplemented_native_operation_returns_typed_error() -> None:
     routes = _site_first({})
     transport, client = _sync_client_with_transport(routes)
     with client:
-        from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
-        from datasluice.errors.catalog import NativeCatalogError
-
         resources_op = next(op for op in declared_udata_profile().operations if "resource" in op.method)
         with pytest.raises(NativeCatalogError, match="tracer slice"):
             client.datasets_list(
@@ -1356,10 +1343,10 @@ def test_wr13_error_metadata_is_deeply_immutable_and_finite() -> None:
     nested = cast(Mapping[str, object], error.metadata["nested"])
     with pytest.raises(TypeError):
         cast(dict[str, object], nested)["value"] = 2
-    with pytest.raises(ValueError):
-        NativeCatalogError(
-            "bad response", operation="udata/api-v1.get-dataset", platform="udata", metadata={"value": float("nan")}
-        )
+    coerced = NativeCatalogError(
+        "bad response", operation="udata/api-v1.get-dataset", platform="udata", metadata={"value": float("nan")}
+    )
+    assert isinstance(coerced.metadata["value"], str)
 
 
 def transport_requests(client: SyncUDataClient) -> list[RuntimeRequest]:

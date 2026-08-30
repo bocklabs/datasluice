@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from codecs import getincrementaldecoder
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit
 
-from datasluice.connectors.catalog.udata.models.root_profile import (
+from datasluice.domain.catalog.udata import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
     SiteDataserviceCsvQuery,
@@ -285,6 +286,7 @@ def jsonld_context_request() -> tuple[str, str, dict[str, str], None]:
 def parse_site_profile(payload: object, *, operation: str = ROOT_OPERATION) -> SiteProfile:
     """Decode a typed site document while preserving unknown fields."""
     try:
+        _validate_json_value(payload)
         return SiteProfile.from_payload(payload, operation=operation)
     except ValueError as error:
         raise CatalogValidationError(
@@ -293,6 +295,18 @@ def parse_site_profile(payload: object, *, operation: str = ROOT_OPERATION) -> S
             platform="udata",
             safe_action="Verify the response against the pinned uData site schema.",
         ) from error
+
+
+def _validate_json_value(value: object) -> None:
+    """Reject JSON values that stdlib parsing can represent as non-finite numbers."""
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _validate_json_value(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_json_value(item)
+    elif isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("uData JSON values must be finite numbers.")
 
 
 def response_media_type(
@@ -568,8 +582,12 @@ def parse_jsonld_context(
     operation: str = ROOT_OPERATION,
 ) -> SiteDocument:
     """Decode the JSON-LD context into an immutable JSON-safe mapping."""
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"The uData JSON-LD context contains the non-JSON constant {value!r}.")
+
     try:
-        payload = json.loads(body)
+        payload = json.loads(body, parse_constant=reject_constant)
     except (TypeError, ValueError) as error:
         raise NativeCatalogError(
             "The uData JSON-LD context is not valid JSON.",

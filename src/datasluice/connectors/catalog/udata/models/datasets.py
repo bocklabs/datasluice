@@ -39,6 +39,7 @@ _V1_LIST_FILTERS = frozenset(
         "private",
     }
 )
+_V1_LIST_BOOLEAN_FILTERS = frozenset({"featured", "archived", "deleted", "private"})
 
 
 _RESERVED_CREATE_FIELDS = frozenset({"title", "description", "private", "tags"})
@@ -98,7 +99,9 @@ def _validate_sort(value: object, field: str) -> None:
         raise ValueError(f"{field} sort must be one of {sorted(_V1_LIST_SORTS)} with optional '-'.")
 
 
-def _validate_filters(value: Mapping[str, object], allowed: frozenset[str], field: str) -> None:
+def _validate_filters(
+    value: Mapping[str, object], allowed: frozenset[str], field: str, *, boolean_filters: frozenset[str]
+) -> None:
     for key, item in value.items():
         if not isinstance(key, str) or not key:
             raise ValueError(f"{field} filter names must be non-empty strings.")
@@ -108,6 +111,8 @@ def _validate_filters(value: Mapping[str, object], allowed: frozenset[str], fiel
             if not item or not all(isinstance(part, str) and part for part in item):
                 raise ValueError(f"{field} repeated filters must contain non-empty strings.")
         elif type(item) is bool:
+            if key not in boolean_filters:
+                raise ValueError(f"{field} filter {key!r} does not accept a boolean value.")
             continue
         elif not isinstance(item, str) or not item:
             raise ValueError(f"{field} filter values must be strings, booleans, or string tuples.")
@@ -140,7 +145,7 @@ class DatasetListQuery:
         if self.filters is not None:
             if not isinstance(self.filters, Mapping):
                 raise ValueError("Dataset list filters must be a mapping.")
-            _validate_filters(self.filters, _V1_LIST_FILTERS, "dataset list")
+            _validate_filters(self.filters, _V1_LIST_FILTERS, "dataset list", boolean_filters=_V1_LIST_BOOLEAN_FILTERS)
             object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
 
     def query_params(self) -> list[tuple[str, str]]:
@@ -368,7 +373,9 @@ class DatasetSearchQuery:
                 not isinstance(range_value, str) or range_value not in _V2_SEARCH_LAST_UPDATE_RANGES
             ):
                 raise ValueError("Dataset search last_update_range must be a documented range choice.")
-            _validate_filters(self.filters, _V2_SEARCH_FILTERS, "dataset search")
+            _validate_filters(
+                self.filters, _V2_SEARCH_FILTERS, "dataset search", boolean_filters=frozenset({"featured"})
+            )
             object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
 
     def query_params(self) -> list[tuple[str, str]]:

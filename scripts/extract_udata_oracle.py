@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 PINNED_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
-ALLOWED_METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"})
+ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -63,17 +63,22 @@ def _ancestor_packages(module: str) -> list[str]:
     return [".".join(parts[:index]) for index in range(1, len(parts))]
 
 
-def _module_imports(tree: ast.AST, module: str) -> set[str]:
+def _relative_base(module: str, level: int, *, is_package: bool) -> str:
+    """Resolve an import level against either a package or plain module."""
+    parts = module.split(".")
+    drop = level - 1 if is_package else level
+    return ".".join(parts[: max(len(parts) - drop, 1)])
+
+
+def _module_imports(tree: ast.AST, module: str, *, is_package: bool) -> set[str]:
     """Return every udata module imported anywhere inside a parsed module."""
     imports: set[str] = set()
-    parts = module.split(".")
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imports.update(alias.name for alias in node.names if alias.name.startswith("udata."))
         elif isinstance(node, ast.ImportFrom):
             if node.level:
-                package = parts[: max(len(parts) - node.level, 1)]
-                base = ".".join(package)
+                base = _relative_base(module, node.level, is_package=is_package)
                 if node.module:
                     imports.add(f"{base}.{node.module}")
                     for alias in node.names:
@@ -95,7 +100,7 @@ def _stock_modules(source_root: Path) -> list[str]:
         tree = ast.parse(initializer.read_text(encoding="utf-8"), filename=str(initializer))
     except (OSError, SyntaxError) as error:
         raise ReconciliationError("unable to parse uData API initializer") from error
-    queue = sorted(_module_imports(tree, "udata.api"))
+    queue = sorted(_module_imports(tree, "udata.api", is_package=True))
     closure: set[str] = set()
     while queue:
         module = queue.pop()
@@ -116,7 +121,7 @@ def _stock_modules(source_root: Path) -> list[str]:
                 candidate_tree = ast.parse(parse_path.read_text(encoding="utf-8"), filename=str(parse_path))
             except (OSError, SyntaxError) as error:
                 raise ReconciliationError(f"unable to parse stock module {candidate}") from error
-            queue.extend(sorted(_module_imports(candidate_tree, candidate)))
+            queue.extend(sorted(_module_imports(candidate_tree, candidate, is_package=not module_path.is_file())))
     return sorted(closure)
 
 
@@ -136,16 +141,14 @@ def _own_http_methods(class_def: ast.ClassDef) -> set[str]:
     }
 
 
-def _imported_names(tree: ast.AST, module: str) -> dict[str, str]:
+def _imported_names(tree: ast.AST, module: str, *, is_package: bool) -> dict[str, str]:
     """Map imported names to the absolute udata module providing them."""
     names: dict[str, str] = {}
-    parts = module.split(".")
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
         if node.level:
-            package = parts[: max(len(parts) - node.level, 1)]
-            base = ".".join(package)
+            base = _relative_base(module, node.level, is_package=is_package)
             absolute = f"{base}.{node.module}" if node.module else base
         elif node.module:
             absolute = node.module
@@ -169,12 +172,14 @@ def _resolve_base_class(
     tree: ast.Module,
     class_registry: dict[str, tuple[str, ast.Module, ast.ClassDef]],
     name: str,
+    *,
+    is_package: bool,
 ) -> tuple[str, ast.Module, ast.ClassDef] | None:
     """Resolve a route class base locally or through its importing statement."""
     local = _class_definitions(tree).get(name)
     if local is not None:
         return module, tree, local
-    imported = _imported_names(tree, module).get(name)
+    imported = _imported_names(tree, module, is_package=is_package).get(name)
     if imported is None:
         return None
     cached = class_registry.get(f"{imported}:{name}")
@@ -200,6 +205,8 @@ def _inherited_http_methods(
     class_def: ast.ClassDef,
     class_registry: dict[str, tuple[str, ast.Module, ast.ClassDef]],
     stack: frozenset[str],
+    *,
+    is_package: bool,
 ) -> set[str]:
     """Collect HTTP verbs from a class and every resolvable udata base class."""
     methods = _own_http_methods(class_def)
@@ -209,12 +216,21 @@ def _inherited_http_methods(
     for base in class_def.bases:
         if not isinstance(base, ast.Name):
             continue
-        resolved = _resolve_base_class(source_root, module, tree, class_registry, base.id)
+        resolved = _resolve_base_class(source_root, module, tree, class_registry, base.id, is_package=is_package)
         if resolved is None:
             continue
         base_module, base_tree, base_class = resolved
+        base_path = _module_path(source_root, base_module)
         methods.update(
-            _inherited_http_methods(source_root, base_module, base_tree, base_class, class_registry, stack | {key})
+            _inherited_http_methods(
+                source_root,
+                base_module,
+                base_tree,
+                base_class,
+                class_registry,
+                stack | {key},
+                is_package=base_path.name == "__init__.py",
+            )
         )
     return methods
 
@@ -310,7 +326,9 @@ def _module_routes(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             routes.extend(_decorated_routes(node, prefixes=prefixes, module=module, inherited=None))
         elif isinstance(node, ast.ClassDef):
-            inherited = _inherited_http_methods(source_root, module, tree, node, class_registry, frozenset())
+            inherited = _inherited_http_methods(
+                source_root, module, tree, node, class_registry, frozenset(), is_package=path.name == "__init__.py"
+            )
             routes.extend(_decorated_routes(node, prefixes=prefixes, module=module, inherited=inherited))
     return routes
 
@@ -514,6 +532,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the bounded local-only reconciliation or verification operation."""
     args = build_parser().parse_args(argv)
+    if args.exclude_namespace and any((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
+        raise SystemExit("namespace exclusion only applies to source extraction")
     if args.verify_preflight:
         print(json.dumps(verify_preflight(args.verify_preflight), sort_keys=True))
         return 0

@@ -29,7 +29,6 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
-    CatalogError,
     CatalogValidationError,
     ForbiddenError,
     NativeCatalogError,
@@ -46,7 +45,6 @@ if TYPE_CHECKING:
 def _require_mutation_permission(
     resolved: object,
     operation: str,
-    target_id: str,
     permissions: EffectivePermissions | None,
     *,
     admin: bool = False,
@@ -94,10 +92,7 @@ def _require_mutation_permission(
             capability_state="forbidden",
             safe_action="Build permission evidence with EffectivePermissions.for_credential using this credential.",
         )
-    try:
-        permissions.require(operation, roles={"admin"} if admin else frozenset())
-    except CatalogError as error:
-        raise error
+    permissions.require(operation, roles={"admin"} if admin else frozenset())
     return resolved
 
 
@@ -195,10 +190,7 @@ def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseExcep
 
 
 def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> None:
-    attached = _attach_receipt(error, receipt)
-    if attached is error:
-        raise error
-    raise attached from error
+    raise _attach_receipt(error, receipt)
 
 
 def _error_status(error: BaseException, response: object | None = None) -> int:
@@ -306,7 +298,7 @@ def _sync_create_dispatch(
     permissions: EffectivePermissions,
     mutation_policy: MutationPolicy | None,
 ) -> tuple[int, object, object]:
-    resolved = _require_mutation_permission(client._resolved_credential(), operation, client_input.title, permissions)
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
     _enforce_mutation_policy(operation, client_input.title, mutation_policy)
     method, path, _, body = wire.create_request(client_input)
     return client._dataset_call(
@@ -329,7 +321,7 @@ def _sync_update_dispatch(
     mutation_policy: MutationPolicy | None,
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
-    resolved = _require_mutation_permission(client._resolved_credential(), operation, identifier, permissions)
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy)
     method, path, _, body = wire.update_request(identifier, client_input)
     return client._dataset_call(
@@ -352,7 +344,7 @@ def _sync_delete_dispatch(
     operation: str,
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
-    resolved = _require_mutation_permission(client._resolved_credential(), operation, identifier, permissions)
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy, destructive=True)
     method, path, _, body = wire.delete_request(identifier, options)
     return client._dataset_call(
@@ -376,9 +368,7 @@ def _sync_feature_dispatch(
     featured: bool,
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
-    resolved = _require_mutation_permission(
-        client._resolved_credential(), operation, identifier, permissions, admin=True
-    )
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions, admin=True)
     _enforce_mutation_policy(operation, identifier, mutation_policy, destructive=not featured)
     method, path, _, body = wire.featured_request(identifier, featured)
     return client._dataset_call(
@@ -401,7 +391,7 @@ def _sync_extras_update_dispatch(
     mutation_policy: MutationPolicy | None,
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
-    resolved = _require_mutation_permission(client._resolved_credential(), operation, identifier, permissions)
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy)
     method, path, _, body = wire.v2_extras_put_request(identifier, client_input)
     return client._dataset_call(
@@ -424,7 +414,7 @@ def _sync_extras_delete_dispatch(
     mutation_policy: MutationPolicy | None,
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
-    resolved = _require_mutation_permission(client._resolved_credential(), operation, identifier, permissions)
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy, destructive=True)
     method, path, _, body = wire.v2_extras_delete_request(identifier, client_input)
     return client._dataset_call(
@@ -446,7 +436,7 @@ async def _async_create_dispatch(
     mutation_policy: MutationPolicy | None,
 ) -> tuple[int, object, object]:
     resolved = await client._resolved_credential_async()
-    _require_mutation_permission(resolved, operation, client_input.title, permissions)
+    _require_mutation_permission(resolved, operation, permissions)
     _enforce_mutation_policy(operation, client_input.title, mutation_policy)
     method, path, _, body = wire.create_request(client_input)
     return await client._dataset_call_async(
@@ -470,7 +460,7 @@ async def _async_update_dispatch(
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
     resolved = await client._resolved_credential_async()
-    _require_mutation_permission(resolved, operation, identifier, permissions)
+    _require_mutation_permission(resolved, operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy)
     method, path, _, body = wire.update_request(identifier, client_input)
     return await client._dataset_call_async(
@@ -494,7 +484,7 @@ async def _async_delete_dispatch(
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
     resolved = await client._resolved_credential_async()
-    _require_mutation_permission(resolved, operation, identifier, permissions)
+    _require_mutation_permission(resolved, operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy, destructive=True)
     method, path, _, body = wire.delete_request(identifier, options)
     return await client._dataset_call_async(
@@ -519,7 +509,7 @@ async def _async_feature_dispatch(
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
     resolved = await client._resolved_credential_async()
-    _require_mutation_permission(resolved, operation, identifier, permissions, admin=True)
+    _require_mutation_permission(resolved, operation, permissions, admin=True)
     _enforce_mutation_policy(operation, identifier, mutation_policy, destructive=not featured)
     method, path, _, body = wire.featured_request(identifier, featured)
     return await client._dataset_call_async(
@@ -543,7 +533,7 @@ async def _async_extras_update_dispatch(
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
     resolved = await client._resolved_credential_async()
-    _require_mutation_permission(resolved, operation, identifier, permissions)
+    _require_mutation_permission(resolved, operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy)
     method, path, _, body = wire.v2_extras_put_request(identifier, client_input)
     return await client._dataset_call_async(
@@ -567,7 +557,7 @@ async def _async_extras_delete_dispatch(
 ) -> tuple[int, object, object]:
     identifier = wire._required_id(dataset_id, operation=operation)
     resolved = await client._resolved_credential_async()
-    _require_mutation_permission(resolved, operation, identifier, permissions)
+    _require_mutation_permission(resolved, operation, permissions)
     _enforce_mutation_policy(operation, identifier, mutation_policy, destructive=True)
     method, path, _, body = wire.v2_extras_delete_request(identifier, client_input)
     return await client._dataset_call_async(

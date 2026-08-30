@@ -29,10 +29,17 @@ from datasluice.domain.catalog.ids import CatalogPlatform
 
 _ORIGINAL_ORIGIN = os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640")
 _parsed = urlparse(_ORIGINAL_ORIGIN)
-if _parsed.scheme != "http" or _parsed.hostname != "127.0.0.1" or _parsed.port != 5640:
-    raise SystemExit(
-        "Controlled uData evidence is restricted to the fixed loopback stack "
-        "http://127.0.0.1:5640; set UDATA_EVIDENCE_ORIGIN to the stock loopback origin."
+try:
+    _port = _parsed.port
+except ValueError:
+    _port = None
+if _parsed.scheme != "http" or _parsed.hostname != "127.0.0.1" or _port != 5640:
+    pytest.skip(
+        allow_module_level=True,
+        reason=(
+            "Controlled uData evidence is restricted to the fixed loopback stack "
+            "http://127.0.0.1:5640; set UDATA_EVIDENCE_ORIGIN to the stock loopback origin."
+        ),
     )
 
 ORIGIN = "http://127.0.0.1:5640"
@@ -71,7 +78,10 @@ def _compose_read(*args: str) -> str:
         check=False,
     )
     if completed.returncode != 0:
-        pytest.fail("controlled stack identity could not be verified")
+        pytest.fail(
+            f"controlled stack identity could not be verified: docker compose {' '.join(args)} "
+            f"failed with: {completed.stderr.strip()}"
+        )
     return completed.stdout.strip()
 
 
@@ -122,7 +132,8 @@ def test_controlled_stack_proves_exact_version_then_one_dataset_read() -> None:
         )
 
     assert envelope.page is not None
-    assert envelope.page.total_items is not None and envelope.page.total_items >= 0
+    assert envelope.page.total_items is not None and envelope.page.total_items > 0
+    assert envelope.items, "expected seeded datasets on the controlled stack"
     for record in envelope.items:
         assert record.id.value
 
@@ -135,6 +146,7 @@ def test_controlled_stack_proves_dataset_family_reads() -> None:
         v2_page = client.datasets.list_v2(DatasetListQuery(page=1, page_size=3))
 
     assert page.page is not None and page.page.total_items is not None
+    assert page.items, "expected seeded datasets on the controlled stack"
     assert isinstance(suggestions, tuple)
     assert v2_page.page is not None
 
@@ -201,6 +213,7 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
                                 confirmed=True, operation="udata/api-v1.delete-dataset", target=dataset_id
                             ),
                             concurrency=ConcurrencyPolicy(overwrite=True),
+                            destructive=True,
                         ),
                     )
                     cleanup_outcome = cleanup_result.receipt

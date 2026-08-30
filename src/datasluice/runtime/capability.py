@@ -143,12 +143,14 @@ class EffectiveCapabilityCache:
         except BaseException as exc:
             with self._lock:
                 flight.error = self._follower_failure(operation_id, exc)
-                self._sync_flights.pop(cache_key, None)
+                if self._sync_flights.get(cache_key) is flight:
+                    self._sync_flights.pop(cache_key, None)
                 flight.event.set()
             raise
         with self._lock:
             if flight.cancelled:
-                self._sync_flights.pop(cache_key, None)
+                if self._sync_flights.get(cache_key) is flight:
+                    self._sync_flights.pop(cache_key, None)
                 if flight.error is None:
                     flight.error = self._invalidation_error(operation_id)
                 if not flight.event.is_set():
@@ -156,7 +158,8 @@ class EffectiveCapabilityCache:
                 raise flight.error
             self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
             flight.profile = effective
-            self._sync_flights.pop(cache_key, None)
+            if self._sync_flights.get(cache_key) is flight:
+                self._sync_flights.pop(cache_key, None)
             flight.event.set()
         return effective
 
@@ -189,17 +192,20 @@ class EffectiveCapabilityCache:
             completed_at = self._clock()
         except BaseException as exc:
             with self._lock:
-                self._async_flights.pop(cache_key, None)
+                if self._async_flights.get(cache_key) is flight:
+                    self._async_flights.pop(cache_key, None)
                 if not flight.done():
                     flight.set_exception(self._follower_failure(operation_id, exc))
                     flight.exception()
             raise
         with self._lock:
             if flight.cancelled():
-                self._async_flights.pop(cache_key, None)
+                if self._async_flights.get(cache_key) is flight:
+                    self._async_flights.pop(cache_key, None)
                 raise self._invalidation_error(operation_id)
             self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
-            self._async_flights.pop(cache_key, None)
+            if self._async_flights.get(cache_key) is flight:
+                self._async_flights.pop(cache_key, None)
             if not flight.done():
                 flight.set_result(effective)
         return effective
@@ -265,9 +271,10 @@ class EffectiveCapabilityCache:
                     flight.error = self._invalidation_error(key[3])
                     flight.event.set()
                 self._sync_flights.clear()
-                for flight in self._async_flights.values():
+                for key, flight in list(self._async_flights.items()):
                     if not flight.done():
-                        flight.cancel()
+                        flight.set_exception(self._invalidation_error(key[3]))
+                        flight.exception()
                 self._async_flights.clear()
             else:
                 keys = [key for key in self._entries if key[3] == operation_id]
@@ -282,7 +289,8 @@ class EffectiveCapabilityCache:
                 for key, flight in tuple(self._async_flights.items()):
                     if key[3] == operation_id:
                         if not flight.done():
-                            flight.cancel()
+                            flight.set_exception(self._invalidation_error(operation_id))
+                            flight.exception()
                         self._async_flights.pop(key, None)
 
     def _follower_failure(self, operation_id: OperationId, exc: BaseException) -> BaseException:

@@ -12,7 +12,7 @@ from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
-    from datasluice.connectors.catalog.udata.models.root_profile import (
+    from datasluice.domain.catalog.udata import (
         SiteCatalogQuery,
         SiteDataserviceCsvQuery,
         SiteDatasetCsvQuery,

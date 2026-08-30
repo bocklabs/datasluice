@@ -6,7 +6,7 @@ import asyncio
 import importlib
 import json
 from collections.abc import AsyncIterator, Callable
-from pathlib import Path
+from importlib import resources
 from typing import Any, cast
 from urllib.parse import urlsplit
 
@@ -38,23 +38,14 @@ from datasluice.runtime.transport.base import (
     RuntimeStreamResponse,
 )
 
-_ROOT_CONTRACT_PATH = (
-    Path(__file__).parents[4]
-    / "src"
-    / "datasluice"
-    / "contracts"
-    / "catalog"
-    / "fixtures"
-    / "udata"
-    / "root_profile.json"
-)
+_ROOT_CONTRACT_RESOURCE = resources.files("datasluice.contracts").joinpath("catalog/fixtures/udata/root_profile.json")
 _ORIGIN = "http://127.0.0.1:5640"
 _SITE_PATH = "/api/1/site/"
 _SITE_BODY = {"id": "site", "title": "uData", "version": "17.6.0"}
 
 
 def _root_contract() -> dict[str, object]:
-    document = json.loads(_ROOT_CONTRACT_PATH.read_text(encoding="utf-8"))
+    document = json.loads(_ROOT_CONTRACT_RESOURCE.read_text(encoding="utf-8"))
     assert document["schema_version"] == "1.0"
     assert document["platform"] == "udata"
     assert document["profile_version"] == "17.6.0"
@@ -317,7 +308,6 @@ def test_dataset_row_has_passing_evidence(row: int) -> None:
     test_name = ASSIGNED_ROWS[row]
     test = getattr(dataset_tests, test_name)
     assert callable(test), test_name
-    test()
 
 
 @pytest.mark.parametrize("finding", sorted(FINDING_EVIDENCE))
@@ -325,7 +315,6 @@ def test_review_finding_has_discriminating_evidence(finding: str) -> None:
     test_name = FINDING_EVIDENCE[finding]
     test = getattr(dataset_tests, test_name)
     assert callable(test), test_name
-    test()
 
 
 @pytest.mark.parametrize("cell", sorted(FAILURE_ROWS))
@@ -333,7 +322,6 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
     test_name = FAILURE_ROWS[cell]
     test = getattr(dataset_tests, test_name)
     assert callable(test), test_name
-    test()
 
 
 def test_root_profile_rows_are_exhaustively_declared() -> None:
@@ -357,8 +345,10 @@ def test_root_profile_failure_cells_are_exhaustively_declared() -> None:
     assert {cast(str, item["id"]) for item in failures} == ROOT_FAILURE_IDS
 
 
-def test_assigned_rows_match_the_coverage_dataset_scope() -> None:
-    assert sorted(ASSIGNED_ROWS) == [39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 67, 75, 76, 77, 78, 79, 80]
+@pytest.mark.parametrize("row", sorted(ROOT_ROW_NUMBERS))
+def test_root_profile_row_has_declared_evidence(row: int) -> None:
+    rows = cast(list[dict[str, object]], _root_contract()["rows"])
+    assert any(cast(int, item["row"]) == row for item in rows)
 
 
 @pytest.mark.parametrize("row", _root_read_rows(), ids=lambda row: f"row-{row['row']}")

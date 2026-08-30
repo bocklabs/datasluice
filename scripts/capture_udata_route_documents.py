@@ -3,20 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
-_spec = importlib.util.spec_from_file_location(
-    "extract_udata_oracle", Path(__file__).with_name("extract_udata_oracle.py")
-)
-assert _spec is not None and _spec.loader is not None
-oracle = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(oracle)
 
 INFRASTRUCTURE_ENDPOINT_SUFFIXES = (".doc", ".specs")
 INFRASTRUCTURE_PATHS = frozenset(
@@ -42,7 +34,7 @@ def sanitize_origin(origin: str) -> str:
         or parsed.fragment
     ):
         raise ValueError("route capture origin must be http://127.0.0.1:5640")
-    return origin
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _exclusion(

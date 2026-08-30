@@ -383,9 +383,9 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "root_profile",
         ),
         "udata/api-v1.set_site": (
-            "SyncUDataServices",
-            "AsyncUDataServices",
-            "root_profile",
+            "SyncUDataRootProfileService",
+            "AsyncUDataRootProfileService",
+            "set_site",
         ),
         "udata/api-v1.dataset-list-search-show-create-update-delete": (
             "SyncUDataServices",
@@ -550,7 +550,11 @@ LOCKED_DATASET_ROUTE_OPERATIONS = frozenset(
     }
 )
 
-LOCKED_EXTRA_OPERATION_IDS = frozenset({"udata/api-v1.set_site"})
+LOCKED_EXTRA_OPERATION_IDS = LOCKED_DATASET_ROUTE_OPERATIONS & {"udata/api-v1.set_site"}
+
+PLATFORM_APPROVED_ROUTE_OPERATIONS = {
+    "udata": LOCKED_DATASET_ROUTE_OPERATIONS,
+}
 
 
 def _retired_word_violations() -> list[str]:
@@ -647,7 +651,7 @@ def _fixture_linkage_violations() -> list[str]:
             continue
         operations = {operation["id"] for operation in profile["operations"]}
         expected = {operation_id for operation_id in integrate_ids if operation_id.startswith(f"{platform}/")}
-        approved_routes = LOCKED_DATASET_ROUTE_OPERATIONS if platform == "udata" else frozenset()
+        approved_routes = PLATFORM_APPROVED_ROUTE_OPERATIONS.get(platform, frozenset())
         if operations != expected | approved_routes:
             violations.append(f"{platform} profile diverges from the locked matrix")
         cases_path = REPO_ROOT / "src/datasluice/contracts/catalog/fixtures" / platform / "cases.json"
@@ -963,7 +967,7 @@ def test_locked_coverage_matrix_matches_profiles_exactly() -> None:
         operations = [operation["id"] for operation in profile["operations"]]
         assert len(operations) == len(set(operations)), f"{platform} declares duplicate operations"
         platform_ids = {operation_id for operation_id in integrate_ids if operation_id.startswith(f"{platform}/")}
-        approved_routes = LOCKED_DATASET_ROUTE_OPERATIONS if platform == "udata" else frozenset()
+        approved_routes = PLATFORM_APPROVED_ROUTE_OPERATIONS.get(platform, frozenset())
         assert set(operations) == platform_ids | approved_routes, f"{platform} profile diverges from the locked matrix"
         locked_outs = {row for row in LOCKED_OPT_OUT_ROWS if row.startswith(f"{platform}.")}
         opt_out_ids = {entry["id"] for entry in profile.get("opt_out_operations", [])}

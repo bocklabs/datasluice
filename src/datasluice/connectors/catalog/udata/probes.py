@@ -19,6 +19,7 @@ SITE_PATH = "/api/1/site/"
 SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"
 _VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\Z")
 _SITE_KEYS = frozenset({"feed_size", "id", "keywords", "metrics", "title", "version"})
+_SITE_PROBE_MAX_BYTES = 64 * 1024
 _VERSION_STATE = Literal["exact", "missing", "malformed", "ambiguous"]
 
 
@@ -75,7 +76,7 @@ def parse_site_version(payload: object) -> SiteVersion:
     if not isinstance(payload, dict):
         raise UDataVersionError(
             version_state="malformed",
-            message="The uData site probe returned a JSON object payload.",
+            message="The uData site probe did not return a JSON object payload.",
             safe_action="Retry against a stock uData deployment serving /api/1/site/ JSON.",
         )
     unknown_version_shaped = [
@@ -178,7 +179,13 @@ class SiteVersionGate:
     def _probe(self) -> SiteVersion:
         if self._transport is None:
             raise RuntimeError("The strict site gate requires a synchronous transport.")
-        request = RuntimeRequest(method="GET", url=f"{self._origin}{SITE_PATH}", headers={}, body=None)
+        request = RuntimeRequest(
+            method="GET",
+            url=f"{self._origin}{SITE_PATH}",
+            headers={},
+            body=None,
+            max_response_bytes=_SITE_PROBE_MAX_BYTES,
+        )
         try:
             response = self._transport.send(request)
         except Exception as exc:
@@ -245,7 +252,13 @@ class AsyncSiteVersionGate(SiteVersionGate):
     async def _probe_async(self) -> SiteVersion:
         import json
 
-        request = RuntimeRequest(method="GET", url=f"{self._origin}{SITE_PATH}", headers={}, body=None)
+        request = RuntimeRequest(
+            method="GET",
+            url=f"{self._origin}{SITE_PATH}",
+            headers={},
+            body=None,
+            max_response_bytes=_SITE_PROBE_MAX_BYTES,
+        )
         try:
             response = await self._async_transport.send(request)
         except Exception as exc:

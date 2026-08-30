@@ -7,10 +7,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
-from datasluice.connectors.catalog.udata.models.root_profile import ControlledStackAttestation
 from datasluice.domain.catalog.auth import CredentialResolver, UDataCredential
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
+from datasluice.domain.catalog.udata import ControlledStackAttestation
 from datasluice.runtime.capability import AsyncProbeRunner, ProbeRunner
 from datasluice.runtime.clients import AsyncCatalogTransport, AsyncStreamingCatalogTransport
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS, DEFAULT_ROOT_EXPORT_MAX_BYTES

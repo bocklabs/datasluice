@@ -13,7 +13,6 @@ _EVIDENCE_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/eviden
 _CASES_PATH = _ROOT / "src/datasluice/contracts/catalog/fixtures/udata/cases.json"
 _EXPECTED_OPERATION_IDS = {
     "udata/api-v1.root-and-effective-profile-probe",
-    "udata/api-v1.set_site",
     "udata/api-v1.dataset-list-search-show-create-update-delete",
     "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
     "udata/api-v1.organizations-and-memberships",
@@ -38,7 +37,6 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
 
     assert isinstance(operations, list)
     operation_ids = [operation["id"] for operation in operations]
-    assert set(_EXPECTED_OPERATION_IDS).issubset(set(operation_ids))
     assert set(operation_ids) == _EXPECTED_OPERATION_IDS | _DATASET_ROUTE_OPERATION_IDS
     assert len(operation_ids) == len(set(operation_ids))
 

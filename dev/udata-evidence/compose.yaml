@@ -16,6 +16,13 @@ services:
       UDATA_SECRET_KEY: ${UDATA_SECRET_KEY:?set a disposable local secret in .env}
       UDATA_API_TOKEN_SECRET: ${UDATA_API_TOKEN_SECRET:?set a disposable local secret in .env}
       UDATA_EVIDENCE_STACK_NONCE: ${UDATA_EVIDENCE_STACK_NONCE:?set a disposable stack nonce in .env}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/api/1/site/', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 30
     depends_on:
       mongo:
         condition: service_healthy

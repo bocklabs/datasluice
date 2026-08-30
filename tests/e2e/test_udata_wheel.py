@@ -3,51 +3,21 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
-from datasluice.connectors.catalog.udata.clients import declared_udata_profile
 
-_ROOT = Path(__file__).resolve().parents[2]
-
-_DATASET_OPERATION_ID = next(
-    op_id
-    for op_id in declared_udata_profile().operations
-    if op_id.method == "dataset-list-search-show-create-update-delete"
-)
-
-
-def _build_wheel(tmp_path: Path) -> Path:
-    dist = tmp_path / "dist"
-    environment = dict(os.environ)
-    environment.setdefault("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
-    completed = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(dist)],
-        cwd=_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        env=environment,
-    )
-    assert completed.returncode == 0, completed.stderr
-    wheels = list(dist.glob("datasluice-*.whl"))
-    assert len(wheels) == 1
-    return wheels[0]
-
-
-def _unpacked_wheel_source(tmp_path: Path) -> Path:
-    wheel = _build_wheel(tmp_path)
+def _unpacked_wheel_source(built_wheel: Path, tmp_path: Path) -> Path:
     unpacked = tmp_path / "wheel"
-    with zipfile.ZipFile(wheel) as archive:
+    with zipfile.ZipFile(built_wheel) as archive:
         archive.extractall(unpacked)
     return unpacked
 
 
-def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(tmp_path: Path) -> None:
-    unpacked = _unpacked_wheel_source(tmp_path)
+def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel: Path, tmp_path: Path) -> None:
+    unpacked = _unpacked_wheel_source(built_wheel, tmp_path)
     package = unpacked / "datasluice" / "connectors" / "catalog" / "udata"
     profiles = unpacked / "datasluice" / "contracts" / "catalog" / "profiles"
     fixtures = unpacked / "datasluice" / "contracts" / "catalog" / "fixtures" / "udata"
@@ -65,9 +35,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(tmp_path: Pa
     assert profile["platform"] == "udata"
 
 
-def test_wheel_import_proves_the_tracer_path_from_installed_content(tmp_path: Path) -> None:
+def test_wheel_import_proves_the_tracer_path_from_installed_content(built_wheel: Path, tmp_path: Path) -> None:
     """A fresh interpreter importing only the unpacked wheel runs the full tracer."""
-    unpacked = _unpacked_wheel_source(tmp_path)
+    unpacked = _unpacked_wheel_source(built_wheel, tmp_path)
     script = """
 import json, sys
 sys.path.insert(0, sys.argv[1])

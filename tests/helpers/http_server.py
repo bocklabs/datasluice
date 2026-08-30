@@ -20,7 +20,7 @@ class MockResponse:
 
         Attributes:
             status: HTTP status code.
-    headers: Response headers (e.g. ``{"Location": ...}``).
+        headers: Response headers (e.g. ``{"Location": ...}``).
             extra_headers: Additional raw header pairs, including duplicate names.
             body: Raw response bytes.
             chunk_size: When set, the handler emits the body using HTTP/1.1
