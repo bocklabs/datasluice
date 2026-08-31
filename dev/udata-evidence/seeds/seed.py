@@ -14,7 +14,7 @@ from secrets import token_urlsafe
 from flask_security.utils import hash_password
 from udata.app import create_app, standalone
 from udata.core.organization.models import Member
-from udata.core.dataset.models import Dataset
+from udata.core.dataset.models import Dataset, Resource
 from udata.models import Organization, User, datastore
 
 app = standalone(create_app())
@@ -53,7 +53,28 @@ with app.app_context():
     ):
         dataset = Dataset.objects(slug=slug).first()
         if dataset is None:
-            Dataset(title=title, description="Controlled evidence dataset", organization=organization).save()
+            resource = Resource(
+                title=f"{title} resource",
+                url=f"https://example.com/{slug}.csv",
+                format="CSV",
+                mime="text/csv",
+            )
+            Dataset(
+                title=title,
+                description="Controlled evidence dataset",
+                organization=organization,
+                resources=[resource],
+            ).save()
+        elif not dataset.resources:
+            dataset.resources = [
+                Resource(
+                    title=f"{title} resource",
+                    url=f"https://example.com/{slug}.csv",
+                    format="CSV",
+                    mime="text/csv",
+                )
+            ]
+            dataset.save()
 """.strip()
 
 

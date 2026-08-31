@@ -360,6 +360,28 @@ def test_row76_v2_list_uses_v2_endpoint() -> None:
     assert envelope.page is not None
 
 
+def test_v2_dataset_collection_links_are_retained() -> None:
+    resources_link = {
+        "href": "/api/2/datasets/abc/resources/",
+        "rel": "resources",
+        "type": "application/json",
+        "total": 1,
+    }
+    community_link = {
+        "href": "/api/2/datasets/abc/community-resources/",
+        "rel": "community_resources",
+        "type": "application/json",
+        "total": 0,
+    }
+    item = _dataset_doc() | {"resources": resources_link, "community_resources": community_link}
+    routes = _site_first({("GET", "http://127.0.0.1:5640/api/2/datasets/?page=1&page_size=20"): _page_body([item])})
+    with _sync_client(routes) as client:
+        envelope = client.datasets.list_v2()
+
+    assert envelope.items[0].payload["resources"] == resources_link
+    assert envelope.items[0].payload["community_resources"] == community_link
+
+
 def test_row77_v2_get_dataset_exact_path() -> None:
     routes = _site_first({("GET", "http://127.0.0.1:5640/api/2/datasets/abc/"): _dataset_doc()})
     with _sync_client(routes) as client:

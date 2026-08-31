@@ -86,9 +86,8 @@ _DATASET_MAPPING_FIELDS = frozenset(
         "permissions",
     }
 )
-_DATASET_LIST_FIELDS = frozenset(
-    {"tags", "resources", "community_resources", "badges", "access_audiences", "contact_points"}
-)
+_DATASET_LINK_FIELDS = frozenset({"resources", "community_resources"})
+_DATASET_LIST_FIELDS = frozenset({"tags", "badges", "access_audiences", "contact_points"})
 _DATASET_DETAIL_FIELDS = frozenset(
     {
         "id",
@@ -142,6 +141,18 @@ def _invalid_field(field: str, operation: str, expected: str) -> CatalogValidati
         platform=PLATFORM.value,
         safe_action="Verify the response against the pinned source oracle.",
     )
+
+
+def _validate_dataset_link(value: object, *, field: str, operation: str) -> None:
+    if not isinstance(value, Mapping):
+        raise _invalid_field(field, operation, "a list of objects or a link object")
+    for key in ("href", "rel", "type"):
+        nested = value.get(key)
+        if not isinstance(nested, str) or not nested:
+            raise _invalid_field(f"{field}.{key}", operation, "a non-empty string")
+    total = value.get("total")
+    if type(total) is not int or total < 0:
+        raise _invalid_field(f"{field}.total", operation, "a non-negative integer")
 
 
 def _validate_json_value(value: object, *, operation: str, path: str) -> None:
@@ -218,7 +229,9 @@ def _validate_dataset_fields(payload: Mapping[str, object], *, operation: str, d
         elif field in _DATASET_MAPPING_FIELDS:
             if value is not None and not isinstance(value, Mapping):
                 raise _invalid_field(field, operation, "an object or null")
-        elif field in _DATASET_LIST_FIELDS:
+        elif field in _DATASET_LINK_FIELDS and operation.startswith("udata/api-v2."):
+            _validate_dataset_link(value, field=field, operation=operation)
+        elif field in _DATASET_LIST_FIELDS or field in _DATASET_LINK_FIELDS:
             if not isinstance(value, list):
                 raise _invalid_field(field, operation, "a list")
             if field == "tags" and not all(isinstance(tag, str) and tag for tag in value):
