@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
+import subprocess
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from importlib import resources
+from pathlib import Path
 from time import monotonic, sleep
 from types import TracebackType
 from typing import Self, cast
@@ -52,7 +57,6 @@ from datasluice.domain.catalog.profiles import (
 )
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
-from datasluice.domain.catalog.udata import ControlledStackAttestation
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
     CatalogUnavailableError,
@@ -98,6 +102,22 @@ from datasluice.runtime.transport.base import (
 
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
+_CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
+_CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
+_CONTROLLED_COMPOSE_SHA256 = "f7acbcd1ea2f88f7b9361cbfadbd46e62be82bd707538f22f0615796e8bf09a3"
+_CONTROLLED_DOCKERFILE_SHA256 = "6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b"
+_CONTROLLED_IMAGE_DIGESTS = (
+    "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+    "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+    "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+    "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+    "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+)
+_CONTROLLED_EVIDENCE_ROOT = Path(__file__).resolve().parents[5] / "dev" / "udata-evidence"
+_CONTROLLED_COMPOSE_FILE = _CONTROLLED_EVIDENCE_ROOT / "compose.yaml"
+_CONTROLLED_ENV_FILE = _CONTROLLED_EVIDENCE_ROOT / ".env"
+_CONTROLLED_AUTHORITY_TTL_SECONDS = 60.0
+_CONTROLLED_TRANSPORT_SEAL = object()
 
 _STATUS_RESPONSE_CLASSES = {
     401: ProbeResponseClass.UNAUTHORIZED,
@@ -232,18 +252,185 @@ def _page_request(
     return RuntimeRequest(method="GET", url=url, headers={}, body=None)
 
 
-class _ControlledSyncTransport:
-    """Bind verified controlled-stack evidence to one synchronous transport."""
+@dataclass(frozen=True, slots=True)
+class _ControlledStackEvidence:
+    """Bounded non-secret facts observed from the controlled stack."""
 
-    __slots__ = ("_transport", "_attestation")
-
-    def __init__(self, transport: CatalogTransport, attestation: ControlledStackAttestation) -> None:
-        self._transport = transport
-        self._attestation = attestation
+    nonce_sha256: str = field(repr=False)
+    site_id: str
 
     @property
-    def attestation(self) -> ControlledStackAttestation:
-        return self._attestation
+    def digest(self) -> str:
+        """Return a stable digest without exposing the stack nonce."""
+        return hashlib.sha256(
+            "|".join(
+                (
+                    _CONTROLLED_SOURCE_COMMIT,
+                    _CONTROLLED_COMPOSE_SHA256,
+                    _CONTROLLED_DOCKERFILE_SHA256,
+                    *_CONTROLLED_IMAGE_DIGESTS,
+                    self.nonce_sha256,
+                    self.site_id,
+                )
+            ).encode()
+        ).hexdigest()
+
+
+def _controlled_error(message: str) -> CatalogValidationError:
+    return CatalogValidationError(
+        message,
+        operation="udata/api-v1.set_site",
+        platform=PLATFORM.value,
+        safe_action="Use the verified disposable uData evidence stack.",
+    )
+
+
+def _compose_read(*args: str) -> str:
+    if not _CONTROLLED_COMPOSE_FILE.is_file() or not _CONTROLLED_ENV_FILE.is_file():
+        raise _controlled_error("The controlled uData evidence configuration is unavailable.")
+    try:
+        completed = subprocess.run(
+            ["docker", "compose", "--env-file", str(_CONTROLLED_ENV_FILE), "-f", str(_CONTROLLED_COMPOSE_FILE), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        raise _controlled_error("The controlled uData stack cannot be verified.") from error
+    if completed.returncode != 0:
+        raise _controlled_error("The controlled uData stack identity check failed.")
+    return completed.stdout.strip()
+
+
+def _verify_controlled_source_and_nonce() -> str:
+    nonce = os.environ.get("UDATA_EVIDENCE_STACK_NONCE")
+    if not nonce:
+        raise _controlled_error("The controlled uData stack nonce is unavailable.")
+    try:
+        compose_text = _CONTROLLED_COMPOSE_FILE.read_text(encoding="utf-8")
+        dockerfile_text = _CONTROLLED_EVIDENCE_ROOT.joinpath("Dockerfile").read_text(encoding="utf-8")
+    except OSError as error:
+        raise _controlled_error("The controlled uData source identity is unavailable.") from error
+    if hashlib.sha256(compose_text.encode()).hexdigest() != _CONTROLLED_COMPOSE_SHA256:
+        raise _controlled_error("The controlled uData compose identity does not match the approved source.")
+    if hashlib.sha256(dockerfile_text.encode()).hexdigest() != _CONTROLLED_DOCKERFILE_SHA256:
+        raise _controlled_error("The controlled uData image identity does not match the approved source.")
+    services = _compose_read("ps", "--status", "running", "--services").splitlines()
+    expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
+    if len(services) != len(expected_services) or set(services) != expected_services:
+        raise _controlled_error("The running services do not match the controlled uData stack.")
+    if _compose_read("port", "udata", "7000") != "127.0.0.1:5640":
+        raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
+    if (
+        _compose_read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD")
+        != _CONTROLLED_SOURCE_COMMIT
+    ):
+        raise _controlled_error("The controlled uData service source does not match the approved commit.")
+    if _compose_read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
+        raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
+    return hashlib.sha256(nonce.encode()).hexdigest()
+
+
+def _controlled_peer_evidence(response: RuntimeResponse) -> str:
+    content_type = _response_header(response, "content-type")
+    if (
+        not 200 <= response.status_code < 300
+        or content_type is None
+        or content_type.split(";", 1)[0] != "application/json"
+    ):
+        raise _controlled_error("The controlled uData peer did not return its expected site identity.")
+    try:
+        payload = json.loads(response.body)
+    except (TypeError, ValueError) as error:
+        raise _controlled_error("The controlled uData peer returned an invalid site identity.") from error
+    if (
+        not isinstance(payload, Mapping)
+        or not isinstance(payload.get("id"), str)
+        or not payload["id"]
+        or payload.get("version") != "17.6.0"
+    ):
+        raise _controlled_error("The controlled uData peer did not match the seeded site identity.")
+    return payload["id"]
+
+
+def _verify_controlled_sync_stack(transport: CatalogTransport) -> _ControlledStackEvidence:
+    nonce_sha256 = _verify_controlled_source_and_nonce()
+    response = transport.send(
+        RuntimeRequest(
+            method="GET",
+            url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
+            headers={},
+            redirect_policy=RedirectPolicy.NO_FOLLOW,
+            max_response_bytes=8192,
+        )
+    )
+    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=_controlled_peer_evidence(response))
+
+
+async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _ControlledStackEvidence:
+    nonce_sha256 = _verify_controlled_source_and_nonce()
+    response = await transport.send(
+        RuntimeRequest(
+            method="GET",
+            url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
+            headers={},
+            redirect_policy=RedirectPolicy.NO_FOLLOW,
+            max_response_bytes=8192,
+        )
+    )
+    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=_controlled_peer_evidence(response))
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledSyncAuthority:
+    """Bind one verified stack identity to one stock synchronous transport."""
+
+    transport: CatalogTransport = field(repr=False, compare=False)
+    evidence: _ControlledStackEvidence
+    verify: Callable[[CatalogTransport], _ControlledStackEvidence] = field(repr=False, compare=False)
+    issued_at: float = field(repr=False, compare=False)
+
+    def revalidate(self, transport: CatalogTransport, *, origin: str, site_id: str) -> bool:
+        """Confirm the exact transport still reaches the originally verified peer."""
+        return (
+            transport is self.transport
+            and origin == _CONTROLLED_ORIGIN
+            and monotonic() - self.issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            and self.verify(transport) == self.evidence
+            and self.evidence.site_id == site_id
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledAsyncAuthority:
+    """Bind one verified stack identity to one stock asynchronous transport."""
+
+    transport: AsyncCatalogTransport = field(repr=False, compare=False)
+    evidence: _ControlledStackEvidence
+    verify: Callable[[AsyncCatalogTransport], Awaitable[_ControlledStackEvidence]] = field(repr=False, compare=False)
+    issued_at: float = field(repr=False, compare=False)
+
+    async def revalidate(self, transport: AsyncCatalogTransport, *, origin: str, site_id: str) -> bool:
+        """Confirm the exact transport still reaches the originally verified peer."""
+        return (
+            transport is self.transport
+            and origin == _CONTROLLED_ORIGIN
+            and monotonic() - self.issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            and await self.verify(transport) == self.evidence
+            and self.evidence.site_id == site_id
+        )
+
+
+class _ControlledSyncTransport:
+    """Carry authority that can only be created with a verified stock transport."""
+
+    __slots__ = ("_transport", "_authority")
+
+    def __init__(self, transport: CatalogTransport, authority: _ControlledSyncAuthority, *, _seal: object) -> None:
+        if _seal is not _CONTROLLED_TRANSPORT_SEAL:
+            raise TypeError("Controlled uData transports are created only by the evidence factory.")
+        self._transport = transport
+        self._authority = authority
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         return self._transport.send(request)
@@ -254,19 +441,33 @@ class _ControlledSyncTransport:
     def close(self) -> None:
         self._transport.close()
 
-
-class _ControlledAsyncTransport:
-    """Bind verified controlled-stack evidence to one asynchronous transport."""
-
-    __slots__ = ("_transport", "_attestation")
-
-    def __init__(self, transport: AsyncCatalogTransport, attestation: ControlledStackAttestation) -> None:
-        self._transport = transport
-        self._attestation = attestation
+    def revalidate(self, *, origin: str, site_id: str) -> bool:
+        """Revalidate this exact binding immediately before a controlled PATCH."""
+        return self._authority.revalidate(self._transport, origin=origin, site_id=site_id)
 
     @property
-    def attestation(self) -> ControlledStackAttestation:
-        return self._attestation
+    def evidence_digest(self) -> str:
+        """Return only the redacted controlled-stack evidence digest."""
+        return self._authority.evidence.digest
+
+    @property
+    def site_id(self) -> str:
+        """Return the peer identity bound during the initial live verification."""
+        return self._authority.evidence.site_id
+
+
+class _ControlledAsyncTransport:
+    """Carry authority that can only be created with a verified stock transport."""
+
+    __slots__ = ("_transport", "_authority")
+
+    def __init__(
+        self, transport: AsyncCatalogTransport, authority: _ControlledAsyncAuthority, *, _seal: object
+    ) -> None:
+        if _seal is not _CONTROLLED_TRANSPORT_SEAL:
+            raise TypeError("Controlled uData transports are created only by the evidence factory.")
+        self._transport = transport
+        self._authority = authority
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
         return await self._transport.send(request)
@@ -276,6 +477,20 @@ class _ControlledAsyncTransport:
 
     async def aclose(self) -> None:
         await self._transport.aclose()
+
+    async def revalidate(self, *, origin: str, site_id: str) -> bool:
+        """Revalidate this exact binding immediately before a controlled PATCH."""
+        return await self._authority.revalidate(self._transport, origin=origin, site_id=site_id)
+
+    @property
+    def evidence_digest(self) -> str:
+        """Return only the redacted controlled-stack evidence digest."""
+        return self._authority.evidence.digest
+
+    @property
+    def site_id(self) -> str:
+        """Return the peer identity bound during the initial live verification."""
+        return self._authority.evidence.site_id
 
 
 class _UDataClientCore:
@@ -348,9 +563,7 @@ class _UDataClientCore:
         if type(root_export_max_bytes) is not int or root_export_max_bytes < 1:
             raise ValueError("uData root export byte limits must be positive integers.")
         self._root_export_max_bytes = root_export_max_bytes
-        controlled_binding = isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport))
-        self._controlled_stack_attestation = transport.attestation if controlled_binding else None
-        self._controlled_transport = controlled_binding
+        self._controlled_transport = isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport))
         self._clock = clock
         self._emitter = emitter or EventEmitter()
         self._closed = False
@@ -372,6 +585,38 @@ class _UDataClientCore:
     def credentials(self) -> object | None:
         """Expose the injected caller-owned credential resolver or provider."""
         return self._credentials
+
+    def _has_controlled_stack_authority(self) -> bool:
+        """Return whether this client came from the controlled evidence factory."""
+        return self._controlled_transport
+
+    def _controlled_evidence_digest(self) -> str | None:
+        """Return the bound redacted evidence digest without exposing control internals."""
+        transport = self._transport
+        if isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport)):
+            return transport.evidence_digest
+        return None
+
+    def _controlled_site_id(self) -> str | None:
+        """Return the internally bound controlled peer identity when present."""
+        transport = self._transport
+        if isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport)):
+            return transport.site_id
+        return None
+
+    def _revalidate_controlled_sync_stack(self, *, site_id: str) -> bool:
+        """Revalidate the synchronous authority at the mutation dispatch boundary."""
+        transport = self._transport
+        return isinstance(transport, _ControlledSyncTransport) and transport.revalidate(
+            origin=self._origin, site_id=site_id
+        )
+
+    async def _revalidate_controlled_async_stack(self, *, site_id: str) -> bool:
+        """Revalidate the asynchronous authority at the mutation dispatch boundary."""
+        transport = self._transport
+        return isinstance(transport, _ControlledAsyncTransport) and await transport.revalidate(
+            origin=self._origin, site_id=site_id
+        )
 
     def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
         self._emitter.record(
@@ -1537,8 +1782,6 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
     override = settings.sync_transport
     if override is None:
         transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
-        if settings.controlled_stack_attestation is not None:
-            transport = _ControlledSyncTransport(transport, settings.controlled_stack_attestation)
         owns_transport = True
     elif hasattr(override, "send"):
         transport = cast(CatalogTransport, override)
@@ -1569,8 +1812,6 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
     override = settings.async_transport
     if override is None:
         transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
-        if settings.controlled_stack_attestation is not None:
-            transport = _ControlledAsyncTransport(transport, settings.controlled_stack_attestation)
         owns_transport = True
     elif hasattr(override, "send"):
         transport = cast(AsyncCatalogTransport, override)
@@ -1591,5 +1832,76 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
         capability_cache_ttl=settings.capability_cache_ttl,
         root_export_max_bytes=settings.root_export_max_bytes,
         owns_transport=owns_transport,
+        async_probe_runner=settings.async_probe_runner,
+    )
+
+
+def _require_controlled_settings(settings: UDataClientSettings) -> None:
+    if settings.base_url != _CONTROLLED_ORIGIN:
+        raise _controlled_error("Controlled uData mutations require the approved loopback origin.")
+    if settings.sync_transport is not None or settings.async_transport is not None:
+        raise _controlled_error("Controlled uData mutations cannot use caller-provided transports.")
+
+
+def create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
+    """Construct a stock synchronous client with a live-verified mutation authority."""
+    require_extra("udata")
+    _require_controlled_settings(settings)
+    transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
+    verify = _verify_controlled_sync_stack
+    try:
+        authority = _ControlledSyncAuthority(
+            transport=transport,
+            evidence=verify(transport),
+            verify=verify,
+            issued_at=monotonic(),
+        )
+    except BaseException:
+        transport.close()
+        raise
+    return SyncUDataClient(
+        _ControlledSyncTransport(transport, authority, _seal=_CONTROLLED_TRANSPORT_SEAL),
+        declared_udata_profile(),
+        origin=settings.base_url,
+        credentials=settings.credential,
+        budget=settings.budget,
+        breakers=settings.breakers,
+        max_attempts=settings.max_attempts,
+        retry_sleep=settings.retry_sleep if settings.retry_sleep is not None else sleep,
+        capability_cache_ttl=settings.capability_cache_ttl,
+        root_export_max_bytes=settings.root_export_max_bytes,
+        owns_transport=True,
+        probe_runner=settings.probe_runner,
+    )
+
+
+async def create_controlled_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
+    """Construct a stock asynchronous client with a live-verified mutation authority."""
+    require_extra("udata")
+    _require_controlled_settings(settings)
+    transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
+    verify = _verify_controlled_async_stack
+    try:
+        authority = _ControlledAsyncAuthority(
+            transport=transport,
+            evidence=await verify(transport),
+            verify=verify,
+            issued_at=monotonic(),
+        )
+    except BaseException:
+        await transport.aclose()
+        raise
+    return AsyncUDataClient(
+        _ControlledAsyncTransport(transport, authority, _seal=_CONTROLLED_TRANSPORT_SEAL),
+        declared_udata_profile(),
+        origin=settings.base_url,
+        credentials=settings.credential,
+        budget=settings.budget,
+        breakers=settings.breakers,
+        max_attempts=settings.max_attempts,
+        retry_sleep=settings.async_retry_sleep if settings.async_retry_sleep is not None else asyncio.sleep,
+        capability_cache_ttl=settings.capability_cache_ttl,
+        root_export_max_bytes=settings.root_export_max_bytes,
+        owns_transport=True,
         async_probe_runner=settings.async_probe_runner,
     )

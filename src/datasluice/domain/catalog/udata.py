@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import cast
-from urllib.parse import urlsplit
 
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import _freeze_json, _thaw_json
@@ -17,7 +15,6 @@ ROOT_OPERATION = "udata/api-v1.root-and-effective-profile-probe"
 SET_SITE_OPERATION = "udata/api-v1.set_site"
 SITE_RESOURCE_KIND = ResourceKind("site")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _VERSION = re.compile(r"^[0-9]+[.][0-9]+[.][0-9]+$")
 _SITE_STRING_FIELDS = frozenset({"id", "title", "version"})
 _SITE_LIST_FIELDS = frozenset({"keywords", "datasets_blocs", "reuses_blocs", "dataservices_blocs"})
@@ -135,18 +132,6 @@ _REUSE_TOPICS = frozenset(
         "others",
     }
 )
-_CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
-_CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
-_CONTROLLED_COMPOSE_SHA256 = "f7acbcd1ea2f88f7b9361cbfadbd46e62be82bd707538f22f0615796e8bf09a3"
-_CONTROLLED_DOCKERFILE_SHA256 = "6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b"
-_CONTROLLED_IMAGE_DIGESTS = (
-    "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
-    "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
-    "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
-    "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-    "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
-)
-_ATTESTATION_SEAL = object()
 
 
 def _freeze_mapping(value: Mapping[str, object], path: str) -> Mapping[str, object]:
@@ -197,115 +182,6 @@ def _validate_geoid(value: str) -> None:
         or ("@" in value and (not validity or any(char.isspace() for char in validity)))
     ):
         raise ValueError("uData geozone filters require a valid GeoID.")
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ControlledStackAttestation:
-    """Evidence identity required before a uData site mutation can dispatch."""
-
-    origin: str = field(repr=False)
-    source_commit: str
-    compose_sha256: str
-    dockerfile_sha256: str
-    image_digests: tuple[str, ...]
-    nonce_sha256: str = field(repr=False)
-    site_id: str
-
-    def __init__(
-        self,
-        *,
-        origin: str,
-        source_commit: str,
-        compose_sha256: str,
-        dockerfile_sha256: str,
-        image_digests: tuple[str, ...],
-        nonce_sha256: str,
-        site_id: str,
-        _seal: object | None = None,
-    ) -> None:
-        if _seal is not _ATTESTATION_SEAL:
-            raise TypeError("Controlled uData attestations must come from the verified evidence constructor.")
-        object.__setattr__(self, "origin", origin)
-        object.__setattr__(self, "source_commit", source_commit)
-        object.__setattr__(self, "compose_sha256", compose_sha256)
-        object.__setattr__(self, "dockerfile_sha256", dockerfile_sha256)
-        object.__setattr__(self, "image_digests", image_digests)
-        object.__setattr__(self, "nonce_sha256", nonce_sha256)
-        object.__setattr__(self, "site_id", site_id)
-        self._validate()
-
-    def _validate(self) -> None:
-        if self.origin != _CONTROLLED_ORIGIN:
-            raise ValueError("Controlled uData evidence must use the approved loopback origin.")
-        if _COMMIT.fullmatch(self.source_commit) is None or self.source_commit != _CONTROLLED_SOURCE_COMMIT:
-            raise ValueError("Controlled uData evidence must use the pinned source commit.")
-        if self.compose_sha256 != _CONTROLLED_COMPOSE_SHA256:
-            raise ValueError("Controlled uData evidence must use the approved compose identity.")
-        if self.dockerfile_sha256 != _CONTROLLED_DOCKERFILE_SHA256:
-            raise ValueError("Controlled uData evidence must use the approved image build identity.")
-        if not isinstance(self.image_digests, tuple) or self.image_digests != _CONTROLLED_IMAGE_DIGESTS:
-            raise ValueError("Controlled uData evidence must use the approved dependency image identities.")
-        if _SHA256.fullmatch(self.nonce_sha256) is None:
-            raise ValueError("Controlled uData evidence must contain a nonce digest.")
-        if not isinstance(self.site_id, str) or not self.site_id:
-            raise ValueError("Controlled uData evidence must identify the target site.")
-        parsed = urlsplit(self.origin)
-        if (
-            parsed.scheme != "http"
-            or parsed.hostname != "127.0.0.1"
-            or parsed.port != 5640
-            or parsed.username
-            or parsed.password
-            or parsed.path not in {"", "/"}
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("Controlled uData evidence must identify the approved loopback transport target.")
-
-    @classmethod
-    def _from_verified_values(
-        cls,
-        *,
-        origin: str,
-        source_commit: str,
-        compose_sha256: str,
-        dockerfile_sha256: str,
-        image_digests: tuple[str, ...],
-        nonce: str,
-        site_id: str,
-    ) -> ControlledStackAttestation:
-        """Create an attestation while retaining only the nonce digest."""
-        if not isinstance(nonce, str) or not nonce:
-            raise ValueError("Controlled uData evidence requires a non-empty stack nonce.")
-        return cls(
-            origin=origin,
-            source_commit=source_commit,
-            compose_sha256=compose_sha256,
-            dockerfile_sha256=dockerfile_sha256,
-            image_digests=image_digests,
-            nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
-            site_id=site_id,
-            _seal=_ATTESTATION_SEAL,
-        )
-
-    @property
-    def evidence_digest(self) -> str:
-        """Return a stable digest of the non-secret controlled-stack identity."""
-        value = "|".join(
-            (
-                self.source_commit,
-                self.compose_sha256,
-                self.dockerfile_sha256,
-                *self.image_digests,
-                self.nonce_sha256,
-                self.site_id,
-            )
-        )
-        return hashlib.sha256(value.encode()).hexdigest()
-
-    def matches(self, *, origin: str, site_id: str) -> bool:
-        """Return whether this evidence binds the current transport and decoded site."""
-        return self.origin == origin == _CONTROLLED_ORIGIN and self.site_id == site_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -942,7 +818,6 @@ SitePatchResult = SiteMutationResult
 SiteMutationOutcome = MutationReceipt
 
 __all__ = [
-    "ControlledStackAttestation",
     "ROOT_OPERATION",
     "SET_SITE_OPERATION",
     "SITE_RESOURCE_KIND",

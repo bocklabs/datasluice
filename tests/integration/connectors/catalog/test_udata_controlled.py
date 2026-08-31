@@ -3,37 +3,23 @@
 from __future__ import annotations
 
 import os
-import subprocess
-from hashlib import sha256
-from pathlib import Path
-from urllib.parse import urlparse
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import (
     create_async_client,
+    create_controlled_async_client,
+    create_controlled_sync_client,
     create_sync_client,
     declared_udata_profile,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
-from datasluice.connectors.catalog.udata.models.root_profile import (
-    ControlledStackAttestation,
-    SiteMutationResult,
-    SitePatchInput,
-    SiteProfile,
-)
+from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
-from datasluice.connectors.catalog.udata.wire.root_profile import ROOT_OPERATIONS
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogPlatform
 
-_ORIGINAL_ORIGIN = os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640")
-_parsed = urlparse(_ORIGINAL_ORIGIN)
-try:
-    _port = _parsed.port
-except ValueError:
-    _port = None
-if _parsed.scheme != "http" or _parsed.hostname != "127.0.0.1" or _port != 5640:
+if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://127.0.0.1:5640":
     pytest.skip(
         allow_module_level=True,
         reason=(
@@ -43,18 +29,6 @@ if _parsed.scheme != "http" or _parsed.hostname != "127.0.0.1" or _port != 5640:
     )
 
 ORIGIN = "http://127.0.0.1:5640"
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_COMPOSE_FILE = _REPO_ROOT / "dev" / "udata-evidence" / "compose.yaml"
-_ENV_FILE = _COMPOSE_FILE.with_name(".env")
-_EXPECTED_UDATA_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
-_EXPECTED_IMAGE_DIGESTS = (
-    "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
-    "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
-    "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
-    "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-    "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
-)
-
 pytestmark = [
     pytest.mark.udata_controlled,
     pytest.mark.skipif(
@@ -68,58 +42,6 @@ _FAMILY_OPERATION_ID = next(
     for op_id in declared_udata_profile().operations
     if op_id.method == "dataset-list-search-show-create-update-delete"
 )
-
-
-def _compose_read(*args: str) -> str:
-    completed = subprocess.run(
-        ["docker", "compose", "--env-file", str(_ENV_FILE), "-f", str(_COMPOSE_FILE), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        pytest.fail(
-            f"controlled stack identity could not be verified: docker compose {' '.join(args)} "
-            f"failed with: {completed.stderr.strip()}"
-        )
-    return completed.stdout.strip()
-
-
-def _verify_controlled_stack_identity() -> ControlledStackAttestation:
-    nonce = os.environ.get("UDATA_EVIDENCE_STACK_NONCE")
-    if not nonce or not _ENV_FILE.is_file():
-        pytest.fail("controlled mutations require a stack nonce and dev/udata-evidence/.env")
-    services = _compose_read("ps", "--status", "running", "--services").splitlines()
-    expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
-    if len(services) != len(expected_services) or set(services) != expected_services:
-        pytest.fail("controlled stack identity does not match the approved compose services")
-    if _compose_read("port", "udata", "7000") != "127.0.0.1:5640":
-        pytest.fail("controlled uData service is not bound to the fixed loopback port")
-    if _compose_read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD") != _EXPECTED_UDATA_COMMIT:
-        pytest.fail("controlled uData service is not built from the approved source commit")
-    if _compose_read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
-        pytest.fail("controlled uData service nonce does not match the caller-selected stack")
-    compose_text = _COMPOSE_FILE.read_text(encoding="utf-8")
-    if any(digest not in compose_text for digest in _EXPECTED_IMAGE_DIGESTS):
-        pytest.fail("controlled compose file is missing an approved dependency digest")
-    dockerfile_text = _COMPOSE_FILE.with_name("Dockerfile").read_text(encoding="utf-8")
-    if (
-        "ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1"
-        not in dockerfile_text
-        or "python:3.13-slim-bookworm@sha256:b6bd71b0dd3811ddbcbc523ec2965fd1e1bcfdf7a20ab24679273d3bee726129"
-        not in dockerfile_text
-        or f"UDATA_COMMIT={_EXPECTED_UDATA_COMMIT}" not in dockerfile_text
-    ):
-        pytest.fail("controlled uData build is missing an approved image or source digest")
-    return ControlledStackAttestation._from_verified_values(
-        origin=ORIGIN,
-        source_commit=_EXPECTED_UDATA_COMMIT,
-        compose_sha256=sha256(compose_text.encode()).hexdigest(),
-        dockerfile_sha256=sha256(dockerfile_text.encode()).hexdigest(),
-        image_digests=_EXPECTED_IMAGE_DIGESTS,
-        nonce=nonce,
-        site_id=os.environ.get("UDATA_EVIDENCE_SITE_ID", "default"),
-    )
 
 
 def test_controlled_stack_proves_exact_version_then_one_dataset_read() -> None:
@@ -155,7 +77,6 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
     token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
     if not token:
         pytest.skip("controlled mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
-    attestation = _verify_controlled_stack_identity()
     from datasluice.connectors.catalog.udata.models.datasets import (
         DatasetCreateInput,
         DatasetDeleteOptions,
@@ -168,7 +89,7 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
-    settings = UDataClientSettings(base_url=ORIGIN, credential=credential, controlled_stack_attestation=attestation)
+    settings = UDataClientSettings(base_url=ORIGIN, credential=credential)
     dataset_id: str | None = None
     cleanup_outcome = None
     cleanup_error: Exception | None = None
@@ -229,7 +150,6 @@ def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -
     token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
     if not token:
         pytest.skip("controlled mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
-    attestation = _verify_controlled_stack_identity()
     from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
     from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 
@@ -237,9 +157,7 @@ def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
-    with create_sync_client(
-        UDataClientSettings(base_url=ORIGIN, credential=credential, controlled_stack_attestation=attestation)
-    ) as client:
+    with create_controlled_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         before = client.root_profile.get()
         result = client.root_profile.set_site(
             SitePatchInput(title=before.title),
@@ -247,7 +165,7 @@ def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -
             mutation_policy=MutationPolicy(
                 confirmation=ConfirmationPolicy(
                     confirmed=True,
-                    operation=ROOT_OPERATIONS["set_site"],
+                    operation="udata/api-v1.set_site",
                     target=before.site_id,
                 ),
                 concurrency=ConcurrencyPolicy(overwrite=True),
@@ -265,7 +183,6 @@ def test_controlled_async_stack_proves_site_patch_is_confirmed_and_receipt_beari
     token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
     if not token:
         pytest.skip("controlled mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
-    attestation = _verify_controlled_stack_identity()
     from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
     from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 
@@ -275,8 +192,8 @@ def test_controlled_async_stack_proves_site_patch_is_confirmed_and_receipt_beari
     )
 
     async def run() -> tuple[SiteProfile, SiteMutationResult]:
-        settings = UDataClientSettings(base_url=ORIGIN, credential=credential, controlled_stack_attestation=attestation)
-        async with create_async_client(settings) as client:
+        settings = UDataClientSettings(base_url=ORIGIN, credential=credential)
+        async with await create_controlled_async_client(settings) as client:
             before = await client.root_profile.get()
             result = await client.root_profile.set_site(
                 SitePatchInput(title=before.title),
@@ -284,7 +201,7 @@ def test_controlled_async_stack_proves_site_patch_is_confirmed_and_receipt_beari
                 mutation_policy=MutationPolicy(
                     confirmation=ConfirmationPolicy(
                         confirmed=True,
-                        operation=ROOT_OPERATIONS["set_site"],
+                        operation="udata/api-v1.set_site",
                         target=before.site_id,
                     ),
                     concurrency=ConcurrencyPolicy(overwrite=True),

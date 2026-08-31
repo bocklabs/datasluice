@@ -3,21 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import AsyncIterator, Generator, Mapping
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
+from datasluice.connectors.catalog.udata import clients as udata_clients
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
     SyncUDataClient,
-    _ControlledAsyncTransport,
-    _ControlledSyncTransport,
+    create_controlled_async_client,
+    create_controlled_sync_client,
+    create_sync_client,
     declared_udata_profile,
 )
 from datasluice.connectors.catalog.udata.models.root_profile import (
-    ControlledStackAttestation,
     SiteCatalogQuery,
     SiteDataserviceCsvQuery,
     SiteDatasetCsvQuery,
@@ -58,21 +61,9 @@ _PERMISSIONS = EffectivePermissions.for_credential(
 )
 
 
-def _attestation(*, site_id: str = "site") -> ControlledStackAttestation:
-    return ControlledStackAttestation._from_verified_values(
-        origin=_ORIGIN,
-        source_commit="0546582058d84706812a1c37387576efc4e5ad1f",
-        compose_sha256="f34538ffeab0de25dd5a8c0ce3984b2f2e6d56356fe3f095dbc593f8fdec23c7",
-        dockerfile_sha256="6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b",
-        image_digests=(
-            "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
-            "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
-            "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
-            "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-            "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
-        ),
-        nonce="unit-test-stack",
-        site_id=site_id,
+def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
+    return udata_clients._ControlledStackEvidence(
+        nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(), site_id=site_id
     )
 
 
@@ -166,21 +157,26 @@ def _sync_client(
     *,
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
-    attestation: ControlledStackAttestation | None = None,
+    verify: object | None = None,
     emitter: EventEmitter | None = None,
     root_export_max_bytes: int = 8 * 1024 * 1024,
+    test_transport: RouterTransport | None = None,
 ) -> tuple[RouterTransport, SyncUDataClient]:
-    transport = RouterTransport(routes)
-    bound_attestation = _attestation() if attestation is None else attestation
-    client = SyncUDataClient(
-        _ControlledSyncTransport(transport, bound_attestation),
-        declared_udata_profile(),
-        origin=origin,
-        credentials=credential,
-        emitter=emitter,
+    transport = test_transport or RouterTransport(routes)
+    evidence = _controlled_evidence()
+    verifier = verify if callable(verify) else lambda _: evidence
+    settings = UDataClientSettings(
+        base_url=origin,
+        credential=credential,
         root_export_max_bytes=root_export_max_bytes,
-        owns_transport=False,
     )
+    with (
+        patch.object(udata_clients, "create_default_sync_transport", return_value=transport),
+        patch.object(udata_clients, "_verify_controlled_sync_stack", new=verifier),
+    ):
+        client = create_controlled_sync_client(settings)
+    if emitter is not None:
+        client._emitter = emitter
     return transport, client
 
 
@@ -189,21 +185,29 @@ def _async_client(
     *,
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
-    attestation: ControlledStackAttestation | None = None,
+    verify: object | None = None,
     emitter: EventEmitter | None = None,
     root_export_max_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
-    bound_attestation = _attestation() if attestation is None else attestation
-    client = AsyncUDataClient(
-        _ControlledAsyncTransport(transport, bound_attestation),
-        declared_udata_profile(),
-        origin=origin,
-        credentials=credential,
-        emitter=emitter,
+    evidence = _controlled_evidence()
+
+    async def default_verifier(_: object) -> object:
+        return evidence
+
+    verifier = verify if callable(verify) else default_verifier
+    settings = UDataClientSettings(
+        base_url=origin,
+        credential=credential,
         root_export_max_bytes=root_export_max_bytes,
-        owns_transport=False,
     )
+    with (
+        patch.object(udata_clients, "create_default_async_transport", return_value=transport),
+        patch.object(udata_clients, "_verify_controlled_async_stack", new=verifier),
+    ):
+        client = asyncio.run(create_controlled_async_client(settings))
+    if emitter is not None:
+        client._emitter = emitter
     return transport, client
 
 
@@ -270,7 +274,7 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert result.profile is not None and result.profile.title == "Changed"
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.target.value == "site"
-    assert result.receipt.audit_metadata["controlled_evidence_digest"] == _attestation().evidence_digest
+    assert result.receipt.audit_metadata["controlled_evidence_digest"] == _controlled_evidence().digest
     patch_request = transport.requests[-1]
     assert patch_request.method == "PATCH"
     assert json.loads(patch_request.body or b"") == {"title": "Changed", "configs": None}
@@ -561,10 +565,13 @@ def test_root_external_redirect_is_rejected_without_following() -> None:
 
 
 def test_set_site_rejects_public_origins_before_any_dispatch_and_keeps_receipt() -> None:
-    transport, client = _sync_client(
-        {("PATCH", "https://public.example/api/1/site/"): _json_response(200, _site_body())},
+    transport = RouterTransport({("PATCH", "https://public.example/api/1/site/"): _json_response(200, _site_body())})
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
         origin="https://public.example",
-        credential=_CREDENTIAL,
+        credentials=_CREDENTIAL,
+        owns_transport=False,
     )
     with client, pytest.raises(CatalogValidationError) as excinfo:
         client.root_profile.set_site(
@@ -647,7 +654,7 @@ def test_set_site_denial_does_not_poison_the_root_read_capability() -> None:
     assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH", "GET"]
 
 
-def test_set_site_requires_verified_attestation_before_any_dispatch() -> None:
+def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
     transport = RouterTransport(_routes())
     client = SyncUDataClient(
         transport,
@@ -667,28 +674,43 @@ def test_set_site_requires_verified_attestation_before_any_dispatch() -> None:
     assert transport.requests == []
 
 
-def test_direct_client_cannot_bind_attestation_to_an_injected_transport() -> None:
+def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport() -> None:
     transport = RouterTransport(_routes())
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        cast(Any, SyncUDataClient)(
-            transport,
-            declared_udata_profile(),
-            origin=_ORIGIN,
-            controlled_stack_attestation=_attestation(),
-            owns_transport=False,
-        )
-
-    assert transport.requests == []
-
-
-def test_factory_injected_transport_cannot_authorize_site_mutation() -> None:
-    transport = RouterTransport(_routes())
-    with pytest.raises(ValueError):
-        UDataClientSettings(
+        cast(Any, UDataClientSettings)(
             base_url=_ORIGIN,
             credential=_CREDENTIAL,
             sync_transport=transport,
-            controlled_stack_attestation=_attestation(),
+            controlled_stack_attestation=object(),
+        )
+
+    client = create_sync_client(UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport))
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.set_site(
+            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
+    assert transport.requests == []
+
+
+def test_injected_transport_remains_available_for_read_only_behavior() -> None:
+    transport = RouterTransport(_routes())
+    client = create_sync_client(UDataClientSettings(base_url=_ORIGIN, sync_transport=transport))
+
+    with client:
+        assert client.root_profile.get().id == "site"
+
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
+
+
+def test_controlled_factory_rejects_injected_transport_before_any_dispatch() -> None:
+    transport = RouterTransport(_routes())
+    with pytest.raises(CatalogValidationError):
+        create_controlled_sync_client(
+            UDataClientSettings(
+                base_url=_ORIGIN,
+                credential=_CREDENTIAL,
+                sync_transport=transport,
+            )
         )
 
     assert transport.requests == []
@@ -702,14 +724,10 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
                 raise TransportFailure("connection dropped after dispatch")
             return _json_response(200, _site_body(), {"Content-Type": "application/json"})
 
-    transport = FailingTransport({})
-    attestation = _attestation()
-    client = SyncUDataClient(
-        _ControlledSyncTransport(transport, attestation),
-        declared_udata_profile(),
-        origin=_ORIGIN,
-        credentials=_CREDENTIAL,
-        owns_transport=False,
+    transport, client = _sync_client(
+        {},
+        credential=_CREDENTIAL,
+        test_transport=FailingTransport({}),
     )
     with client, pytest.raises(TransportFailure):
         client.root_profile.set_site(
@@ -719,6 +737,38 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
         )
 
     assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
+
+
+def test_unrelated_local_listener_loses_authority_before_patch_dispatch() -> None:
+    evidence = iter((_controlled_evidence(), _controlled_evidence("unrelated-site")))
+    transport, client = _sync_client(
+        _routes(),
+        credential=_CREDENTIAL,
+        verify=lambda _: next(evidence),
+    )
+
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.set_site(
+            SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
+
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
+
+
+def test_forwarding_listener_loses_authority_before_patch_dispatch() -> None:
+    evidence = iter((_controlled_evidence(), _controlled_evidence(nonce="forwarded-stack")))
+    transport, client = _sync_client(
+        _routes(),
+        credential=_CREDENTIAL,
+        verify=lambda _: next(evidence),
+    )
+
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.set_site(
+            SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
+
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
 def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:

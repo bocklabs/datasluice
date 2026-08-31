@@ -10,7 +10,6 @@ from urllib.parse import urlsplit, urlunsplit
 from datasluice.domain.catalog.auth import CredentialResolver, UDataCredential
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
-from datasluice.domain.catalog.udata import ControlledStackAttestation
 from datasluice.runtime.capability import AsyncProbeRunner, ProbeRunner
 from datasluice.runtime.clients import AsyncCatalogTransport, AsyncStreamingCatalogTransport
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS, DEFAULT_ROOT_EXPORT_MAX_BYTES
@@ -91,7 +90,6 @@ class UDataClientSettings:
     async_probe_runner: AsyncProbeRunner | None = None
     capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
     root_export_max_bytes: int = DEFAULT_ROOT_EXPORT_MAX_BYTES
-    controlled_stack_attestation: ControlledStackAttestation | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", normalize_origin(self.base_url))
@@ -130,14 +128,6 @@ class UDataClientSettings:
             raise ValueError("Capability cache TTL must be a finite non-negative number.")
         if type(self.root_export_max_bytes) is not int or self.root_export_max_bytes < 1:
             raise ValueError("uData root export byte limits must be positive integers.")
-        if self.controlled_stack_attestation is not None and not isinstance(
-            self.controlled_stack_attestation, ControlledStackAttestation
-        ):
-            raise TypeError("uData controlled stack evidence must use ControlledStackAttestation.")
-        if self.controlled_stack_attestation is not None and (
-            self.sync_transport is not None or self.async_transport is not None
-        ):
-            raise ValueError("Controlled uData evidence requires the client-owned stock transport.")
 
     @property
     def owns_sync_transport(self) -> bool:

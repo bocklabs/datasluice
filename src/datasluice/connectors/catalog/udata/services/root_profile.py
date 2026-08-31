@@ -16,7 +16,6 @@ from datasluice.domain.catalog.udata import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
     SITE_RESOURCE_KIND,
-    ControlledStackAttestation,
     SiteCatalogQuery,
     SiteDataserviceCsvQuery,
     SiteDatasetCsvQuery,
@@ -131,11 +130,11 @@ def _build_receipt(
     status_code: int,
     mutation: str,
     target: str,
-    attestation: ControlledStackAttestation | None = None,
+    evidence_digest: str | None = None,
 ) -> MutationReceipt:
     metadata = {"mutation": mutation, "status_code": status_code, "policy": _policy_metadata(policy)}
-    if attestation is not None:
-        metadata["controlled_evidence_digest"] = attestation.evidence_digest
+    if evidence_digest is not None:
+        metadata["controlled_evidence_digest"] = evidence_digest
     return build_mutation_receipt(
         _operation_id(SET_SITE_OPERATION),
         CatalogId(platform=CatalogPlatform.UDATA, resource_kind=SITE_RESOURCE_KIND, value=target),
@@ -186,28 +185,13 @@ def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> Never
     raise _attach_receipt(error, receipt)
 
 
-def _require_controlled_attestation(
-    attestation: ControlledStackAttestation | None,
-    *,
-    origin: str,
-    operation: str,
-    site_id: str | None = None,
-    transport_bound: bool,
-) -> None:
-    if not transport_bound or not isinstance(attestation, ControlledStackAttestation):
+def _require_controlled_authority(*, authorized: bool, operation: str) -> None:
+    if not authorized:
         raise CatalogValidationError(
             "uData site PATCH requires verified controlled-stack evidence.",
             operation=operation,
             platform="udata",
-            safe_action="Provide a verified controlled-stack attestation before attempting a site mutation.",
-        )
-    expected_site_id = attestation.site_id if site_id is None else site_id
-    if not attestation.matches(origin=origin, site_id=expected_site_id):
-        raise CatalogValidationError(
-            "uData site PATCH evidence does not match the configured target.",
-            operation=operation,
-            platform="udata",
-            safe_action="Use evidence from the approved disposable stack and decoded site target.",
+            safe_action="Construct the client through the verified controlled-stack factory.",
         )
 
 
@@ -264,7 +248,7 @@ def _mutating(
     dispatch: Callable[[], tuple[int, object, object]],
     decode: Callable[[object, object], SiteProfile | None],
     target: Callable[[], str],
-    evidence: Callable[[], ControlledStackAttestation | None],
+    evidence_digest: Callable[[], str | None],
     emit: Callable[[str], None],
 ) -> SiteMutationResult:
     response: object | None = None
@@ -279,11 +263,11 @@ def _mutating(
             status_code=_error_status(error, response),
             mutation="set_site",
             target=target(),
-            attestation=evidence(),
+            evidence_digest=evidence_digest(),
         )
         _raise_with_receipt(error, receipt)
     receipt = _build_receipt(
-        policy, "succeeded", status_code=status, mutation="set_site", target=target(), attestation=evidence()
+        policy, "succeeded", status_code=status, mutation="set_site", target=target(), evidence_digest=evidence_digest()
     )
     emit("succeeded")
     return SiteMutationResult(receipt=receipt, profile=profile)
@@ -294,7 +278,7 @@ async def _amutating(
     dispatch: Callable[[], Awaitable[tuple[int, object, object]]],
     decode: Callable[[object, object], SiteProfile | None],
     target: Callable[[], str],
-    evidence: Callable[[], ControlledStackAttestation | None],
+    evidence_digest: Callable[[], str | None],
     emit: Callable[[str], None],
 ) -> SiteMutationResult:
     response: object | None = None
@@ -309,11 +293,11 @@ async def _amutating(
             status_code=_error_status(error, response),
             mutation="set_site",
             target=target(),
-            attestation=evidence(),
+            evidence_digest=evidence_digest(),
         )
         _raise_with_receipt(error, receipt)
     receipt = _build_receipt(
-        policy, "succeeded", status_code=status, mutation="set_site", target=target(), attestation=evidence()
+        policy, "succeeded", status_code=status, mutation="set_site", target=target(), evidence_digest=evidence_digest()
     )
     emit("succeeded")
     return SiteMutationResult(receipt=receipt, profile=profile)
@@ -427,16 +411,12 @@ class SyncRootProfileService:
     ) -> SiteMutationResult:
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
         operation = SET_SITE_OPERATION
-        attestation = getattr(self._client, "_controlled_stack_attestation", None)
-        target_id = attestation.site_id if isinstance(attestation, ControlledStackAttestation) else _UNKNOWN_SITE
+        target_id = self._client._controlled_site_id() or _UNKNOWN_SITE
 
         def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
-            _require_controlled_attestation(
-                attestation,
-                origin=self._client._origin,
-                operation=operation,
-                transport_bound=self._client._controlled_transport,
+            _require_controlled_authority(
+                authorized=self._client._has_controlled_stack_authority(), operation=operation
             )
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
@@ -448,13 +428,13 @@ class SyncRootProfileService:
             resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = self.get()
-            _require_controlled_attestation(
-                attestation,
-                origin=self._client._origin,
-                operation=operation,
-                site_id=current.site_id,
-                transport_bound=self._client._controlled_transport,
-            )
+            if not self._client._revalidate_controlled_sync_stack(site_id=current.site_id):
+                raise CatalogValidationError(
+                    "uData site PATCH evidence no longer matches the controlled stack.",
+                    operation=operation,
+                    platform="udata",
+                    safe_action="Rebuild the client through the verified controlled-stack factory.",
+                )
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
@@ -477,7 +457,7 @@ class SyncRootProfileService:
             dispatch,
             _decode_patch,
             lambda: target_id,
-            lambda: attestation,
+            self._client._controlled_evidence_digest,
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
         )
 
@@ -718,16 +698,12 @@ class AsyncRootProfileService:
     ) -> SiteMutationResult:
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
         operation = SET_SITE_OPERATION
-        attestation = getattr(self._client, "_controlled_stack_attestation", None)
-        target_id = attestation.site_id if isinstance(attestation, ControlledStackAttestation) else _UNKNOWN_SITE
+        target_id = self._client._controlled_site_id() or _UNKNOWN_SITE
 
         async def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
-            _require_controlled_attestation(
-                attestation,
-                origin=self._client._origin,
-                operation=operation,
-                transport_bound=self._client._controlled_transport,
+            _require_controlled_authority(
+                authorized=self._client._has_controlled_stack_authority(), operation=operation
             )
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
@@ -740,13 +716,13 @@ class AsyncRootProfileService:
             _require_mutation_permission(resolved, operation, permissions)
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = await self.get()
-            _require_controlled_attestation(
-                attestation,
-                origin=self._client._origin,
-                operation=operation,
-                site_id=current.site_id,
-                transport_bound=self._client._controlled_transport,
-            )
+            if not await self._client._revalidate_controlled_async_stack(site_id=current.site_id):
+                raise CatalogValidationError(
+                    "uData site PATCH evidence no longer matches the controlled stack.",
+                    operation=operation,
+                    platform="udata",
+                    safe_action="Rebuild the client through the verified controlled-stack factory.",
+                )
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
@@ -769,7 +745,7 @@ class AsyncRootProfileService:
             dispatch,
             _decode_patch,
             lambda: target_id,
-            lambda: attestation,
+            self._client._controlled_evidence_digest,
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
         )
 
