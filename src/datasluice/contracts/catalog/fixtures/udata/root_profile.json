@@ -136,6 +136,7 @@
       "method": "PATCH",
       "path": "/api/1/site/",
       "request_media_type": "application/json",
+      "request_fields": ["title"],
       "response_media_type": "application/json",
       "controlled_only": true
     },
