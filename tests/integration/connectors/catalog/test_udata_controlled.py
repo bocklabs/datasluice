@@ -251,7 +251,10 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
                 row, token, {"feed_size": mutation_feed_size}
             )
             assert direct_fields["feed_size"] == mutation_feed_size
-            _direct_site_patch(row, token, {"feed_size": before.feed_size})
+            reset_status, _, reset_fields = _direct_site_patch(row, token, {"feed_size": before.feed_size})
+            assert reset_status in {200, 204}
+            assert reset_fields["feed_size"] == before.feed_size
+            assert client.root_profile.get().feed_size == before.feed_size
             typed = client.root_profile.set_site(
                 SitePatchInput(feed_size=mutation_feed_size),
                 permissions=permissions,
@@ -266,7 +269,10 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
             )
             after = client.root_profile.get()
         finally:
-            _direct_site_patch(row, token, {"feed_size": before.feed_size})
+            restored_status, _, restored_fields = _direct_site_patch(row, token, {"feed_size": before.feed_size})
+            assert restored_status in {200, 204}
+            assert restored_fields["feed_size"] == before.feed_size
+            assert client.root_profile.get().feed_size == before.feed_size
 
     expected_media = row["response_media_type"]
     assert isinstance(expected_media, str)

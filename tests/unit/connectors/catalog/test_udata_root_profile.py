@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import AsyncIterator, Generator, Mapping
+from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -15,8 +14,8 @@ from datasluice.connectors.catalog.udata import clients as udata_clients
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
     SyncUDataClient,
-    _create_controlled_async_client,
     _create_controlled_sync_client,
+    create_async_client,
     create_sync_client,
     declared_udata_profile,
 )
@@ -65,16 +64,6 @@ def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack
     return udata_clients._ControlledStackEvidence(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(), site_id=site_id
     )
-
-
-@pytest.fixture(autouse=True)
-def _fake_controlled_verification(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(udata_clients, "_verify_controlled_sync_stack", lambda _: _controlled_evidence())
-
-    async def verify(_: object) -> object:
-        return _controlled_evidence()
-
-    monkeypatch.setattr(udata_clients, "_verify_controlled_async_stack", verify)
 
 
 def _site_body(*, title: str = "uData") -> dict[str, object]:
@@ -167,24 +156,23 @@ def _sync_client(
     *,
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
-    verify: object | None = None,
+    revalidate: Callable[..., bool] | None = None,
     emitter: EventEmitter | None = None,
     root_export_max_bytes: int = 8 * 1024 * 1024,
     test_transport: RouterTransport | None = None,
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = test_transport or RouterTransport(routes)
-    evidence = _controlled_evidence()
-    verifier = verify if callable(verify) else lambda _: evidence
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
+        sync_transport=transport,
         root_export_max_bytes=root_export_max_bytes,
     )
-    with (
-        patch.object(udata_clients, "create_default_sync_transport", return_value=transport),
-        patch.object(udata_clients, "_verify_controlled_sync_stack", new=verifier),
-    ):
-        client = _create_controlled_sync_client(settings)
+    client = create_sync_client(settings)
+    cast(Any, client)._has_controlled_stack_authority = lambda: True
+    cast(Any, client)._controlled_evidence_digest = lambda: _controlled_evidence().digest
+    cast(Any, client)._controlled_site_id = lambda: "site"
+    cast(Any, client)._revalidate_controlled_sync_stack = revalidate or (lambda *, site_id: True)
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -195,27 +183,25 @@ def _async_client(
     *,
     origin: str = _ORIGIN,
     credential: UDataCredential | None = None,
-    verify: object | None = None,
     emitter: EventEmitter | None = None,
     root_export_max_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
-    evidence = _controlled_evidence()
-
-    async def default_verifier(_: object) -> object:
-        return evidence
-
-    verifier = verify if callable(verify) else default_verifier
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
+        async_transport=transport,
         root_export_max_bytes=root_export_max_bytes,
     )
-    with (
-        patch.object(udata_clients, "create_default_async_transport", return_value=transport),
-        patch.object(udata_clients, "_verify_controlled_async_stack", new=verifier),
-    ):
-        client = asyncio.run(_create_controlled_async_client(settings))
+    client = create_async_client(settings)
+    cast(Any, client)._has_controlled_stack_authority = lambda: True
+    cast(Any, client)._controlled_evidence_digest = lambda: _controlled_evidence().digest
+    cast(Any, client)._controlled_site_id = lambda: "site"
+
+    async def revalidate(*, site_id: str) -> bool:
+        return True
+
+    cast(Any, client)._revalidate_controlled_async_stack = revalidate
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -684,8 +670,11 @@ def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
     assert transport.requests == []
 
 
-def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport() -> None:
+def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     transport = RouterTransport(_routes())
+    monkeypatch.setattr(udata_clients, "_verify_controlled_sync_stack", lambda _: _controlled_evidence("forged"))
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         cast(Any, udata_clients._ControlledSyncTransport)(transport=transport)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -696,7 +685,17 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport()
             controlled_stack_attestation=object(),
         )
 
-    client = create_sync_client(UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport))
+    fabricated = object.__new__(udata_clients._ControlledSyncTransport)
+    object.__setattr__(fabricated, "_transport", transport)
+    object.__setattr__(fabricated, "_evidence", _controlled_evidence())
+    object.__setattr__(fabricated, "_issued_at", 0.0)
+    client = SyncUDataClient(
+        fabricated,
+        declared_udata_profile(),
+        origin=_ORIGIN,
+        credentials=_CREDENTIAL,
+        owns_transport=False,
+    )
     with client, pytest.raises(CatalogValidationError):
         client.root_profile.set_site(
             SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
@@ -755,15 +754,13 @@ def test_unrelated_local_listener_loses_authority_before_patch_dispatch() -> Non
     transport, client = _sync_client(
         _routes(),
         credential=_CREDENTIAL,
+        revalidate=lambda *, site_id: False,
     )
 
-    with patch.object(
-        udata_clients, "_verify_controlled_sync_stack", return_value=_controlled_evidence("unrelated-site")
-    ):
-        with client, pytest.raises(CatalogValidationError):
-            client.root_profile.set_site(
-                SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-            )
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.set_site(
+            SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
 
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
@@ -772,17 +769,13 @@ def test_forwarding_listener_loses_authority_before_patch_dispatch() -> None:
     transport, client = _sync_client(
         _routes(),
         credential=_CREDENTIAL,
+        revalidate=lambda *, site_id: False,
     )
 
-    with patch.object(
-        udata_clients,
-        "_verify_controlled_sync_stack",
-        return_value=_controlled_evidence(nonce="forwarded-stack"),
-    ):
-        with client, pytest.raises(CatalogValidationError):
-            client.root_profile.set_site(
-                SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-            )
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.set_site(
+            SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
 
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 

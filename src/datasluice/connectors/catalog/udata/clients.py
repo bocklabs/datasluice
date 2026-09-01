@@ -8,6 +8,7 @@ import json
 import os
 import select
 import signal
+import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -331,7 +332,16 @@ def _compose_read(*args: str) -> str:
                 os.waitpid(process_id, 0)
                 raise _controlled_error("The controlled uData stack identity check returned too much output.")
             chunks.append(chunk)
-        _, wait_status = os.waitpid(process_id, 0)
+        while True:
+            completed_pid, wait_status = os.waitpid(process_id, os.WNOHANG)
+            if completed_pid == process_id:
+                break
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                os.kill(process_id, signal.SIGKILL)
+                os.waitpid(process_id, 0)
+                raise _controlled_error("The controlled uData stack identity check timed out.")
+            select.select([], [], [], min(remaining, 0.05))
     except (AttributeError, OSError) as error:
         if process_id is not None:
             try:
@@ -349,7 +359,10 @@ def _compose_read(*args: str) -> str:
             os.close(write_fd)
     if os.waitstatus_to_exitcode(wait_status) != 0:
         raise _controlled_error("The controlled uData stack identity check failed.")
-    return b"".join(chunks).decode().strip()
+    try:
+        return b"".join(chunks).decode().strip()
+    except UnicodeDecodeError as error:
+        raise _controlled_error("The controlled uData stack identity check returned invalid output.") from error
 
 
 def _verify_controlled_source_and_nonce() -> str:
@@ -431,106 +444,134 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
     return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=_controlled_peer_evidence(response))
 
 
-class _ControlledSyncTransport:
-    """Own a stock transport after live controlled-stack verification."""
+def _build_controlled_transport_types():
+    sync_builder = create_default_sync_transport
+    sync_verifier = _verify_controlled_sync_stack
+    async_builder = create_default_async_transport
+    async_verifier = _verify_controlled_async_stack
+    sync_registry: weakref.WeakKeyDictionary[object, _ControlledStackEvidence] = weakref.WeakKeyDictionary()
+    async_registry: weakref.WeakKeyDictionary[object, _ControlledStackEvidence] = weakref.WeakKeyDictionary()
 
-    __slots__ = ("_transport", "_evidence", "_issued_at")
-
-    def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-        transport = create_default_sync_transport(tls_policy=tls_policy, budget=budget)
+    def sync_lookup(value: object) -> _ControlledStackEvidence | None:
         try:
-            evidence = _verify_controlled_sync_stack(transport)
-        except BaseException:
-            transport.close()
-            raise
-        self._transport = transport
-        self._evidence = evidence
-        self._issued_at = monotonic()
+            return sync_registry.get(value)
+        except TypeError:
+            return None
 
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        return self._transport.send(request)
-
-    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
-        return cast(StreamingCatalogTransport, self._transport).send_stream(request)
-
-    def close(self) -> None:
-        self._transport.close()
-
-    def revalidate(self, *, origin: str, site_id: str) -> bool:
-        """Revalidate this exact binding immediately before a controlled PATCH."""
-        evidence = _verify_controlled_sync_stack(self._transport)
-        return (
-            origin == _CONTROLLED_ORIGIN
-            and monotonic() - self._issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-            and evidence == self._evidence
-            and evidence.site_id == site_id
-        )
-
-    @property
-    def evidence_digest(self) -> str:
-        """Return only the redacted controlled-stack evidence digest."""
-        return self._evidence.digest
-
-    @property
-    def site_id(self) -> str:
-        """Return the peer identity bound during the initial live verification."""
-        return self._evidence.site_id
-
-
-class _ControlledAsyncTransport:
-    """Own a stock asynchronous transport after live controlled-stack verification."""
-
-    __slots__ = ("_transport", "_evidence", "_issued_at")
-
-    def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-        self._transport = create_default_async_transport(tls_policy=tls_policy, budget=budget)
-        self._evidence: _ControlledStackEvidence | None = None
-        self._issued_at: float | None = None
-
-    async def verify(self) -> None:
-        """Complete live verification before the transport is used for mutations."""
+    def async_lookup(value: object) -> _ControlledStackEvidence | None:
         try:
-            evidence = await _verify_controlled_async_stack(self._transport)
-        except BaseException:
+            return async_registry.get(value)
+        except TypeError:
+            return None
+
+    class _ControlledSyncTransport:
+        """Own a stock transport after live controlled-stack verification."""
+
+        __slots__ = ("_transport", "_evidence", "_issued_at", "__weakref__")
+
+        def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
+            transport = sync_builder(tls_policy=tls_policy, budget=budget)
+            try:
+                evidence = sync_verifier(transport)
+            except BaseException:
+                transport.close()
+                raise
+            self._transport = transport
+            self._evidence = evidence
+            self._issued_at = monotonic()
+            sync_registry[self] = evidence
+
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            return self._transport.send(request)
+
+        def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+            return cast(StreamingCatalogTransport, self._transport).send_stream(request)
+
+        def close(self) -> None:
+            self._transport.close()
+
+        def revalidate(self, *, origin: str, site_id: str) -> bool:
+            """Revalidate this exact binding immediately before a controlled PATCH."""
+            evidence = sync_verifier(self._transport)
+            return (
+                origin == _CONTROLLED_ORIGIN
+                and monotonic() - self._issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+                and evidence == self._evidence
+                and evidence.site_id == site_id
+            )
+
+        @property
+        def evidence_digest(self) -> str:
+            """Return only the redacted controlled-stack evidence digest."""
+            return self._evidence.digest
+
+        @property
+        def site_id(self) -> str:
+            """Return the peer identity bound during the initial live verification."""
+            return self._evidence.site_id
+
+    class _ControlledAsyncTransport:
+        """Own a stock asynchronous transport after live controlled-stack verification."""
+
+        __slots__ = ("_transport", "_evidence", "_issued_at", "__weakref__")
+
+        def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
+            self._transport = async_builder(tls_policy=tls_policy, budget=budget)
+            self._evidence: _ControlledStackEvidence | None = None
+            self._issued_at: float | None = None
+
+        async def verify(self) -> None:
+            """Complete live verification before the transport is used for mutations."""
+            try:
+                evidence = await async_verifier(self._transport)
+            except BaseException:
+                await self._transport.aclose()
+                raise
+            self._evidence = evidence
+            self._issued_at = monotonic()
+            async_registry[self] = evidence
+
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            return await self._transport.send(request)
+
+        async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+            return await cast(AsyncStreamingCatalogTransport, self._transport).send_stream(request)
+
+        async def aclose(self) -> None:
             await self._transport.aclose()
-            raise
-        self._evidence = evidence
-        self._issued_at = monotonic()
 
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        return await self._transport.send(request)
+        async def revalidate(self, *, origin: str, site_id: str) -> bool:
+            """Revalidate this exact binding immediately before a controlled PATCH."""
+            if self._evidence is None or self._issued_at is None:
+                return False
+            evidence = await async_verifier(self._transport)
+            return (
+                origin == _CONTROLLED_ORIGIN
+                and monotonic() - self._issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+                and evidence == self._evidence
+                and evidence.site_id == site_id
+            )
 
-    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
-        return await cast(AsyncStreamingCatalogTransport, self._transport).send_stream(request)
+        @property
+        def evidence_digest(self) -> str:
+            """Return only the redacted controlled-stack evidence digest."""
+            if self._evidence is None:
+                return ""
+            return self._evidence.digest
 
-    async def aclose(self) -> None:
-        await self._transport.aclose()
+        @property
+        def site_id(self) -> str:
+            """Return the peer identity bound during the initial live verification."""
+            if self._evidence is None:
+                return ""
+            return self._evidence.site_id
 
-    async def revalidate(self, *, origin: str, site_id: str) -> bool:
-        """Revalidate this exact binding immediately before a controlled PATCH."""
-        if self._evidence is None or self._issued_at is None:
-            return False
-        evidence = await _verify_controlled_async_stack(self._transport)
-        return (
-            origin == _CONTROLLED_ORIGIN
-            and monotonic() - self._issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-            and evidence == self._evidence
-            and evidence.site_id == site_id
-        )
+    return _ControlledSyncTransport, sync_lookup, _ControlledAsyncTransport, async_lookup
 
-    @property
-    def evidence_digest(self) -> str:
-        """Return only the redacted controlled-stack evidence digest."""
-        if self._evidence is None:
-            return ""
-        return self._evidence.digest
 
-    @property
-    def site_id(self) -> str:
-        """Return the peer identity bound during the initial live verification."""
-        if self._evidence is None:
-            return ""
-        return self._evidence.site_id
+_ControlledSyncTransport, _controlled_sync_lookup, _ControlledAsyncTransport, _controlled_async_lookup = (
+    _build_controlled_transport_types()
+)
 
 
 class _UDataClientCore:
@@ -603,7 +644,6 @@ class _UDataClientCore:
         if type(root_export_max_bytes) is not int or root_export_max_bytes < 1:
             raise ValueError("uData root export byte limits must be positive integers.")
         self._root_export_max_bytes = root_export_max_bytes
-        self._controlled_transport = isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport))
         self._clock = clock
         self._emitter = emitter or EventEmitter()
         self._closed = False
@@ -626,37 +666,53 @@ class _UDataClientCore:
         """Expose the injected caller-owned credential resolver or provider."""
         return self._credentials
 
-    def _has_controlled_stack_authority(self) -> bool:
+    def _has_controlled_stack_authority(
+        self,
+        sync_lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_sync_lookup,
+        async_lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_async_lookup,
+    ) -> bool:
         """Return whether this client came from the controlled evidence factory."""
-        return self._controlled_transport
+        return sync_lookup(self._transport) is not None or async_lookup(self._transport) is not None
 
-    def _controlled_evidence_digest(self) -> str | None:
+    def _controlled_evidence_digest(
+        self,
+        sync_lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_sync_lookup,
+        async_lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_async_lookup,
+    ) -> str | None:
         """Return the bound redacted evidence digest without exposing control internals."""
-        transport = self._transport
-        if isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport)):
-            return transport.evidence_digest
-        return None
+        evidence = sync_lookup(self._transport) or async_lookup(self._transport)
+        return evidence.digest if evidence is not None else None
 
-    def _controlled_site_id(self) -> str | None:
+    def _controlled_site_id(
+        self,
+        sync_lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_sync_lookup,
+        async_lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_async_lookup,
+    ) -> str | None:
         """Return the internally bound controlled peer identity when present."""
-        transport = self._transport
-        if isinstance(transport, (_ControlledSyncTransport, _ControlledAsyncTransport)):
-            return transport.site_id
-        return None
+        evidence = sync_lookup(self._transport) or async_lookup(self._transport)
+        return evidence.site_id if evidence is not None else None
 
-    def _revalidate_controlled_sync_stack(self, *, site_id: str) -> bool:
+    def _revalidate_controlled_sync_stack(
+        self,
+        *,
+        site_id: str,
+        lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_sync_lookup,
+    ) -> bool:
         """Revalidate the synchronous authority at the mutation dispatch boundary."""
-        transport = self._transport
-        return isinstance(transport, _ControlledSyncTransport) and transport.revalidate(
-            origin=self._origin, site_id=site_id
-        )
+        if lookup(self._transport) is None:
+            return False
+        return cast(_ControlledSyncTransport, self._transport).revalidate(origin=self._origin, site_id=site_id)
 
-    async def _revalidate_controlled_async_stack(self, *, site_id: str) -> bool:
+    async def _revalidate_controlled_async_stack(
+        self,
+        *,
+        site_id: str,
+        lookup: Callable[[object], _ControlledStackEvidence | None] = _controlled_async_lookup,
+    ) -> bool:
         """Revalidate the asynchronous authority at the mutation dispatch boundary."""
-        transport = self._transport
-        return isinstance(transport, _ControlledAsyncTransport) and await transport.revalidate(
-            origin=self._origin, site_id=site_id
-        )
+        if lookup(self._transport) is None:
+            return False
+        return await cast(_ControlledAsyncTransport, self._transport).revalidate(origin=self._origin, site_id=site_id)
 
     def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
         self._emitter.record(
