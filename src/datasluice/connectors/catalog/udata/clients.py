@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import json
 import os
+import select
+import signal
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -37,6 +39,7 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.auth import credential_scope as _credential_scope
 from datasluice.domain.catalog.models import ResultEnvelope
+from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -116,7 +119,8 @@ _CONTROLLED_EVIDENCE_ROOT = Path(__file__).resolve().parents[5] / "dev" / "udata
 _CONTROLLED_COMPOSE_FILE = _CONTROLLED_EVIDENCE_ROOT / "compose.yaml"
 _CONTROLLED_ENV_FILE = _CONTROLLED_EVIDENCE_ROOT / ".env"
 _CONTROLLED_AUTHORITY_TTL_SECONDS = 60.0
-_CONTROLLED_TRANSPORT_SEAL = object()
+_CONTROLLED_COMMAND_TIMEOUT_SECONDS = 15.0
+_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES = 65536
 
 _STATUS_RESPONSE_CLASSES = {
     401: ProbeResponseClass.UNAUTHORIZED,
@@ -297,6 +301,7 @@ def _compose_read(*args: str) -> str:
         *args,
     ]
     read_fd, write_fd = os.pipe()
+    process_id: int | None = None
     try:
         file_actions = (
             (os.POSIX_SPAWN_DUP2, write_fd, 1),
@@ -308,11 +313,35 @@ def _compose_read(*args: str) -> str:
         process_id = os.posix_spawnp(command[0], command, environment, file_actions=file_actions)
         os.close(write_fd)
         write_fd = -1
-        chunks = []
-        while chunk := os.read(read_fd, 65536):
+        deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
+        chunks: list[bytes] = []
+        output_size = 0
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0 or not select.select([read_fd], [], [], remaining)[0]:
+                os.kill(process_id, signal.SIGKILL)
+                os.waitpid(process_id, 0)
+                raise _controlled_error("The controlled uData stack identity check timed out.")
+            chunk = os.read(read_fd, 65536)
+            if not chunk:
+                break
+            output_size += len(chunk)
+            if output_size > _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES:
+                os.kill(process_id, signal.SIGKILL)
+                os.waitpid(process_id, 0)
+                raise _controlled_error("The controlled uData stack identity check returned too much output.")
             chunks.append(chunk)
         _, wait_status = os.waitpid(process_id, 0)
-    except OSError as error:
+    except (AttributeError, OSError) as error:
+        if process_id is not None:
+            try:
+                os.kill(process_id, signal.SIGKILL)
+            except OSError:
+                pass
+            try:
+                os.waitpid(process_id, 0)
+            except OSError:
+                pass
         raise _controlled_error("The controlled uData stack cannot be verified.") from error
     finally:
         os.close(read_fd)
@@ -402,56 +431,21 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
     return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=_controlled_peer_evidence(response))
 
 
-@dataclass(frozen=True, slots=True)
-class _ControlledSyncAuthority:
-    """Bind one verified stack identity to one stock synchronous transport."""
-
-    transport: CatalogTransport = field(repr=False, compare=False)
-    evidence: _ControlledStackEvidence
-    verify: Callable[[CatalogTransport], _ControlledStackEvidence] = field(repr=False, compare=False)
-    issued_at: float = field(repr=False, compare=False)
-
-    def revalidate(self, transport: CatalogTransport, *, origin: str, site_id: str) -> bool:
-        """Confirm the exact transport still reaches the originally verified peer."""
-        return (
-            transport is self.transport
-            and origin == _CONTROLLED_ORIGIN
-            and monotonic() - self.issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-            and self.verify(transport) == self.evidence
-            and self.evidence.site_id == site_id
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _ControlledAsyncAuthority:
-    """Bind one verified stack identity to one stock asynchronous transport."""
-
-    transport: AsyncCatalogTransport = field(repr=False, compare=False)
-    evidence: _ControlledStackEvidence
-    verify: Callable[[AsyncCatalogTransport], Awaitable[_ControlledStackEvidence]] = field(repr=False, compare=False)
-    issued_at: float = field(repr=False, compare=False)
-
-    async def revalidate(self, transport: AsyncCatalogTransport, *, origin: str, site_id: str) -> bool:
-        """Confirm the exact transport still reaches the originally verified peer."""
-        return (
-            transport is self.transport
-            and origin == _CONTROLLED_ORIGIN
-            and monotonic() - self.issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-            and await self.verify(transport) == self.evidence
-            and self.evidence.site_id == site_id
-        )
-
-
 class _ControlledSyncTransport:
-    """Carry authority that can only be created with a verified stock transport."""
+    """Own a stock transport after live controlled-stack verification."""
 
-    __slots__ = ("_transport", "_authority")
+    __slots__ = ("_transport", "_evidence", "_issued_at")
 
-    def __init__(self, transport: CatalogTransport, authority: _ControlledSyncAuthority, *, _seal: object) -> None:
-        if _seal is not _CONTROLLED_TRANSPORT_SEAL:
-            raise TypeError("Controlled uData transports are created only by the evidence factory.")
+    def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
+        transport = create_default_sync_transport(tls_policy=tls_policy, budget=budget)
+        try:
+            evidence = _verify_controlled_sync_stack(transport)
+        except BaseException:
+            transport.close()
+            raise
         self._transport = transport
-        self._authority = authority
+        self._evidence = evidence
+        self._issued_at = monotonic()
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         return self._transport.send(request)
@@ -464,31 +458,44 @@ class _ControlledSyncTransport:
 
     def revalidate(self, *, origin: str, site_id: str) -> bool:
         """Revalidate this exact binding immediately before a controlled PATCH."""
-        return self._authority.revalidate(self._transport, origin=origin, site_id=site_id)
+        evidence = _verify_controlled_sync_stack(self._transport)
+        return (
+            origin == _CONTROLLED_ORIGIN
+            and monotonic() - self._issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            and evidence == self._evidence
+            and evidence.site_id == site_id
+        )
 
     @property
     def evidence_digest(self) -> str:
         """Return only the redacted controlled-stack evidence digest."""
-        return self._authority.evidence.digest
+        return self._evidence.digest
 
     @property
     def site_id(self) -> str:
         """Return the peer identity bound during the initial live verification."""
-        return self._authority.evidence.site_id
+        return self._evidence.site_id
 
 
 class _ControlledAsyncTransport:
-    """Carry authority that can only be created with a verified stock transport."""
+    """Own a stock asynchronous transport after live controlled-stack verification."""
 
-    __slots__ = ("_transport", "_authority")
+    __slots__ = ("_transport", "_evidence", "_issued_at")
 
-    def __init__(
-        self, transport: AsyncCatalogTransport, authority: _ControlledAsyncAuthority, *, _seal: object
-    ) -> None:
-        if _seal is not _CONTROLLED_TRANSPORT_SEAL:
-            raise TypeError("Controlled uData transports are created only by the evidence factory.")
-        self._transport = transport
-        self._authority = authority
+    def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
+        self._transport = create_default_async_transport(tls_policy=tls_policy, budget=budget)
+        self._evidence: _ControlledStackEvidence | None = None
+        self._issued_at: float | None = None
+
+    async def verify(self) -> None:
+        """Complete live verification before the transport is used for mutations."""
+        try:
+            evidence = await _verify_controlled_async_stack(self._transport)
+        except BaseException:
+            await self._transport.aclose()
+            raise
+        self._evidence = evidence
+        self._issued_at = monotonic()
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
         return await self._transport.send(request)
@@ -501,17 +508,29 @@ class _ControlledAsyncTransport:
 
     async def revalidate(self, *, origin: str, site_id: str) -> bool:
         """Revalidate this exact binding immediately before a controlled PATCH."""
-        return await self._authority.revalidate(self._transport, origin=origin, site_id=site_id)
+        if self._evidence is None or self._issued_at is None:
+            return False
+        evidence = await _verify_controlled_async_stack(self._transport)
+        return (
+            origin == _CONTROLLED_ORIGIN
+            and monotonic() - self._issued_at <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            and evidence == self._evidence
+            and evidence.site_id == site_id
+        )
 
     @property
     def evidence_digest(self) -> str:
         """Return only the redacted controlled-stack evidence digest."""
-        return self._authority.evidence.digest
+        if self._evidence is None:
+            return ""
+        return self._evidence.digest
 
     @property
     def site_id(self) -> str:
         """Return the peer identity bound during the initial live verification."""
-        return self._authority.evidence.site_id
+        if self._evidence is None:
+            return ""
+        return self._evidence.site_id
 
 
 class _UDataClientCore:
@@ -1864,24 +1883,13 @@ def _require_controlled_settings(settings: UDataClientSettings) -> None:
         raise _controlled_error("Controlled uData mutations cannot use caller-provided transports.")
 
 
-def create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
+def _create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
     """Construct a stock synchronous client with a live-verified mutation authority."""
     require_extra("udata")
     _require_controlled_settings(settings)
-    transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
-    verify = _verify_controlled_sync_stack
-    try:
-        authority = _ControlledSyncAuthority(
-            transport=transport,
-            evidence=verify(transport),
-            verify=verify,
-            issued_at=monotonic(),
-        )
-    except BaseException:
-        transport.close()
-        raise
+    transport = _ControlledSyncTransport(tls_policy=settings.tls_policy, budget=settings.budget)
     return SyncUDataClient(
-        _ControlledSyncTransport(transport, authority, _seal=_CONTROLLED_TRANSPORT_SEAL),
+        transport,
         declared_udata_profile(),
         origin=settings.base_url,
         credentials=settings.credential,
@@ -1896,24 +1904,14 @@ def create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataCli
     )
 
 
-async def create_controlled_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
+async def _create_controlled_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
     """Construct a stock asynchronous client with a live-verified mutation authority."""
     require_extra("udata")
     _require_controlled_settings(settings)
-    transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
-    verify = _verify_controlled_async_stack
-    try:
-        authority = _ControlledAsyncAuthority(
-            transport=transport,
-            evidence=await verify(transport),
-            verify=verify,
-            issued_at=monotonic(),
-        )
-    except BaseException:
-        await transport.aclose()
-        raise
+    transport = _ControlledAsyncTransport(tls_policy=settings.tls_policy, budget=settings.budget)
+    await transport.verify()
     return AsyncUDataClient(
-        _ControlledAsyncTransport(transport, authority, _seal=_CONTROLLED_TRANSPORT_SEAL),
+        transport,
         declared_udata_profile(),
         origin=settings.base_url,
         credentials=settings.credential,

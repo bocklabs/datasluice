@@ -12,9 +12,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import (
+    _create_controlled_async_client,
+    _create_controlled_sync_client,
     create_async_client,
-    create_controlled_async_client,
-    create_controlled_sync_client,
     create_sync_client,
     declared_udata_profile,
 )
@@ -63,7 +63,9 @@ class _DirectNoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _direct_site_patch(row: Mapping[str, object], token: str, title: str) -> tuple[int, str, dict[str, object]]:
+def _direct_site_patch(
+    row: Mapping[str, object], token: str, body: Mapping[str, object]
+) -> tuple[int, str, dict[str, object]]:
     method = row["method"]
     path = row["path"]
     request_media_type = row["request_media_type"]
@@ -72,11 +74,10 @@ def _direct_site_patch(row: Mapping[str, object], token: str, title: str) -> tup
     assert isinstance(request_media_type, str)
     request_fields = row["request_fields"]
     assert isinstance(request_fields, list)
-    body = {"title": title}
-    assert set(body) == set(request_fields)
+    assert set(body) <= set(request_fields)
     request = Request(
         f"{ORIGIN}{path}",
-        data=json.dumps(body).encode(),
+        data=json.dumps(dict(body)).encode(),
         headers={"Content-Type": request_media_type, "X-API-KEY": token},
         method=method,
     )
@@ -93,7 +94,7 @@ def _direct_site_patch(row: Mapping[str, object], token: str, title: str) -> tup
         media_type = response.headers.get_content_type()
         assert type(status) is int
         assert isinstance(media_type, str)
-        return status, media_type, {field: payload.get(field) for field in ("id", "title", "version")}
+        return status, media_type, {field: payload.get(field) for field in ("id", "title", "version", "feed_size")}
 
 
 def test_controlled_stack_proves_exact_version_then_one_dataset_read() -> None:
@@ -209,7 +210,7 @@ def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
-    with create_controlled_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+    with _create_controlled_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         before = client.root_profile.get()
         result = client.root_profile.set_site(
             SitePatchInput(title=before.title),
@@ -241,21 +242,31 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
-    with create_controlled_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+    with _create_controlled_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         before = client.root_profile.get()
-        direct_status, direct_media, direct_fields = _direct_site_patch(row, token, before.title)
-        typed = client.root_profile.set_site(
-            SitePatchInput(title=before.title),
-            permissions=permissions,
-            mutation_policy=MutationPolicy(
-                confirmation=ConfirmationPolicy(
-                    confirmed=True,
-                    operation="udata/api-v1.set_site",
-                    target=before.site_id,
+        assert before.feed_size is not None
+        mutation_feed_size = before.feed_size + 1
+        try:
+            direct_status, direct_media, direct_fields = _direct_site_patch(
+                row, token, {"feed_size": mutation_feed_size}
+            )
+            assert direct_fields["feed_size"] == mutation_feed_size
+            _direct_site_patch(row, token, {"feed_size": before.feed_size})
+            typed = client.root_profile.set_site(
+                SitePatchInput(feed_size=mutation_feed_size),
+                permissions=permissions,
+                mutation_policy=MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True,
+                        operation="udata/api-v1.set_site",
+                        target=before.site_id,
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
                 ),
-                concurrency=ConcurrencyPolicy(overwrite=True),
-            ),
-        )
+            )
+            after = client.root_profile.get()
+        finally:
+            _direct_site_patch(row, token, {"feed_size": before.feed_size})
 
     expected_media = row["response_media_type"]
     assert isinstance(expected_media, str)
@@ -263,7 +274,11 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
     assert direct_media == expected_media
     assert typed.receipt.audit_metadata["status_code"] == direct_status
     assert typed.profile is not None
-    assert {field: typed.profile.payload.get(field) for field in ("id", "title", "version")} == direct_fields
+    assert typed.profile.feed_size == mutation_feed_size
+    assert after.feed_size == mutation_feed_size
+    assert {
+        field: typed.profile.payload.get(field) for field in ("id", "title", "version", "feed_size")
+    } == direct_fields
 
 
 def test_controlled_async_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -> None:
@@ -282,7 +297,7 @@ def test_controlled_async_stack_proves_site_patch_is_confirmed_and_receipt_beari
 
     async def run() -> tuple[SiteProfile, SiteMutationResult]:
         settings = UDataClientSettings(base_url=ORIGIN, credential=credential)
-        async with await create_controlled_async_client(settings) as client:
+        async with await _create_controlled_async_client(settings) as client:
             before = await client.root_profile.get()
             result = await client.root_profile.set_site(
                 SitePatchInput(title=before.title),

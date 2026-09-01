@@ -334,7 +334,7 @@ def test_root_profile_rows_are_exhaustively_declared() -> None:
             "method": "PATCH",
             "path": "/api/1/site/",
             "request_media_type": "application/json",
-            "request_fields": ["title"],
+            "request_fields": ["title", "feed_size"],
             "response_media_type": "application/json",
             "controlled_only": True,
         }
