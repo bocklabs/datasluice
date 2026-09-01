@@ -686,9 +686,8 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport(
         )
 
     fabricated = object.__new__(udata_clients._ControlledSyncTransport)
-    object.__setattr__(fabricated, "_transport", transport)
-    object.__setattr__(fabricated, "_evidence", _controlled_evidence())
-    object.__setattr__(fabricated, "_issued_at", 0.0)
+    with pytest.raises(AttributeError):
+        object.__setattr__(fabricated, "_transport", transport)
     client = SyncUDataClient(
         fabricated,
         declared_udata_profile(),
@@ -696,7 +695,7 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport(
         credentials=_CREDENTIAL,
         owns_transport=False,
     )
-    with client, pytest.raises(CatalogValidationError):
+    with client, pytest.raises((CatalogValidationError, ForbiddenError)):
         client.root_profile.set_site(
             SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
         )
