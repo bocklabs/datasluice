@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import os
-import subprocess
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -288,18 +287,40 @@ def _controlled_error(message: str) -> CatalogValidationError:
 def _compose_read(*args: str) -> str:
     if not _CONTROLLED_COMPOSE_FILE.is_file() or not _CONTROLLED_ENV_FILE.is_file():
         raise _controlled_error("The controlled uData evidence configuration is unavailable.")
+    command = [
+        "docker",
+        "compose",
+        "--env-file",
+        str(_CONTROLLED_ENV_FILE),
+        "-f",
+        str(_CONTROLLED_COMPOSE_FILE),
+        *args,
+    ]
+    read_fd, write_fd = os.pipe()
     try:
-        completed = subprocess.run(
-            ["docker", "compose", "--env-file", str(_CONTROLLED_ENV_FILE), "-f", str(_CONTROLLED_COMPOSE_FILE), *args],
-            capture_output=True,
-            text=True,
-            check=False,
+        file_actions = (
+            (os.POSIX_SPAWN_DUP2, write_fd, 1),
+            (os.POSIX_SPAWN_DUP2, write_fd, 2),
+            (os.POSIX_SPAWN_CLOSE, read_fd),
+            (os.POSIX_SPAWN_CLOSE, write_fd),
         )
+        environment = {key: os.environ[key] for key in ("PATH", "DOCKER_HOST", "DOCKER_CONTEXT") if key in os.environ}
+        process_id = os.posix_spawnp(command[0], command, environment, file_actions=file_actions)
+        os.close(write_fd)
+        write_fd = -1
+        chunks = []
+        while chunk := os.read(read_fd, 65536):
+            chunks.append(chunk)
+        _, wait_status = os.waitpid(process_id, 0)
     except OSError as error:
         raise _controlled_error("The controlled uData stack cannot be verified.") from error
-    if completed.returncode != 0:
+    finally:
+        os.close(read_fd)
+        if write_fd >= 0:
+            os.close(write_fd)
+    if os.waitstatus_to_exitcode(wait_status) != 0:
         raise _controlled_error("The controlled uData stack identity check failed.")
-    return completed.stdout.strip()
+    return b"".join(chunks).decode().strip()
 
 
 def _verify_controlled_source_and_nonce() -> str:
