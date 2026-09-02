@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from collections.abc import Mapping
@@ -41,6 +42,12 @@ pytestmark = [
         reason="controlled uData evidence runs only against the local digest-pinned stack",
     ),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _reload_root_profile_service() -> None:
+    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
+
 
 _FAMILY_OPERATION_ID = next(
     op_id

@@ -444,6 +444,7 @@ def digest_stream_document(
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
     complete_ready = False
+    decode_failure: NativeCatalogError | None = None
     try:
         media_type = response_media_type(
             response.headers,
@@ -467,20 +468,21 @@ def digest_stream_document(
             size_bytes = next_size
         decoder.decode(b"", final=True)
         complete_ready = True
-    except UnicodeDecodeError as error:
-        failure = NativeCatalogError(
+    except UnicodeDecodeError:
+        decode_failure = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
             operation=operation,
             platform="udata",
             status_code=response.status_code,
         )
-        response.fail(failure)
-        raise failure from error
+        response.fail(decode_failure)
     except BaseException as error:
         response.fail(error)
         raise
     finally:
         response.close()
+    if decode_failure is not None:
+        raise decode_failure
     if complete_ready:
         try:
             response.complete()
@@ -516,6 +518,7 @@ async def digest_stream_document_async(
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
     complete_ready = False
+    decode_failure: NativeCatalogError | None = None
     try:
         media_type = response_media_type(
             response.headers,
@@ -541,20 +544,21 @@ async def digest_stream_document_async(
             size_bytes = next_size
         decoder.decode(b"", final=True)
         complete_ready = True
-    except UnicodeDecodeError as error:
-        failure = NativeCatalogError(
+    except UnicodeDecodeError:
+        decode_failure = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
             operation=operation,
             platform="udata",
             status_code=response.status_code,
         )
-        await response.fail(failure)
-        raise failure from error
+        await response.fail(decode_failure)
     except BaseException as error:
         await response.fail(error)
         raise
     finally:
         await response.aclose()
+    if decode_failure is not None:
+        raise decode_failure
     if complete_ready:
         try:
             await response.complete()

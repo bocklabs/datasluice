@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Never, cast
+from typing import Never, cast
 from urllib.parse import urlsplit
 
+from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
 from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform
@@ -36,9 +37,6 @@ from datasluice.errors.catalog import (
 )
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import TransportFailure
-
-if TYPE_CHECKING:
-    from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
 
 _CSV_MEDIA_TYPE = "text/csv"
 _UNKNOWN_SITE = "unknown"
@@ -368,6 +366,139 @@ async def _run_root_async[T](client: AsyncUDataClient, action: Callable[[], Awai
     return result
 
 
+def _make_sync_set_site():
+    has_authority = SyncUDataClient._has_controlled_stack_authority
+    evidence_digest = SyncUDataClient._controlled_evidence_digest
+    site_id = SyncUDataClient._controlled_site_id
+    revalidate = SyncUDataClient._revalidate_controlled_sync_stack
+
+    def set_site(
+        self: SyncRootProfileService,
+        client_input: SitePatchInput,
+        *,
+        permissions: EffectivePermissions | None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> SiteMutationResult:
+        """PATCH /api/1/site/ (row 184) on the controlled stack only."""
+        operation = SET_SITE_OPERATION
+        target_id = site_id(self._client) or _UNKNOWN_SITE
+
+        def dispatch() -> tuple[int, object, object]:
+            nonlocal target_id
+            _require_controlled_authority(authorized=has_authority(self._client), operation=operation)
+            if not isinstance(client_input, SitePatchInput):
+                raise CatalogValidationError(
+                    "uData site PATCH requires SitePatchInput.",
+                    operation=operation,
+                    platform="udata",
+                    safe_action="Pass a typed SitePatchInput.",
+                )
+            resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
+            _enforce_patch_policy(mutation_policy, target=target_id)
+            current = self.get()
+            if not revalidate(self._client, site_id=current.site_id):
+                raise CatalogValidationError(
+                    "uData site PATCH evidence no longer matches the controlled stack.",
+                    operation=operation,
+                    platform="udata",
+                    safe_action="Rebuild the client through the verified controlled-stack factory.",
+                )
+            target_id = current.site_id
+            _enforce_patch_policy(mutation_policy, target=target_id)
+            method, path, headers, body = wire.set_site_request(client_input)
+            status, payload, response = self._client._root_call(
+                method=method,
+                path=path,
+                owning_operation=operation,
+                headers=headers,
+                json_body=body,
+                credential=resolved,
+                permissions=permissions,
+                idempotency_policy=IdempotencyPolicy(),
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            return status, payload, response
+
+        return _mutating(
+            mutation_policy,
+            dispatch,
+            _decode_patch,
+            lambda: target_id,
+            lambda: evidence_digest(self._client),
+            lambda outcome: self._client._emit(_operation_id(operation), outcome),
+        )
+
+    return set_site
+
+
+def _make_async_set_site():
+    has_authority = AsyncUDataClient._has_controlled_stack_authority
+    evidence_digest = AsyncUDataClient._controlled_evidence_digest
+    site_id = AsyncUDataClient._controlled_site_id
+    revalidate = AsyncUDataClient._revalidate_controlled_async_stack
+
+    async def set_site(
+        self: AsyncRootProfileService,
+        client_input: SitePatchInput,
+        *,
+        permissions: EffectivePermissions | None,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> SiteMutationResult:
+        """PATCH /api/1/site/ (row 184) on the controlled stack only."""
+        operation = SET_SITE_OPERATION
+        target_id = site_id(self._client) or _UNKNOWN_SITE
+
+        async def dispatch() -> tuple[int, object, object]:
+            nonlocal target_id
+            _require_controlled_authority(authorized=has_authority(self._client), operation=operation)
+            if not isinstance(client_input, SitePatchInput):
+                raise CatalogValidationError(
+                    "uData site PATCH requires SitePatchInput.",
+                    operation=operation,
+                    platform="udata",
+                    safe_action="Pass a typed SitePatchInput.",
+                )
+            resolved = await self._client._resolved_credential_async()
+            _require_mutation_permission(resolved, operation, permissions)
+            _enforce_patch_policy(mutation_policy, target=target_id)
+            current = await self.get()
+            if not await revalidate(self._client, site_id=current.site_id):
+                raise CatalogValidationError(
+                    "uData site PATCH evidence no longer matches the controlled stack.",
+                    operation=operation,
+                    platform="udata",
+                    safe_action="Rebuild the client through the verified controlled-stack factory.",
+                )
+            target_id = current.site_id
+            _enforce_patch_policy(mutation_policy, target=target_id)
+            method, path, headers, body = wire.set_site_request(client_input)
+            status, payload, response = await self._client._root_call_async(
+                method=method,
+                path=path,
+                owning_operation=operation,
+                headers=headers,
+                json_body=body,
+                credential=resolved,
+                permissions=permissions,
+                idempotency_policy=IdempotencyPolicy(),
+                max_response_bytes=self._client._root_export_max_bytes,
+                emit_success=False,
+            )
+            return status, payload, response
+
+        return await _amutating(
+            mutation_policy,
+            dispatch,
+            _decode_patch,
+            lambda: target_id,
+            lambda: evidence_digest(self._client),
+            lambda outcome: self._client._emit(_operation_id(operation), outcome),
+        )
+
+    return set_site
+
+
 class SyncRootProfileService:
     """Typed synchronous service for all assigned root-profile rows."""
 
@@ -402,66 +533,7 @@ class SyncRootProfileService:
 
         return _run_root(self._client, action)
 
-    def set_site(
-        self,
-        client_input: SitePatchInput,
-        *,
-        permissions: EffectivePermissions | None,
-        mutation_policy: MutationPolicy | None = None,
-    ) -> SiteMutationResult:
-        """PATCH /api/1/site/ (row 184) on the controlled stack only."""
-        from datasluice.connectors.catalog.udata.clients import SyncUDataClient
-
-        operation = SET_SITE_OPERATION
-        target_id = SyncUDataClient._controlled_site_id(self._client) or _UNKNOWN_SITE
-
-        def dispatch() -> tuple[int, object, object]:
-            nonlocal target_id
-            _require_controlled_authority(
-                authorized=SyncUDataClient._has_controlled_stack_authority(self._client), operation=operation
-            )
-            if not isinstance(client_input, SitePatchInput):
-                raise CatalogValidationError(
-                    "uData site PATCH requires SitePatchInput.",
-                    operation=operation,
-                    platform="udata",
-                    safe_action="Pass a typed SitePatchInput.",
-                )
-            resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
-            _enforce_patch_policy(mutation_policy, target=target_id)
-            current = self.get()
-            if not SyncUDataClient._revalidate_controlled_sync_stack(self._client, site_id=current.site_id):
-                raise CatalogValidationError(
-                    "uData site PATCH evidence no longer matches the controlled stack.",
-                    operation=operation,
-                    platform="udata",
-                    safe_action="Rebuild the client through the verified controlled-stack factory.",
-                )
-            target_id = current.site_id
-            _enforce_patch_policy(mutation_policy, target=target_id)
-            method, path, headers, body = wire.set_site_request(client_input)
-            status, payload, response = self._client._root_call(
-                method=method,
-                path=path,
-                owning_operation=operation,
-                headers=headers,
-                json_body=body,
-                credential=resolved,
-                permissions=permissions,
-                idempotency_policy=IdempotencyPolicy(),
-                max_response_bytes=self._client._root_export_max_bytes,
-                emit_success=False,
-            )
-            return status, payload, response
-
-        return _mutating(
-            mutation_policy,
-            dispatch,
-            _decode_patch,
-            lambda: target_id,
-            lambda: SyncUDataClient._controlled_evidence_digest(self._client),
-            lambda outcome: self._client._emit(_operation_id(operation), outcome),
-        )
+    set_site = _make_sync_set_site()
 
     def data_portal(self, fmt: str) -> SiteDocument:
         """GET /api/1/site/data.<format> (row 185)."""
@@ -691,67 +763,7 @@ class AsyncRootProfileService:
 
         return await _run_root_async(self._client, action)
 
-    async def set_site(
-        self,
-        client_input: SitePatchInput,
-        *,
-        permissions: EffectivePermissions | None,
-        mutation_policy: MutationPolicy | None = None,
-    ) -> SiteMutationResult:
-        """PATCH /api/1/site/ (row 184) on the controlled stack only."""
-        from datasluice.connectors.catalog.udata.clients import AsyncUDataClient
-
-        operation = SET_SITE_OPERATION
-        target_id = AsyncUDataClient._controlled_site_id(self._client) or _UNKNOWN_SITE
-
-        async def dispatch() -> tuple[int, object, object]:
-            nonlocal target_id
-            _require_controlled_authority(
-                authorized=AsyncUDataClient._has_controlled_stack_authority(self._client), operation=operation
-            )
-            if not isinstance(client_input, SitePatchInput):
-                raise CatalogValidationError(
-                    "uData site PATCH requires SitePatchInput.",
-                    operation=operation,
-                    platform="udata",
-                    safe_action="Pass a typed SitePatchInput.",
-                )
-            resolved = await self._client._resolved_credential_async()
-            _require_mutation_permission(resolved, operation, permissions)
-            _enforce_patch_policy(mutation_policy, target=target_id)
-            current = await self.get()
-            if not await AsyncUDataClient._revalidate_controlled_async_stack(self._client, site_id=current.site_id):
-                raise CatalogValidationError(
-                    "uData site PATCH evidence no longer matches the controlled stack.",
-                    operation=operation,
-                    platform="udata",
-                    safe_action="Rebuild the client through the verified controlled-stack factory.",
-                )
-            target_id = current.site_id
-            _enforce_patch_policy(mutation_policy, target=target_id)
-            method, path, headers, body = wire.set_site_request(client_input)
-            status, payload, response = await self._client._root_call_async(
-                method=method,
-                path=path,
-                owning_operation=operation,
-                headers=headers,
-                json_body=body,
-                credential=resolved,
-                permissions=permissions,
-                idempotency_policy=IdempotencyPolicy(),
-                max_response_bytes=self._client._root_export_max_bytes,
-                emit_success=False,
-            )
-            return status, payload, response
-
-        return await _amutating(
-            mutation_policy,
-            dispatch,
-            _decode_patch,
-            lambda: target_id,
-            lambda: AsyncUDataClient._controlled_evidence_digest(self._client),
-            lambda outcome: self._client._emit(_operation_id(operation), outcome),
-        )
+    set_site = _make_async_set_site()
 
     async def data_portal(self, fmt: str) -> SiteDocument:
         """GET /api/1/site/data.<format> (row 185)."""

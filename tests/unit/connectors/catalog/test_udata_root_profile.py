@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
 import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
@@ -61,6 +62,11 @@ _CREDENTIAL = UDataCredential(api_key="site-key")
 _PERMISSIONS = EffectivePermissions.for_credential(
     _CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
 )
+
+
+@pytest.fixture(autouse=True)
+def _reload_real_root_profile_service() -> None:
+    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
 
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
@@ -247,6 +253,7 @@ def _sync_client(
         return revalidate(site_id=site_id) if revalidate is not None else True
 
     stack.enter_context(patch.object(SyncUDataClient, "_revalidate_controlled_sync_stack", new=fake_revalidate))
+    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
     original_close = client.close
     closed = False
 
@@ -293,6 +300,7 @@ def _async_client(
         return True
 
     stack.enter_context(patch.object(AsyncUDataClient, "_revalidate_controlled_async_stack", new=revalidate))
+    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
     original_aclose = client.aclose
     closed = False
 

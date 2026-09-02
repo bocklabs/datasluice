@@ -17,7 +17,7 @@ from importlib import resources
 from pathlib import Path
 from time import monotonic, sleep
 from types import TracebackType
-from typing import Self, cast
+from typing import TYPE_CHECKING, Self, cast
 
 from datasluice.connectors.catalog.udata.mapping import (
     _DATASETS_OPERATION_ID,
@@ -32,8 +32,6 @@ from datasluice.connectors.catalog.udata.probes import (
     SiteVersion,
     SiteVersionGate,
 )
-from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
-from datasluice.connectors.catalog.udata.services.root_profile import AsyncRootProfileService, SyncRootProfileService
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings, normalize_origin
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -102,6 +100,13 @@ from datasluice.runtime.transport.base import (
     StreamingCatalogTransport,
     TransportFailure,
 )
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.udata.services.root_profile import (
+        AsyncRootProfileService,
+        SyncRootProfileService,
+    )
 
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
@@ -359,10 +364,14 @@ def _compose_read(*args: str) -> str:
             os.close(write_fd)
     if os.waitstatus_to_exitcode(wait_status) != 0:
         raise _controlled_error("The controlled uData stack identity check failed.")
+    invalid_output = False
     try:
-        return b"".join(chunks).decode().strip()
+        output = b"".join(chunks).decode().strip()
     except UnicodeDecodeError:
-        raise _controlled_error("The controlled uData stack identity check returned invalid output.") from None
+        invalid_output = True
+    if invalid_output:
+        raise _controlled_error("The controlled uData stack identity check returned invalid output.")
+    return output
 
 
 def _verify_controlled_source_and_nonce() -> str:
@@ -402,10 +411,14 @@ def _controlled_peer_evidence(response: RuntimeResponse) -> str:
         or content_type.split(";", 1)[0] != "application/json"
     ):
         raise _controlled_error("The controlled uData peer did not return its expected site identity.")
+    invalid_payload = False
     try:
         payload = json.loads(response.body)
     except (TypeError, ValueError):
-        raise _controlled_error("The controlled uData peer returned an invalid site identity.") from None
+        invalid_payload = True
+        payload = None
+    if invalid_payload:
+        raise _controlled_error("The controlled uData peer returned an invalid site identity.")
     if (
         not isinstance(payload, Mapping)
         or not isinstance(payload.get("id"), str)
@@ -904,11 +917,15 @@ class SyncUDataClient(_UDataClientCore):
     @property
     def datasets(self) -> SyncDatasetsService:
         """Expose the complete typed dataset service."""
+        from datasluice.connectors.catalog.udata.services.datasets import SyncDatasetsService
+
         return SyncDatasetsService(self)
 
     @property
     def root_profile(self) -> SyncRootProfileService:
         """Expose the complete typed root-profile service."""
+        from datasluice.connectors.catalog.udata.services.root_profile import SyncRootProfileService
+
         return SyncRootProfileService(self)
 
     def _require_site_version(self) -> SiteVersion:
@@ -1425,11 +1442,15 @@ class AsyncUDataClient(_UDataClientCore):
     @property
     def datasets(self) -> AsyncDatasetsService:
         """Expose the complete typed dataset service."""
+        from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService
+
         return AsyncDatasetsService(self)
 
     @property
     def root_profile(self) -> AsyncRootProfileService:
         """Expose the complete typed root-profile service."""
+        from datasluice.connectors.catalog.udata.services.root_profile import AsyncRootProfileService
+
         return AsyncRootProfileService(self)
 
     async def datasets_list(
