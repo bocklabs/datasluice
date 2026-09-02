@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib
 import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -64,11 +61,6 @@ _PERMISSIONS = EffectivePermissions.for_credential(
 )
 
 
-@pytest.fixture(autouse=True)
-def _reload_real_root_profile_service() -> None:
-    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
-
-
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
     return udata_clients._ControlledStackEvidence(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(), site_id=site_id
@@ -116,6 +108,63 @@ def test_controlled_command_decode_failure_is_redacted(monkeypatch: pytest.Monke
         udata_clients._compose_read("ps")
 
     assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+def test_controlled_command_timeout_terminates_the_child(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    times = iter((0.0, 16.0))
+    killed: list[int] = []
+
+    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_clients.os, "kill", lambda pid, _: killed.append(pid))
+    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_clients, "monotonic", lambda: next(times))
+
+    with pytest.raises(CatalogValidationError):
+        udata_clients._compose_read("ps")
+
+    assert killed == [7]
+
+
+def test_controlled_command_output_limit_terminates_the_child(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    killed: list[int] = []
+
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES", 1)
+    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_clients.os, "read", lambda *_: b"too much")
+    monkeypatch.setattr(udata_clients.os, "kill", lambda pid, _: killed.append(pid))
+    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []))
+
+    with pytest.raises(CatalogValidationError):
+        udata_clients._compose_read("ps")
+
+    assert killed == [7]
+
+
+def test_controlled_command_nonzero_exit_is_sanitized(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    reads = iter((b"ok", b""))
+
+    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_clients.os, "read", lambda *_: next(reads))
+    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_clients.os, "waitstatus_to_exitcode", lambda _: 1)
+    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], []))
+
+    with pytest.raises(CatalogValidationError) as excinfo:
+        udata_clients._compose_read("ps")
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
 
 
 def test_controlled_peer_decode_failure_is_redacted() -> None:
@@ -125,6 +174,7 @@ def test_controlled_peer_decode_failure_is_redacted() -> None:
         udata_clients._controlled_peer_evidence(response)
 
     assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
 
 
 def test_root_document_decode_failure_is_redacted() -> None:
@@ -137,6 +187,27 @@ def test_root_document_decode_failure_is_redacted() -> None:
         )
 
     assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+def test_stream_document_decode_failure_is_redacted() -> None:
+    response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=iter((b"\xff",)),
+        close_callback=lambda: None,
+    )
+
+    with pytest.raises(NativeCatalogError) as excinfo:
+        wire.digest_stream_document(
+            response,
+            endpoint=_SITE_URL,
+            expected_media_type="text/csv",
+            max_bytes=8,
+        )
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
 
 
 def _site_body(*, title: str = "uData") -> dict[str, object]:
@@ -224,6 +295,61 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
+class _ControlledRouterTransport(udata_clients._ControlledSyncTransport):
+    __slots__ = ("_delegate", "_revalidate")
+
+    def __init__(self, delegate: RouterTransport, revalidate: Callable[..., bool]) -> None:
+        self._delegate = delegate
+        self._revalidate = revalidate
+
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return self._delegate.send(request)
+
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        return self._delegate.send_stream(request)
+
+    def close(self) -> None:
+        self._delegate.close()
+
+    def revalidate(self, *, origin: str, site_id: str) -> bool:
+        return self._revalidate(site_id=site_id)
+
+    @property
+    def evidence_digest(self) -> str:
+        return _controlled_evidence().digest
+
+    @property
+    def site_id(self) -> str:
+        return "site"
+
+
+class _ControlledAsyncRouterTransport(udata_clients._ControlledAsyncTransport):
+    __slots__ = ("_delegate",)
+
+    def __init__(self, delegate: AsyncRouterTransport) -> None:
+        self._delegate = delegate
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return await self._delegate.send(request)
+
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        return await self._delegate.send_stream(request)
+
+    async def aclose(self) -> None:
+        await self._delegate.aclose()
+
+    async def revalidate(self, *, origin: str, site_id: str) -> bool:
+        return True
+
+    @property
+    def evidence_digest(self) -> str:
+        return _controlled_evidence().digest
+
+    @property
+    def site_id(self) -> str:
+        return "site"
+
+
 def _sync_client(
     routes: Mapping[tuple[str, str], RuntimeResponse],
     *,
@@ -235,38 +361,14 @@ def _sync_client(
     test_transport: RouterTransport | None = None,
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = test_transport or RouterTransport(routes)
+    controlled_transport = _ControlledRouterTransport(transport, revalidate or (lambda **_: True))
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
-        sync_transport=transport,
+        sync_transport=controlled_transport,
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_sync_client(settings)
-    stack = ExitStack()
-    stack.enter_context(patch.object(SyncUDataClient, "_has_controlled_stack_authority", new=lambda _: True))
-    stack.enter_context(
-        patch.object(SyncUDataClient, "_controlled_evidence_digest", new=lambda _: _controlled_evidence().digest)
-    )
-    stack.enter_context(patch.object(SyncUDataClient, "_controlled_site_id", new=lambda _: "site"))
-
-    def fake_revalidate(_: object, *, site_id: str) -> bool:
-        return revalidate(site_id=site_id) if revalidate is not None else True
-
-    stack.enter_context(patch.object(SyncUDataClient, "_revalidate_controlled_sync_stack", new=fake_revalidate))
-    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
-    original_close = client.close
-    closed = False
-
-    def close() -> None:
-        nonlocal closed
-        try:
-            original_close()
-        finally:
-            if not closed:
-                stack.close()
-                closed = True
-
-    cast(Any, client).close = close
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -284,36 +386,10 @@ def _async_client(
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
-        async_transport=transport,
+        async_transport=_ControlledAsyncRouterTransport(transport),
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_async_client(settings)
-
-    stack = ExitStack()
-    stack.enter_context(patch.object(AsyncUDataClient, "_has_controlled_stack_authority", new=lambda _: True))
-    stack.enter_context(
-        patch.object(AsyncUDataClient, "_controlled_evidence_digest", new=lambda _: _controlled_evidence().digest)
-    )
-    stack.enter_context(patch.object(AsyncUDataClient, "_controlled_site_id", new=lambda _: "site"))
-
-    async def revalidate(_: object, *, site_id: str) -> bool:
-        return True
-
-    stack.enter_context(patch.object(AsyncUDataClient, "_revalidate_controlled_async_stack", new=revalidate))
-    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
-    original_aclose = client.aclose
-    closed = False
-
-    async def aclose() -> None:
-        nonlocal closed
-        try:
-            await original_aclose()
-        finally:
-            if not closed:
-                stack.close()
-                closed = True
-
-    cast(Any, client).aclose = aclose
     if emitter is not None:
         client._emitter = emitter
     return transport, client

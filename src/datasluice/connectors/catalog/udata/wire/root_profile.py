@@ -398,15 +398,18 @@ def parse_document(
             platform="udata",
             status_code=status_code,
         )
+    invalid_utf8 = False
     try:
         body.decode("utf-8")
     except UnicodeDecodeError:
+        invalid_utf8 = True
+    if invalid_utf8:
         raise NativeCatalogError(
             "The uData site document is not valid UTF-8.",
             operation=operation,
             platform="udata",
             status_code=status_code,
-        ) from None
+        )
     media_type = _media_type(
         response_media_type,
         expected_media_type,
@@ -590,15 +593,19 @@ def parse_jsonld_context(
     def reject_constant(value: str) -> None:
         raise ValueError(f"The uData JSON-LD context contains the non-JSON constant {value!r}.")
 
+    invalid_payload = False
     try:
         payload = json.loads(body, parse_constant=reject_constant)
     except (TypeError, ValueError):
+        invalid_payload = True
+        payload = None
+    if invalid_payload:
         raise NativeCatalogError(
             "The uData JSON-LD context is not valid JSON.",
             operation=operation,
             platform="udata",
             status_code=status_code,
-        ) from None
+        )
     if not isinstance(payload, Mapping):
         raise CatalogValidationError(
             "The uData JSON-LD context must be a JSON object.",
