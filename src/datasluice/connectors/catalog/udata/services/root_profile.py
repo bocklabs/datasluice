@@ -385,12 +385,12 @@ def _make_sync_set_site():
         operation = SET_SITE_OPERATION
         transport = self._client.transport
         target_id = (
-            cast(_ControlledSyncTransport, transport).site_id if isinstance(transport, controlled_type) else None
+            cast(_ControlledSyncTransport, transport).site_id if type(transport) is controlled_type else None
         ) or _UNKNOWN_SITE
 
         def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
-            _require_controlled_authority(authorized=isinstance(transport, controlled_type), operation=operation)
+            _require_controlled_authority(authorized=type(transport) is controlled_type, operation=operation)
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
                     "uData site PATCH requires SitePatchInput.",
@@ -434,7 +434,7 @@ def _make_sync_set_site():
             lambda: target_id,
             lambda: (
                 cast(_ControlledSyncTransport, transport).evidence_digest
-                if isinstance(transport, controlled_type)
+                if type(transport) is controlled_type
                 else None
             ),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
@@ -457,12 +457,12 @@ def _make_async_set_site():
         operation = SET_SITE_OPERATION
         transport = self._client.transport
         target_id = (
-            cast(_ControlledAsyncTransport, transport).site_id if isinstance(transport, controlled_type) else None
+            cast(_ControlledAsyncTransport, transport).site_id if type(transport) is controlled_type else None
         ) or _UNKNOWN_SITE
 
         async def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
-            _require_controlled_authority(authorized=isinstance(transport, controlled_type), operation=operation)
+            _require_controlled_authority(authorized=type(transport) is controlled_type, operation=operation)
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
                     "uData site PATCH requires SitePatchInput.",
@@ -507,7 +507,7 @@ def _make_async_set_site():
             lambda: target_id,
             lambda: (
                 cast(_ControlledAsyncTransport, transport).evidence_digest
-                if isinstance(transport, controlled_type)
+                if type(transport) is controlled_type
                 else None
             ),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),

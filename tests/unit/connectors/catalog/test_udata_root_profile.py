@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
 import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -210,6 +212,66 @@ def test_stream_document_decode_failure_is_redacted() -> None:
     assert excinfo.value.__context__ is None
 
 
+def test_async_stream_document_decode_failure_is_redacted() -> None:
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"\xff"
+
+    response = AsyncRuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=chunks(),
+        close_callback=lambda: None,
+    )
+
+    async def run() -> None:
+        with pytest.raises(NativeCatalogError) as excinfo:
+            await wire.digest_stream_document_async(
+                response,
+                endpoint=_SITE_URL,
+                expected_media_type="text/csv",
+                max_bytes=8,
+            )
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__context__ is None
+
+    asyncio.run(run())
+
+
+def test_sync_root_json_decode_failure_does_not_retain_response_body() -> None:
+    transport, client = _sync_client(
+        _routes(("GET", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
+    )
+    with client:
+        client.site_version()
+        transport.routes[("GET", _SITE_URL)] = RuntimeResponse(200, {"Content-Type": "application/json"}, b"not-json")
+        with pytest.raises(NativeCatalogError) as excinfo:
+            client.root_profile.get()
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+    assert len(transport.requests) == 2
+
+
+def test_async_root_json_decode_failure_does_not_retain_response_body() -> None:
+    transport, client = _async_client(
+        _routes(("GET", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
+    )
+
+    async def run() -> None:
+        async with client:
+            await client.site_version()
+            transport.routes[("GET", _SITE_URL)] = RuntimeResponse(
+                200, {"Content-Type": "application/json"}, b"not-json"
+            )
+            with pytest.raises(NativeCatalogError) as excinfo:
+                await client.root_profile.get()
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__context__ is None
+
+    asyncio.run(run())
+    assert len(transport.requests) == 2
+
+
 def _site_body(*, title: str = "uData") -> dict[str, object]:
     return {
         "id": "site",
@@ -295,9 +357,12 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
-class _ControlledRouterTransport(udata_clients._ControlledSyncTransport):
-    __slots__ = ("_delegate", "_revalidate")
+@pytest.fixture(autouse=True)
+def _reload_real_root_profile_service() -> None:
+    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
 
+
+class _ControlledRouterTransport:
     def __init__(self, delegate: RouterTransport, revalidate: Callable[..., bool]) -> None:
         self._delegate = delegate
         self._revalidate = revalidate
@@ -323,9 +388,7 @@ class _ControlledRouterTransport(udata_clients._ControlledSyncTransport):
         return "site"
 
 
-class _ControlledAsyncRouterTransport(udata_clients._ControlledAsyncTransport):
-    __slots__ = ("_delegate",)
-
+class _ControlledAsyncRouterTransport:
     def __init__(self, delegate: AsyncRouterTransport) -> None:
         self._delegate = delegate
 
@@ -369,6 +432,8 @@ def _sync_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_sync_client(settings)
+    with patch.object(udata_clients, "_ControlledSyncTransport", _ControlledRouterTransport):
+        importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -390,6 +455,8 @@ def _async_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_async_client(settings)
+    with patch.object(udata_clients, "_ControlledAsyncTransport", _ControlledAsyncRouterTransport):
+        importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
     if emitter is not None:
         client._emitter = emitter
     return transport, client

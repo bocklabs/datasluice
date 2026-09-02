@@ -130,6 +130,11 @@ ROOT_FAILURE_IDS = frozenset(
 )
 
 
+@pytest.fixture(autouse=True)
+def _reload_root_profile_service() -> None:
+    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
+
+
 class _FixtureSyncTransport:
     def __init__(self, responder: Callable[[RuntimeRequest], RuntimeResponse]) -> None:
         self._responder = responder

@@ -829,14 +829,18 @@ class _UDataClientCore:
                     retry_after=response.retry_after,
                 )
             )
+        invalid_payload = False
         try:
             payload = json.loads(response.body)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
+            invalid_payload = True
+            payload = None
+        if invalid_payload:
             raise NativeCatalogError(
                 "Catalog operation returned an invalid JSON result.",
                 operation=str(owning_id),
                 platform=PLATFORM.value,
-            ) from exc
+            )
         return shape_dataset_page(parse_native_page(payload, operation=str(owning_id)), operation=str(owning_id))
 
     def capability(self, operation_id: str) -> str:
@@ -1064,16 +1068,20 @@ class SyncUDataClient(_UDataClientCore):
             elif not response.body:
                 result = response.status_code, None, response
             else:
+                invalid_payload = False
                 try:
                     payload = json.loads(response.body)
-                except (TypeError, ValueError) as exc:
+                except (TypeError, ValueError):
+                    invalid_payload = True
+                    payload = None
+                if invalid_payload:
                     raise NativeCatalogError(
                         "Catalog operation returned an invalid JSON result.",
                         operation=str(owning_id),
                         platform=PLATFORM.value,
                         status_code=response.status_code,
                         metadata={"ambiguous": json_body is not None and method != "GET"},
-                    ) from exc
+                    )
                 result = response.status_code, payload, response
         except BudgetExhaustedError:
             if emit_success:
@@ -1680,16 +1688,20 @@ class AsyncUDataClient(_UDataClientCore):
             elif not response.body:
                 result = response.status_code, None, response
             else:
+                invalid_payload = False
                 try:
                     payload = json.loads(response.body)
-                except (TypeError, ValueError) as exc:
+                except (TypeError, ValueError):
+                    invalid_payload = True
+                    payload = None
+                if invalid_payload:
                     raise NativeCatalogError(
                         "Catalog operation returned an invalid JSON result.",
                         operation=str(owning_id),
                         platform=PLATFORM.value,
                         status_code=response.status_code,
                         metadata={"ambiguous": json_body is not None and method != "GET"},
-                    ) from exc
+                    )
                 result = response.status_code, payload, response
         except BudgetExhaustedError:
             if emit_success:
