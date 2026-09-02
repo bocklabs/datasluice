@@ -410,13 +410,15 @@ class SyncRootProfileService:
         mutation_policy: MutationPolicy | None = None,
     ) -> SiteMutationResult:
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
+        from datasluice.connectors.catalog.udata.clients import SyncUDataClient
+
         operation = SET_SITE_OPERATION
-        target_id = self._client._controlled_site_id() or _UNKNOWN_SITE
+        target_id = SyncUDataClient._controlled_site_id(self._client) or _UNKNOWN_SITE
 
         def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
             _require_controlled_authority(
-                authorized=self._client._has_controlled_stack_authority(), operation=operation
+                authorized=SyncUDataClient._has_controlled_stack_authority(self._client), operation=operation
             )
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
@@ -428,7 +430,7 @@ class SyncRootProfileService:
             resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = self.get()
-            if not self._client._revalidate_controlled_sync_stack(site_id=current.site_id):
+            if not SyncUDataClient._revalidate_controlled_sync_stack(self._client, site_id=current.site_id):
                 raise CatalogValidationError(
                     "uData site PATCH evidence no longer matches the controlled stack.",
                     operation=operation,
@@ -457,7 +459,7 @@ class SyncRootProfileService:
             dispatch,
             _decode_patch,
             lambda: target_id,
-            self._client._controlled_evidence_digest,
+            lambda: SyncUDataClient._controlled_evidence_digest(self._client),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
         )
 
@@ -697,13 +699,15 @@ class AsyncRootProfileService:
         mutation_policy: MutationPolicy | None = None,
     ) -> SiteMutationResult:
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
+        from datasluice.connectors.catalog.udata.clients import AsyncUDataClient
+
         operation = SET_SITE_OPERATION
-        target_id = self._client._controlled_site_id() or _UNKNOWN_SITE
+        target_id = AsyncUDataClient._controlled_site_id(self._client) or _UNKNOWN_SITE
 
         async def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
             _require_controlled_authority(
-                authorized=self._client._has_controlled_stack_authority(), operation=operation
+                authorized=AsyncUDataClient._has_controlled_stack_authority(self._client), operation=operation
             )
             if not isinstance(client_input, SitePatchInput):
                 raise CatalogValidationError(
@@ -716,7 +720,7 @@ class AsyncRootProfileService:
             _require_mutation_permission(resolved, operation, permissions)
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = await self.get()
-            if not await self._client._revalidate_controlled_async_stack(site_id=current.site_id):
+            if not await AsyncUDataClient._revalidate_controlled_async_stack(self._client, site_id=current.site_id):
                 raise CatalogValidationError(
                     "uData site PATCH evidence no longer matches the controlled stack.",
                     operation=operation,
@@ -745,7 +749,7 @@ class AsyncRootProfileService:
             dispatch,
             _decode_patch,
             lambda: target_id,
-            self._client._controlled_evidence_digest,
+            lambda: AsyncUDataClient._controlled_evidence_digest(self._client),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
         )
 

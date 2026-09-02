@@ -6,7 +6,10 @@ import asyncio
 import hashlib
 import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
+from contextlib import ExitStack
+from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -64,6 +67,70 @@ def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack
     return udata_clients._ControlledStackEvidence(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(), site_id=site_id
     )
+
+
+def _controlled_compose_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    compose_file = tmp_path / "compose.yaml"
+    env_file = tmp_path / ".env"
+    compose_file.write_text("compose", encoding="utf-8")
+    env_file.write_text("env", encoding="utf-8")
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMPOSE_FILE", compose_file)
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_ENV_FILE", env_file)
+
+
+def test_controlled_command_reaps_a_process_after_pipe_eof(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    reads = iter((b"ok", b""))
+    waits = iter(((0, 0), (7, 0)))
+
+    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_clients.os, "read", lambda *_: next(reads))
+    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: next(waits))
+    monkeypatch.setattr(udata_clients.os, "waitstatus_to_exitcode", lambda _: 0)
+    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], []))
+
+    assert udata_clients._compose_read("ps") == "ok"
+
+
+def test_controlled_command_decode_failure_is_redacted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    reads = iter((b"\xff", b""))
+
+    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_clients.os, "read", lambda *_: next(reads))
+    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_clients.os, "waitstatus_to_exitcode", lambda _: 0)
+    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], []))
+
+    with pytest.raises(CatalogValidationError) as excinfo:
+        udata_clients._compose_read("ps")
+
+    assert excinfo.value.__cause__ is None
+
+
+def test_controlled_peer_decode_failure_is_redacted() -> None:
+    response = RuntimeResponse(status_code=200, headers={"Content-Type": "application/json"}, body=b"not-json")
+
+    with pytest.raises(CatalogValidationError) as excinfo:
+        udata_clients._controlled_peer_evidence(response)
+
+    assert excinfo.value.__cause__ is None
+
+
+def test_root_document_decode_failure_is_redacted() -> None:
+    with pytest.raises(NativeCatalogError) as excinfo:
+        wire.parse_document(
+            b"\xffpayload",
+            endpoint=_SITE_URL,
+            expected_media_type="text/csv",
+            response_media_type="text/csv",
+        )
+
+    assert excinfo.value.__cause__ is None
 
 
 def _site_body(*, title: str = "uData") -> dict[str, object]:
@@ -169,10 +236,30 @@ def _sync_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_sync_client(settings)
-    cast(Any, client)._has_controlled_stack_authority = lambda: True
-    cast(Any, client)._controlled_evidence_digest = lambda: _controlled_evidence().digest
-    cast(Any, client)._controlled_site_id = lambda: "site"
-    cast(Any, client)._revalidate_controlled_sync_stack = revalidate or (lambda *, site_id: True)
+    stack = ExitStack()
+    stack.enter_context(patch.object(SyncUDataClient, "_has_controlled_stack_authority", new=lambda _: True))
+    stack.enter_context(
+        patch.object(SyncUDataClient, "_controlled_evidence_digest", new=lambda _: _controlled_evidence().digest)
+    )
+    stack.enter_context(patch.object(SyncUDataClient, "_controlled_site_id", new=lambda _: "site"))
+
+    def fake_revalidate(_: object, *, site_id: str) -> bool:
+        return revalidate(site_id=site_id) if revalidate is not None else True
+
+    stack.enter_context(patch.object(SyncUDataClient, "_revalidate_controlled_sync_stack", new=fake_revalidate))
+    original_close = client.close
+    closed = False
+
+    def close() -> None:
+        nonlocal closed
+        try:
+            original_close()
+        finally:
+            if not closed:
+                stack.close()
+                closed = True
+
+    cast(Any, client).close = close
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -194,14 +281,31 @@ def _async_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_async_client(settings)
-    cast(Any, client)._has_controlled_stack_authority = lambda: True
-    cast(Any, client)._controlled_evidence_digest = lambda: _controlled_evidence().digest
-    cast(Any, client)._controlled_site_id = lambda: "site"
 
-    async def revalidate(*, site_id: str) -> bool:
+    stack = ExitStack()
+    stack.enter_context(patch.object(AsyncUDataClient, "_has_controlled_stack_authority", new=lambda _: True))
+    stack.enter_context(
+        patch.object(AsyncUDataClient, "_controlled_evidence_digest", new=lambda _: _controlled_evidence().digest)
+    )
+    stack.enter_context(patch.object(AsyncUDataClient, "_controlled_site_id", new=lambda _: "site"))
+
+    async def revalidate(_: object, *, site_id: str) -> bool:
         return True
 
-    cast(Any, client)._revalidate_controlled_async_stack = revalidate
+    stack.enter_context(patch.object(AsyncUDataClient, "_revalidate_controlled_async_stack", new=revalidate))
+    original_aclose = client.aclose
+    closed = False
+
+    async def aclose() -> None:
+        nonlocal closed
+        try:
+            await original_aclose()
+        finally:
+            if not closed:
+                stack.close()
+                closed = True
+
+    cast(Any, client).aclose = aclose
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -697,6 +801,18 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport(
     )
     with client, pytest.raises((CatalogValidationError, ForbiddenError)):
         client.root_profile.set_site(
+            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
+
+    hooked_client = create_sync_client(
+        UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport)
+    )
+    cast(Any, hooked_client)._has_controlled_stack_authority = lambda: True
+    cast(Any, hooked_client)._controlled_evidence_digest = lambda: _controlled_evidence().digest
+    cast(Any, hooked_client)._controlled_site_id = lambda: "site"
+    cast(Any, hooked_client)._revalidate_controlled_sync_stack = lambda *, site_id: True
+    with hooked_client, pytest.raises(CatalogValidationError):
+        hooked_client.root_profile.set_site(
             SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
         )
     assert transport.requests == []

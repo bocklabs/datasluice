@@ -361,8 +361,8 @@ def _compose_read(*args: str) -> str:
         raise _controlled_error("The controlled uData stack identity check failed.")
     try:
         return b"".join(chunks).decode().strip()
-    except UnicodeDecodeError as error:
-        raise _controlled_error("The controlled uData stack identity check returned invalid output.") from error
+    except UnicodeDecodeError:
+        raise _controlled_error("The controlled uData stack identity check returned invalid output.") from None
 
 
 def _verify_controlled_source_and_nonce() -> str:
@@ -404,8 +404,8 @@ def _controlled_peer_evidence(response: RuntimeResponse) -> str:
         raise _controlled_error("The controlled uData peer did not return its expected site identity.")
     try:
         payload = json.loads(response.body)
-    except (TypeError, ValueError) as error:
-        raise _controlled_error("The controlled uData peer returned an invalid site identity.") from error
+    except (TypeError, ValueError):
+        raise _controlled_error("The controlled uData peer returned an invalid site identity.") from None
     if (
         not isinstance(payload, Mapping)
         or not isinstance(payload.get("id"), str)
