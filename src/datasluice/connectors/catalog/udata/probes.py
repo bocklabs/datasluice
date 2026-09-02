@@ -204,14 +204,18 @@ class SiteVersionGate:
             )
         import json
 
+        invalid_payload = False
         try:
             payload = json.loads(response.body)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
+            invalid_payload = True
+            payload = None
+        if invalid_payload:
             raise UDataVersionError(
                 version_state="malformed",
                 message="The uData site probe returned an invalid JSON result.",
                 safe_action="Verify the deployment serves the stock /api/1/site/ JSON document.",
-            ) from exc
+            )
         return require_exact_version(parse_site_version(payload), self._pinned_version)
 
 
@@ -275,12 +279,16 @@ class AsyncSiteVersionGate(SiteVersionGate):
                 message=f"The uData site probe returned HTTP {response.status_code}.",
                 safe_action="Verify the deployment origin exposes the stock /api/1/site/ document.",
             )
+        invalid_payload = False
         try:
             payload = json.loads(response.body)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError):
+            invalid_payload = True
+            payload = None
+        if invalid_payload:
             raise UDataVersionError(
                 version_state="malformed",
                 message="The uData site probe returned an invalid JSON result.",
                 safe_action="Verify the deployment serves the stock /api/1/site/ JSON document.",
-            ) from exc
+            )
         return require_exact_version(parse_site_version(payload), self._pinned_version)

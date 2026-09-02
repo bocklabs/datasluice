@@ -2036,3 +2036,16 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
         owns_transport=True,
         async_probe_runner=settings.async_probe_runner,
     )
+
+
+def _load_services():
+    from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.udata.services.root_profile import (
+        AsyncRootProfileService,
+        SyncRootProfileService,
+    )
+
+    return AsyncDatasetsService, SyncDatasetsService, AsyncRootProfileService, SyncRootProfileService
+
+
+AsyncDatasetsService, SyncDatasetsService, AsyncRootProfileService, SyncRootProfileService = _load_services()

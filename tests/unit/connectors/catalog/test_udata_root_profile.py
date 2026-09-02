@@ -33,6 +33,7 @@ from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteProfile,
     SiteReuseCsvQuery,
 )
+from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
@@ -270,6 +271,34 @@ def test_async_root_json_decode_failure_does_not_retain_response_body() -> None:
 
     asyncio.run(run())
     assert len(transport.requests) == 2
+
+
+def test_sync_site_probe_decode_failure_does_not_retain_response_body() -> None:
+    transport, client = _sync_client(
+        _routes(("GET", _SITE_URL, RuntimeResponse(200, {"Content-Type": "application/json"}, b"not-json")))
+    )
+    with client, pytest.raises(UDataVersionError) as excinfo:
+        client.site_version()
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+    assert len(transport.requests) == 1
+
+
+def test_async_site_probe_decode_failure_does_not_retain_response_body() -> None:
+    transport, client = _async_client(
+        _routes(("GET", _SITE_URL, RuntimeResponse(200, {"Content-Type": "application/json"}, b"not-json")))
+    )
+
+    async def run() -> None:
+        async with client:
+            with pytest.raises(UDataVersionError) as excinfo:
+                await client.site_version()
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__context__ is None
+
+    asyncio.run(run())
+    assert len(transport.requests) == 1
 
 
 def _site_body(*, title: str = "uData") -> dict[str, object]:
