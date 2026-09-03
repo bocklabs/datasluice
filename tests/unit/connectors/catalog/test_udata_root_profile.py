@@ -47,7 +47,6 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     NativeCatalogError,
 )
-from datasluice.runtime import defaults as runtime_defaults
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.transport import httpx_transport
 from datasluice.runtime.transport.base import (
@@ -409,11 +408,18 @@ def _sync_client(
     transport = test_transport or RouterTransport(routes)
     stack = ExitStack()
 
-    def no_http_extra(_: str) -> None:
-        raise ImportError
+    def send(_: object, request: RuntimeRequest) -> RuntimeResponse:
+        return transport.send(request)
 
-    stack.enter_context(patch.object(runtime_defaults, "require_extra", no_http_extra))
-    stack.enter_context(patch.object(runtime_defaults, "UrllibCatalogTransport", lambda **_: transport))
+    def send_stream(_: object, request: RuntimeRequest) -> RuntimeStreamResponse:
+        return transport.send_stream(request)
+
+    def close(_: object) -> None:
+        transport.close()
+
+    stack.enter_context(patch.object(httpx_transport.HttpxCatalogTransport, "send", send))
+    stack.enter_context(patch.object(httpx_transport.HttpxCatalogTransport, "send_stream", send_stream))
+    stack.enter_context(patch.object(httpx_transport.HttpxCatalogTransport, "close", close))
 
     def verify_source() -> str:
         transport._suppress_next = True
@@ -474,7 +480,19 @@ def _async_client(
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
     stack = ExitStack()
-    stack.enter_context(patch.object(httpx_transport, "AsyncHttpxCatalogTransport", lambda **_: transport))
+
+    async def send(_: object, request: RuntimeRequest) -> RuntimeResponse:
+        return await transport.send(request)
+
+    async def send_stream(_: object, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        return await transport.send_stream(request)
+
+    async def aclose(_: object) -> None:
+        await transport.aclose()
+
+    stack.enter_context(patch.object(httpx_transport.AsyncHttpxCatalogTransport, "send", send))
+    stack.enter_context(patch.object(httpx_transport.AsyncHttpxCatalogTransport, "send_stream", send_stream))
+    stack.enter_context(patch.object(httpx_transport.AsyncHttpxCatalogTransport, "aclose", aclose))
 
     def verify_source() -> str:
         transport._suppress_next = True

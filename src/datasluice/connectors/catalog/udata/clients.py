@@ -101,6 +101,7 @@ from datasluice.runtime.transport.base import (
     StreamingCatalogTransport,
     TransportFailure,
 )
+from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
@@ -459,6 +460,25 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
 
 
 class _ImmutableDispatchGateType(type):
+    def __new__(
+        mcls, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object
+    ) -> _ImmutableDispatchGateType:
+        reserved = {
+            "authorize_sync",
+            "authorize_async",
+            "bind_sync_client",
+            "bind_async_client",
+            "_sync_verifier",
+            "_async_verifier",
+        }
+        inherited: set[str] = set()
+        for base in bases:
+            for ancestor in base.__mro__:
+                inherited.update(attribute for attribute in reserved if attribute in ancestor.__dict__)
+        if inherited.intersection(namespace):
+            raise AttributeError("Controlled dispatch authorization is immutable.")
+        return super().__new__(mcls, name, bases, namespace, **kwargs)
+
     def __setattr__(cls, name: str, value: object) -> None:
         if name in {
             "authorize_sync",
@@ -539,18 +559,52 @@ class _ImmutableTransportType(type):
     def __new__(
         mcls, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object
     ) -> _ImmutableTransportType:
+        reserved = {
+            "_factory_bindings",
+            "__init__",
+            "send",
+            "send_stream",
+            "close",
+            "verify",
+            "aclose",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
+        }
         inherited = any("_factory_bindings" in ancestor.__dict__ for base in bases for ancestor in base.__mro__)
-        if inherited and "_factory_bindings" in namespace:
+        if inherited and reserved.intersection(namespace):
             raise AttributeError("Controlled transport bindings are factory-owned.")
         return super().__new__(mcls, name, bases, namespace, **kwargs)
 
     def __setattr__(cls, name: str, value: object) -> None:
-        if name == "_factory_bindings":
+        if name in {
+            "_factory_bindings",
+            "__init__",
+            "send",
+            "send_stream",
+            "close",
+            "verify",
+            "aclose",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
+        }:
             raise AttributeError("Controlled transport bindings are factory-owned.")
         super().__setattr__(name, value)
 
     def __delattr__(cls, name: str) -> None:
-        if name == "_factory_bindings":
+        if name in {
+            "_factory_bindings",
+            "__init__",
+            "send",
+            "send_stream",
+            "close",
+            "verify",
+            "aclose",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
+        }:
             raise AttributeError("Controlled transport bindings are factory-owned.")
         super().__delattr__(name)
 
@@ -607,7 +661,7 @@ def _build_controlled_transport_types():
         """Own a stock transport after live controlled-stack verification."""
 
         __slots__ = ("__weakref__",)
-        _factory_bindings = (create_default_sync_transport, _verify_controlled_sync_stack)
+        _factory_bindings = (HttpxCatalogTransport, _verify_controlled_sync_stack)
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
             builder, verifier = type(self)._factory_bindings
@@ -640,7 +694,7 @@ def _build_controlled_transport_types():
         """Own a stock asynchronous transport after live controlled-stack verification."""
 
         __slots__ = ("__weakref__",)
-        _factory_bindings = (create_default_async_transport, _verify_controlled_async_stack)
+        _factory_bindings = (AsyncHttpxCatalogTransport, _verify_controlled_async_stack)
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
             builder, _ = type(self)._factory_bindings
@@ -738,11 +792,11 @@ def _build_controlled_transport_types():
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
 
         def bind_sync_client(self, client: object, transport: object) -> None:
-            if sync_state(transport) is not None:
+            if type(transport) is _ControlledSyncTransport and sync_state(transport) is not None:
                 sync_client_registry.set(client, transport)
 
         def bind_async_client(self, client: object, transport: object) -> None:
-            if async_state(transport) is not None:
+            if type(transport) is _ControlledAsyncTransport and async_state(transport) is not None:
                 async_client_registry.set(client, transport)
 
         def authorize_sync(
