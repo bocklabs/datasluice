@@ -45,7 +45,7 @@ from datasluice.errors.catalog import (
     attach_catalog_metadata,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
-from datasluice.runtime.transport.base import TransportFailure
+from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse, TransportFailure
 
 _CSV_MEDIA_TYPE = "text/csv"
 _UNKNOWN_SITE = "unknown"
@@ -346,6 +346,52 @@ def _parse_redirect(
     )
 
 
+def _parse_and_close_redirect(response: RuntimeStreamResponse, parse: Callable[[], SiteDocument]) -> SiteDocument:
+    document: SiteDocument | None = None
+    primary_error: BaseException | None = None
+    try:
+        document = parse()
+    except BaseException as error:
+        primary_error = error
+    cleanup_error: BaseException | None = None
+    try:
+        response.close()
+    except BaseException as error:
+        cleanup_error = error
+    if primary_error is not None:
+        if cleanup_error is not None:
+            raise primary_error from cleanup_error
+        raise primary_error
+    if cleanup_error is not None:
+        raise cleanup_error
+    assert document is not None
+    return document
+
+
+async def _parse_and_close_redirect_async(
+    response: AsyncRuntimeStreamResponse, parse: Callable[[], SiteDocument]
+) -> SiteDocument:
+    document: SiteDocument | None = None
+    primary_error: BaseException | None = None
+    try:
+        document = parse()
+    except BaseException as error:
+        primary_error = error
+    cleanup_error: BaseException | None = None
+    try:
+        await response.aclose()
+    except BaseException as error:
+        cleanup_error = error
+    if primary_error is not None:
+        if cleanup_error is not None:
+            raise primary_error from cleanup_error
+        raise primary_error
+    if cleanup_error is not None:
+        raise cleanup_error
+    assert document is not None
+    return document
+
+
 def _run_root[T](client: SyncUDataClient, action: Callable[[], T]) -> T:
     """Emit the root outcome after route-level validation completes."""
     operation = _operation_id(ROOT_OPERATION)
@@ -622,10 +668,10 @@ class SyncRootProfileService:
         response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                try:
-                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-                finally:
-                    response.close()
+                document = _parse_and_close_redirect(
+                    response,
+                    lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
+                )
             except BaseException:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
@@ -656,10 +702,10 @@ class SyncRootProfileService:
         response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                try:
-                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-                finally:
-                    response.close()
+                document = _parse_and_close_redirect(
+                    response,
+                    lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
+                )
             except BaseException:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
@@ -853,10 +899,10 @@ class AsyncRootProfileService:
         )
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                try:
-                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-                finally:
-                    await response.aclose()
+                document = await _parse_and_close_redirect_async(
+                    response,
+                    lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
+                )
             except BaseException:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
@@ -889,10 +935,10 @@ class AsyncRootProfileService:
         )
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
-                try:
-                    document = _parse_redirect(response.status_code, response.headers, path, self._client._origin)
-                finally:
-                    await response.aclose()
+                document = await _parse_and_close_redirect_async(
+                    response,
+                    lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
+                )
             except BaseException:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise

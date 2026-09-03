@@ -334,6 +334,7 @@ class _ControlledStackEvidence:
 
     nonce_sha256: str = field(repr=False)
     site_id: str
+    docker_endpoint_sha256: str = field(default="", repr=False)
 
     @property
     def digest(self) -> str:
@@ -347,9 +348,16 @@ class _ControlledStackEvidence:
                     *_CONTROLLED_IMAGE_DIGESTS,
                     self.nonce_sha256,
                     self.site_id,
+                    self.docker_endpoint_sha256,
                 )
             ).encode()
         ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledSourceIdentity:
+    nonce_sha256: str = field(repr=False)
+    docker_endpoint: str = field(repr=False)
 
 
 def _controlled_error(message: str) -> CatalogValidationError:
@@ -365,11 +373,22 @@ def _controlled_command_spec(
     args: tuple[str, ...],
     *,
     input_data: bytes | None = None,
+    docker_endpoint: str | None = None,
 ) -> tuple[tuple[str, ...], dict[str, str]]:
     if not _CONTROLLED_COMPOSE_FILE.is_file() or not _CONTROLLED_ENV_FILE.is_file():
         raise _controlled_error("The controlled uData evidence configuration is unavailable.")
     if input_data is not None and len(input_data) > _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES:
         raise _controlled_error("The controlled uData command input is too large.")
+    if docker_endpoint is not None:
+        parsed_endpoint = urlsplit(docker_endpoint)
+        if (
+            parsed_endpoint.scheme != "unix"
+            or bool(parsed_endpoint.netloc)
+            or not parsed_endpoint.path.startswith("/")
+            or bool(parsed_endpoint.query)
+            or bool(parsed_endpoint.fragment)
+        ):
+            raise _controlled_error("Controlled uData evidence requires a local Unix Docker context.")
     executable = next(
         (path for path in _CONTROLLED_DOCKER_EXECUTABLES if path.is_file() and os.access(path, os.X_OK)),
         None,
@@ -378,11 +397,12 @@ def _controlled_command_spec(
         raise _controlled_error("The trusted Docker executable is unavailable.")
     if os.environ.get("DOCKER_HOST") or os.environ.get("DOCKER_CONTEXT"):
         raise _controlled_error("Controlled uData evidence cannot use Docker environment overrides.")
+    executable_prefix = (str(executable),) if docker_endpoint is None else (str(executable), "--host", docker_endpoint)
     command = (
-        (str(executable), *args)
+        (*executable_prefix, *args)
         if args[:2] == ("context", "inspect")
         else (
-            str(executable),
+            *executable_prefix,
             "compose",
             "--env-file",
             str(_CONTROLLED_ENV_FILE),
@@ -394,105 +414,159 @@ def _controlled_command_spec(
     return command, {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
 
-def _controlled_command(
+@dataclass(frozen=True, slots=True)
+class _ControlledSyncRuntime:
+    command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]]
+    pipe: Callable[[], tuple[int, int]]
+    posix_spawnp: Callable[..., int]
+    close: Callable[[int], None]
+    set_blocking: Callable[[int, bool], None]
+    read: Callable[[int, int], bytes]
+    write: Callable[[int, bytes], int]
+    kill: Callable[[int, int], None]
+    waitpid: Callable[..., tuple[int, int]]
+    waitstatus_to_exitcode: Callable[[int], int]
+    select: Callable[..., tuple[list[int], list[int], list[int]]]
+    monotonic: Callable[[], float]
+    posix_spawn_dup2: int
+    posix_spawn_close: int
+    wnohang: int
+    sigkill: int
+    timeout_seconds: float
+    max_output_bytes: int
+
+
+def _current_controlled_sync_runtime() -> _ControlledSyncRuntime:
+    return _ControlledSyncRuntime(
+        command_spec=_controlled_command_spec,
+        pipe=os.pipe,
+        posix_spawnp=os.posix_spawnp,
+        close=os.close,
+        set_blocking=os.set_blocking,
+        read=os.read,
+        write=os.write,
+        kill=os.kill,
+        waitpid=os.waitpid,
+        waitstatus_to_exitcode=os.waitstatus_to_exitcode,
+        select=select.select,
+        monotonic=monotonic,
+        posix_spawn_dup2=os.POSIX_SPAWN_DUP2,
+        posix_spawn_close=os.POSIX_SPAWN_CLOSE,
+        wnohang=os.WNOHANG,
+        sigkill=signal.SIGKILL,
+        timeout_seconds=_CONTROLLED_COMMAND_TIMEOUT_SECONDS,
+        max_output_bytes=_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES,
+    )
+
+
+def _terminate_controlled_process_sync(process_id: int, deadline: float, runtime: _ControlledSyncRuntime) -> None:
+    try:
+        runtime.kill(process_id, runtime.sigkill)
+    except OSError:
+        pass
+    while True:
+        try:
+            completed_pid, _ = runtime.waitpid(process_id, runtime.wnohang)
+        except OSError:
+            return
+        if completed_pid == process_id:
+            return
+        remaining = deadline - runtime.monotonic()
+        if remaining <= 0:
+            return
+        runtime.select([], [], [], min(remaining, 0.05))
+
+
+def _run_controlled_command(
     args: tuple[str, ...],
     *,
     input_data: bytes | None = None,
+    docker_endpoint: str | None = None,
     timeout_message: str,
     output_message: str,
     failure_message: str,
+    runtime: _ControlledSyncRuntime,
 ) -> str:
-    command, environment = _controlled_command_spec(args, input_data=input_data)
-    read_fd, write_fd = os.pipe()
+    command, environment = runtime.command_spec(args, input_data=input_data, docker_endpoint=docker_endpoint)
+    read_fd, write_fd = runtime.pipe()
     input_read_fd = input_write_fd = -1
     if input_data is not None:
-        input_read_fd, input_write_fd = os.pipe()
+        input_read_fd, input_write_fd = runtime.pipe()
     process_id: int | None = None
-    deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
+    deadline = runtime.monotonic() + runtime.timeout_seconds
     try:
         file_actions = [
-            (os.POSIX_SPAWN_DUP2, write_fd, 1),
-            (os.POSIX_SPAWN_DUP2, write_fd, 2),
-            (os.POSIX_SPAWN_CLOSE, read_fd),
-            (os.POSIX_SPAWN_CLOSE, write_fd),
+            (runtime.posix_spawn_dup2, write_fd, 1),
+            (runtime.posix_spawn_dup2, write_fd, 2),
+            (runtime.posix_spawn_close, read_fd),
+            (runtime.posix_spawn_close, write_fd),
         ]
         if input_data is not None:
             file_actions.extend(
                 (
-                    (os.POSIX_SPAWN_DUP2, input_read_fd, 0),
-                    (os.POSIX_SPAWN_CLOSE, input_read_fd),
-                    (os.POSIX_SPAWN_CLOSE, input_write_fd),
+                    (runtime.posix_spawn_dup2, input_read_fd, 0),
+                    (runtime.posix_spawn_close, input_read_fd),
+                    (runtime.posix_spawn_close, input_write_fd),
                 )
             )
-        process_id = os.posix_spawnp(command[0], command, environment, file_actions=tuple(file_actions))
-        os.close(write_fd)
+        process_id = runtime.posix_spawnp(command[0], command, environment, file_actions=tuple(file_actions))
+        runtime.close(write_fd)
         write_fd = -1
         if input_read_fd >= 0:
-            os.close(input_read_fd)
+            runtime.close(input_read_fd)
             input_read_fd = -1
         if input_write_fd >= 0:
-            os.set_blocking(input_write_fd, False)
+            runtime.set_blocking(input_write_fd, False)
             offset = 0
             input_bytes = input_data or b""
             while offset < len(input_bytes):
-                remaining = deadline - monotonic()
-                if remaining <= 0 or not select.select([], [input_write_fd], [], remaining)[1]:
-                    os.kill(process_id, signal.SIGKILL)
-                    os.waitpid(process_id, 0)
+                remaining = deadline - runtime.monotonic()
+                if remaining <= 0 or not runtime.select([], [input_write_fd], [], remaining)[1]:
+                    _terminate_controlled_process_sync(process_id, deadline, runtime)
                     raise _controlled_error(timeout_message)
                 try:
-                    offset += os.write(input_write_fd, input_bytes[offset:])
+                    offset += runtime.write(input_write_fd, input_bytes[offset:])
                 except BlockingIOError:
                     continue
-            os.close(input_write_fd)
+            runtime.close(input_write_fd)
             input_write_fd = -1
         chunks: list[bytes] = []
         output_size = 0
         while True:
-            remaining = deadline - monotonic()
-            if remaining <= 0 or not select.select([read_fd], [], [], remaining)[0]:
-                os.kill(process_id, signal.SIGKILL)
-                os.waitpid(process_id, 0)
+            remaining = deadline - runtime.monotonic()
+            if remaining <= 0 or not runtime.select([read_fd], [], [], remaining)[0]:
+                _terminate_controlled_process_sync(process_id, deadline, runtime)
                 raise _controlled_error(timeout_message)
-            chunk = os.read(read_fd, 65536)
+            chunk = runtime.read(read_fd, 65536)
             if not chunk:
                 break
             output_size += len(chunk)
-            if output_size > _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES:
-                os.kill(process_id, signal.SIGKILL)
-                os.waitpid(process_id, 0)
+            if output_size > runtime.max_output_bytes:
+                _terminate_controlled_process_sync(process_id, deadline, runtime)
                 raise _controlled_error(output_message)
             chunks.append(chunk)
         while True:
-            completed_pid, wait_status = os.waitpid(process_id, os.WNOHANG)
+            completed_pid, wait_status = runtime.waitpid(process_id, runtime.wnohang)
             if completed_pid == process_id:
                 break
-            remaining = deadline - monotonic()
+            remaining = deadline - runtime.monotonic()
             if remaining <= 0:
-                os.kill(process_id, signal.SIGKILL)
-                os.waitpid(process_id, 0)
+                _terminate_controlled_process_sync(process_id, deadline, runtime)
                 raise _controlled_error(timeout_message)
-            select.select([], [], [], min(remaining, 0.05))
+            runtime.select([], [], [], min(remaining, 0.05))
     except (AttributeError, OSError) as error:
         if process_id is not None:
-            try:
-                os.kill(process_id, signal.SIGKILL)
-            except OSError:
-                pass
-            try:
-                os.waitpid(process_id, 0)
-            except OSError:
-                pass
+            _terminate_controlled_process_sync(process_id, deadline, runtime)
         raise _controlled_error(failure_message) from error
     finally:
-        os.close(read_fd)
+        runtime.close(read_fd)
         if write_fd >= 0:
-            os.close(write_fd)
+            runtime.close(write_fd)
         if input_read_fd >= 0:
-            os.close(input_read_fd)
+            runtime.close(input_read_fd)
         if input_write_fd >= 0:
-            os.close(input_write_fd)
-    if os.waitstatus_to_exitcode(wait_status) != 0:
+            runtime.close(input_write_fd)
+    if runtime.waitstatus_to_exitcode(wait_status) != 0:
         raise _controlled_error(failure_message)
     invalid_output = False
     try:
@@ -504,54 +578,147 @@ def _controlled_command(
     return output
 
 
-def _compose_read(*args: str) -> str:
+def _controlled_command(
+    args: tuple[str, ...],
+    *,
+    input_data: bytes | None = None,
+    docker_endpoint: str | None = None,
+    timeout_message: str,
+    output_message: str,
+    failure_message: str,
+) -> str:
+    return _run_controlled_command(
+        args,
+        input_data=input_data,
+        docker_endpoint=docker_endpoint,
+        timeout_message=timeout_message,
+        output_message=output_message,
+        failure_message=failure_message,
+        runtime=_current_controlled_sync_runtime(),
+    )
+
+
+def _make_bound_controlled_command(runtime: _ControlledSyncRuntime) -> Callable[..., str]:
+    def command(
+        args: tuple[str, ...],
+        *,
+        input_data: bytes | None = None,
+        docker_endpoint: str | None = None,
+        timeout_message: str,
+        output_message: str,
+        failure_message: str,
+    ) -> str:
+        return _run_controlled_command(
+            args,
+            input_data=input_data,
+            docker_endpoint=docker_endpoint,
+            timeout_message=timeout_message,
+            output_message=output_message,
+            failure_message=failure_message,
+            runtime=runtime,
+        )
+
+    return command
+
+
+def _compose_read(*args: str, docker_endpoint: str | None = None) -> str:
     return _controlled_command(
         args,
+        docker_endpoint=docker_endpoint,
         timeout_message="The controlled uData stack identity check timed out.",
         output_message="The controlled uData stack identity check returned too much output.",
         failure_message="The controlled uData stack identity check failed.",
     )
 
 
-async def _terminate_controlled_process(process: asyncio.subprocess.Process | None) -> None:
+async def _terminate_controlled_process(
+    process: asyncio.subprocess.Process | None,
+    deadline: float,
+    *,
+    wait_for: Callable[..., Awaitable[object]] = asyncio.wait_for,
+    clock: Callable[[], float] = monotonic,
+) -> None:
     if process is None or process.returncode is not None:
         return
     try:
         process.kill()
     except OSError:
+        pass
+    remaining = deadline - clock()
+    if remaining <= 0:
         return
     try:
-        await process.wait()
-    except OSError:
+        await wait_for(process.wait(), timeout=remaining)
+    except (OSError, TimeoutError):
         return
 
 
-async def _controlled_command_async(
+@dataclass(frozen=True, slots=True)
+class _ControlledAsyncRuntime:
+    command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]]
+    create_subprocess_exec: Callable[..., Awaitable[asyncio.subprocess.Process]]
+    wait_for: Callable[..., Awaitable[object]]
+    terminate: Callable[[asyncio.subprocess.Process | None, float], Awaitable[None]]
+    pipe: int
+    devnull: int
+    stdout: int
+    stderr: int
+    monotonic: Callable[[], float]
+    timeout_seconds: float
+    max_output_bytes: int
+
+
+def _current_controlled_async_runtime() -> _ControlledAsyncRuntime:
+    return _ControlledAsyncRuntime(
+        command_spec=_controlled_command_spec,
+        create_subprocess_exec=asyncio.create_subprocess_exec,
+        wait_for=asyncio.wait_for,
+        terminate=_terminate_controlled_process,
+        pipe=asyncio.subprocess.PIPE,
+        devnull=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        monotonic=monotonic,
+        timeout_seconds=_CONTROLLED_COMMAND_TIMEOUT_SECONDS,
+        max_output_bytes=_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES,
+    )
+
+
+async def _run_controlled_command_async(
     args: tuple[str, ...],
     *,
     input_data: bytes | None = None,
+    docker_endpoint: str | None = None,
     timeout_message: str,
     output_message: str,
     failure_message: str,
+    runtime: _ControlledAsyncRuntime,
 ) -> str:
-    command, environment = _controlled_command_spec(args, input_data=input_data)
+    command, environment = runtime.command_spec(
+        args,
+        input_data=input_data,
+        docker_endpoint=docker_endpoint,
+    )
     process: asyncio.subprocess.Process | None = None
     chunks: list[bytes] = []
-    deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
+    deadline = runtime.monotonic() + runtime.timeout_seconds
     try:
-        remaining = deadline - monotonic()
+        remaining = deadline - runtime.monotonic()
         if remaining <= 0:
             raise _controlled_error(timeout_message)
         try:
-            process = await asyncio.wait_for(
-                asyncio.create_subprocess_exec(
-                    *command,
-                    stdin=asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    env=environment,
+            process = cast(
+                asyncio.subprocess.Process,
+                await runtime.wait_for(
+                    runtime.create_subprocess_exec(
+                        *command,
+                        stdin=runtime.pipe if input_data is not None else runtime.devnull,
+                        stdout=runtime.stdout,
+                        stderr=runtime.stderr,
+                        env=environment,
+                    ),
+                    timeout=remaining,
                 ),
-                timeout=remaining,
             )
         except TimeoutError:
             raise _controlled_error(timeout_message) from None
@@ -560,49 +727,49 @@ async def _controlled_command_async(
         if input_data is not None:
             if process.stdin is None:
                 raise OSError("controlled command stdin was unavailable")
-            remaining = deadline - monotonic()
+            remaining = deadline - runtime.monotonic()
             if remaining <= 0:
-                await _terminate_controlled_process(process)
+                await runtime.terminate(process, deadline)
                 raise _controlled_error(timeout_message)
             process.stdin.write(input_data)
             try:
-                await asyncio.wait_for(process.stdin.drain(), timeout=remaining)
+                await runtime.wait_for(process.stdin.drain(), timeout=remaining)
             except TimeoutError:
-                await _terminate_controlled_process(process)
+                await runtime.terminate(process, deadline)
                 raise _controlled_error(timeout_message) from None
             process.stdin.close()
         output_size = 0
         while True:
-            remaining = deadline - monotonic()
+            remaining = deadline - runtime.monotonic()
             if remaining <= 0:
-                await _terminate_controlled_process(process)
+                await runtime.terminate(process, deadline)
                 raise _controlled_error(timeout_message)
             try:
-                chunk = await asyncio.wait_for(process.stdout.read(65536), timeout=remaining)
+                chunk = cast(bytes, await runtime.wait_for(process.stdout.read(65536), timeout=remaining))
             except TimeoutError:
-                await _terminate_controlled_process(process)
+                await runtime.terminate(process, deadline)
                 raise _controlled_error(timeout_message) from None
             if not chunk:
                 break
             output_size += len(chunk)
-            if output_size > _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES:
-                await _terminate_controlled_process(process)
+            if output_size > runtime.max_output_bytes:
+                await runtime.terminate(process, deadline)
                 raise _controlled_error(output_message)
             chunks.append(chunk)
-        remaining = deadline - monotonic()
+        remaining = deadline - runtime.monotonic()
         if remaining <= 0:
-            await _terminate_controlled_process(process)
+            await runtime.terminate(process, deadline)
             raise _controlled_error(timeout_message)
         try:
-            await asyncio.wait_for(process.wait(), timeout=remaining)
+            await runtime.wait_for(process.wait(), timeout=remaining)
         except TimeoutError:
-            await _terminate_controlled_process(process)
+            await runtime.terminate(process, deadline)
             raise _controlled_error(timeout_message) from None
     except (OSError, ChildProcessError) as error:
-        await _terminate_controlled_process(process)
+        await runtime.terminate(process, deadline)
         raise _controlled_error(failure_message) from error
     finally:
-        await _terminate_controlled_process(process)
+        await runtime.terminate(process, deadline)
     if process is None or process.returncode != 0:
         raise _controlled_error(failure_message)
     try:
@@ -611,9 +778,53 @@ async def _controlled_command_async(
         raise _controlled_error(output_message) from None
 
 
-async def _compose_read_async(*args: str) -> str:
+async def _controlled_command_async(
+    args: tuple[str, ...],
+    *,
+    input_data: bytes | None = None,
+    docker_endpoint: str | None = None,
+    timeout_message: str,
+    output_message: str,
+    failure_message: str,
+) -> str:
+    return await _run_controlled_command_async(
+        args,
+        input_data=input_data,
+        docker_endpoint=docker_endpoint,
+        timeout_message=timeout_message,
+        output_message=output_message,
+        failure_message=failure_message,
+        runtime=_current_controlled_async_runtime(),
+    )
+
+
+def _make_bound_controlled_command_async(runtime: _ControlledAsyncRuntime) -> Callable[..., Awaitable[str]]:
+    async def command(
+        args: tuple[str, ...],
+        *,
+        input_data: bytes | None = None,
+        docker_endpoint: str | None = None,
+        timeout_message: str,
+        output_message: str,
+        failure_message: str,
+    ) -> str:
+        return await _run_controlled_command_async(
+            args,
+            input_data=input_data,
+            docker_endpoint=docker_endpoint,
+            timeout_message=timeout_message,
+            output_message=output_message,
+            failure_message=failure_message,
+            runtime=runtime,
+        )
+
+    return command
+
+
+async def _compose_read_async(*args: str, docker_endpoint: str | None = None) -> str:
     return await _controlled_command_async(
         args,
+        docker_endpoint=docker_endpoint,
         timeout_message="The controlled uData stack identity check timed out.",
         output_message="The controlled uData stack identity check returned too much output.",
         failure_message="The controlled uData stack identity check failed.",
@@ -625,18 +836,21 @@ def _controlled_patch_response(
     body: Mapping[str, object],
     *,
     command: Callable[..., str] | None = None,
-    source_verifier: Callable[[], str] | None = None,
+    source_verifier: Callable[[], _ControlledSourceIdentity] | None = None,
     response_parser: Callable[[str], RuntimeResponse] | None = None,
+    patch_program: str | None = None,
 ) -> RuntimeResponse:
     runner = _controlled_command if command is None else command
     verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
     parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
-    verify_source()
+    program = _CONTROLLED_PATCH_PROGRAM if patch_program is None else patch_program
+    identity = verify_source()
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
     output = runner(
-        ("exec", "-T", "udata", "python", "-c", _CONTROLLED_PATCH_PROGRAM),
+        ("exec", "-T", "udata", "python", "-c", program),
         input_data=input_data,
+        docker_endpoint=identity.docker_endpoint,
         timeout_message="The controlled uData site PATCH timed out.",
         output_message="The controlled uData site PATCH returned too much output.",
         failure_message="The controlled uData site PATCH process failed.",
@@ -677,18 +891,21 @@ async def _controlled_patch_response_async(
     body: Mapping[str, object],
     *,
     command: Callable[..., Awaitable[str]] | None = None,
-    source_verifier: Callable[[], Awaitable[str]] | None = None,
+    source_verifier: Callable[[], Awaitable[_ControlledSourceIdentity]] | None = None,
     response_parser: Callable[[str], RuntimeResponse] | None = None,
+    patch_program: str | None = None,
 ) -> RuntimeResponse:
     runner = _controlled_command_async if command is None else command
     verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
     parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
-    await verify_source()
+    program = _CONTROLLED_PATCH_PROGRAM if patch_program is None else patch_program
+    identity = await verify_source()
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
     output = await runner(
-        ("exec", "-T", "udata", "python", "-c", _CONTROLLED_PATCH_PROGRAM),
+        ("exec", "-T", "udata", "python", "-c", program),
         input_data=input_data,
+        docker_endpoint=identity.docker_endpoint,
         timeout_message="The controlled uData site PATCH timed out.",
         output_message="The controlled uData site PATCH returned too much output.",
         failure_message="The controlled uData site PATCH process failed.",
@@ -712,7 +929,7 @@ def _controlled_source_nonce() -> str:
     return nonce
 
 
-def _validate_controlled_context_endpoint(context_endpoint: str) -> None:
+def _validate_controlled_context_endpoint(context_endpoint: str) -> str:
     try:
         endpoint = json.loads(context_endpoint)
     except (TypeError, ValueError):
@@ -723,58 +940,113 @@ def _validate_controlled_context_endpoint(context_endpoint: str) -> None:
         or parsed_endpoint.scheme != "unix"
         or bool(parsed_endpoint.netloc)
         or not parsed_endpoint.path.startswith("/")
+        or bool(parsed_endpoint.query)
+        or bool(parsed_endpoint.fragment)
     ):
         raise _controlled_error("Controlled uData evidence requires a local Unix Docker context.")
+    return endpoint
 
 
 def _verify_controlled_source_and_nonce(
     *,
     compose_read: Callable[..., str] | None = None,
     source_nonce: Callable[[], str] | None = None,
-    context_validator: Callable[[str], None] | None = None,
-) -> str:
+    context_validator: Callable[[str], str] | None = None,
+) -> _ControlledSourceIdentity:
     read = _compose_read if compose_read is None else compose_read
     nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
     validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
     nonce = nonce_reader()
     context_endpoint = read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-    validate_context(context_endpoint)
-    services = read("ps", "--status", "running", "--services").splitlines()
+    docker_endpoint = validate_context(context_endpoint)
+    services = read("ps", "--status", "running", "--services", docker_endpoint=docker_endpoint).splitlines()
     expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
     if len(services) != len(expected_services) or set(services) != expected_services:
         raise _controlled_error("The running services do not match the controlled uData stack.")
-    if read("port", "udata", "7000") != "127.0.0.1:5640":
+    if read("port", "udata", "7000", docker_endpoint=docker_endpoint) != "127.0.0.1:5640":
         raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
-    if read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD") != _CONTROLLED_SOURCE_COMMIT:
+    if (
+        read(
+            "exec",
+            "-T",
+            "udata",
+            "git",
+            "-C",
+            "/opt/udata",
+            "rev-parse",
+            "HEAD",
+            docker_endpoint=docker_endpoint,
+        )
+        != _CONTROLLED_SOURCE_COMMIT
+    ):
         raise _controlled_error("The controlled uData service source does not match the approved commit.")
-    if read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
+    if (
+        read(
+            "exec",
+            "-T",
+            "udata",
+            "printenv",
+            "UDATA_EVIDENCE_STACK_NONCE",
+            docker_endpoint=docker_endpoint,
+        )
+        != nonce
+    ):
         raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
-    return hashlib.sha256(nonce.encode()).hexdigest()
+    return _ControlledSourceIdentity(
+        nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
+        docker_endpoint=docker_endpoint,
+    )
 
 
 async def _verify_controlled_source_and_nonce_async(
     *,
     compose_read: Callable[..., Awaitable[str]] | None = None,
     source_nonce: Callable[[], str] | None = None,
-    context_validator: Callable[[str], None] | None = None,
-) -> str:
+    context_validator: Callable[[str], str] | None = None,
+) -> _ControlledSourceIdentity:
     read = _compose_read_async if compose_read is None else compose_read
     nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
     validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
     nonce = nonce_reader()
     context_endpoint = await read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-    validate_context(context_endpoint)
-    services = (await read("ps", "--status", "running", "--services")).splitlines()
+    docker_endpoint = validate_context(context_endpoint)
+    services = (await read("ps", "--status", "running", "--services", docker_endpoint=docker_endpoint)).splitlines()
     expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
     if len(services) != len(expected_services) or set(services) != expected_services:
         raise _controlled_error("The running services do not match the controlled uData stack.")
-    if await read("port", "udata", "7000") != "127.0.0.1:5640":
+    if await read("port", "udata", "7000", docker_endpoint=docker_endpoint) != "127.0.0.1:5640":
         raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
-    if await read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD") != _CONTROLLED_SOURCE_COMMIT:
+    if (
+        await read(
+            "exec",
+            "-T",
+            "udata",
+            "git",
+            "-C",
+            "/opt/udata",
+            "rev-parse",
+            "HEAD",
+            docker_endpoint=docker_endpoint,
+        )
+        != _CONTROLLED_SOURCE_COMMIT
+    ):
         raise _controlled_error("The controlled uData service source does not match the approved commit.")
-    if await read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
+    if (
+        await read(
+            "exec",
+            "-T",
+            "udata",
+            "printenv",
+            "UDATA_EVIDENCE_STACK_NONCE",
+            docker_endpoint=docker_endpoint,
+        )
+        != nonce
+    ):
         raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
-    return hashlib.sha256(nonce.encode()).hexdigest()
+    return _ControlledSourceIdentity(
+        nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
+        docker_endpoint=docker_endpoint,
+    )
 
 
 def _controlled_peer_evidence(response: RuntimeResponse) -> str:
@@ -806,13 +1078,13 @@ def _controlled_peer_evidence(response: RuntimeResponse) -> str:
 def _verify_controlled_sync_stack(
     transport: CatalogTransport,
     *,
-    source_verifier: Callable[[], str] | None = None,
+    source_verifier: Callable[[], _ControlledSourceIdentity] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
-    site_probe: Callable[[], RuntimeResponse] | None = None,
+    site_probe: Callable[[str], RuntimeResponse] | None = None,
 ) -> _ControlledStackEvidence:
     verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
     decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
-    nonce_sha256 = verify_source()
+    identity = verify_source()
     response = (
         transport.send(
             RuntimeRequest(
@@ -824,21 +1096,25 @@ def _verify_controlled_sync_stack(
             )
         )
         if site_probe is None
-        else site_probe()
+        else site_probe(identity.docker_endpoint)
     )
-    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=decode_peer(response))
+    return _ControlledStackEvidence(
+        nonce_sha256=identity.nonce_sha256,
+        site_id=decode_peer(response),
+        docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
+    )
 
 
 async def _verify_controlled_async_stack(
     transport: AsyncCatalogTransport,
     *,
-    source_verifier: Callable[[], Awaitable[str]] | None = None,
+    source_verifier: Callable[[], Awaitable[_ControlledSourceIdentity]] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
-    site_probe: Callable[[], Awaitable[RuntimeResponse]] | None = None,
+    site_probe: Callable[[str], Awaitable[RuntimeResponse]] | None = None,
 ) -> _ControlledStackEvidence:
     verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
     decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
-    nonce_sha256 = await verify_source()
+    identity = await verify_source()
     response = (
         await transport.send(
             RuntimeRequest(
@@ -850,9 +1126,13 @@ async def _verify_controlled_async_stack(
             )
         )
         if site_probe is None
-        else await site_probe()
+        else await site_probe(identity.docker_endpoint)
     )
-    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=decode_peer(response))
+    return _ControlledStackEvidence(
+        nonce_sha256=identity.nonce_sha256,
+        site_id=decode_peer(response),
+        docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -868,9 +1148,10 @@ class _ControlledAsyncOperations:
 
 
 def _make_controlled_compose_read(command: Callable[..., str]) -> Callable[..., str]:
-    def compose_read(*args: str) -> str:
+    def compose_read(*args: str, docker_endpoint: str | None = None) -> str:
         return command(
             args,
+            docker_endpoint=docker_endpoint,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
@@ -880,9 +1161,10 @@ def _make_controlled_compose_read(command: Callable[..., str]) -> Callable[..., 
 
 
 def _make_controlled_compose_read_async(command: Callable[..., Awaitable[str]]) -> Callable[..., Awaitable[str]]:
-    async def compose_read(*args: str) -> str:
+    async def compose_read(*args: str, docker_endpoint: str | None = None) -> str:
         return await command(
             args,
+            docker_endpoint=docker_endpoint,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
@@ -892,11 +1174,12 @@ def _make_controlled_compose_read_async(command: Callable[..., Awaitable[str]]) 
 
 
 def _make_controlled_site_probe(
-    command: Callable[..., str], response_parser: Callable[[str], RuntimeResponse]
-) -> Callable[[], RuntimeResponse]:
-    def probe() -> RuntimeResponse:
+    command: Callable[..., str], response_parser: Callable[[str], RuntimeResponse], program: str
+) -> Callable[[str], RuntimeResponse]:
+    def probe(docker_endpoint: str) -> RuntimeResponse:
         output = command(
-            ("exec", "-T", "udata", "python", "-c", _CONTROLLED_SITE_PROBE_PROGRAM),
+            ("exec", "-T", "udata", "python", "-c", program),
+            docker_endpoint=docker_endpoint,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
@@ -907,11 +1190,12 @@ def _make_controlled_site_probe(
 
 
 def _make_controlled_site_probe_async(
-    command: Callable[..., Awaitable[str]], response_parser: Callable[[str], RuntimeResponse]
-) -> Callable[[], Awaitable[RuntimeResponse]]:
-    async def probe() -> RuntimeResponse:
+    command: Callable[..., Awaitable[str]], response_parser: Callable[[str], RuntimeResponse], program: str
+) -> Callable[[str], Awaitable[RuntimeResponse]]:
+    async def probe(docker_endpoint: str) -> RuntimeResponse:
         output = await command(
-            ("exec", "-T", "udata", "python", "-c", _CONTROLLED_SITE_PROBE_PROGRAM),
+            ("exec", "-T", "udata", "python", "-c", program),
+            docker_endpoint=docker_endpoint,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
@@ -930,9 +1214,10 @@ def _make_controlled_sync_operations(command: Callable[..., str]) -> _Controlled
     peer_evidence = _controlled_peer_evidence
     patch_response = _controlled_patch_response
     response_parser = _parse_controlled_patch_output
-    site_probe = _make_controlled_site_probe(command, response_parser)
+    site_probe = _make_controlled_site_probe(command, response_parser, _CONTROLLED_SITE_PROBE_PROGRAM)
+    patch_program = _CONTROLLED_PATCH_PROGRAM
 
-    def verify_source() -> str:
+    def verify_source() -> _ControlledSourceIdentity:
         return source_checker(
             compose_read=compose_read,
             source_nonce=source_nonce,
@@ -954,6 +1239,7 @@ def _make_controlled_sync_operations(command: Callable[..., str]) -> _Controlled
             command=command,
             source_verifier=verify_source,
             response_parser=response_parser,
+            patch_program=patch_program,
         )
 
     return _ControlledSyncOperations(verify=verify, patch=patch)
@@ -968,9 +1254,10 @@ def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) ->
     peer_evidence = _controlled_peer_evidence
     patch_response = _controlled_patch_response_async
     response_parser = _parse_controlled_patch_output
-    site_probe = _make_controlled_site_probe_async(command, response_parser)
+    site_probe = _make_controlled_site_probe_async(command, response_parser, _CONTROLLED_SITE_PROBE_PROGRAM)
+    patch_program = _CONTROLLED_PATCH_PROGRAM
 
-    async def verify_source() -> str:
+    async def verify_source() -> _ControlledSourceIdentity:
         return await source_checker(
             compose_read=compose_read,
             source_nonce=source_nonce,
@@ -992,6 +1279,7 @@ def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) ->
             command=command,
             source_verifier=verify_source,
             response_parser=response_parser,
+            patch_program=patch_program,
         )
 
     return _ControlledAsyncOperations(verify=verify, patch=patch)
@@ -1178,8 +1466,12 @@ class _IdentityRegistry[T]:
 def _build_controlled_transport_types():
     type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float, _ControlledSyncOperations]
     type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float, _ControlledAsyncOperations]
-    trusted_sync_operations = _make_controlled_sync_operations(_controlled_command)
-    trusted_async_operations = _make_controlled_async_operations(_controlled_command_async)
+    trusted_sync_operations = _make_controlled_sync_operations(
+        _make_bound_controlled_command(_current_controlled_sync_runtime())
+    )
+    trusted_async_operations = _make_controlled_async_operations(
+        _make_bound_controlled_command_async(_current_controlled_async_runtime())
+    )
     sync_registry: _IdentityRegistry[SyncState] = _IdentityRegistry()
     async_registry: _IdentityRegistry[AsyncState] = _IdentityRegistry()
     sync_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
@@ -2036,10 +2328,13 @@ class SyncUDataClient(_UDataClientCore):
                 if response.status_code in {301, 302, 303, 307, 308}:
                     _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
                     return response
-            except BaseException:
-                response.close()
+            except BaseException as error:
                 self._emit(owning_id, "failed")
-                raise
+                try:
+                    response.close()
+                except BaseException as cleanup_error:
+                    raise error from cleanup_error
+                raise error
         finally:
             if not settled:
                 self._breakers.release_trial(key)
@@ -2096,12 +2391,24 @@ class SyncUDataClient(_UDataClientCore):
         stream_chunks = guarded_chunks()
 
         def close() -> None:
+            primary_error: BaseException | None = None
             try:
                 stream_chunks.close()
+            except BaseException as error:
+                primary_error = error
+                settle_failure(error)
+            cleanup_error: BaseException | None = None
+            try:
                 response.close()
             except BaseException as error:
-                settle_failure(error)
-                raise
+                cleanup_error = error
+            if primary_error is not None:
+                if cleanup_error is not None:
+                    raise primary_error from cleanup_error
+                raise primary_error
+            if cleanup_error is not None:
+                settle_failure(cleanup_error)
+                raise cleanup_error
             if not settled and not consumed:
                 settle_failure(RuntimeError("The catalog stream was closed before completion."))
 
@@ -2665,10 +2972,13 @@ class AsyncUDataClient(_UDataClientCore):
                 if response.status_code in {301, 302, 303, 307, 308}:
                     _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
                     return response
-            except BaseException:
-                await response.aclose()
+            except BaseException as error:
                 self._emit(owning_id, "failed")
-                raise
+                try:
+                    await response.aclose()
+                except BaseException as cleanup_error:
+                    raise error from cleanup_error
+                raise error
         finally:
             if not settled:
                 self._breakers.release_trial(key)
@@ -2723,12 +3033,24 @@ class AsyncUDataClient(_UDataClientCore):
         stream_chunks = guarded_chunks()
 
         async def close() -> None:
+            primary_error: BaseException | None = None
             try:
                 await stream_chunks.aclose()
+            except BaseException as error:
+                primary_error = error
+                settle_failure(error)
+            cleanup_error: BaseException | None = None
+            try:
                 await response.aclose()
             except BaseException as error:
-                settle_failure(error)
-                raise
+                cleanup_error = error
+            if primary_error is not None:
+                if cleanup_error is not None:
+                    raise primary_error from cleanup_error
+                raise primary_error
+            if cleanup_error is not None:
+                settle_failure(cleanup_error)
+                raise cleanup_error
             if not settled and not consumed:
                 settle_failure(RuntimeError("The catalog stream was closed before completion."))
 

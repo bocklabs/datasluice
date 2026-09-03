@@ -70,7 +70,9 @@ _PERMISSIONS = EffectivePermissions.for_credential(
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
     return udata_clients._ControlledStackEvidence(
-        nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(), site_id=site_id
+        nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
+        site_id=site_id,
+        docker_endpoint_sha256=hashlib.sha256(b"unix:///Users/nitish/.docker/run/docker.sock").hexdigest(),
     )
 
 
