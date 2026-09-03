@@ -342,6 +342,7 @@ def test_controlled_command_rejects_docker_environment_overrides(
 def test_bound_controlled_command_spec_ignores_mutable_module_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
     bound_spec = udata_clients._make_bound_controlled_command_spec()
     original = bound_spec(("ps",))
 
