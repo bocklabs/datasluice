@@ -6,10 +6,9 @@ import asyncio
 import hashlib
 import json
 import os
-import sys
-import tempfile
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -122,7 +121,7 @@ def test_controlled_command_decode_failure_is_redacted(monkeypatch: pytest.Monke
 
 def test_controlled_command_timeout_terminates_the_child(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _controlled_compose_files(monkeypatch, tmp_path)
-    times = iter((0.0, 16.0))
+    times = iter((0.0, 16.0, 16.0))
     killed: list[int] = []
 
     monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
@@ -136,6 +135,51 @@ def test_controlled_command_timeout_terminates_the_child(monkeypatch: pytest.Mon
         udata_clients._compose_read("ps")
 
     assert killed == [7]
+
+
+def test_controlled_sync_reap_uses_a_separate_bounded_cleanup_window() -> None:
+    waits = iter(((0, 0), (7, 0)))
+    killed: list[int] = []
+    runtime = replace(
+        udata_clients._current_controlled_sync_runtime(),
+        kill=lambda pid, _: killed.append(pid),
+        waitpid=lambda *_: next(waits),
+        monotonic=lambda: 0.0,
+        select=lambda *_: ([], [], []),
+    )
+
+    udata_clients._terminate_controlled_process_sync(7, runtime)
+
+    assert killed == [7]
+
+
+def test_controlled_async_reap_uses_a_bounded_cleanup_timeout() -> None:
+    class PendingProcess:
+        returncode: int | None = None
+
+        def __init__(self) -> None:
+            self.killed = False
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self) -> object:
+            return object()
+
+    process = PendingProcess()
+    observed_timeouts: list[float] = []
+
+    async def bounded_wait(_awaitable: object, timeout: float) -> object:
+        observed_timeouts.append(timeout)
+        raise TimeoutError
+
+    async def run() -> None:
+        await udata_clients._terminate_controlled_process(cast(Any, process), wait_for=bounded_wait, clock=lambda: 0.0)
+
+    asyncio.run(run())
+
+    assert process.killed is True
+    assert observed_timeouts == [1.0]
 
 
 def test_controlled_command_output_limit_terminates_the_child(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -184,6 +228,19 @@ def test_controlled_command_rejects_docker_environment_overrides(
 
     with pytest.raises(CatalogValidationError, match="environment overrides"):
         udata_clients._compose_read("ps")
+
+
+def test_bound_controlled_command_spec_ignores_mutable_module_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bound_spec = udata_clients._make_bound_controlled_command_spec()
+    original = bound_spec(("ps",))
+
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMPOSE_FILE", tmp_path / "compose.yaml")
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_ENV_FILE", tmp_path / ".env")
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_DOCKER_EXECUTABLES", ())
+
+    assert bound_spec(("ps",)) == original
 
 
 def test_controlled_peer_decode_failure_is_redacted() -> None:
@@ -468,70 +525,58 @@ class AsyncRouterTransport:
 
 
 def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
-    temporary_dir = tempfile.TemporaryDirectory()
-    stack.callback(temporary_dir.cleanup)
-    directory = Path(temporary_dir.name)
-    probe_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
-    patch_response = transport.routes.get(
-        ("PATCH", _SITE_URL),
-        _json_response(200, _site_body(), {"Content-Type": "application/json"}),
-    )
-
-    def save_response(path: Path, response: RuntimeResponse) -> None:
-        path.write_text(
-            json.dumps(
+    def sync_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
+        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
+            return '"unix:///Users/nitish/.docker/run/docker.sock"'
+        if args[-4:] == ("ps", "--status", "running", "--services"):
+            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
+        if args[-3:] == ("port", "udata", "7000"):
+            return "127.0.0.1:5640"
+        if args[-8:] == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
+            return "0546582058d84706812a1c37387576efc4e5ad1f"
+        if args[-5:] == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
+            return "unit-test-stack"
+        if args[-3] == "python":
+            response = transport.routes.get(
+                ("PATCH", _SITE_URL),
+                _json_response(200, _site_body(), {"Content-Type": "application/json"}),
+            )
+            if 'method="PATCH"' not in args[-1]:
+                response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
+            return json.dumps(
                 {
                     "status": response.status_code,
                     "content_type": response.headers.get("Content-Type", ""),
                     "location": response.headers.get("Location", ""),
                     "body": response.body.decode("utf-8", "replace"),
-                }
-            ),
-            encoding="utf-8",
-        )
+                },
+                separators=(",", ":"),
+            )
+        raise AssertionError(f"unexpected controlled command {args}")
 
-    probe_path = directory / "probe.json"
-    patch_path = directory / "patch.json"
-    env_path = directory / ".env"
-    docker_path = directory / "docker"
-    save_response(probe_path, probe_response)
-    save_response(patch_path, patch_response)
-    env_path.write_text(f"UDATA_TEST_PROBE={probe_path}\nUDATA_TEST_PATCH={patch_path}\n", encoding="utf-8")
-    docker_path.write_text(
-        """#!PYTHON
-import json
-import sys
-from pathlib import Path
+    async def async_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
+        return sync_command(args, input_data=input_data)
 
-args = sys.argv[1:]
-if args[:2] == ["context", "inspect"]:
-    print(json.dumps("unix:///Users/nitish/.docker/run/docker.sock"))
-    raise SystemExit(0)
-env_file = Path(args[args.index("--env-file") + 1])
-values = {}
-for line in env_file.read_text(encoding="utf-8").splitlines():
-    key, value = line.split("=", 1)
-    values[key] = value
-if args[-4:] == ["ps", "--status", "running", "--services"]:
-    print("udata\\nmongo\\nredis\\nsearch\\nstorage\\nmailpit")
-elif args[-3:] == ["port", "udata", "7000"]:
-    print("127.0.0.1:5640")
-elif args[-8:] == ["exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"]:
-    print("0546582058d84706812a1c37387576efc4e5ad1f")
-elif args[-5:] == ["exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"]:
-    print("unit-test-stack")
-elif args[-3] == "python":
-    sys.stdin.buffer.read()
-    response_path = values["UDATA_TEST_PATCH"] if "method=\\\"PATCH\\\"" in args[-1] else values["UDATA_TEST_PROBE"]
-    print(Path(response_path).read_text(encoding="utf-8"))
-else:
-    raise SystemExit(1)
-""".replace("PYTHON", sys.executable),
-        encoding="utf-8",
+    sync_type = udata_clients._ControlledSyncTransport
+    async_type = udata_clients._ControlledAsyncTransport
+    sync_bindings = sync_type._factory_bindings
+    async_bindings = async_type._factory_bindings
+    type.__setattr__(
+        sync_type,
+        "_factory_bindings",
+        (*sync_bindings[:5], udata_clients._make_controlled_sync_operations(sync_command)),
     )
-    docker_path.chmod(0o755)
-    stack.enter_context(patch.object(udata_clients, "_CONTROLLED_ENV_FILE", env_path))
-    stack.enter_context(patch.object(udata_clients, "_CONTROLLED_DOCKER_EXECUTABLES", (docker_path,)))
+    type.__setattr__(
+        async_type,
+        "_factory_bindings",
+        (*async_bindings[:5], udata_clients._make_controlled_async_operations(async_command)),
+    )
+
+    def restore_bindings() -> None:
+        type.__setattr__(sync_type, "_factory_bindings", sync_bindings)
+        type.__setattr__(async_type, "_factory_bindings", async_bindings)
+
+    stack.callback(restore_bindings)
 
 
 def _sync_client(

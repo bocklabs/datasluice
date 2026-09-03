@@ -127,6 +127,7 @@ _CONTROLLED_COMPOSE_FILE = _CONTROLLED_EVIDENCE_ROOT / "compose.yaml"
 _CONTROLLED_ENV_FILE = _CONTROLLED_EVIDENCE_ROOT / ".env"
 _CONTROLLED_AUTHORITY_TTL_SECONDS = 60.0
 _CONTROLLED_COMMAND_TIMEOUT_SECONDS = 15.0
+_CONTROLLED_REAP_TIMEOUT_SECONDS = 1.0
 _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES = 65536
 _CONTROLLED_DOCKER_EXECUTABLES = (
     Path("/usr/local/bin/docker"),
@@ -335,6 +336,10 @@ class _ControlledStackEvidence:
     nonce_sha256: str = field(repr=False)
     site_id: str
     docker_endpoint_sha256: str = field(default="", repr=False)
+    source_commit: str = field(default=_CONTROLLED_SOURCE_COMMIT, repr=False)
+    compose_sha256: str = field(default=_CONTROLLED_COMPOSE_SHA256, repr=False)
+    dockerfile_sha256: str = field(default=_CONTROLLED_DOCKERFILE_SHA256, repr=False)
+    image_digests: tuple[str, ...] = field(default=_CONTROLLED_IMAGE_DIGESTS, repr=False)
 
     @property
     def digest(self) -> str:
@@ -342,10 +347,10 @@ class _ControlledStackEvidence:
         return hashlib.sha256(
             "|".join(
                 (
-                    _CONTROLLED_SOURCE_COMMIT,
-                    _CONTROLLED_COMPOSE_SHA256,
-                    _CONTROLLED_DOCKERFILE_SHA256,
-                    *_CONTROLLED_IMAGE_DIGESTS,
+                    self.source_commit,
+                    self.compose_sha256,
+                    self.dockerfile_sha256,
+                    *self.image_digests,
                     self.nonce_sha256,
                     self.site_id,
                     self.docker_endpoint_sha256,
@@ -358,6 +363,12 @@ class _ControlledStackEvidence:
 class _ControlledSourceIdentity:
     nonce_sha256: str = field(repr=False)
     docker_endpoint: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledVerification:
+    identity: _ControlledSourceIdentity = field(repr=False)
+    evidence: _ControlledStackEvidence
 
 
 def _controlled_error(message: str) -> CatalogValidationError:
@@ -414,9 +425,70 @@ def _controlled_command_spec(
     return command, {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
 
 
+def _make_bound_controlled_command_spec() -> Callable[..., tuple[tuple[str, ...], dict[str, str]]]:
+    compose_file = _CONTROLLED_COMPOSE_FILE
+    env_file = _CONTROLLED_ENV_FILE
+    compose_file_exists = compose_file.is_file
+    env_file_exists = env_file.is_file
+    executable_flag = os.X_OK
+    executable_candidates = tuple((str(path), path.is_file, os.access) for path in _CONTROLLED_DOCKER_EXECUTABLES)
+    environment_get = os.environ.get
+    url_split = urlsplit
+    error = _controlled_error
+    input_limit = _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES
+    path_value = environment_get("PATH", "/usr/bin:/bin")
+
+    def command_spec(
+        args: tuple[str, ...],
+        *,
+        input_data: bytes | None = None,
+        docker_endpoint: str | None = None,
+    ) -> tuple[tuple[str, ...], dict[str, str]]:
+        if not compose_file_exists() or not env_file_exists():
+            raise error("The controlled uData evidence configuration is unavailable.")
+        if input_data is not None and len(input_data) > input_limit:
+            raise error("The controlled uData command input is too large.")
+        if docker_endpoint is not None:
+            parsed_endpoint = url_split(docker_endpoint)
+            if (
+                parsed_endpoint.scheme != "unix"
+                or bool(parsed_endpoint.netloc)
+                or not parsed_endpoint.path.startswith("/")
+                or bool(parsed_endpoint.query)
+                or bool(parsed_endpoint.fragment)
+            ):
+                raise error("Controlled uData evidence requires a local Unix Docker context.")
+        executable = next(
+            (path for path, is_file, access in executable_candidates if is_file() and access(path, executable_flag)),
+            None,
+        )
+        if executable is None:
+            raise error("The trusted Docker executable is unavailable.")
+        if environment_get("DOCKER_HOST") or environment_get("DOCKER_CONTEXT"):
+            raise error("Controlled uData evidence cannot use Docker environment overrides.")
+        executable_prefix = (executable,) if docker_endpoint is None else (executable, "--host", docker_endpoint)
+        command = (
+            (*executable_prefix, *args)
+            if args[:2] == ("context", "inspect")
+            else (
+                *executable_prefix,
+                "compose",
+                "--env-file",
+                str(env_file),
+                "-f",
+                str(compose_file),
+                *args,
+            )
+        )
+        return command, {"PATH": path_value}
+
+    return command_spec
+
+
 @dataclass(frozen=True, slots=True)
 class _ControlledSyncRuntime:
     command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]]
+    error: Callable[[str], CatalogValidationError]
     pipe: Callable[[], tuple[int, int]]
     posix_spawnp: Callable[..., int]
     close: Callable[[int], None]
@@ -433,12 +505,16 @@ class _ControlledSyncRuntime:
     wnohang: int
     sigkill: int
     timeout_seconds: float
+    reap_timeout_seconds: float
     max_output_bytes: int
 
 
-def _current_controlled_sync_runtime() -> _ControlledSyncRuntime:
+def _current_controlled_sync_runtime(
+    *, command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]] | None = None
+) -> _ControlledSyncRuntime:
     return _ControlledSyncRuntime(
-        command_spec=_controlled_command_spec,
+        command_spec=_controlled_command_spec if command_spec is None else command_spec,
+        error=_controlled_error,
         pipe=os.pipe,
         posix_spawnp=os.posix_spawnp,
         close=os.close,
@@ -455,15 +531,17 @@ def _current_controlled_sync_runtime() -> _ControlledSyncRuntime:
         wnohang=os.WNOHANG,
         sigkill=signal.SIGKILL,
         timeout_seconds=_CONTROLLED_COMMAND_TIMEOUT_SECONDS,
+        reap_timeout_seconds=_CONTROLLED_REAP_TIMEOUT_SECONDS,
         max_output_bytes=_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES,
     )
 
 
-def _terminate_controlled_process_sync(process_id: int, deadline: float, runtime: _ControlledSyncRuntime) -> None:
+def _terminate_controlled_process_sync(process_id: int, runtime: _ControlledSyncRuntime) -> None:
     try:
         runtime.kill(process_id, runtime.sigkill)
     except OSError:
         pass
+    reap_deadline = runtime.monotonic() + runtime.reap_timeout_seconds
     while True:
         try:
             completed_pid, _ = runtime.waitpid(process_id, runtime.wnohang)
@@ -471,7 +549,7 @@ def _terminate_controlled_process_sync(process_id: int, deadline: float, runtime
             return
         if completed_pid == process_id:
             return
-        remaining = deadline - runtime.monotonic()
+        remaining = reap_deadline - runtime.monotonic()
         if remaining <= 0:
             return
         runtime.select([], [], [], min(remaining, 0.05))
@@ -522,8 +600,8 @@ def _run_controlled_command(
             while offset < len(input_bytes):
                 remaining = deadline - runtime.monotonic()
                 if remaining <= 0 or not runtime.select([], [input_write_fd], [], remaining)[1]:
-                    _terminate_controlled_process_sync(process_id, deadline, runtime)
-                    raise _controlled_error(timeout_message)
+                    _terminate_controlled_process_sync(process_id, runtime)
+                    raise runtime.error(timeout_message)
                 try:
                     offset += runtime.write(input_write_fd, input_bytes[offset:])
                 except BlockingIOError:
@@ -535,15 +613,15 @@ def _run_controlled_command(
         while True:
             remaining = deadline - runtime.monotonic()
             if remaining <= 0 or not runtime.select([read_fd], [], [], remaining)[0]:
-                _terminate_controlled_process_sync(process_id, deadline, runtime)
-                raise _controlled_error(timeout_message)
+                _terminate_controlled_process_sync(process_id, runtime)
+                raise runtime.error(timeout_message)
             chunk = runtime.read(read_fd, 65536)
             if not chunk:
                 break
             output_size += len(chunk)
             if output_size > runtime.max_output_bytes:
-                _terminate_controlled_process_sync(process_id, deadline, runtime)
-                raise _controlled_error(output_message)
+                _terminate_controlled_process_sync(process_id, runtime)
+                raise runtime.error(output_message)
             chunks.append(chunk)
         while True:
             completed_pid, wait_status = runtime.waitpid(process_id, runtime.wnohang)
@@ -551,13 +629,13 @@ def _run_controlled_command(
                 break
             remaining = deadline - runtime.monotonic()
             if remaining <= 0:
-                _terminate_controlled_process_sync(process_id, deadline, runtime)
-                raise _controlled_error(timeout_message)
+                _terminate_controlled_process_sync(process_id, runtime)
+                raise runtime.error(timeout_message)
             runtime.select([], [], [], min(remaining, 0.05))
     except (AttributeError, OSError) as error:
         if process_id is not None:
-            _terminate_controlled_process_sync(process_id, deadline, runtime)
-        raise _controlled_error(failure_message) from error
+            _terminate_controlled_process_sync(process_id, runtime)
+        raise runtime.error(failure_message) from error
     finally:
         runtime.close(read_fd)
         if write_fd >= 0:
@@ -567,14 +645,14 @@ def _run_controlled_command(
         if input_write_fd >= 0:
             runtime.close(input_write_fd)
     if runtime.waitstatus_to_exitcode(wait_status) != 0:
-        raise _controlled_error(failure_message)
+        raise runtime.error(failure_message)
     invalid_output = False
     try:
         output = b"".join(chunks).decode().strip()
     except UnicodeDecodeError:
         invalid_output = True
     if invalid_output:
-        raise _controlled_error(output_message)
+        raise runtime.error(output_message)
     return output
 
 
@@ -599,6 +677,8 @@ def _controlled_command(
 
 
 def _make_bound_controlled_command(runtime: _ControlledSyncRuntime) -> Callable[..., str]:
+    run_command = _run_controlled_command
+
     def command(
         args: tuple[str, ...],
         *,
@@ -608,7 +688,7 @@ def _make_bound_controlled_command(runtime: _ControlledSyncRuntime) -> Callable[
         output_message: str,
         failure_message: str,
     ) -> str:
-        return _run_controlled_command(
+        return run_command(
             args,
             input_data=input_data,
             docker_endpoint=docker_endpoint,
@@ -633,10 +713,10 @@ def _compose_read(*args: str, docker_endpoint: str | None = None) -> str:
 
 async def _terminate_controlled_process(
     process: asyncio.subprocess.Process | None,
-    deadline: float,
     *,
     wait_for: Callable[..., Awaitable[object]] = asyncio.wait_for,
     clock: Callable[[], float] = monotonic,
+    reap_timeout: float = _CONTROLLED_REAP_TIMEOUT_SECONDS,
 ) -> None:
     if process is None or process.returncode is not None:
         return
@@ -644,7 +724,8 @@ async def _terminate_controlled_process(
         process.kill()
     except OSError:
         pass
-    remaining = deadline - clock()
+    reap_deadline = clock() + reap_timeout
+    remaining = reap_deadline - clock()
     if remaining <= 0:
         return
     try:
@@ -656,9 +737,10 @@ async def _terminate_controlled_process(
 @dataclass(frozen=True, slots=True)
 class _ControlledAsyncRuntime:
     command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]]
+    error: Callable[[str], CatalogValidationError]
     create_subprocess_exec: Callable[..., Awaitable[asyncio.subprocess.Process]]
     wait_for: Callable[..., Awaitable[object]]
-    terminate: Callable[[asyncio.subprocess.Process | None, float], Awaitable[None]]
+    terminate: Callable[[asyncio.subprocess.Process | None], Awaitable[None]]
     pipe: int
     devnull: int
     stdout: int
@@ -668,9 +750,12 @@ class _ControlledAsyncRuntime:
     max_output_bytes: int
 
 
-def _current_controlled_async_runtime() -> _ControlledAsyncRuntime:
+def _current_controlled_async_runtime(
+    *, command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]] | None = None
+) -> _ControlledAsyncRuntime:
     return _ControlledAsyncRuntime(
-        command_spec=_controlled_command_spec,
+        command_spec=_controlled_command_spec if command_spec is None else command_spec,
+        error=_controlled_error,
         create_subprocess_exec=asyncio.create_subprocess_exec,
         wait_for=asyncio.wait_for,
         terminate=_terminate_controlled_process,
@@ -705,7 +790,7 @@ async def _run_controlled_command_async(
     try:
         remaining = deadline - runtime.monotonic()
         if remaining <= 0:
-            raise _controlled_error(timeout_message)
+            raise runtime.error(timeout_message)
         try:
             process = cast(
                 asyncio.subprocess.Process,
@@ -721,7 +806,7 @@ async def _run_controlled_command_async(
                 ),
             )
         except TimeoutError:
-            raise _controlled_error(timeout_message) from None
+            raise runtime.error(timeout_message) from None
         if process.stdout is None:
             raise OSError("controlled command stdout was unavailable")
         if input_data is not None:
@@ -729,53 +814,53 @@ async def _run_controlled_command_async(
                 raise OSError("controlled command stdin was unavailable")
             remaining = deadline - runtime.monotonic()
             if remaining <= 0:
-                await runtime.terminate(process, deadline)
-                raise _controlled_error(timeout_message)
+                await runtime.terminate(process)
+                raise runtime.error(timeout_message)
             process.stdin.write(input_data)
             try:
                 await runtime.wait_for(process.stdin.drain(), timeout=remaining)
             except TimeoutError:
-                await runtime.terminate(process, deadline)
-                raise _controlled_error(timeout_message) from None
+                await runtime.terminate(process)
+                raise runtime.error(timeout_message) from None
             process.stdin.close()
         output_size = 0
         while True:
             remaining = deadline - runtime.monotonic()
             if remaining <= 0:
-                await runtime.terminate(process, deadline)
-                raise _controlled_error(timeout_message)
+                await runtime.terminate(process)
+                raise runtime.error(timeout_message)
             try:
                 chunk = cast(bytes, await runtime.wait_for(process.stdout.read(65536), timeout=remaining))
             except TimeoutError:
-                await runtime.terminate(process, deadline)
-                raise _controlled_error(timeout_message) from None
+                await runtime.terminate(process)
+                raise runtime.error(timeout_message) from None
             if not chunk:
                 break
             output_size += len(chunk)
             if output_size > runtime.max_output_bytes:
-                await runtime.terminate(process, deadline)
-                raise _controlled_error(output_message)
+                await runtime.terminate(process)
+                raise runtime.error(output_message)
             chunks.append(chunk)
         remaining = deadline - runtime.monotonic()
         if remaining <= 0:
-            await runtime.terminate(process, deadline)
-            raise _controlled_error(timeout_message)
+            await runtime.terminate(process)
+            raise runtime.error(timeout_message)
         try:
             await runtime.wait_for(process.wait(), timeout=remaining)
         except TimeoutError:
-            await runtime.terminate(process, deadline)
-            raise _controlled_error(timeout_message) from None
+            await runtime.terminate(process)
+            raise runtime.error(timeout_message) from None
     except (OSError, ChildProcessError) as error:
-        await runtime.terminate(process, deadline)
-        raise _controlled_error(failure_message) from error
+        await runtime.terminate(process)
+        raise runtime.error(failure_message) from error
     finally:
-        await runtime.terminate(process, deadline)
+        await runtime.terminate(process)
     if process is None or process.returncode != 0:
-        raise _controlled_error(failure_message)
+        raise runtime.error(failure_message)
     try:
         return b"".join(chunks).decode().strip()
     except UnicodeDecodeError:
-        raise _controlled_error(output_message) from None
+        raise runtime.error(output_message) from None
 
 
 async def _controlled_command_async(
@@ -799,6 +884,8 @@ async def _controlled_command_async(
 
 
 def _make_bound_controlled_command_async(runtime: _ControlledAsyncRuntime) -> Callable[..., Awaitable[str]]:
+    run_command = _run_controlled_command_async
+
     async def command(
         args: tuple[str, ...],
         *,
@@ -808,7 +895,7 @@ def _make_bound_controlled_command_async(runtime: _ControlledAsyncRuntime) -> Ca
         output_message: str,
         failure_message: str,
     ) -> str:
-        return await _run_controlled_command_async(
+        return await run_command(
             args,
             input_data=input_data,
             docker_endpoint=docker_endpoint,
@@ -836,15 +923,16 @@ def _controlled_patch_response(
     body: Mapping[str, object],
     *,
     command: Callable[..., str] | None = None,
-    source_verifier: Callable[[], _ControlledSourceIdentity] | None = None,
+    source_verifier: Callable[..., _ControlledSourceIdentity] | None = None,
     response_parser: Callable[[str], RuntimeResponse] | None = None,
     patch_program: str | None = None,
+    source_identity: _ControlledSourceIdentity | None = None,
 ) -> RuntimeResponse:
     runner = _controlled_command if command is None else command
     verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
     parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
     program = _CONTROLLED_PATCH_PROGRAM if patch_program is None else patch_program
-    identity = verify_source()
+    identity = source_identity if source_identity is not None else verify_source()
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
     output = runner(
@@ -858,13 +946,15 @@ def _controlled_patch_response(
     return parse_response(output)
 
 
-def _parse_controlled_patch_output(output: str) -> RuntimeResponse:
+def _parse_controlled_patch_output(
+    output: str, error_factory: Callable[[str], CatalogValidationError] = _controlled_error
+) -> RuntimeResponse:
     try:
         result = json.loads(output)
     except (TypeError, ValueError):
-        raise _controlled_error("The controlled uData site PATCH returned invalid output.") from None
+        raise error_factory("The controlled uData site PATCH returned invalid output.") from None
     if not isinstance(result, Mapping):
-        raise _controlled_error("The controlled uData site PATCH returned invalid output.")
+        raise error_factory("The controlled uData site PATCH returned invalid output.")
     status = result.get("status")
     content_type = result.get("content_type")
     location = result.get("location")
@@ -876,13 +966,13 @@ def _parse_controlled_patch_output(output: str) -> RuntimeResponse:
         or not isinstance(location, str)
         or not isinstance(response_body, str)
     ):
-        raise _controlled_error("The controlled uData site PATCH returned invalid output.")
+        raise error_factory("The controlled uData site PATCH returned invalid output.")
     headers: dict[str, str] = {"Content-Type": content_type}
     if location:
         headers["Location"] = location
     encoded_body = response_body.encode()
     if len(encoded_body) > 8192:
-        raise _controlled_error("The controlled uData site PATCH returned too much output.")
+        raise error_factory("The controlled uData site PATCH returned too much output.")
     return RuntimeResponse(status, headers, encoded_body)
 
 
@@ -891,15 +981,16 @@ async def _controlled_patch_response_async(
     body: Mapping[str, object],
     *,
     command: Callable[..., Awaitable[str]] | None = None,
-    source_verifier: Callable[[], Awaitable[_ControlledSourceIdentity]] | None = None,
+    source_verifier: Callable[..., Awaitable[_ControlledSourceIdentity]] | None = None,
     response_parser: Callable[[str], RuntimeResponse] | None = None,
     patch_program: str | None = None,
+    source_identity: _ControlledSourceIdentity | None = None,
 ) -> RuntimeResponse:
     runner = _controlled_command_async if command is None else command
     verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
     parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
     program = _CONTROLLED_PATCH_PROGRAM if patch_program is None else patch_program
-    identity = await verify_source()
+    identity = source_identity if source_identity is not None else await verify_source()
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
     output = await runner(
@@ -913,27 +1004,37 @@ async def _controlled_patch_response_async(
     return parse_response(output)
 
 
-def _controlled_source_nonce() -> str:
-    nonce = os.environ.get("UDATA_EVIDENCE_STACK_NONCE")
+def _controlled_source_nonce(
+    *,
+    nonce_getter: Callable[..., str | None] = os.environ.get,
+    compose_file: Path = _CONTROLLED_COMPOSE_FILE,
+    evidence_root: Path = _CONTROLLED_EVIDENCE_ROOT,
+    compose_sha256: str = _CONTROLLED_COMPOSE_SHA256,
+    dockerfile_sha256: str = _CONTROLLED_DOCKERFILE_SHA256,
+    error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
+) -> str:
+    nonce = nonce_getter("UDATA_EVIDENCE_STACK_NONCE")
     if not nonce:
-        raise _controlled_error("The controlled uData stack nonce is unavailable.")
+        raise error_factory("The controlled uData stack nonce is unavailable.")
     try:
-        compose_text = _CONTROLLED_COMPOSE_FILE.read_text(encoding="utf-8")
-        dockerfile_text = _CONTROLLED_EVIDENCE_ROOT.joinpath("Dockerfile").read_text(encoding="utf-8")
+        compose_text = compose_file.read_text(encoding="utf-8")
+        dockerfile_text = evidence_root.joinpath("Dockerfile").read_text(encoding="utf-8")
     except OSError as error:
-        raise _controlled_error("The controlled uData source identity is unavailable.") from error
-    if hashlib.sha256(compose_text.encode()).hexdigest() != _CONTROLLED_COMPOSE_SHA256:
-        raise _controlled_error("The controlled uData compose identity does not match the approved source.")
-    if hashlib.sha256(dockerfile_text.encode()).hexdigest() != _CONTROLLED_DOCKERFILE_SHA256:
-        raise _controlled_error("The controlled uData image identity does not match the approved source.")
+        raise error_factory("The controlled uData source identity is unavailable.") from error
+    if hashlib.sha256(compose_text.encode()).hexdigest() != compose_sha256:
+        raise error_factory("The controlled uData compose identity does not match the approved source.")
+    if hashlib.sha256(dockerfile_text.encode()).hexdigest() != dockerfile_sha256:
+        raise error_factory("The controlled uData image identity does not match the approved source.")
     return nonce
 
 
-def _validate_controlled_context_endpoint(context_endpoint: str) -> str:
+def _validate_controlled_context_endpoint(
+    context_endpoint: str, error_factory: Callable[[str], CatalogValidationError] = _controlled_error
+) -> str:
     try:
         endpoint = json.loads(context_endpoint)
     except (TypeError, ValueError):
-        raise _controlled_error("The active Docker context identity is invalid.") from None
+        raise error_factory("The active Docker context identity is invalid.") from None
     parsed_endpoint = urlsplit(endpoint) if isinstance(endpoint, str) else None
     if (
         parsed_endpoint is None
@@ -943,7 +1044,7 @@ def _validate_controlled_context_endpoint(context_endpoint: str) -> str:
         or bool(parsed_endpoint.query)
         or bool(parsed_endpoint.fragment)
     ):
-        raise _controlled_error("Controlled uData evidence requires a local Unix Docker context.")
+        raise error_factory("Controlled uData evidence requires a local Unix Docker context.")
     return endpoint
 
 
@@ -952,19 +1053,26 @@ def _verify_controlled_source_and_nonce(
     compose_read: Callable[..., str] | None = None,
     source_nonce: Callable[[], str] | None = None,
     context_validator: Callable[[str], str] | None = None,
+    source_commit: str = _CONTROLLED_SOURCE_COMMIT,
+    expected_services: frozenset[str] = frozenset({"udata", "mongo", "redis", "search", "storage", "mailpit"}),
+    expected_port: str = "127.0.0.1:5640",
+    error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
+    docker_endpoint: str | None = None,
 ) -> _ControlledSourceIdentity:
     read = _compose_read if compose_read is None else compose_read
     nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
     validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
     nonce = nonce_reader()
-    context_endpoint = read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-    docker_endpoint = validate_context(context_endpoint)
+    if docker_endpoint is None:
+        context_endpoint = read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
+        docker_endpoint = validate_context(context_endpoint)
+    else:
+        validate_context(json.dumps(docker_endpoint))
     services = read("ps", "--status", "running", "--services", docker_endpoint=docker_endpoint).splitlines()
-    expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
     if len(services) != len(expected_services) or set(services) != expected_services:
-        raise _controlled_error("The running services do not match the controlled uData stack.")
-    if read("port", "udata", "7000", docker_endpoint=docker_endpoint) != "127.0.0.1:5640":
-        raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
+        raise error_factory("The running services do not match the controlled uData stack.")
+    if read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
+        raise error_factory("The controlled uData service is not bound to the approved loopback port.")
     if (
         read(
             "exec",
@@ -977,9 +1085,9 @@ def _verify_controlled_source_and_nonce(
             "HEAD",
             docker_endpoint=docker_endpoint,
         )
-        != _CONTROLLED_SOURCE_COMMIT
+        != source_commit
     ):
-        raise _controlled_error("The controlled uData service source does not match the approved commit.")
+        raise error_factory("The controlled uData service source does not match the approved commit.")
     if (
         read(
             "exec",
@@ -991,7 +1099,7 @@ def _verify_controlled_source_and_nonce(
         )
         != nonce
     ):
-        raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
+        raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,
@@ -1003,19 +1111,26 @@ async def _verify_controlled_source_and_nonce_async(
     compose_read: Callable[..., Awaitable[str]] | None = None,
     source_nonce: Callable[[], str] | None = None,
     context_validator: Callable[[str], str] | None = None,
+    source_commit: str = _CONTROLLED_SOURCE_COMMIT,
+    expected_services: frozenset[str] = frozenset({"udata", "mongo", "redis", "search", "storage", "mailpit"}),
+    expected_port: str = "127.0.0.1:5640",
+    error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
+    docker_endpoint: str | None = None,
 ) -> _ControlledSourceIdentity:
     read = _compose_read_async if compose_read is None else compose_read
     nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
     validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
     nonce = nonce_reader()
-    context_endpoint = await read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-    docker_endpoint = validate_context(context_endpoint)
+    if docker_endpoint is None:
+        context_endpoint = await read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
+        docker_endpoint = validate_context(context_endpoint)
+    else:
+        validate_context(json.dumps(docker_endpoint))
     services = (await read("ps", "--status", "running", "--services", docker_endpoint=docker_endpoint)).splitlines()
-    expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
     if len(services) != len(expected_services) or set(services) != expected_services:
-        raise _controlled_error("The running services do not match the controlled uData stack.")
-    if await read("port", "udata", "7000", docker_endpoint=docker_endpoint) != "127.0.0.1:5640":
-        raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
+        raise error_factory("The running services do not match the controlled uData stack.")
+    if await read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
+        raise error_factory("The controlled uData service is not bound to the approved loopback port.")
     if (
         await read(
             "exec",
@@ -1028,9 +1143,9 @@ async def _verify_controlled_source_and_nonce_async(
             "HEAD",
             docker_endpoint=docker_endpoint,
         )
-        != _CONTROLLED_SOURCE_COMMIT
+        != source_commit
     ):
-        raise _controlled_error("The controlled uData service source does not match the approved commit.")
+        raise error_factory("The controlled uData service source does not match the approved commit.")
     if (
         await read(
             "exec",
@@ -1042,21 +1157,23 @@ async def _verify_controlled_source_and_nonce_async(
         )
         != nonce
     ):
-        raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
+        raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,
     )
 
 
-def _controlled_peer_evidence(response: RuntimeResponse) -> str:
+def _controlled_peer_evidence(
+    response: RuntimeResponse, error_factory: Callable[[str], CatalogValidationError] = _controlled_error
+) -> str:
     content_type = _response_header(response, "content-type")
     if (
         not 200 <= response.status_code < 300
         or content_type is None
         or content_type.split(";", 1)[0] != "application/json"
     ):
-        raise _controlled_error("The controlled uData peer did not return its expected site identity.")
+        raise error_factory("The controlled uData peer did not return its expected site identity.")
     invalid_payload = False
     try:
         payload = json.loads(response.body)
@@ -1064,32 +1181,34 @@ def _controlled_peer_evidence(response: RuntimeResponse) -> str:
         invalid_payload = True
         payload = None
     if invalid_payload:
-        raise _controlled_error("The controlled uData peer returned an invalid site identity.")
+        raise error_factory("The controlled uData peer returned an invalid site identity.")
     if (
         not isinstance(payload, Mapping)
         or not isinstance(payload.get("id"), str)
         or not payload["id"]
         or payload.get("version") != "17.6.0"
     ):
-        raise _controlled_error("The controlled uData peer did not match the seeded site identity.")
+        raise error_factory("The controlled uData peer did not match the seeded site identity.")
     return payload["id"]
 
 
 def _verify_controlled_sync_stack(
     transport: CatalogTransport,
     *,
-    source_verifier: Callable[[], _ControlledSourceIdentity] | None = None,
+    source_verifier: Callable[..., _ControlledSourceIdentity] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
     site_probe: Callable[[str], RuntimeResponse] | None = None,
-) -> _ControlledStackEvidence:
+    controlled_origin: str = _CONTROLLED_ORIGIN,
+    docker_endpoint: str | None = None,
+) -> _ControlledVerification:
     verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
     decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
-    identity = verify_source()
+    identity = verify_source(docker_endpoint=docker_endpoint)
     response = (
         transport.send(
             RuntimeRequest(
                 method="GET",
-                url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
+                url=f"{controlled_origin}/api/1/site/",
                 headers={},
                 redirect_policy=RedirectPolicy.NO_FOLLOW,
                 max_response_bytes=8192,
@@ -1098,28 +1217,31 @@ def _verify_controlled_sync_stack(
         if site_probe is None
         else site_probe(identity.docker_endpoint)
     )
-    return _ControlledStackEvidence(
+    evidence = _ControlledStackEvidence(
         nonce_sha256=identity.nonce_sha256,
         site_id=decode_peer(response),
         docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
     )
+    return _ControlledVerification(identity=identity, evidence=evidence)
 
 
 async def _verify_controlled_async_stack(
     transport: AsyncCatalogTransport,
     *,
-    source_verifier: Callable[[], Awaitable[_ControlledSourceIdentity]] | None = None,
+    source_verifier: Callable[..., Awaitable[_ControlledSourceIdentity]] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
     site_probe: Callable[[str], Awaitable[RuntimeResponse]] | None = None,
-) -> _ControlledStackEvidence:
+    controlled_origin: str = _CONTROLLED_ORIGIN,
+    docker_endpoint: str | None = None,
+) -> _ControlledVerification:
     verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
     decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
-    identity = await verify_source()
+    identity = await verify_source(docker_endpoint=docker_endpoint)
     response = (
         await transport.send(
             RuntimeRequest(
                 method="GET",
-                url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
+                url=f"{controlled_origin}/api/1/site/",
                 headers={},
                 redirect_policy=RedirectPolicy.NO_FOLLOW,
                 max_response_bytes=8192,
@@ -1128,23 +1250,24 @@ async def _verify_controlled_async_stack(
         if site_probe is None
         else await site_probe(identity.docker_endpoint)
     )
-    return _ControlledStackEvidence(
+    evidence = _ControlledStackEvidence(
         nonce_sha256=identity.nonce_sha256,
         site_id=decode_peer(response),
         docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
     )
+    return _ControlledVerification(identity=identity, evidence=evidence)
 
 
 @dataclass(frozen=True, slots=True)
 class _ControlledSyncOperations:
-    verify: Callable[[CatalogTransport], _ControlledStackEvidence]
-    patch: Callable[[UDataCredential, Mapping[str, object]], RuntimeResponse]
+    verify: Callable[..., _ControlledVerification]
+    dispatch: Callable[..., RuntimeResponse]
 
 
 @dataclass(frozen=True, slots=True)
 class _ControlledAsyncOperations:
-    verify: Callable[[AsyncCatalogTransport], Awaitable[_ControlledStackEvidence]]
-    patch: Callable[[UDataCredential, Mapping[str, object]], Awaitable[RuntimeResponse]]
+    verify: Callable[..., Awaitable[_ControlledVerification]]
+    dispatch: Callable[..., Awaitable[RuntimeResponse]]
 
 
 def _make_controlled_compose_read(command: Callable[..., str]) -> Callable[..., str]:
@@ -1217,32 +1340,41 @@ def _make_controlled_sync_operations(command: Callable[..., str]) -> _Controlled
     site_probe = _make_controlled_site_probe(command, response_parser, _CONTROLLED_SITE_PROBE_PROGRAM)
     patch_program = _CONTROLLED_PATCH_PROGRAM
 
-    def verify_source() -> _ControlledSourceIdentity:
+    def verify_source(*, docker_endpoint: str | None = None) -> _ControlledSourceIdentity:
         return source_checker(
             compose_read=compose_read,
             source_nonce=source_nonce,
             context_validator=context_validator,
+            docker_endpoint=docker_endpoint,
         )
 
-    def verify(transport: CatalogTransport) -> _ControlledStackEvidence:
+    def verify(transport: CatalogTransport, *, docker_endpoint: str | None = None) -> _ControlledVerification:
         return stack_verifier(
             transport,
             source_verifier=verify_source,
             peer_evidence=peer_evidence,
             site_probe=site_probe,
+            docker_endpoint=docker_endpoint,
         )
 
-    def patch(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
+    def dispatch(
+        transport: CatalogTransport,
+        credential: UDataCredential,
+        body: Mapping[str, object],
+        *,
+        docker_endpoint: str,
+    ) -> RuntimeResponse:
+        verification = verify(transport, docker_endpoint=docker_endpoint)
         return patch_response(
             credential,
             body,
             command=command,
-            source_verifier=verify_source,
             response_parser=response_parser,
             patch_program=patch_program,
+            source_identity=verification.identity,
         )
 
-    return _ControlledSyncOperations(verify=verify, patch=patch)
+    return _ControlledSyncOperations(verify=verify, dispatch=dispatch)
 
 
 def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) -> _ControlledAsyncOperations:
@@ -1257,32 +1389,43 @@ def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) ->
     site_probe = _make_controlled_site_probe_async(command, response_parser, _CONTROLLED_SITE_PROBE_PROGRAM)
     patch_program = _CONTROLLED_PATCH_PROGRAM
 
-    async def verify_source() -> _ControlledSourceIdentity:
+    async def verify_source(*, docker_endpoint: str | None = None) -> _ControlledSourceIdentity:
         return await source_checker(
             compose_read=compose_read,
             source_nonce=source_nonce,
             context_validator=context_validator,
+            docker_endpoint=docker_endpoint,
         )
 
-    async def verify(transport: AsyncCatalogTransport) -> _ControlledStackEvidence:
+    async def verify(
+        transport: AsyncCatalogTransport, *, docker_endpoint: str | None = None
+    ) -> _ControlledVerification:
         return await stack_verifier(
             transport,
             source_verifier=verify_source,
             peer_evidence=peer_evidence,
             site_probe=site_probe,
+            docker_endpoint=docker_endpoint,
         )
 
-    async def patch(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
+    async def dispatch(
+        transport: AsyncCatalogTransport,
+        credential: UDataCredential,
+        body: Mapping[str, object],
+        *,
+        docker_endpoint: str,
+    ) -> RuntimeResponse:
+        verification = await verify(transport, docker_endpoint=docker_endpoint)
         return await patch_response(
             credential,
             body,
             command=command,
-            source_verifier=verify_source,
             response_parser=response_parser,
             patch_program=patch_program,
+            source_identity=verification.identity,
         )
 
-    return _ControlledAsyncOperations(verify=verify, patch=patch)
+    return _ControlledAsyncOperations(verify=verify, dispatch=dispatch)
 
 
 class _ImmutableDispatchGateType(type):
@@ -1464,13 +1607,20 @@ class _IdentityRegistry[T]:
 
 
 def _build_controlled_transport_types():
-    type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float, _ControlledSyncOperations]
-    type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float, _ControlledAsyncOperations]
+    type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float, _ControlledSyncOperations, str]
+    type AsyncState = tuple[
+        AsyncCatalogTransport, _ControlledStackEvidence | None, float, _ControlledAsyncOperations, str | None
+    ]
+    controlled_origin = _CONTROLLED_ORIGIN
+    authority_ttl = _CONTROLLED_AUTHORITY_TTL_SECONDS
+    clock = monotonic
+    error_factory = _controlled_error
+    trusted_command_spec = _make_bound_controlled_command_spec()
     trusted_sync_operations = _make_controlled_sync_operations(
-        _make_bound_controlled_command(_current_controlled_sync_runtime())
+        _make_bound_controlled_command(_current_controlled_sync_runtime(command_spec=trusted_command_spec))
     )
     trusted_async_operations = _make_controlled_async_operations(
-        _make_bound_controlled_command_async(_current_controlled_async_runtime())
+        _make_bound_controlled_command_async(_current_controlled_async_runtime(command_spec=trusted_command_spec))
     )
     sync_registry: _IdentityRegistry[SyncState] = _IdentityRegistry()
     async_registry: _IdentityRegistry[AsyncState] = _IdentityRegistry()
@@ -1507,11 +1657,20 @@ def _build_controlled_transport_types():
             transport = object.__new__(transport_type)
             try:
                 cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
-                evidence = operations.verify(transport)
+                verification = operations.verify(transport)
             except BaseException:
                 cast(Callable[[HttpxCatalogTransport], None], close)(transport)
                 raise
-            sync_registry.set(self, (transport, evidence, monotonic(), operations))
+            sync_registry.set(
+                self,
+                (
+                    transport,
+                    verification.evidence,
+                    clock(),
+                    operations,
+                    verification.identity.docker_endpoint,
+                ),
+            )
 
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = sync_state(self)
@@ -1563,6 +1722,7 @@ def _build_controlled_transport_types():
                     None,
                     0.0,
                     operations,
+                    None,
                 ),
             )
 
@@ -1572,13 +1732,22 @@ def _build_controlled_transport_types():
             if state is None:
                 return
             try:
-                evidence = await state[3].verify(state[0])
+                verification = await state[3].verify(state[0])
             except BaseException:
                 _, _, _, _, aclose, _ = type(self)._factory_bindings
                 await aclose(cast(AsyncHttpxCatalogTransport, state[0]))
                 async_registry.discard(self)
                 raise
-            async_registry.set(self, (state[0], evidence, monotonic(), state[3]))
+            async_registry.set(
+                self,
+                (
+                    state[0],
+                    verification.evidence,
+                    clock(),
+                    state[3],
+                    verification.identity.docker_endpoint,
+                ),
+            )
 
         async def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = async_state(self)
@@ -1618,10 +1787,10 @@ def _build_controlled_transport_types():
         state = sync_state(value)
         if state is None:
             return False
-        evidence = state[3].verify(state[0])
+        evidence = state[3].verify(state[0], docker_endpoint=state[4]).evidence
         return (
-            origin == _CONTROLLED_ORIGIN
-            and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            origin == controlled_origin
+            and clock() - state[2] <= authority_ttl
             and evidence == state[1]
             and evidence.site_id == site_id
         )
@@ -1638,10 +1807,10 @@ def _build_controlled_transport_types():
         state = async_state(value)
         if state is None or state[1] is None:
             return False
-        evidence = await state[3].verify(state[0])
+        evidence = (await state[3].verify(state[0], docker_endpoint=state[4])).evidence
         return (
-            origin == _CONTROLLED_ORIGIN
-            and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            origin == controlled_origin
+            and clock() - state[2] <= authority_ttl
             and evidence == state[1]
             and evidence.site_id == site_id
         )
@@ -1673,18 +1842,18 @@ def _build_controlled_transport_types():
         ) -> bool:
             if sync_client_registry.get(client) is not transport:
                 return False
-            if origin != _CONTROLLED_ORIGIN or request.method != "PATCH":
+            if origin != controlled_origin or request.method != "PATCH":
                 return False
-            if request.url != f"{_CONTROLLED_ORIGIN}/api/1/site/":
+            if request.url != f"{controlled_origin}/api/1/site/":
                 return False
             state = sync_state(transport)
             if state is None:
                 return False
             try:
-                evidence = state[3].verify(state[0])
+                evidence = state[3].verify(state[0], docker_endpoint=state[4]).evidence
             except Exception:
                 return False
-            return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
+            return clock() - state[2] <= authority_ttl and evidence == state[1]
 
         def dispatch_sync(
             self,
@@ -1696,12 +1865,18 @@ def _build_controlled_transport_types():
             *,
             origin: str,
         ) -> RuntimeResponse:
-            if not self.authorize_sync(client, transport, request, origin=origin):
-                raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
+            if sync_client_registry.get(client) is not transport:
+                raise error_factory("The uData site PATCH is not bound to the verified controlled client.")
+            if (
+                origin != controlled_origin
+                or request.method != "PATCH"
+                or request.url != f"{controlled_origin}/api/1/site/"
+            ):
+                raise error_factory("The uData site PATCH is not bound to the verified controlled client.")
             state = sync_state(transport)
             if state is None or not isinstance(credential, UDataCredential) or not isinstance(body, Mapping):
-                raise _controlled_error("The controlled uData site PATCH requires a resolved credential and body.")
-            return state[3].patch(credential, body)
+                raise error_factory("The controlled uData site PATCH requires a resolved credential and body.")
+            return state[3].dispatch(state[0], credential, body, docker_endpoint=state[4])
 
         async def authorize_async(
             self,
@@ -1713,18 +1888,18 @@ def _build_controlled_transport_types():
         ) -> bool:
             if async_client_registry.get(client) is not transport:
                 return False
-            if origin != _CONTROLLED_ORIGIN or request.method != "PATCH":
+            if origin != controlled_origin or request.method != "PATCH":
                 return False
-            if request.url != f"{_CONTROLLED_ORIGIN}/api/1/site/":
+            if request.url != f"{controlled_origin}/api/1/site/":
                 return False
             state = async_state(transport)
             if state is None or state[1] is None:
                 return False
             try:
-                evidence = await state[3].verify(state[0])
+                evidence = (await state[3].verify(state[0], docker_endpoint=state[4])).evidence
             except Exception:
                 return False
-            return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
+            return clock() - state[2] <= authority_ttl and evidence == state[1]
 
         async def dispatch_async(
             self,
@@ -1736,12 +1911,20 @@ def _build_controlled_transport_types():
             *,
             origin: str,
         ) -> RuntimeResponse:
-            if not await self.authorize_async(client, transport, request, origin=origin):
-                raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
+            if async_client_registry.get(client) is not transport:
+                raise error_factory("The uData site PATCH is not bound to the verified controlled client.")
+            if (
+                origin != controlled_origin
+                or request.method != "PATCH"
+                or request.url != f"{controlled_origin}/api/1/site/"
+            ):
+                raise error_factory("The uData site PATCH is not bound to the verified controlled client.")
             state = async_state(transport)
             if state is None or not isinstance(credential, UDataCredential) or not isinstance(body, Mapping):
-                raise _controlled_error("The controlled uData site PATCH requires a resolved credential and body.")
-            return await state[3].patch(credential, body)
+                raise error_factory("The controlled uData site PATCH requires a resolved credential and body.")
+            if state[4] is None:
+                raise error_factory("The controlled uData transport is not factory-bound.")
+            return await state[3].dispatch(state[0], credential, body, docker_endpoint=state[4])
 
     return (
         _ControlledSyncTransport,
@@ -3145,8 +3328,8 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
     )
 
 
-def _require_controlled_settings(settings: UDataClientSettings) -> None:
-    if settings.base_url != _CONTROLLED_ORIGIN:
+def _require_controlled_settings(settings: UDataClientSettings, controlled_origin: str = _CONTROLLED_ORIGIN) -> None:
+    if settings.base_url != controlled_origin:
         raise _controlled_error("Controlled uData mutations require the approved loopback origin.")
     if settings.sync_transport is not None or settings.async_transport is not None:
         raise _controlled_error("Controlled uData mutations cannot use caller-provided transports.")
