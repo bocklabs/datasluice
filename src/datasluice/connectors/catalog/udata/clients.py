@@ -548,72 +548,97 @@ def _build_controlled_transport_types():
             if state is not None:
                 await state[0].aclose()
 
-    def sync_site_id(value: object) -> str | None:
-        state = sync_state(value)
-        return state[1].site_id if state is not None else None
+    class _ControlledAuthority:
+        __slots__ = ("_async_mode", "_transport")
 
-    def sync_evidence_digest(value: object) -> str | None:
-        state = sync_state(value)
-        return state[1].digest if state is not None else None
+        def __init__(self, transport: object, *, async_mode: bool) -> None:
+            self._transport = transport
+            self._async_mode = async_mode
 
-    def sync_revalidate(value: object, *, origin: str, site_id: str) -> bool:
-        state = sync_state(value)
-        if state is None:
-            return False
-        evidence = _verify_controlled_sync_stack(state[0])
-        return (
-            origin == _CONTROLLED_ORIGIN
-            and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-            and evidence == state[1]
-            and evidence.site_id == site_id
-        )
+        def is_bound_to(self, value: object) -> bool:
+            if value is not self._transport:
+                return False
+            state = async_state(value) if self._async_mode else sync_state(value)
+            return state is not None and (not self._async_mode or state[1] is not None)
 
-    def async_site_id(value: object) -> str | None:
-        state = async_state(value)
-        return state[1].site_id if state is not None and state[1] is not None else None
+        @property
+        def site_id(self) -> str:
+            state = async_state(self._transport) if self._async_mode else sync_state(self._transport)
+            if state is None:
+                return ""
+            evidence = state[1]
+            if evidence is None:
+                return ""
+            return evidence.site_id
 
-    def async_evidence_digest(value: object) -> str | None:
-        state = async_state(value)
-        return state[1].digest if state is not None and state[1] is not None else None
+        @property
+        def evidence_digest(self) -> str:
+            state = async_state(self._transport) if self._async_mode else sync_state(self._transport)
+            if state is None:
+                return ""
+            evidence = state[1]
+            if evidence is None:
+                return ""
+            return evidence.digest
 
-    async def async_revalidate(value: object, *, origin: str, site_id: str) -> bool:
-        state = async_state(value)
-        if state is None or state[1] is None:
-            return False
-        evidence = await _verify_controlled_async_stack(state[0])
-        return (
-            origin == _CONTROLLED_ORIGIN
-            and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-            and evidence == state[1]
-            and evidence.site_id == site_id
-        )
+        def revalidate(self, *, origin: str, site_id: str) -> bool:
+            if self._async_mode:
+                return False
+            state = sync_state(self._transport)
+            if state is None:
+                return False
+            evidence = _verify_controlled_sync_stack(state[0])
+            return (
+                origin == _CONTROLLED_ORIGIN
+                and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+                and evidence == state[1]
+                and evidence.site_id == site_id
+            )
 
-    return (
-        _ControlledSyncTransport,
-        _ControlledAsyncTransport,
-        sync_site_id,
-        sync_evidence_digest,
-        sync_revalidate,
-        async_site_id,
-        async_evidence_digest,
-        async_revalidate,
-    )
+        async def revalidate_async(self, *, origin: str, site_id: str) -> bool:
+            if not self._async_mode:
+                return False
+            state = async_state(self._transport)
+            if state is None or state[1] is None:
+                return False
+            evidence = await _verify_controlled_async_stack(state[0])
+            return (
+                origin == _CONTROLLED_ORIGIN
+                and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+                and evidence == state[1]
+                and evidence.site_id == site_id
+            )
+
+    class _ControlledAuthorityDescriptor:
+        def __get__(
+            self, instance: object | None, owner: type | None = None
+        ) -> _ControlledAuthorityDescriptor | _ControlledAuthority | None:
+            if instance is None:
+                return self
+            transport = getattr(instance, "_transport", None)
+            if sync_state(transport) is not None:
+                return _ControlledAuthority(transport, async_mode=False)
+            if async_state(transport) is not None:
+                return _ControlledAuthority(transport, async_mode=True)
+            return None
+
+        def __set__(self, instance: object, value: object) -> None:
+            raise AttributeError("Controlled authority is factory-owned.")
+
+    return _ControlledSyncTransport, _ControlledAsyncTransport, _ControlledAuthorityDescriptor()
 
 
 (
     _ControlledSyncTransport,
     _ControlledAsyncTransport,
-    _controlled_sync_site_id,
-    _controlled_sync_evidence_digest,
-    _controlled_sync_revalidate,
-    _controlled_async_site_id,
-    _controlled_async_evidence_digest,
-    _controlled_async_revalidate,
+    _controlled_authority_descriptor,
 ) = _build_controlled_transport_types()
 
 
 class _UDataClientCore:
     """Shared strict-gate state for the sync and async uData clients."""
+
+    _controlled_authority = _controlled_authority_descriptor
 
     def __init__(
         self,

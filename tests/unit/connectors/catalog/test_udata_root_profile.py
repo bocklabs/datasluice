@@ -962,10 +962,13 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport()
         credentials=_CREDENTIAL,
         owns_transport=False,
     )
-    with client, pytest.raises((CatalogValidationError, ForbiddenError)):
-        client.root_profile.set_site(
-            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-        )
+    with client:
+        with pytest.raises(AttributeError, match="factory-owned"):
+            cast(Any, client)._controlled_authority = object()
+        with pytest.raises((CatalogValidationError, ForbiddenError)):
+            client.root_profile.set_site(
+                SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+            )
     assert transport.requests == []
 
 
