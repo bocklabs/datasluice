@@ -921,15 +921,11 @@ class SyncUDataClient(_UDataClientCore):
     @property
     def datasets(self) -> SyncDatasetsService:
         """Expose the complete typed dataset service."""
-        from datasluice.connectors.catalog.udata.services.datasets import SyncDatasetsService
-
         return SyncDatasetsService(self)
 
     @property
     def root_profile(self) -> SyncRootProfileService:
         """Expose the complete typed root-profile service."""
-        from datasluice.connectors.catalog.udata.services.root_profile import SyncRootProfileService
-
         return SyncRootProfileService(self)
 
     def _require_site_version(self) -> SiteVersion:
@@ -1450,15 +1446,11 @@ class AsyncUDataClient(_UDataClientCore):
     @property
     def datasets(self) -> AsyncDatasetsService:
         """Expose the complete typed dataset service."""
-        from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService
-
         return AsyncDatasetsService(self)
 
     @property
     def root_profile(self) -> AsyncRootProfileService:
         """Expose the complete typed root-profile service."""
-        from datasluice.connectors.catalog.udata.services.root_profile import AsyncRootProfileService
-
         return AsyncRootProfileService(self)
 
     async def datasets_list(

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib
 import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
+from contextlib import ExitStack
 from pathlib import Path
+from types import FunctionType
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -386,11 +386,6 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
-@pytest.fixture(autouse=True)
-def _reload_real_root_profile_service() -> None:
-    importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
-
-
 class _ControlledRouterTransport:
     def __init__(self, delegate: RouterTransport, revalidate: Callable[..., bool]) -> None:
         self._delegate = delegate
@@ -442,6 +437,15 @@ class _ControlledAsyncRouterTransport:
         return "site"
 
 
+def _swap_controlled_type(service_type: Any, transport_type: type, stack: ExitStack) -> None:
+    function = cast(FunctionType, service_type.set_site)
+    cells = dict(zip(function.__code__.co_freevars, function.__closure__ or (), strict=True))
+    cell = cells["controlled_type"]
+    previous = cell.cell_contents
+    cell.cell_contents = transport_type
+    stack.callback(setattr, cell, "cell_contents", previous)
+
+
 def _sync_client(
     routes: Mapping[tuple[str, str], RuntimeResponse],
     *,
@@ -461,8 +465,23 @@ def _sync_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_sync_client(settings)
-    with patch.object(udata_clients, "_ControlledSyncTransport", _ControlledRouterTransport):
-        importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
+    from datasluice.connectors.catalog.udata.services.root_profile import SyncRootProfileService
+
+    stack = ExitStack()
+    _swap_controlled_type(SyncRootProfileService, _ControlledRouterTransport, stack)
+    original_close = client.close
+    closed = False
+
+    def close() -> None:
+        nonlocal closed
+        try:
+            original_close()
+        finally:
+            if not closed:
+                stack.close()
+                closed = True
+
+    cast(Any, client).close = close
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -484,8 +503,23 @@ def _async_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_async_client(settings)
-    with patch.object(udata_clients, "_ControlledAsyncTransport", _ControlledAsyncRouterTransport):
-        importlib.reload(importlib.import_module("datasluice.connectors.catalog.udata.services.root_profile"))
+    from datasluice.connectors.catalog.udata.services.root_profile import AsyncRootProfileService
+
+    stack = ExitStack()
+    _swap_controlled_type(AsyncRootProfileService, _ControlledAsyncRouterTransport, stack)
+    original_aclose = client.aclose
+    closed = False
+
+    async def aclose() -> None:
+        nonlocal closed
+        try:
+            await original_aclose()
+        finally:
+            if not closed:
+                stack.close()
+                closed = True
+
+    cast(Any, client).aclose = aclose
     if emitter is not None:
         client._emitter = emitter
     return transport, client
