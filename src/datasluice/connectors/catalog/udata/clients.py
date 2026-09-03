@@ -669,15 +669,15 @@ def _build_controlled_transport_types():
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            adapter_type, initializer, _, _, close, verifier = type(self)._factory_bindings
-            adapter = object.__new__(adapter_type)
+            transport_type, transport_initializer, _, _, close, verifier = type(self)._factory_bindings
+            transport = object.__new__(transport_type)
             try:
-                cast(Callable[..., None], initializer)(adapter, tls_policy=tls_policy, budget=budget)
-                evidence = verifier(adapter)
+                cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
+                evidence = verifier(transport)
             except BaseException:
-                cast(Callable[[HttpxCatalogTransport], None], close)(adapter)
+                cast(Callable[[HttpxCatalogTransport], None], close)(transport)
                 raise
-            sync_registry.set(self, (adapter, evidence, monotonic()))
+            sync_registry.set(self, (transport, evidence, monotonic()))
 
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = sync_state(self)
@@ -719,13 +719,13 @@ def _build_controlled_transport_types():
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            adapter_type, initializer, _, _, _, _ = type(self)._factory_bindings
-            adapter = object.__new__(adapter_type)
-            cast(Callable[..., None], initializer)(adapter, tls_policy=tls_policy, budget=budget)
+            transport_type, transport_initializer, _, _, _, _ = type(self)._factory_bindings
+            transport = object.__new__(transport_type)
+            cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
             async_registry.set(
                 self,
                 (
-                    adapter,
+                    transport,
                     None,
                     0.0,
                 ),
