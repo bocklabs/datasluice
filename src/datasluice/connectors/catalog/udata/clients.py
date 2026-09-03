@@ -460,12 +460,12 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
 
 class _ImmutableDispatchGateType(type):
     def __setattr__(cls, name: str, value: object) -> None:
-        if name in {"authorize_sync", "authorize_async"}:
+        if name in {"authorize_sync", "authorize_async", "bind_sync_client", "bind_async_client"}:
             raise AttributeError("Controlled dispatch authorization is immutable.")
         super().__setattr__(name, value)
 
     def __delattr__(cls, name: str) -> None:
-        if name in {"authorize_sync", "authorize_async"}:
+        if name in {"authorize_sync", "authorize_async", "bind_sync_client", "bind_async_client"}:
             raise AttributeError("Controlled dispatch authorization is immutable.")
         super().__delattr__(name)
 
@@ -474,18 +474,40 @@ class _ImmutableClientType(type):
     def __new__(
         mcls, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object
     ) -> _ImmutableClientType:
-        inherited = any("_mutation_dispatch_gate" in ancestor.__dict__ for base in bases for ancestor in base.__mro__)
-        if inherited and "_mutation_dispatch_gate" in namespace:
+        reserved = {
+            "_mutation_dispatch_gate",
+            "_dataset_call",
+            "_dataset_call_async",
+            "_root_call",
+            "_root_call_async",
+        }
+        inherited: set[str] = set()
+        for base in bases:
+            for ancestor in base.__mro__:
+                inherited.update(attribute for attribute in reserved if attribute in ancestor.__dict__)
+        if inherited.intersection(namespace):
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
         return super().__new__(mcls, name, bases, namespace, **kwargs)
 
     def __setattr__(cls, name: str, value: object) -> None:
-        if name == "_mutation_dispatch_gate":
+        if name in {
+            "_mutation_dispatch_gate",
+            "_dataset_call",
+            "_dataset_call_async",
+            "_root_call",
+            "_root_call_async",
+        }:
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
         super().__setattr__(name, value)
 
     def __delattr__(cls, name: str) -> None:
-        if name == "_mutation_dispatch_gate":
+        if name in {
+            "_mutation_dispatch_gate",
+            "_dataset_call",
+            "_dataset_call_async",
+            "_root_call",
+            "_root_call_async",
+        }:
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
         super().__delattr__(name)
 
@@ -523,6 +545,8 @@ def _build_controlled_transport_types():
     type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float]
     sync_registry: _IdentityRegistry[SyncState] = _IdentityRegistry()
     async_registry: _IdentityRegistry[AsyncState] = _IdentityRegistry()
+    sync_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
+    async_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
 
     def sync_state(value: object) -> SyncState | None:
         try:
@@ -661,12 +685,59 @@ def _build_controlled_transport_types():
         def __set__(self, instance: object, value: object) -> None:
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
 
-        def authorize_sync(self, value: object) -> bool:
-            return sync_state(value) is not None
+        def bind_sync_client(self, client: object, transport: object) -> None:
+            if sync_state(transport) is not None:
+                sync_client_registry.set(client, transport)
 
-        def authorize_async(self, value: object) -> bool:
-            state = async_state(value)
-            return state is not None and state[1] is not None
+        def bind_async_client(self, client: object, transport: object) -> None:
+            if async_state(transport) is not None:
+                async_client_registry.set(client, transport)
+
+        def authorize_sync(
+            self,
+            client: object,
+            transport: object,
+            request: RuntimeRequest,
+            *,
+            origin: str,
+        ) -> bool:
+            if sync_client_registry.get(client) is not transport:
+                return False
+            if origin != _CONTROLLED_ORIGIN or request.method != "PATCH":
+                return False
+            if request.url != f"{_CONTROLLED_ORIGIN}/api/1/site/":
+                return False
+            state = sync_state(transport)
+            if state is None:
+                return False
+            try:
+                evidence = _verify_controlled_sync_stack(state[0])
+            except Exception:
+                return False
+            return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
+
+        async def authorize_async(
+            self,
+            client: object,
+            transport: object,
+            request: RuntimeRequest,
+            *,
+            origin: str,
+        ) -> bool:
+            if async_client_registry.get(client) is not transport:
+                return False
+            if origin != _CONTROLLED_ORIGIN or request.method != "PATCH":
+                return False
+            if request.url != f"{_CONTROLLED_ORIGIN}/api/1/site/":
+                return False
+            state = async_state(transport)
+            if state is None or state[1] is None:
+                return False
+            try:
+                evidence = await _verify_controlled_async_stack(state[0])
+            except Exception:
+                return False
+            return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
 
     return (
         _ControlledSyncTransport,
@@ -999,8 +1070,6 @@ class SyncUDataClient(_UDataClientCore):
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The synchronous uData client is closed.")
-        if owning_operation == SET_SITE_OPERATION and not self._mutation_dispatch_gate.authorize_sync(self._transport):
-            raise _controlled_error("The uData site PATCH transport is not factory-bound.")
         owning_id = _operation_id_from(owning_operation)
         self._require_site_version()
         resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
@@ -1035,6 +1104,10 @@ class SyncUDataClient(_UDataClientCore):
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
+        if owning_operation == SET_SITE_OPERATION and not self._mutation_dispatch_gate.authorize_sync(
+            self, self._transport, request, origin=self._origin
+        ):
+            raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         sync_transport = cast(CatalogTransport, self._transport)
@@ -1149,7 +1222,8 @@ class SyncUDataClient(_UDataClientCore):
         emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one root-profile request through the shared guarded transport seam."""
-        return self._dataset_call(
+        return SyncUDataClient._dataset_call(
+            self,
             method=method,
             path=path,
             owning_operation=owning_operation,
@@ -1615,8 +1689,6 @@ class AsyncUDataClient(_UDataClientCore):
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The asynchronous uData client is closed.")
-        if owning_operation == SET_SITE_OPERATION and not self._mutation_dispatch_gate.authorize_async(self._transport):
-            raise _controlled_error("The uData site PATCH transport is not factory-bound.")
         owning_id = _operation_id_from(owning_operation)
         await self.site_version()
         resolved_credential = (
@@ -1653,6 +1725,10 @@ class AsyncUDataClient(_UDataClientCore):
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
+        if owning_operation == SET_SITE_OPERATION and not await self._mutation_dispatch_gate.authorize_async(
+            self, self._transport, request, origin=self._origin
+        ):
+            raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         async_transport = cast(AsyncCatalogTransport, self._transport)
@@ -1767,7 +1843,8 @@ class AsyncUDataClient(_UDataClientCore):
         emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one async root-profile request through the shared transport seam."""
-        return await self._dataset_call_async(
+        return await AsyncUDataClient._dataset_call_async(
+            self,
             method=method,
             path=path,
             owning_operation=owning_operation,
@@ -2034,7 +2111,7 @@ def _create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataCl
     require_extra("udata")
     _require_controlled_settings(settings)
     transport = _ControlledSyncTransport(tls_policy=settings.tls_policy, budget=settings.budget)
-    return SyncUDataClient(
+    client = SyncUDataClient(
         transport,
         declared_udata_profile(),
         origin=settings.base_url,
@@ -2048,6 +2125,8 @@ def _create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataCl
         owns_transport=True,
         probe_runner=settings.probe_runner,
     )
+    client._mutation_dispatch_gate.bind_sync_client(client, transport)
+    return client
 
 
 async def _create_controlled_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
@@ -2056,7 +2135,7 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
     _require_controlled_settings(settings)
     transport = _ControlledAsyncTransport(tls_policy=settings.tls_policy, budget=settings.budget)
     await transport.verify()
-    return AsyncUDataClient(
+    client = AsyncUDataClient(
         transport,
         declared_udata_profile(),
         origin=settings.base_url,
@@ -2070,6 +2149,8 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
         owns_transport=True,
         async_probe_runner=settings.async_probe_runner,
     )
+    client._mutation_dispatch_gate.bind_async_client(client, transport)
+    return client
 
 
 def _load_services():

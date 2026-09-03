@@ -416,7 +416,8 @@ def _make_sync_set_site():
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
-            status, payload, response = self._client._root_call(
+            status, payload, response = SyncUDataClient._root_call(
+                self._client,
                 method=method,
                 path=path,
                 owning_operation=operation,
@@ -484,7 +485,8 @@ def _make_async_set_site():
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
-            status, payload, response = await self._client._root_call_async(
+            status, payload, response = await AsyncUDataClient._root_call_async(
+                self._client,
                 method=method,
                 path=path,
                 owning_operation=operation,

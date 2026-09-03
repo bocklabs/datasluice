@@ -416,6 +416,7 @@ def _sync_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_sync_client(settings)
+    client._mutation_dispatch_gate.bind_sync_client(client, controlled_transport)
     original_close = client.close
     closed = False
 
@@ -459,6 +460,7 @@ def _async_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_async_client(settings)
+    client._mutation_dispatch_gate.bind_async_client(client, controlled_transport)
     original_aclose = client.aclose
     closed = False
 
@@ -982,6 +984,31 @@ def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: p
     client_type = cast(Any, type(client))
     with pytest.raises(AttributeError, match="factory-owned"):
         client_type._mutation_dispatch_gate = object()
+
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.set_site(
+            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
+
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
+
+
+def test_registered_transport_cannot_be_rebound_to_another_origin(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datasluice.connectors.catalog.udata.services import root_profile as root_service
+
+    origin = "https://other.example"
+    site_url = f"{origin}/api/1/site/"
+    transport, client = _sync_client(
+        _routes(
+            ("GET", site_url, _json_response(200, _site_body(), {"Content-Type": "application/json"})),
+            ("PATCH", site_url, _json_response(200, _site_body(), {"Content-Type": "application/json"})),
+        ),
+        origin=origin,
+        credential=_CREDENTIAL,
+    )
+    monkeypatch.setattr(root_service, "_controlled_sync_site_id", lambda _: "site")
+    monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
+    monkeypatch.setattr(root_service, "_controlled_sync_evidence_digest", lambda _: _controlled_evidence().digest)
 
     with client, pytest.raises(CatalogValidationError):
         client.root_profile.set_site(
