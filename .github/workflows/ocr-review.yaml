@@ -22,6 +22,14 @@ jobs:
     timeout-minutes: 180
     if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
     steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Configure OCR
+        run: npx -y "@alibaba-group/open-code-review@${OCR_VERSION}" config set max_tokens 1000000
+
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@66120291271b2e605e420e9f11fbd6448f06163f # v1.9.10
         with:
@@ -29,12 +37,9 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
-
-          llm_extra_body: '{"reasoning_effort": "max"}'
-
+          llm_extra_body: '{"reasoning_effort": "max", "max_tokens": 131072}'
           review_concurrency: '4'
           language: 'English'
-
           github_token: ${{ secrets.GITHUB_TOKEN }}
           sticky_summary: 'true'
           incremental: 'true'
