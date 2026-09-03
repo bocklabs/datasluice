@@ -923,11 +923,12 @@ class SyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
+        _dispatch_authorized: Callable[[object], bool] = _controlled_sync_authorized,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The synchronous uData client is closed.")
-        if owning_operation == SET_SITE_OPERATION and not _controlled_sync_authorized(self._transport):
+        if owning_operation == SET_SITE_OPERATION and not _dispatch_authorized(self._transport):
             raise _controlled_error("The uData site PATCH transport is not factory-bound.")
         owning_id = _operation_id_from(owning_operation)
         self._require_site_version()
@@ -1539,11 +1540,12 @@ class AsyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
+        _dispatch_authorized: Callable[[object], bool] = _controlled_async_authorized,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The asynchronous uData client is closed.")
-        if owning_operation == SET_SITE_OPERATION and not _controlled_async_authorized(self._transport):
+        if owning_operation == SET_SITE_OPERATION and not _dispatch_authorized(self._transport):
             raise _controlled_error("The uData site PATCH transport is not factory-bound.")
         owning_id = _operation_id_from(owning_operation)
         await self.site_version()
