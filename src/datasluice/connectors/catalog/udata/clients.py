@@ -480,6 +480,9 @@ class _ImmutableClientType(type):
             "_dataset_call_async",
             "_root_call",
             "_root_call_async",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
         }
         inherited: set[str] = set()
         for base in bases:
@@ -496,6 +499,9 @@ class _ImmutableClientType(type):
             "_dataset_call_async",
             "_root_call",
             "_root_call_async",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
         }:
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
         super().__setattr__(name, value)
@@ -507,6 +513,9 @@ class _ImmutableClientType(type):
             "_dataset_call_async",
             "_root_call",
             "_root_call_async",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
         }:
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
         super().__delattr__(name)
