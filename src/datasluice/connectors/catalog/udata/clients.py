@@ -471,6 +471,14 @@ class _ImmutableDispatchGateType(type):
 
 
 class _ImmutableClientType(type):
+    def __new__(
+        mcls, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object
+    ) -> _ImmutableClientType:
+        inherited = any("_mutation_dispatch_gate" in ancestor.__dict__ for base in bases for ancestor in base.__mro__)
+        if inherited and "_mutation_dispatch_gate" in namespace:
+            raise AttributeError("Controlled dispatch authorization is factory-owned.")
+        return super().__new__(mcls, name, bases, namespace, **kwargs)
+
     def __setattr__(cls, name: str, value: object) -> None:
         if name == "_mutation_dispatch_gate":
             raise AttributeError("Controlled dispatch authorization is factory-owned.")
@@ -482,11 +490,39 @@ class _ImmutableClientType(type):
         super().__delattr__(name)
 
 
+class _IdentityRegistry[T]:
+    __slots__ = ("_entries",)
+
+    def __init__(self) -> None:
+        self._entries: dict[int, tuple[weakref.ReferenceType[object], T]] = {}
+
+    def set(self, key: object, value: T) -> None:
+        key_id = id(key)
+
+        def remove(reference: weakref.ReferenceType[object]) -> None:
+            entry = self._entries.get(key_id)
+            if entry is not None and entry[0] is reference:
+                self._entries.pop(key_id, None)
+
+        self._entries[key_id] = (weakref.ref(key, remove), value)
+
+    def get(self, key: object) -> T | None:
+        entry = self._entries.get(id(key))
+        if entry is None or entry[0]() is not key:
+            return None
+        return entry[1]
+
+    def discard(self, key: object) -> None:
+        entry = self._entries.get(id(key))
+        if entry is not None and entry[0]() is key:
+            self._entries.pop(id(key), None)
+
+
 def _build_controlled_transport_types():
     type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float]
     type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float]
-    sync_registry: weakref.WeakKeyDictionary[object, SyncState] = weakref.WeakKeyDictionary()
-    async_registry: weakref.WeakKeyDictionary[object, AsyncState] = weakref.WeakKeyDictionary()
+    sync_registry: _IdentityRegistry[SyncState] = _IdentityRegistry()
+    async_registry: _IdentityRegistry[AsyncState] = _IdentityRegistry()
 
     def sync_state(value: object) -> SyncState | None:
         try:
@@ -512,7 +548,7 @@ def _build_controlled_transport_types():
             except BaseException:
                 transport.close()
                 raise
-            sync_registry[self] = (transport, evidence, monotonic())
+            sync_registry.set(self, (transport, evidence, monotonic()))
 
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = sync_state(self)
@@ -537,10 +573,13 @@ def _build_controlled_transport_types():
         __slots__ = ("__weakref__",)
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            async_registry[self] = (
-                create_default_async_transport(tls_policy=tls_policy, budget=budget),
-                None,
-                0.0,
+            async_registry.set(
+                self,
+                (
+                    create_default_async_transport(tls_policy=tls_policy, budget=budget),
+                    None,
+                    0.0,
+                ),
             )
 
         async def verify(self) -> None:
@@ -552,9 +591,9 @@ def _build_controlled_transport_types():
                 evidence = await _verify_controlled_async_stack(state[0])
             except BaseException:
                 await state[0].aclose()
-                async_registry.pop(self, None)
+                async_registry.discard(self)
                 raise
-            async_registry[self] = (state[0], evidence, monotonic())
+            async_registry.set(self, (state[0], evidence, monotonic()))
 
         async def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = async_state(self)
