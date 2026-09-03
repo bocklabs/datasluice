@@ -661,6 +661,7 @@ def _build_controlled_transport_types():
         __slots__ = ("__weakref__",)
         _factory_bindings = (
             HttpxCatalogTransport,
+            HttpxCatalogTransport.__init__,
             HttpxCatalogTransport.send,
             HttpxCatalogTransport.send_stream,
             HttpxCatalogTransport.close,
@@ -668,14 +669,15 @@ def _build_controlled_transport_types():
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            builder, _, _, _, verifier = type(self)._factory_bindings
-            transport = builder(tls_policy=tls_policy, budget=budget)
+            adapter_type, initializer, _, _, close, verifier = type(self)._factory_bindings
+            adapter = object.__new__(adapter_type)
             try:
-                evidence = verifier(transport)
+                cast(Callable[..., None], initializer)(adapter, tls_policy=tls_policy, budget=budget)
+                evidence = verifier(adapter)
             except BaseException:
-                transport.close()
+                cast(Callable[[HttpxCatalogTransport], None], close)(adapter)
                 raise
-            sync_registry.set(self, (transport, evidence, monotonic()))
+            sync_registry.set(self, (adapter, evidence, monotonic()))
 
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = sync_state(self)
@@ -683,7 +685,7 @@ def _build_controlled_transport_types():
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
             send = cast(
                 Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeResponse],
-                type(self)._factory_bindings[1],
+                type(self)._factory_bindings[2],
             )
             return send(cast(HttpxCatalogTransport, state[0]), request)
 
@@ -693,14 +695,14 @@ def _build_controlled_transport_types():
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
             send_stream = cast(
                 Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeStreamResponse],
-                type(self)._factory_bindings[2],
+                type(self)._factory_bindings[3],
             )
             return send_stream(cast(HttpxCatalogTransport, state[0]), request)
 
         def close(self) -> None:
             state = sync_state(self)
             if state is not None:
-                close = cast(Callable[[HttpxCatalogTransport], None], type(self)._factory_bindings[3])
+                close = cast(Callable[[HttpxCatalogTransport], None], type(self)._factory_bindings[4])
                 close(cast(HttpxCatalogTransport, state[0]))
 
     class _ControlledAsyncTransport(metaclass=_ImmutableTransportType):
@@ -709,6 +711,7 @@ def _build_controlled_transport_types():
         __slots__ = ("__weakref__",)
         _factory_bindings = (
             AsyncHttpxCatalogTransport,
+            AsyncHttpxCatalogTransport.__init__,
             AsyncHttpxCatalogTransport.send,
             AsyncHttpxCatalogTransport.send_stream,
             AsyncHttpxCatalogTransport.aclose,
@@ -716,11 +719,13 @@ def _build_controlled_transport_types():
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            builder, _, _, _, _ = type(self)._factory_bindings
+            adapter_type, initializer, _, _, _, _ = type(self)._factory_bindings
+            adapter = object.__new__(adapter_type)
+            cast(Callable[..., None], initializer)(adapter, tls_policy=tls_policy, budget=budget)
             async_registry.set(
                 self,
                 (
-                    builder(tls_policy=tls_policy, budget=budget),
+                    adapter,
                     None,
                     0.0,
                 ),
@@ -732,10 +737,11 @@ def _build_controlled_transport_types():
             if state is None:
                 return
             try:
-                _, _, _, _, verifier = type(self)._factory_bindings
+                _, _, _, _, _, verifier = type(self)._factory_bindings
                 evidence = await verifier(state[0])
             except BaseException:
-                await state[0].aclose()
+                _, _, _, _, aclose, _ = type(self)._factory_bindings
+                await aclose(cast(AsyncHttpxCatalogTransport, state[0]))
                 async_registry.discard(self)
                 raise
             async_registry.set(self, (state[0], evidence, monotonic()))
@@ -746,7 +752,7 @@ def _build_controlled_transport_types():
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
             send = cast(
                 Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[RuntimeResponse]],
-                type(self)._factory_bindings[1],
+                type(self)._factory_bindings[2],
             )
             return await send(cast(AsyncHttpxCatalogTransport, state[0]), request)
 
@@ -756,14 +762,14 @@ def _build_controlled_transport_types():
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
             send_stream = cast(
                 Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]],
-                type(self)._factory_bindings[2],
+                type(self)._factory_bindings[3],
             )
             return await send_stream(cast(AsyncHttpxCatalogTransport, state[0]), request)
 
         async def aclose(self) -> None:
             state = async_state(self)
             if state is not None:
-                aclose = cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], type(self)._factory_bindings[3])
+                aclose = cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], type(self)._factory_bindings[4])
                 await aclose(cast(AsyncHttpxCatalogTransport, state[0]))
 
     def sync_site_id(value: object) -> str | None:
@@ -778,7 +784,7 @@ def _build_controlled_transport_types():
         state = sync_state(value)
         if state is None:
             return False
-        _, _, _, _, verifier = _ControlledSyncTransport._factory_bindings
+        _, _, _, _, _, verifier = _ControlledSyncTransport._factory_bindings
         evidence = verifier(state[0])
         return (
             origin == _CONTROLLED_ORIGIN
@@ -799,7 +805,7 @@ def _build_controlled_transport_types():
         state = async_state(value)
         if state is None or state[1] is None:
             return False
-        _, _, _, _, verifier = _ControlledAsyncTransport._factory_bindings
+        _, _, _, _, _, verifier = _ControlledAsyncTransport._factory_bindings
         evidence = await verifier(state[0])
         return (
             origin == _CONTROLLED_ORIGIN
@@ -810,8 +816,8 @@ def _build_controlled_transport_types():
 
     class _ControlledDispatchGate(metaclass=_ImmutableDispatchGateType):
         __slots__ = ()
-        _sync_verifier = _ControlledSyncTransport._factory_bindings[4]
-        _async_verifier = _ControlledAsyncTransport._factory_bindings[4]
+        _sync_verifier = _ControlledSyncTransport._factory_bindings[5]
+        _async_verifier = _ControlledAsyncTransport._factory_bindings[5]
 
         def __get__(self, instance: object | None, owner: type | None = None) -> _ControlledDispatchGate:
             return self

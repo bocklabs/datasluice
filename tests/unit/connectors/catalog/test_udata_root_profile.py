@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -439,11 +440,20 @@ def _sync_client(
 
     stack.enter_context(patch.object(httpx, "Client", client_factory))
 
-    def verify_source() -> str:
-        transport._suppress_next = True
-        return hashlib.sha256(b"unit-test-stack").hexdigest()
+    def compose_read(*args: str) -> str:
+        if args == ("ps", "--status", "running", "--services"):
+            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
+        if args == ("port", "udata", "7000"):
+            return "127.0.0.1:5640"
+        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
+            return "0546582058d84706812a1c37387576efc4e5ad1f"
+        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
+            transport._suppress_next = True
+            return "unit-test-stack"
+        raise AssertionError(f"unexpected compose read {args}")
 
-    stack.enter_context(patch.object(udata_clients, "_verify_controlled_source_and_nonce", verify_source))
+    stack.enter_context(patch.object(udata_clients, "_compose_read", compose_read))
+    stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
     verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
     original_site_response = transport.routes.get(("GET", _SITE_URL))
     transport.routes[("GET", _SITE_URL)] = verification_response
@@ -522,11 +532,20 @@ def _async_client(
 
     stack.enter_context(patch.object(httpx, "AsyncClient", client_factory))
 
-    def verify_source() -> str:
-        transport._suppress_next = True
-        return hashlib.sha256(b"unit-test-stack").hexdigest()
+    def compose_read(*args: str) -> str:
+        if args == ("ps", "--status", "running", "--services"):
+            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
+        if args == ("port", "udata", "7000"):
+            return "127.0.0.1:5640"
+        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
+            return "0546582058d84706812a1c37387576efc4e5ad1f"
+        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
+            transport._suppress_next = True
+            return "unit-test-stack"
+        raise AssertionError(f"unexpected compose read {args}")
 
-    stack.enter_context(patch.object(udata_clients, "_verify_controlled_source_and_nonce", verify_source))
+    stack.enter_context(patch.object(udata_clients, "_compose_read", compose_read))
+    stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
 
     verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
     original_site_response = transport.routes.get(("GET", _SITE_URL))
