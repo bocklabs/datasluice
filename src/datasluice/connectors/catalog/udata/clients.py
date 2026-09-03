@@ -458,10 +458,6 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
 
 
 def _build_controlled_transport_types():
-    sync_builder = create_default_sync_transport
-    sync_verifier = _verify_controlled_sync_stack
-    async_builder = create_default_async_transport
-    async_verifier = _verify_controlled_async_stack
     type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float]
     type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float]
     sync_registry: weakref.WeakKeyDictionary[object, SyncState] = weakref.WeakKeyDictionary()
@@ -485,9 +481,9 @@ def _build_controlled_transport_types():
         __slots__ = ("__weakref__",)
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport = sync_builder(tls_policy=tls_policy, budget=budget)
+            transport = create_default_sync_transport(tls_policy=tls_policy, budget=budget)
             try:
-                evidence = sync_verifier(transport)
+                evidence = _verify_controlled_sync_stack(transport)
             except BaseException:
                 transport.close()
                 raise
@@ -510,38 +506,17 @@ def _build_controlled_transport_types():
             if state is not None:
                 state[0].close()
 
-        def revalidate(self, *, origin: str, site_id: str) -> bool:
-            """Revalidate this exact binding immediately before a controlled PATCH."""
-            state = sync_state(self)
-            if state is None:
-                return False
-            evidence = sync_verifier(state[0])
-            return (
-                origin == _CONTROLLED_ORIGIN
-                and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-                and evidence == state[1]
-                and evidence.site_id == site_id
-            )
-
-        @property
-        def evidence_digest(self) -> str:
-            """Return only the redacted controlled-stack evidence digest."""
-            state = sync_state(self)
-            return state[1].digest if state is not None else ""
-
-        @property
-        def site_id(self) -> str:
-            """Return the peer identity bound during the initial live verification."""
-            state = sync_state(self)
-            return state[1].site_id if state is not None else ""
-
     class _ControlledAsyncTransport:
         """Own a stock asynchronous transport after live controlled-stack verification."""
 
         __slots__ = ("__weakref__",)
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            async_registry[self] = (async_builder(tls_policy=tls_policy, budget=budget), None, 0.0)
+            async_registry[self] = (
+                create_default_async_transport(tls_policy=tls_policy, budget=budget),
+                None,
+                0.0,
+            )
 
         async def verify(self) -> None:
             """Complete live verification before the transport is used for mutations."""
@@ -549,7 +524,7 @@ def _build_controlled_transport_types():
             if state is None:
                 return
             try:
-                evidence = await async_verifier(state[0])
+                evidence = await _verify_controlled_async_stack(state[0])
             except BaseException:
                 await state[0].aclose()
                 async_registry.pop(self, None)
@@ -573,35 +548,68 @@ def _build_controlled_transport_types():
             if state is not None:
                 await state[0].aclose()
 
-        async def revalidate(self, *, origin: str, site_id: str) -> bool:
-            """Revalidate this exact binding immediately before a controlled PATCH."""
-            state = async_state(self)
-            if state is None or state[1] is None:
-                return False
-            evidence = await async_verifier(state[0])
-            return (
-                origin == _CONTROLLED_ORIGIN
-                and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
-                and evidence == state[1]
-                and evidence.site_id == site_id
-            )
+    def sync_site_id(value: object) -> str | None:
+        state = sync_state(value)
+        return state[1].site_id if state is not None else None
 
-        @property
-        def evidence_digest(self) -> str:
-            """Return only the redacted controlled-stack evidence digest."""
-            state = async_state(self)
-            return state[1].digest if state is not None and state[1] is not None else ""
+    def sync_evidence_digest(value: object) -> str | None:
+        state = sync_state(value)
+        return state[1].digest if state is not None else None
 
-        @property
-        def site_id(self) -> str:
-            """Return the peer identity bound during the initial live verification."""
-            state = async_state(self)
-            return state[1].site_id if state is not None and state[1] is not None else ""
+    def sync_revalidate(value: object, *, origin: str, site_id: str) -> bool:
+        state = sync_state(value)
+        if state is None:
+            return False
+        evidence = _verify_controlled_sync_stack(state[0])
+        return (
+            origin == _CONTROLLED_ORIGIN
+            and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            and evidence == state[1]
+            and evidence.site_id == site_id
+        )
 
-    return _ControlledSyncTransport, _ControlledAsyncTransport
+    def async_site_id(value: object) -> str | None:
+        state = async_state(value)
+        return state[1].site_id if state is not None and state[1] is not None else None
+
+    def async_evidence_digest(value: object) -> str | None:
+        state = async_state(value)
+        return state[1].digest if state is not None and state[1] is not None else None
+
+    async def async_revalidate(value: object, *, origin: str, site_id: str) -> bool:
+        state = async_state(value)
+        if state is None or state[1] is None:
+            return False
+        evidence = await _verify_controlled_async_stack(state[0])
+        return (
+            origin == _CONTROLLED_ORIGIN
+            and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
+            and evidence == state[1]
+            and evidence.site_id == site_id
+        )
+
+    return (
+        _ControlledSyncTransport,
+        _ControlledAsyncTransport,
+        sync_site_id,
+        sync_evidence_digest,
+        sync_revalidate,
+        async_site_id,
+        async_evidence_digest,
+        async_revalidate,
+    )
 
 
-_ControlledSyncTransport, _ControlledAsyncTransport = _build_controlled_transport_types()
+(
+    _ControlledSyncTransport,
+    _ControlledAsyncTransport,
+    _controlled_sync_site_id,
+    _controlled_sync_evidence_digest,
+    _controlled_sync_revalidate,
+    _controlled_async_site_id,
+    _controlled_async_evidence_digest,
+    _controlled_async_revalidate,
+) = _build_controlled_transport_types()
 
 
 class _UDataClientCore:
@@ -695,60 +703,6 @@ class _UDataClientCore:
     def credentials(self) -> object | None:
         """Expose the injected caller-owned credential resolver or provider."""
         return self._credentials
-
-    def _has_controlled_stack_authority(
-        self,
-        sync_type: type = _ControlledSyncTransport,
-        async_type: type = _ControlledAsyncTransport,
-    ) -> bool:
-        """Return whether this client came from the controlled evidence factory."""
-        return isinstance(self._transport, (sync_type, async_type))
-
-    def _controlled_evidence_digest(
-        self,
-        sync_type: type = _ControlledSyncTransport,
-        async_type: type = _ControlledAsyncTransport,
-    ) -> str | None:
-        """Return the bound redacted evidence digest without exposing control internals."""
-        if isinstance(self._transport, sync_type):
-            return cast(_ControlledSyncTransport, self._transport).evidence_digest
-        if isinstance(self._transport, async_type):
-            return cast(_ControlledAsyncTransport, self._transport).evidence_digest
-        return None
-
-    def _controlled_site_id(
-        self,
-        sync_type: type = _ControlledSyncTransport,
-        async_type: type = _ControlledAsyncTransport,
-    ) -> str | None:
-        """Return the internally bound controlled peer identity when present."""
-        if isinstance(self._transport, sync_type):
-            return cast(_ControlledSyncTransport, self._transport).site_id
-        if isinstance(self._transport, async_type):
-            return cast(_ControlledAsyncTransport, self._transport).site_id
-        return None
-
-    def _revalidate_controlled_sync_stack(
-        self,
-        *,
-        site_id: str,
-        transport_type: type = _ControlledSyncTransport,
-    ) -> bool:
-        """Revalidate the synchronous authority at the mutation dispatch boundary."""
-        if not isinstance(self._transport, transport_type):
-            return False
-        return cast(_ControlledSyncTransport, self._transport).revalidate(origin=self._origin, site_id=site_id)
-
-    async def _revalidate_controlled_async_stack(
-        self,
-        *,
-        site_id: str,
-        transport_type: type = _ControlledAsyncTransport,
-    ) -> bool:
-        """Revalidate the asynchronous authority at the mutation dispatch boundary."""
-        if not isinstance(self._transport, transport_type):
-            return False
-        return await cast(_ControlledAsyncTransport, self._transport).revalidate(origin=self._origin, site_id=site_id)
 
     def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
         self._emitter.record(

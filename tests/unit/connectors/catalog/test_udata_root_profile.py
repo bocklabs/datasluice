@@ -8,8 +8,8 @@ import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
-from types import FunctionType
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -386,66 +386,6 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
-class _ControlledRouterTransport:
-    def __init__(self, delegate: RouterTransport, revalidate: Callable[..., bool]) -> None:
-        self._delegate = delegate
-        self._revalidate = revalidate
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        return self._delegate.send(request)
-
-    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
-        return self._delegate.send_stream(request)
-
-    def close(self) -> None:
-        self._delegate.close()
-
-    def revalidate(self, *, origin: str, site_id: str) -> bool:
-        return self._revalidate(site_id=site_id)
-
-    @property
-    def evidence_digest(self) -> str:
-        return _controlled_evidence().digest
-
-    @property
-    def site_id(self) -> str:
-        return "site"
-
-
-class _ControlledAsyncRouterTransport:
-    def __init__(self, delegate: AsyncRouterTransport) -> None:
-        self._delegate = delegate
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        return await self._delegate.send(request)
-
-    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
-        return await self._delegate.send_stream(request)
-
-    async def aclose(self) -> None:
-        await self._delegate.aclose()
-
-    async def revalidate(self, *, origin: str, site_id: str) -> bool:
-        return True
-
-    @property
-    def evidence_digest(self) -> str:
-        return _controlled_evidence().digest
-
-    @property
-    def site_id(self) -> str:
-        return "site"
-
-
-def _swap_controlled_type(service_type: Any, transport_type: type, stack: ExitStack) -> None:
-    function = cast(FunctionType, service_type.set_site)
-    cells = dict(zip(function.__code__.co_freevars, function.__closure__ or (), strict=True))
-    cell = cells["controlled_type"]
-    previous = cell.cell_contents
-    cell.cell_contents = transport_type
-    stack.callback(setattr, cell, "cell_contents", previous)
-
-
 def _sync_client(
     routes: Mapping[tuple[str, str], RuntimeResponse],
     *,
@@ -457,18 +397,25 @@ def _sync_client(
     test_transport: RouterTransport | None = None,
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = test_transport or RouterTransport(routes)
-    controlled_transport = _ControlledRouterTransport(transport, revalidate or (lambda **_: True))
+    stack = ExitStack()
+    stack.enter_context(patch.object(udata_clients, "create_default_sync_transport", lambda **_: transport))
+    stack.enter_context(patch.object(udata_clients, "_verify_controlled_sync_stack", lambda _: _controlled_evidence()))
+    controlled_transport = udata_clients._ControlledSyncTransport()
+    if revalidate is not None:
+        stack.enter_context(
+            patch.object(
+                udata_clients,
+                "_verify_controlled_sync_stack",
+                lambda _: _controlled_evidence() if revalidate(site_id="site") else _controlled_evidence("changed"),
+            )
+        )
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
-        sync_transport=controlled_transport,
+        sync_transport=lambda: controlled_transport,
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_sync_client(settings)
-    from datasluice.connectors.catalog.udata.services.root_profile import SyncRootProfileService
-
-    stack = ExitStack()
-    _swap_controlled_type(SyncRootProfileService, _ControlledRouterTransport, stack)
     original_close = client.close
     closed = False
 
@@ -496,17 +443,22 @@ def _async_client(
     root_export_max_bytes: int = 8 * 1024 * 1024,
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
+    stack = ExitStack()
+    stack.enter_context(patch.object(udata_clients, "create_default_async_transport", lambda **_: transport))
+
+    async def verify(_: object) -> Any:
+        return _controlled_evidence()
+
+    stack.enter_context(patch.object(udata_clients, "_verify_controlled_async_stack", verify))
+    controlled_transport = udata_clients._ControlledAsyncTransport()
+    asyncio.run(controlled_transport.verify())
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
-        async_transport=_ControlledAsyncRouterTransport(transport),
+        async_transport=lambda: controlled_transport,
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_async_client(settings)
-    from datasluice.connectors.catalog.udata.services.root_profile import AsyncRootProfileService
-
-    stack = ExitStack()
-    _swap_controlled_type(AsyncRootProfileService, _ControlledAsyncRouterTransport, stack)
     original_aclose = client.aclose
     closed = False
 
@@ -988,11 +940,8 @@ def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
     assert transport.requests == []
 
 
-def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport() -> None:
     transport = RouterTransport(_routes())
-    monkeypatch.setattr(udata_clients, "_verify_controlled_sync_stack", lambda _: _controlled_evidence("forged"))
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         cast(Any, udata_clients._ControlledSyncTransport)(transport=transport)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -1015,18 +964,6 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport(
     )
     with client, pytest.raises((CatalogValidationError, ForbiddenError)):
         client.root_profile.set_site(
-            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-        )
-
-    hooked_client = create_sync_client(
-        UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport)
-    )
-    cast(Any, hooked_client)._has_controlled_stack_authority = lambda: True
-    cast(Any, hooked_client)._controlled_evidence_digest = lambda: _controlled_evidence().digest
-    cast(Any, hooked_client)._controlled_site_id = lambda: "site"
-    cast(Any, hooked_client)._revalidate_controlled_sync_stack = lambda *, site_id: True
-    with hooked_client, pytest.raises(CatalogValidationError):
-        hooked_client.root_profile.set_site(
             SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
         )
     assert transport.requests == []
