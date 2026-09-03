@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from datasluice.connectors.catalog.udata import clients as udata_clients
@@ -48,7 +49,6 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
 )
 from datasluice.runtime.events import EventEmitter
-from datasluice.runtime.transport import httpx_transport
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
     RuntimeRequest,
@@ -408,18 +408,36 @@ def _sync_client(
     transport = test_transport or RouterTransport(routes)
     stack = ExitStack()
 
-    def send(_: object, request: RuntimeRequest) -> RuntimeResponse:
-        return transport.send(request)
+    original_client = httpx.Client
 
-    def send_stream(_: object, request: RuntimeRequest) -> RuntimeStreamResponse:
-        return transport.send_stream(request)
+    def handler(request: httpx.Request) -> httpx.Response:
+        headers = {
+            {
+                "accept": "Accept",
+                "content-type": "Content-Type",
+                "x-api-key": "X-API-KEY",
+            }.get(key.lower(), key): value
+            for key, value in request.headers.items()
+        }
+        response = transport.send(
+            RuntimeRequest(
+                method=request.method,
+                url=str(request.url),
+                headers=headers,
+                body=request.content or None,
+            )
+        )
+        return httpx.Response(
+            response.status_code,
+            headers=dict(response.headers),
+            content=response.body,
+            request=request,
+        )
 
-    def close(_: object) -> None:
-        transport.close()
+    def client_factory(**_: object) -> httpx.Client:
+        return original_client(transport=httpx.MockTransport(handler), follow_redirects=False)
 
-    stack.enter_context(patch.object(httpx_transport.HttpxCatalogTransport, "send", send))
-    stack.enter_context(patch.object(httpx_transport.HttpxCatalogTransport, "send_stream", send_stream))
-    stack.enter_context(patch.object(httpx_transport.HttpxCatalogTransport, "close", close))
+    stack.enter_context(patch.object(httpx, "Client", client_factory))
 
     def verify_source() -> str:
         transport._suppress_next = True
@@ -481,18 +499,28 @@ def _async_client(
     transport = AsyncRouterTransport(routes)
     stack = ExitStack()
 
-    async def send(_: object, request: RuntimeRequest) -> RuntimeResponse:
-        return await transport.send(request)
+    original_client = httpx.AsyncClient
 
-    async def send_stream(_: object, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
-        return await transport.send_stream(request)
+    async def handler(request: httpx.Request) -> httpx.Response:
+        response = await transport.send(
+            RuntimeRequest(
+                method=request.method,
+                url=str(request.url),
+                headers=dict(request.headers),
+                body=request.content or None,
+            )
+        )
+        return httpx.Response(
+            response.status_code,
+            headers=dict(response.headers),
+            content=response.body,
+            request=request,
+        )
 
-    async def aclose(_: object) -> None:
-        await transport.aclose()
+    def client_factory(**_: object) -> httpx.AsyncClient:
+        return original_client(transport=httpx.MockTransport(handler), follow_redirects=False)
 
-    stack.enter_context(patch.object(httpx_transport.AsyncHttpxCatalogTransport, "send", send))
-    stack.enter_context(patch.object(httpx_transport.AsyncHttpxCatalogTransport, "send_stream", send_stream))
-    stack.enter_context(patch.object(httpx_transport.AsyncHttpxCatalogTransport, "aclose", aclose))
+    stack.enter_context(patch.object(httpx, "AsyncClient", client_factory))
 
     def verify_source() -> str:
         transport._suppress_next = True
@@ -780,9 +808,15 @@ def test_async_site_patch_matches_sync_target_and_receipt_contract() -> None:
 
 def test_root_profile_rejects_oversized_buffered_json() -> None:
     payload = _site_body()
-    transport, client = _sync_client(
-        _routes(("GET", _SITE_URL, _json_response(200, payload, {"Content-Type": "application/json"}))),
+    transport = RouterTransport(
+        _routes(("GET", _SITE_URL, _json_response(200, payload, {"Content-Type": "application/json"})))
+    )
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=_ORIGIN,
         root_export_max_bytes=4,
+        owns_transport=False,
     )
     with client, pytest.raises(NativeCatalogError, match="byte limit"):
         client.root_profile.get()
