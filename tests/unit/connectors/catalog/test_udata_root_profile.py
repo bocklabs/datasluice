@@ -8,8 +8,8 @@ import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
-from types import FunctionType
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -47,7 +47,9 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     NativeCatalogError,
 )
+from datasluice.runtime import defaults as runtime_defaults
 from datasluice.runtime.events import EventEmitter
+from datasluice.runtime.transport import httpx_transport
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
     RuntimeRequest,
@@ -331,9 +333,13 @@ class RouterTransport:
         self.routes = dict(routes)
         self.requests: list[RuntimeRequest] = []
         self.close_count = 0
+        self._suppress_next = False
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
+        suppress = self._suppress_next
+        self._suppress_next = False
+        if not suppress:
+            self.requests.append(request)
         try:
             return self.routes[(request.method, request.url)]
         except KeyError as error:
@@ -360,9 +366,13 @@ class AsyncRouterTransport:
         self.routes = dict(routes)
         self.requests: list[RuntimeRequest] = []
         self.close_count = 0
+        self._suppress_next = False
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
+        suppress = self._suppress_next
+        self._suppress_next = False
+        if not suppress:
+            self.requests.append(request)
         try:
             return self.routes[(request.method, request.url)]
         except KeyError as error:
@@ -386,19 +396,6 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
-def _controlled_dependencies() -> Any:
-    function = cast(FunctionType, udata_clients._ControlledSyncTransport.__init__)
-    cells = dict(zip(function.__code__.co_freevars, function.__closure__ or (), strict=True))
-    return cells["dependencies"].cell_contents
-
-
-def _replace_controlled_dependency(stack: ExitStack, name: str, value: object) -> None:
-    dependencies = _controlled_dependencies()
-    previous = getattr(dependencies, name)
-    object.__setattr__(dependencies, name, value)
-    stack.callback(object.__setattr__, dependencies, name, previous)
-
-
 def _sync_client(
     routes: Mapping[tuple[str, str], RuntimeResponse],
     *,
@@ -411,15 +408,36 @@ def _sync_client(
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = test_transport or RouterTransport(routes)
     stack = ExitStack()
-    _replace_controlled_dependency(stack, "_sync_builder", lambda **_: transport)
-    _replace_controlled_dependency(stack, "_sync_verifier", lambda _: _controlled_evidence())
-    controlled_transport = udata_clients._ControlledSyncTransport()
-    if revalidate is not None:
-        _replace_controlled_dependency(
-            stack,
-            "_sync_verifier",
-            lambda _: _controlled_evidence() if revalidate(site_id="site") else _controlled_evidence("changed"),
-        )
+
+    def no_http_extra(_: str) -> None:
+        raise ImportError
+
+    stack.enter_context(patch.object(runtime_defaults, "require_extra", no_http_extra))
+    stack.enter_context(patch.object(runtime_defaults, "UrllibCatalogTransport", lambda **_: transport))
+
+    def verify_source() -> str:
+        transport._suppress_next = True
+        return hashlib.sha256(b"unit-test-stack").hexdigest()
+
+    stack.enter_context(patch.object(udata_clients, "_verify_controlled_source_and_nonce", verify_source))
+    verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
+    original_site_response = transport.routes.get(("GET", _SITE_URL))
+    transport.routes[("GET", _SITE_URL)] = verification_response
+    try:
+        controlled_transport = udata_clients._ControlledSyncTransport()
+    except BaseException:
+        stack.close()
+        raise
+    finally:
+        if original_site_response is None:
+            transport.routes.pop(("GET", _SITE_URL), None)
+        else:
+            transport.routes[("GET", _SITE_URL)] = original_site_response
+        transport.requests.clear()
+    if revalidate is not None and not revalidate(site_id="site"):
+        changed_site = _site_body()
+        changed_site["id"] = "changed"
+        transport.routes[("GET", _SITE_URL)] = _json_response(200, changed_site, {"Content-Type": "application/json"})
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
@@ -456,14 +474,29 @@ def _async_client(
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
     stack = ExitStack()
-    _replace_controlled_dependency(stack, "_async_builder", lambda **_: transport)
+    stack.enter_context(patch.object(httpx_transport, "AsyncHttpxCatalogTransport", lambda **_: transport))
 
-    async def verify(_: object) -> Any:
-        return _controlled_evidence()
+    def verify_source() -> str:
+        transport._suppress_next = True
+        return hashlib.sha256(b"unit-test-stack").hexdigest()
 
-    _replace_controlled_dependency(stack, "_async_verifier", verify)
-    controlled_transport = udata_clients._ControlledAsyncTransport()
-    asyncio.run(controlled_transport.verify())
+    stack.enter_context(patch.object(udata_clients, "_verify_controlled_source_and_nonce", verify_source))
+
+    verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
+    original_site_response = transport.routes.get(("GET", _SITE_URL))
+    transport.routes[("GET", _SITE_URL)] = verification_response
+    try:
+        controlled_transport = udata_clients._ControlledAsyncTransport()
+        asyncio.run(controlled_transport.verify())
+    except BaseException:
+        stack.close()
+        raise
+    finally:
+        if original_site_response is None:
+            transport.routes.pop(("GET", _SITE_URL), None)
+        else:
+            transport.routes[("GET", _SITE_URL)] = original_site_response
+        transport.requests.clear()
     settings = UDataClientSettings(
         base_url=origin,
         credential=credential,
@@ -1056,7 +1089,10 @@ def test_controlled_factory_rejects_injected_transport_before_any_dispatch() -> 
 def test_root_mutation_does_not_retry_after_transport_failure() -> None:
     class FailingTransport(RouterTransport):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
-            self.requests.append(request)
+            suppress = self._suppress_next
+            self._suppress_next = False
+            if not suppress:
+                self.requests.append(request)
             if request.method == "PATCH":
                 raise TransportFailure("connection dropped after dispatch")
             return _json_response(200, _site_body(), {"Content-Type": "application/json"})

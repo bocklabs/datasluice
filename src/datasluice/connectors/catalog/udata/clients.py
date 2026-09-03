@@ -460,12 +460,26 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
 
 class _ImmutableDispatchGateType(type):
     def __setattr__(cls, name: str, value: object) -> None:
-        if name in {"authorize_sync", "authorize_async", "bind_sync_client", "bind_async_client"}:
+        if name in {
+            "authorize_sync",
+            "authorize_async",
+            "bind_sync_client",
+            "bind_async_client",
+            "_sync_verifier",
+            "_async_verifier",
+        }:
             raise AttributeError("Controlled dispatch authorization is immutable.")
         super().__setattr__(name, value)
 
     def __delattr__(cls, name: str) -> None:
-        if name in {"authorize_sync", "authorize_async", "bind_sync_client", "bind_async_client"}:
+        if name in {
+            "authorize_sync",
+            "authorize_async",
+            "bind_sync_client",
+            "bind_async_client",
+            "_sync_verifier",
+            "_async_verifier",
+        }:
             raise AttributeError("Controlled dispatch authorization is immutable.")
         super().__delattr__(name)
 
@@ -521,6 +535,26 @@ class _ImmutableClientType(type):
         super().__delattr__(name)
 
 
+class _ImmutableTransportType(type):
+    def __new__(
+        mcls, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object
+    ) -> _ImmutableTransportType:
+        inherited = any("_factory_bindings" in ancestor.__dict__ for base in bases for ancestor in base.__mro__)
+        if inherited and "_factory_bindings" in namespace:
+            raise AttributeError("Controlled transport bindings are factory-owned.")
+        return super().__new__(mcls, name, bases, namespace, **kwargs)
+
+    def __setattr__(cls, name: str, value: object) -> None:
+        if name == "_factory_bindings":
+            raise AttributeError("Controlled transport bindings are factory-owned.")
+        super().__setattr__(name, value)
+
+    def __delattr__(cls, name: str) -> None:
+        if name == "_factory_bindings":
+            raise AttributeError("Controlled transport bindings are factory-owned.")
+        super().__delattr__(name)
+
+
 class _IdentityRegistry[T]:
     __slots__ = ("_entries",)
 
@@ -549,41 +583,6 @@ class _IdentityRegistry[T]:
             self._entries.pop(id(key), None)
 
 
-class _ControlledFactoryDependencies:
-    __slots__ = ("_async_builder", "_async_verifier", "_sync_builder", "_sync_verifier")
-    _sync_builder: Callable[..., CatalogTransport]
-    _sync_verifier: Callable[[CatalogTransport], _ControlledStackEvidence]
-    _async_builder: Callable[..., AsyncCatalogTransport]
-    _async_verifier: Callable[[AsyncCatalogTransport], Awaitable[_ControlledStackEvidence]]
-
-    def __init__(
-        self,
-        sync_builder: Callable[..., CatalogTransport],
-        sync_verifier: Callable[[CatalogTransport], _ControlledStackEvidence],
-        async_builder: Callable[..., AsyncCatalogTransport],
-        async_verifier: Callable[[AsyncCatalogTransport], Awaitable[_ControlledStackEvidence]],
-    ) -> None:
-        object.__setattr__(self, "_sync_builder", sync_builder)
-        object.__setattr__(self, "_sync_verifier", sync_verifier)
-        object.__setattr__(self, "_async_builder", async_builder)
-        object.__setattr__(self, "_async_verifier", async_verifier)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        raise AttributeError("Controlled factory dependencies are immutable.")
-
-    def build_sync(self, *, tls_policy: TLSPolicy | None, budget: TimeBudget | None) -> CatalogTransport:
-        return self._sync_builder(tls_policy=tls_policy, budget=budget)
-
-    def verify_sync(self, transport: CatalogTransport) -> _ControlledStackEvidence:
-        return self._sync_verifier(transport)
-
-    def build_async(self, *, tls_policy: TLSPolicy | None, budget: TimeBudget | None) -> AsyncCatalogTransport:
-        return self._async_builder(tls_policy=tls_policy, budget=budget)
-
-    async def verify_async(self, transport: AsyncCatalogTransport) -> _ControlledStackEvidence:
-        return await self._async_verifier(transport)
-
-
 def _build_controlled_transport_types():
     type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float]
     type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float]
@@ -591,12 +590,6 @@ def _build_controlled_transport_types():
     async_registry: _IdentityRegistry[AsyncState] = _IdentityRegistry()
     sync_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
     async_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
-    dependencies = _ControlledFactoryDependencies(
-        create_default_sync_transport,
-        _verify_controlled_sync_stack,
-        create_default_async_transport,
-        _verify_controlled_async_stack,
-    )
 
     def sync_state(value: object) -> SyncState | None:
         try:
@@ -610,15 +603,17 @@ def _build_controlled_transport_types():
         except TypeError:
             return None
 
-    class _ControlledSyncTransport:
+    class _ControlledSyncTransport(metaclass=_ImmutableTransportType):
         """Own a stock transport after live controlled-stack verification."""
 
         __slots__ = ("__weakref__",)
+        _factory_bindings = (create_default_sync_transport, _verify_controlled_sync_stack)
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport = dependencies.build_sync(tls_policy=tls_policy, budget=budget)
+            builder, verifier = type(self)._factory_bindings
+            transport = builder(tls_policy=tls_policy, budget=budget)
             try:
-                evidence = dependencies.verify_sync(transport)
+                evidence = verifier(transport)
             except BaseException:
                 transport.close()
                 raise
@@ -641,16 +636,18 @@ def _build_controlled_transport_types():
             if state is not None:
                 state[0].close()
 
-    class _ControlledAsyncTransport:
+    class _ControlledAsyncTransport(metaclass=_ImmutableTransportType):
         """Own a stock asynchronous transport after live controlled-stack verification."""
 
         __slots__ = ("__weakref__",)
+        _factory_bindings = (create_default_async_transport, _verify_controlled_async_stack)
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
+            builder, _ = type(self)._factory_bindings
             async_registry.set(
                 self,
                 (
-                    dependencies.build_async(tls_policy=tls_policy, budget=budget),
+                    builder(tls_policy=tls_policy, budget=budget),
                     None,
                     0.0,
                 ),
@@ -662,7 +659,8 @@ def _build_controlled_transport_types():
             if state is None:
                 return
             try:
-                evidence = await dependencies.verify_async(state[0])
+                _, verifier = type(self)._factory_bindings
+                evidence = await verifier(state[0])
             except BaseException:
                 await state[0].aclose()
                 async_registry.discard(self)
@@ -698,7 +696,8 @@ def _build_controlled_transport_types():
         state = sync_state(value)
         if state is None:
             return False
-        evidence = dependencies.verify_sync(state[0])
+        _, verifier = _ControlledSyncTransport._factory_bindings
+        evidence = verifier(state[0])
         return (
             origin == _CONTROLLED_ORIGIN
             and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
@@ -718,7 +717,8 @@ def _build_controlled_transport_types():
         state = async_state(value)
         if state is None or state[1] is None:
             return False
-        evidence = await dependencies.verify_async(state[0])
+        _, verifier = _ControlledAsyncTransport._factory_bindings
+        evidence = await verifier(state[0])
         return (
             origin == _CONTROLLED_ORIGIN
             and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
@@ -728,6 +728,8 @@ def _build_controlled_transport_types():
 
     class _ControlledDispatchGate(metaclass=_ImmutableDispatchGateType):
         __slots__ = ()
+        _sync_verifier = _ControlledSyncTransport._factory_bindings[1]
+        _async_verifier = _ControlledAsyncTransport._factory_bindings[1]
 
         def __get__(self, instance: object | None, owner: type | None = None) -> _ControlledDispatchGate:
             return self
@@ -761,7 +763,7 @@ def _build_controlled_transport_types():
             if state is None:
                 return False
             try:
-                evidence = dependencies.verify_sync(state[0])
+                evidence = type(self)._sync_verifier(state[0])
             except Exception:
                 return False
             return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
@@ -784,7 +786,7 @@ def _build_controlled_transport_types():
             if state is None or state[1] is None:
                 return False
             try:
-                evidence = await dependencies.verify_async(state[0])
+                evidence = await type(self)._async_verifier(state[0])
             except Exception:
                 return False
             return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
