@@ -169,6 +169,31 @@ else:
     finally:
         response.close()
 """.strip()
+_CONTROLLED_SITE_PROBE_PROGRAM = """
+import json
+import urllib.error
+import urllib.request
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+request = urllib.request.Request("http://127.0.0.1:7000/api/1/site/")
+try:
+    response = urllib.request.build_opener(NoRedirect()).open(request, timeout=10)
+except urllib.error.HTTPError as error:
+    response = error
+try:
+    body = response.read(8193)
+    print(json.dumps({
+        "status": getattr(response, "status", getattr(response, "code", 0)),
+        "content_type": response.headers.get("Content-Type", ""),
+        "location": response.headers.get("Location", ""),
+        "body": body.decode("utf-8", "replace"),
+    }, separators=(",", ":")))
+finally:
+    response.close()
+""".strip()
 
 _STATUS_RESPONSE_CLASSES = {
     401: ProbeResponseClass.UNAUTHORIZED,
@@ -383,6 +408,7 @@ def _controlled_command(
     if input_data is not None:
         input_read_fd, input_write_fd = os.pipe()
     process_id: int | None = None
+    deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
     try:
         file_actions = [
             (os.POSIX_SPAWN_DUP2, write_fd, 1),
@@ -405,13 +431,21 @@ def _controlled_command(
             os.close(input_read_fd)
             input_read_fd = -1
         if input_write_fd >= 0:
+            os.set_blocking(input_write_fd, False)
             offset = 0
             input_bytes = input_data or b""
             while offset < len(input_bytes):
-                offset += os.write(input_write_fd, input_bytes[offset:])
+                remaining = deadline - monotonic()
+                if remaining <= 0 or not select.select([], [input_write_fd], [], remaining)[1]:
+                    os.kill(process_id, signal.SIGKILL)
+                    os.waitpid(process_id, 0)
+                    raise _controlled_error(timeout_message)
+                try:
+                    offset += os.write(input_write_fd, input_bytes[offset:])
+                except BlockingIOError:
+                    continue
             os.close(input_write_fd)
             input_write_fd = -1
-        deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
         chunks: list[bytes] = []
         output_size = 0
         while True:
@@ -503,23 +537,40 @@ async def _controlled_command_async(
     command, environment = _controlled_command_spec(args, input_data=input_data)
     process: asyncio.subprocess.Process | None = None
     chunks: list[bytes] = []
+    deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=environment,
-        )
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise _controlled_error(timeout_message)
+        try:
+            process = await asyncio.wait_for(
+                asyncio.create_subprocess_exec(
+                    *command,
+                    stdin=asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=environment,
+                ),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            raise _controlled_error(timeout_message) from None
         if process.stdout is None:
             raise OSError("controlled command stdout was unavailable")
         if input_data is not None:
             if process.stdin is None:
                 raise OSError("controlled command stdin was unavailable")
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                await _terminate_controlled_process(process)
+                raise _controlled_error(timeout_message)
             process.stdin.write(input_data)
-            await process.stdin.drain()
+            try:
+                await asyncio.wait_for(process.stdin.drain(), timeout=remaining)
+            except TimeoutError:
+                await _terminate_controlled_process(process)
+                raise _controlled_error(timeout_message) from None
             process.stdin.close()
-        deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
         output_size = 0
         while True:
             remaining = deadline - monotonic()
@@ -757,18 +808,23 @@ def _verify_controlled_sync_stack(
     *,
     source_verifier: Callable[[], str] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
+    site_probe: Callable[[], RuntimeResponse] | None = None,
 ) -> _ControlledStackEvidence:
     verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
     decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
     nonce_sha256 = verify_source()
-    response = transport.send(
-        RuntimeRequest(
-            method="GET",
-            url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
-            headers={},
-            redirect_policy=RedirectPolicy.NO_FOLLOW,
-            max_response_bytes=8192,
+    response = (
+        transport.send(
+            RuntimeRequest(
+                method="GET",
+                url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
+                headers={},
+                redirect_policy=RedirectPolicy.NO_FOLLOW,
+                max_response_bytes=8192,
+            )
         )
+        if site_probe is None
+        else site_probe()
     )
     return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=decode_peer(response))
 
@@ -778,18 +834,23 @@ async def _verify_controlled_async_stack(
     *,
     source_verifier: Callable[[], Awaitable[str]] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
+    site_probe: Callable[[], Awaitable[RuntimeResponse]] | None = None,
 ) -> _ControlledStackEvidence:
     verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
     decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
     nonce_sha256 = await verify_source()
-    response = await transport.send(
-        RuntimeRequest(
-            method="GET",
-            url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
-            headers={},
-            redirect_policy=RedirectPolicy.NO_FOLLOW,
-            max_response_bytes=8192,
+    response = (
+        await transport.send(
+            RuntimeRequest(
+                method="GET",
+                url=f"{_CONTROLLED_ORIGIN}/api/1/site/",
+                headers={},
+                redirect_policy=RedirectPolicy.NO_FOLLOW,
+                max_response_bytes=8192,
+            )
         )
+        if site_probe is None
+        else await site_probe()
     )
     return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=decode_peer(response))
 
@@ -830,6 +891,36 @@ def _make_controlled_compose_read_async(command: Callable[..., Awaitable[str]]) 
     return compose_read
 
 
+def _make_controlled_site_probe(
+    command: Callable[..., str], response_parser: Callable[[str], RuntimeResponse]
+) -> Callable[[], RuntimeResponse]:
+    def probe() -> RuntimeResponse:
+        output = command(
+            ("exec", "-T", "udata", "python", "-c", _CONTROLLED_SITE_PROBE_PROGRAM),
+            timeout_message="The controlled uData stack identity check timed out.",
+            output_message="The controlled uData stack identity check returned too much output.",
+            failure_message="The controlled uData stack identity check failed.",
+        )
+        return response_parser(output)
+
+    return probe
+
+
+def _make_controlled_site_probe_async(
+    command: Callable[..., Awaitable[str]], response_parser: Callable[[str], RuntimeResponse]
+) -> Callable[[], Awaitable[RuntimeResponse]]:
+    async def probe() -> RuntimeResponse:
+        output = await command(
+            ("exec", "-T", "udata", "python", "-c", _CONTROLLED_SITE_PROBE_PROGRAM),
+            timeout_message="The controlled uData stack identity check timed out.",
+            output_message="The controlled uData stack identity check returned too much output.",
+            failure_message="The controlled uData stack identity check failed.",
+        )
+        return response_parser(output)
+
+    return probe
+
+
 def _make_controlled_sync_operations(command: Callable[..., str]) -> _ControlledSyncOperations:
     compose_read = _make_controlled_compose_read(command)
     source_checker = _verify_controlled_source_and_nonce
@@ -839,6 +930,7 @@ def _make_controlled_sync_operations(command: Callable[..., str]) -> _Controlled
     peer_evidence = _controlled_peer_evidence
     patch_response = _controlled_patch_response
     response_parser = _parse_controlled_patch_output
+    site_probe = _make_controlled_site_probe(command, response_parser)
 
     def verify_source() -> str:
         return source_checker(
@@ -848,7 +940,12 @@ def _make_controlled_sync_operations(command: Callable[..., str]) -> _Controlled
         )
 
     def verify(transport: CatalogTransport) -> _ControlledStackEvidence:
-        return stack_verifier(transport, source_verifier=verify_source, peer_evidence=peer_evidence)
+        return stack_verifier(
+            transport,
+            source_verifier=verify_source,
+            peer_evidence=peer_evidence,
+            site_probe=site_probe,
+        )
 
     def patch(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
         return patch_response(
@@ -871,6 +968,7 @@ def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) ->
     peer_evidence = _controlled_peer_evidence
     patch_response = _controlled_patch_response_async
     response_parser = _parse_controlled_patch_output
+    site_probe = _make_controlled_site_probe_async(command, response_parser)
 
     async def verify_source() -> str:
         return await source_checker(
@@ -880,7 +978,12 @@ def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) ->
         )
 
     async def verify(transport: AsyncCatalogTransport) -> _ControlledStackEvidence:
-        return await stack_verifier(transport, source_verifier=verify_source, peer_evidence=peer_evidence)
+        return await stack_verifier(
+            transport,
+            source_verifier=verify_source,
+            peer_evidence=peer_evidence,
+            site_probe=site_probe,
+        )
 
     async def patch(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
         return await patch_response(
@@ -1075,6 +1178,8 @@ class _IdentityRegistry[T]:
 def _build_controlled_transport_types():
     type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float, _ControlledSyncOperations]
     type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float, _ControlledAsyncOperations]
+    trusted_sync_operations = _make_controlled_sync_operations(_controlled_command)
+    trusted_async_operations = _make_controlled_async_operations(_controlled_command_async)
     sync_registry: _IdentityRegistry[SyncState] = _IdentityRegistry()
     async_registry: _IdentityRegistry[AsyncState] = _IdentityRegistry()
     sync_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
@@ -1102,15 +1207,12 @@ def _build_controlled_transport_types():
             HttpxCatalogTransport.send,
             HttpxCatalogTransport.send_stream,
             HttpxCatalogTransport.close,
-            _make_controlled_sync_operations,
+            trusted_sync_operations,
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport_type, transport_initializer, _, _, close, operation_factory = type(self)._factory_bindings
+            transport_type, transport_initializer, _, _, close, operations = type(self)._factory_bindings
             transport = object.__new__(transport_type)
-            operations = cast(Callable[[Callable[..., str]], _ControlledSyncOperations], operation_factory)(
-                _controlled_command
-            )
             try:
                 cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
                 evidence = operations.verify(transport)
@@ -1155,15 +1257,12 @@ def _build_controlled_transport_types():
             AsyncHttpxCatalogTransport.send,
             AsyncHttpxCatalogTransport.send_stream,
             AsyncHttpxCatalogTransport.aclose,
-            _make_controlled_async_operations,
+            trusted_async_operations,
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport_type, transport_initializer, _, _, _, operation_factory = type(self)._factory_bindings
+            transport_type, transport_initializer, _, _, _, operations = type(self)._factory_bindings
             transport = object.__new__(transport_type)
-            operations = cast(Callable[[Callable[..., Awaitable[str]]], _ControlledAsyncOperations], operation_factory)(
-                _controlled_command_async
-            )
             cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
             async_registry.set(
                 self,

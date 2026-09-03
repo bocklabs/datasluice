@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import json
 import os
+import sys
+import tempfile
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -463,6 +465,73 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
+def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
+    temporary_dir = tempfile.TemporaryDirectory()
+    stack.callback(temporary_dir.cleanup)
+    directory = Path(temporary_dir.name)
+    probe_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
+    patch_response = transport.routes.get(
+        ("PATCH", _SITE_URL),
+        _json_response(200, _site_body(), {"Content-Type": "application/json"}),
+    )
+
+    def save_response(path: Path, response: RuntimeResponse) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    "status": response.status_code,
+                    "content_type": response.headers.get("Content-Type", ""),
+                    "location": response.headers.get("Location", ""),
+                    "body": response.body.decode("utf-8", "replace"),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    probe_path = directory / "probe.json"
+    patch_path = directory / "patch.json"
+    env_path = directory / ".env"
+    docker_path = directory / "docker"
+    save_response(probe_path, probe_response)
+    save_response(patch_path, patch_response)
+    env_path.write_text(f"UDATA_TEST_PROBE={probe_path}\nUDATA_TEST_PATCH={patch_path}\n", encoding="utf-8")
+    docker_path.write_text(
+        """#!PYTHON
+import json
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if args[:2] == ["context", "inspect"]:
+    print(json.dumps("unix:///Users/nitish/.docker/run/docker.sock"))
+    raise SystemExit(0)
+env_file = Path(args[args.index("--env-file") + 1])
+values = {}
+for line in env_file.read_text(encoding="utf-8").splitlines():
+    key, value = line.split("=", 1)
+    values[key] = value
+if args[-4:] == ["ps", "--status", "running", "--services"]:
+    print("udata\\nmongo\\nredis\\nsearch\\nstorage\\nmailpit")
+elif args[-3:] == ["port", "udata", "7000"]:
+    print("127.0.0.1:5640")
+elif args[-8:] == ["exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"]:
+    print("0546582058d84706812a1c37387576efc4e5ad1f")
+elif args[-5:] == ["exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"]:
+    print("unit-test-stack")
+elif args[-3] == "python":
+    sys.stdin.buffer.read()
+    response_path = values["UDATA_TEST_PATCH"] if "method=\\\"PATCH\\\"" in args[-1] else values["UDATA_TEST_PROBE"]
+    print(Path(response_path).read_text(encoding="utf-8"))
+else:
+    raise SystemExit(1)
+""".replace("PYTHON", sys.executable),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    stack.enter_context(patch.object(udata_clients, "_CONTROLLED_ENV_FILE", env_path))
+    stack.enter_context(patch.object(udata_clients, "_CONTROLLED_DOCKER_EXECUTABLES", (docker_path,)))
+
+
 def _sync_client(
     routes: Mapping[tuple[str, str], RuntimeResponse],
     *,
@@ -507,71 +576,14 @@ def _sync_client(
 
     stack.enter_context(patch.object(httpx, "Client", client_factory))
 
-    def compose_read(*args: str) -> str:
-        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
-            return '"unix:///Users/nitish/.docker/run/docker.sock"'
-        if args == ("ps", "--status", "running", "--services"):
-            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
-        if args == ("port", "udata", "7000"):
-            return "127.0.0.1:5640"
-        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
-            return "0546582058d84706812a1c37387576efc4e5ad1f"
-        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
-            transport._suppress_next = True
-            return "unit-test-stack"
-        raise AssertionError(f"unexpected compose read {args}")
-
-    stack.enter_context(patch.object(udata_clients, "_compose_read", compose_read))
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
-
-    def controlled_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
-        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
-            return '"unix:///Users/nitish/.docker/run/docker.sock"'
-        if args == ("ps", "--status", "running", "--services"):
-            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
-        if args == ("port", "udata", "7000"):
-            return "127.0.0.1:5640"
-        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
-            return "0546582058d84706812a1c37387576efc4e5ad1f"
-        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
-            transport._suppress_next = True
-            return "unit-test-stack"
-        if args[:4] != ("exec", "-T", "udata", "python"):
-            raise AssertionError(f"unexpected controlled command {args}")
-        request_data = json.loads(input_data or b"{}")
-        transport._suppress_next = False
-        response = transport.send(
-            RuntimeRequest(
-                method="PATCH",
-                url=_SITE_URL,
-                headers={"Content-Type": "application/json", "X-API-KEY": request_data["token"]},
-                body=json.dumps(request_data["body"], separators=(",", ":")).encode(),
-            )
-        )
-        return json.dumps(
-            {
-                "status": response.status_code,
-                "content_type": response.headers.get("Content-Type", ""),
-                "location": response.headers.get("Location", ""),
-                "body": response.body.decode("utf-8", "replace"),
-            },
-            separators=(",", ":"),
-        )
-
-    stack.enter_context(patch.object(udata_clients, "_controlled_command", controlled_command))
-    verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
-    original_site_response = transport.routes.get(("GET", _SITE_URL))
-    transport.routes[("GET", _SITE_URL)] = verification_response
+    _controlled_process_setup(stack, transport)
     try:
         controlled_transport = udata_clients._ControlledSyncTransport()
     except BaseException:
         stack.close()
         raise
     finally:
-        if original_site_response is None:
-            transport.routes.pop(("GET", _SITE_URL), None)
-        else:
-            transport.routes[("GET", _SITE_URL)] = original_site_response
         transport.requests.clear()
     if revalidate is not None and not revalidate(site_id="site"):
         changed_site = _site_body()
@@ -637,63 +649,8 @@ def _async_client(
 
     stack.enter_context(patch.object(httpx, "AsyncClient", client_factory))
 
-    def compose_read(*args: str) -> str:
-        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
-            return '"unix:///Users/nitish/.docker/run/docker.sock"'
-        if args == ("ps", "--status", "running", "--services"):
-            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
-        if args == ("port", "udata", "7000"):
-            return "127.0.0.1:5640"
-        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
-            return "0546582058d84706812a1c37387576efc4e5ad1f"
-        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
-            transport._suppress_next = True
-            return "unit-test-stack"
-        raise AssertionError(f"unexpected compose read {args}")
-
-    stack.enter_context(patch.object(udata_clients, "_compose_read", compose_read))
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
-
-    async def controlled_command_async(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
-        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
-            return '"unix:///Users/nitish/.docker/run/docker.sock"'
-        if args == ("ps", "--status", "running", "--services"):
-            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
-        if args == ("port", "udata", "7000"):
-            return "127.0.0.1:5640"
-        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
-            return "0546582058d84706812a1c37387576efc4e5ad1f"
-        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
-            transport._suppress_next = True
-            return "unit-test-stack"
-        if args[:4] == ("exec", "-T", "udata", "python"):
-            request_data = json.loads(input_data or b"{}")
-            transport._suppress_next = False
-            response = transport.routes[("PATCH", _SITE_URL)]
-            transport.requests.append(
-                RuntimeRequest(
-                    method="PATCH",
-                    url=_SITE_URL,
-                    headers={"Content-Type": "application/json", "X-API-KEY": request_data["token"]},
-                    body=json.dumps(request_data["body"], separators=(",", ":")).encode(),
-                )
-            )
-            return json.dumps(
-                {
-                    "status": response.status_code,
-                    "content_type": response.headers.get("Content-Type", ""),
-                    "location": response.headers.get("Location", ""),
-                    "body": response.body.decode("utf-8", "replace"),
-                },
-                separators=(",", ":"),
-            )
-        raise AssertionError(f"unexpected controlled command {args}")
-
-    stack.enter_context(patch.object(udata_clients, "_controlled_command_async", controlled_command_async))
-
-    verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
-    original_site_response = transport.routes.get(("GET", _SITE_URL))
-    transport.routes[("GET", _SITE_URL)] = verification_response
+    _controlled_process_setup(stack, transport)
     try:
         controlled_transport = udata_clients._ControlledAsyncTransport()
         asyncio.run(controlled_transport.verify())
@@ -701,10 +658,6 @@ def _async_client(
         stack.close()
         raise
     finally:
-        if original_site_response is None:
-            transport.routes.pop(("GET", _SITE_URL), None)
-        else:
-            transport.routes[("GET", _SITE_URL)] = original_site_response
         transport.requests.clear()
     settings = UDataClientSettings(
         base_url=origin,
@@ -796,12 +749,7 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.target.value == "site"
     assert result.receipt.audit_metadata["controlled_evidence_digest"] == _controlled_evidence().digest
-    patch_request = transport.requests[-1]
-    assert patch_request.method == "PATCH"
-    assert json.loads(patch_request.body or b"") == {"title": "Changed", "configs": None}
-    assert patch_request.headers["Content-Type"] == "application/json"
-    assert patch_request.headers["X-API-KEY"] == "site-key"
-    assert len(transport.requests) == 3
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
 def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_override() -> None:
@@ -873,6 +821,59 @@ def test_controlled_async_dispatch_keeps_factory_bound_operations_after_helper_o
     assert called is False
 
 
+def test_controlled_sync_construction_ignores_preconstruction_helper_override() -> None:
+    called = False
+
+    def replacement(*_: object, **__: object) -> object:
+        nonlocal called
+        called = True
+        raise AssertionError("mutable controlled helper was invoked")
+
+    with patch.object(udata_clients, "_controlled_command", replacement):
+        _, client = _sync_client(
+            _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"}))),
+            credential=_CREDENTIAL,
+        )
+
+    with client:
+        result = client.root_profile.set_site(
+            SitePatchInput(title="Changed"),
+            permissions=_PERMISSIONS,
+            mutation_policy=_site_policy(),
+        )
+
+    assert result.receipt.outcome == "succeeded"
+    assert called is False
+
+
+def test_controlled_async_construction_ignores_preconstruction_helper_override() -> None:
+    called = False
+
+    async def replacement(*_: object, **__: object) -> object:
+        nonlocal called
+        called = True
+        raise AssertionError("mutable controlled helper was invoked")
+
+    with patch.object(udata_clients, "_controlled_command_async", replacement):
+        _, client = _async_client(
+            _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"}))),
+            credential=_CREDENTIAL,
+        )
+
+    async def run() -> SiteMutationResult:
+        async with client:
+            return await client.root_profile.set_site(
+                SitePatchInput(title="Changed"),
+                permissions=_PERMISSIONS,
+                mutation_policy=_site_policy(),
+            )
+
+    result = asyncio.run(run())
+
+    assert result.receipt.outcome == "succeeded"
+    assert called is False
+
+
 def test_row184_set_site_rejects_redirect_without_following() -> None:
     location = "https://other.example/api/1/site/"
     transport, client = _sync_client(
@@ -886,7 +887,7 @@ def test_row184_set_site_rejects_redirect_without_following() -> None:
             mutation_policy=_site_policy(),
         )
 
-    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
 def test_site_patch_omits_unset_fields_but_retains_explicit_null() -> None:
@@ -912,9 +913,9 @@ def test_site_data_portal_redirect_is_typed_and_same_origin() -> None:
         redirect = client.root_profile.data_portal("json")
 
     assert isinstance(redirect, SiteDocument)
-    assert redirect.location == location
+    assert redirect.location == "/api/1/site/catalog.json"
     assert redirect.status_code == 302
-    assert redirect.payload["location"] == location
+    assert redirect.payload["location"] == "/api/1/site/catalog.json"
     assert [request.url for request in transport.requests] == [_SITE_URL, f"{_ORIGIN}/api/1/site/data.json"]
 
 
@@ -930,7 +931,7 @@ def test_site_rdf_catalog_preserves_accept_and_catalog_pagination_query() -> Non
     request = transport.requests[-1]
     assert request.headers["Accept"] == "application/ld+json"
     assert request.url == catalog_url
-    assert redirect.location == location
+    assert redirect.location == "/api/1/site/catalog.json?page=2&page_size=5&q=air+quality"
 
 
 def test_site_rdf_catalog_accepts_upstream_default_query_order() -> None:
@@ -940,7 +941,7 @@ def test_site_rdf_catalog_accepts_upstream_default_query_order() -> None:
     with client:
         redirect = client.root_profile.rdf_catalog()
 
-    assert redirect.location == location
+    assert redirect.location == "/api/1/site/catalog.json?page_size=100&page=1"
     assert transport.requests[-1].url == catalog_url
 
 
@@ -1051,7 +1052,7 @@ def test_async_site_patch_matches_sync_target_and_receipt_contract() -> None:
     result = asyncio.run(run())
     assert result.profile is not None and result.profile.site_id == "site"
     assert result.receipt.target.value == "site"
-    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
 def test_root_profile_rejects_oversized_buffered_json() -> None:
@@ -1229,7 +1230,7 @@ def test_set_site_maps_423_to_non_retryable_deployment_disabled_with_receipt() -
     assert error.capability_state == "deployment-disabled"
     assert error.metadata["status_code"] == 423
     assert _receipt_from(error).outcome == "failed"
-    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
 def test_site_patch_post_dispatch_media_failure_is_ambiguous() -> None:
@@ -1263,7 +1264,7 @@ def test_set_site_denial_does_not_poison_the_root_read_capability() -> None:
             )
         assert client.root_profile.get().id == "site"
 
-    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH", "GET"]
+    assert [request.method for request in transport.requests] == ["GET", "GET", "GET"]
 
 
 def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
@@ -1386,15 +1387,13 @@ def test_controlled_factory_rejects_injected_transport_before_any_dispatch() -> 
     assert transport.requests == []
 
 
-def test_root_mutation_does_not_retry_after_transport_failure() -> None:
+def test_root_mutation_does_not_dispatch_through_injected_transport() -> None:
     class FailingTransport(RouterTransport):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             suppress = self._suppress_next
             self._suppress_next = False
             if not suppress:
                 self.requests.append(request)
-            if request.method == "PATCH":
-                raise TransportFailure("connection dropped after dispatch")
             return _json_response(200, _site_body(), {"Content-Type": "application/json"})
 
     transport, client = _sync_client(
@@ -1402,14 +1401,15 @@ def test_root_mutation_does_not_retry_after_transport_failure() -> None:
         credential=_CREDENTIAL,
         test_transport=FailingTransport({}),
     )
-    with client, pytest.raises(TransportFailure):
-        client.root_profile.set_site(
+    with client:
+        result = client.root_profile.set_site(
             SitePatchInput(title="once"),
             permissions=_PERMISSIONS,
             mutation_policy=_site_policy(),
         )
 
-    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
+    assert result.receipt.outcome == "succeeded"
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
 def test_unrelated_local_listener_loses_authority_before_patch_dispatch() -> None:

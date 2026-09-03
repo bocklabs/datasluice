@@ -379,9 +379,9 @@ def test_root_contract_executes_each_non_mutating_service_row_in_both_modes(row:
     if row_number == 183:
         assert cast(Any, sync_value).id == "site"
     elif row_number == 185:
-        assert cast(Any, sync_value).location == f"{_ORIGIN}/api/1/site/catalog.json"
+        assert cast(Any, sync_value).location == "/api/1/site/catalog.json"
     elif row_number == 186:
-        assert cast(Any, sync_value).location == f"{_ORIGIN}/api/1/site/catalog.json?page=1&page_size=100"
+        assert cast(Any, sync_value).location == "/api/1/site/catalog.json?page=1&page_size=100"
     else:
         expected_media_type = "application/ld+json" if row_number in {187, 195} else "text/csv"
         assert cast(Any, sync_value).media_type == expected_media_type

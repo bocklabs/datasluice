@@ -745,7 +745,8 @@ def parse_redirect(
             status_code=status_code,
         )
     digest = hashlib.sha256(b"").hexdigest()
-    metadata = {"status_code": status_code, "location": location}
+    safe_location = target.path + (f"?{target.query}" if target.query else "")
+    metadata = {"status_code": status_code, "location": safe_location}
     return SiteDocument(
         endpoint=endpoint,
         media_type="text/plain",
@@ -753,7 +754,7 @@ def parse_redirect(
         size_bytes=0,
         sha256=digest,
         metadata=metadata,
-        location=location,
+        location=safe_location,
     )
 
 
