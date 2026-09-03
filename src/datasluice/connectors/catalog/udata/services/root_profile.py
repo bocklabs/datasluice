@@ -9,6 +9,12 @@ from urllib.parse import urlsplit
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
     SyncUDataClient,
+    _controlled_async_evidence_digest,
+    _controlled_async_revalidate,
+    _controlled_async_site_id,
+    _controlled_sync_evidence_digest,
+    _controlled_sync_revalidate,
+    _controlled_sync_site_id,
 )
 from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
@@ -380,13 +386,12 @@ def _make_sync_set_site():
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
         operation = SET_SITE_OPERATION
         transport = self._client.transport
-        authority = self._client._controlled_authority
-        target_id = authority.site_id if authority is not None and authority.is_bound_to(transport) else _UNKNOWN_SITE
+        target_id = _controlled_sync_site_id(transport) or _UNKNOWN_SITE
 
         def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
             _require_controlled_authority(
-                authorized=authority is not None and authority.is_bound_to(transport),
+                authorized=_controlled_sync_site_id(transport) is not None,
                 operation=operation,
             )
             if not isinstance(client_input, SitePatchInput):
@@ -399,11 +404,8 @@ def _make_sync_set_site():
             resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = self.get()
-            if (
-                self._client.transport is not transport
-                or authority is None
-                or not authority.is_bound_to(transport)
-                or not authority.revalidate(origin=self._client._origin, site_id=current.site_id)
+            if self._client.transport is not transport or not _controlled_sync_revalidate(
+                transport, origin=self._client._origin, site_id=current.site_id
             ):
                 raise CatalogValidationError(
                     "uData site PATCH evidence no longer matches the controlled stack.",
@@ -433,7 +435,7 @@ def _make_sync_set_site():
             dispatch,
             _decode_patch,
             lambda: target_id,
-            lambda: authority.evidence_digest if authority is not None else None,
+            lambda: _controlled_sync_evidence_digest(transport),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
         )
 
@@ -451,13 +453,12 @@ def _make_async_set_site():
         """PATCH /api/1/site/ (row 184) on the controlled stack only."""
         operation = SET_SITE_OPERATION
         transport = self._client.transport
-        authority = self._client._controlled_authority
-        target_id = authority.site_id if authority is not None and authority.is_bound_to(transport) else _UNKNOWN_SITE
+        target_id = _controlled_async_site_id(transport) or _UNKNOWN_SITE
 
         async def dispatch() -> tuple[int, object, object]:
             nonlocal target_id
             _require_controlled_authority(
-                authorized=authority is not None and authority.is_bound_to(transport),
+                authorized=_controlled_async_site_id(transport) is not None,
                 operation=operation,
             )
             if not isinstance(client_input, SitePatchInput):
@@ -471,11 +472,8 @@ def _make_async_set_site():
             _require_mutation_permission(resolved, operation, permissions)
             _enforce_patch_policy(mutation_policy, target=target_id)
             current = await self.get()
-            if (
-                self._client.transport is not transport
-                or authority is None
-                or not authority.is_bound_to(transport)
-                or not await authority.revalidate_async(origin=self._client._origin, site_id=current.site_id)
+            if self._client.transport is not transport or not await _controlled_async_revalidate(
+                transport, origin=self._client._origin, site_id=current.site_id
             ):
                 raise CatalogValidationError(
                     "uData site PATCH evidence no longer matches the controlled stack.",
@@ -505,7 +503,7 @@ def _make_async_set_site():
             dispatch,
             _decode_patch,
             lambda: target_id,
-            lambda: authority.evidence_digest if authority is not None else None,
+            lambda: _controlled_async_evidence_digest(transport),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
         )
 

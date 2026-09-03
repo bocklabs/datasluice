@@ -963,13 +963,28 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport()
         owns_transport=False,
     )
     with client:
-        with pytest.raises(AttributeError, match="factory-owned"):
-            cast(Any, client)._controlled_authority = object()
         with pytest.raises((CatalogValidationError, ForbiddenError)):
             client.root_profile.set_site(
                 SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
             )
     assert transport.requests == []
+
+
+def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datasluice.connectors.catalog.udata.services import root_profile as root_service
+
+    transport = RouterTransport(_routes())
+    client = create_sync_client(UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport))
+    monkeypatch.setattr(root_service, "_controlled_sync_site_id", lambda _: "site")
+    monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
+    monkeypatch.setattr(root_service, "_controlled_sync_evidence_digest", lambda _: _controlled_evidence().digest)
+
+    with client, pytest.raises(CatalogValidationError):
+        client.root_profile.set_site(
+            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
+        )
+
+    assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
 def test_injected_transport_remains_available_for_read_only_behavior() -> None:
