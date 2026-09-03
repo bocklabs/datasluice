@@ -1817,7 +1817,7 @@ class _ImmutableTransportType(type):
             "__getattr__",
             "__setattr__",
         }
-        inherited = any("_factory_bindings" in ancestor.__dict__ for base in bases for ancestor in base.__mro__)
+        inherited = any(reserved.intersection(ancestor.__dict__) for base in bases for ancestor in base.__mro__)
         if inherited and reserved.intersection(namespace):
             raise AttributeError("Controlled transport bindings are factory-owned.")
         return super().__new__(mcls, name, bases, namespace, **kwargs)
@@ -2220,8 +2220,6 @@ def _build_controlled_transport_types():
 class _UDataClientCore(metaclass=_ImmutableClientType):
     """Shared strict-gate state for the sync and async uData clients."""
 
-    _mutation_dispatch_gate = _controlled_dispatch_gate
-
     def __init__(
         self,
         transport: CatalogTransport | AsyncCatalogTransport,
@@ -2518,6 +2516,7 @@ class SyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
+        _dispatch_sync: Callable[..., RuntimeResponse] = _controlled_dispatch_gate.dispatch_sync,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
@@ -2578,7 +2577,7 @@ class SyncUDataClient(_UDataClientCore):
             before = self._breakers.inspect(key)
             try:
                 if owning_operation == SET_SITE_OPERATION:
-                    response = self._mutation_dispatch_gate.dispatch_sync(
+                    response = _dispatch_sync(
                         self,
                         self._transport,
                         request,
@@ -3158,6 +3157,7 @@ class AsyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
+        _dispatch_async: Callable[..., Awaitable[RuntimeResponse]] = _controlled_dispatch_gate.dispatch_async,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
@@ -3220,7 +3220,7 @@ class AsyncUDataClient(_UDataClientCore):
             before = self._breakers.inspect(key)
             try:
                 if owning_operation == SET_SITE_OPERATION:
-                    response = await self._mutation_dispatch_gate.dispatch_async(
+                    response = await _dispatch_async(
                         self,
                         self._transport,
                         request,
@@ -3619,7 +3619,7 @@ def _create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataCl
         owns_transport=True,
         probe_runner=settings.probe_runner,
     )
-    client._mutation_dispatch_gate.bind_sync_client(client, transport)
+    _controlled_dispatch_gate.bind_sync_client(client, transport)
     return client
 
 
@@ -3643,7 +3643,7 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
         owns_transport=True,
         async_probe_runner=settings.async_probe_runner,
     )
-    client._mutation_dispatch_gate.bind_async_client(client, transport)
+    _controlled_dispatch_gate.bind_async_client(client, transport)
     return client
 
 

@@ -764,7 +764,7 @@ def _sync_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_sync_client(settings)
-    client._mutation_dispatch_gate.bind_sync_client(client, controlled_transport)
+    udata_clients._controlled_dispatch_gate.bind_sync_client(client, controlled_transport)
     original_close = client.close
     closed = False
 
@@ -834,7 +834,7 @@ def _async_client(
         root_export_max_bytes=root_export_max_bytes,
     )
     client = create_async_client(settings)
-    client._mutation_dispatch_gate.bind_async_client(client, controlled_transport)
+    udata_clients._controlled_dispatch_gate.bind_async_client(client, controlled_transport)
     original_aclose = client.aclose
     closed = False
 
@@ -953,8 +953,8 @@ def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_ov
     assert called is False
 
 
-def test_controlled_sync_class_binding_override_cannot_replace_authority() -> None:
-    transport, client = _sync_client(
+def test_controlled_sync_gate_override_cannot_replace_authority() -> None:
+    _, client = _sync_client(
         _routes(
             (
                 "PATCH",
@@ -966,8 +966,15 @@ def test_controlled_sync_class_binding_override_cannot_replace_authority() -> No
     )
 
     with client:
-        transport_type = type(client.transport)
-        type.__setattr__(transport_type, "_factory_bindings", object())
+        gate_type = type(udata_clients._controlled_dispatch_gate)
+        original_dispatch = gate_type.__dict__["dispatch_sync"]
+
+        def replacement(*_: object, **__: object) -> object:
+            raise AssertionError("mutable dispatch gate was invoked")
+
+        type.__setattr__(gate_type, "dispatch_sync", replacement)
+        client_type = type(client)
+        type.__setattr__(client_type, "_mutation_dispatch_gate", object())
         try:
             result = client.root_profile.set_site(
                 SitePatchInput(title="Changed"),
@@ -975,7 +982,8 @@ def test_controlled_sync_class_binding_override_cannot_replace_authority() -> No
                 mutation_policy=_site_policy(),
             )
         finally:
-            type.__delattr__(transport_type, "_factory_bindings")
+            type.__setattr__(gate_type, "dispatch_sync", original_dispatch)
+            type.__delattr__(client_type, "_mutation_dispatch_gate")
 
     assert result.receipt.outcome == "succeeded"
 
@@ -1016,7 +1024,7 @@ def test_controlled_async_dispatch_keeps_factory_bound_operations_after_helper_o
     assert called is False
 
 
-def test_controlled_async_class_binding_override_cannot_replace_authority() -> None:
+def test_controlled_async_gate_override_cannot_replace_authority() -> None:
     _, client = _async_client(
         _routes(
             (
@@ -1030,8 +1038,15 @@ def test_controlled_async_class_binding_override_cannot_replace_authority() -> N
 
     async def run() -> SiteMutationResult:
         async with client:
-            transport_type = type(client.transport)
-            type.__setattr__(transport_type, "_factory_bindings", object())
+            gate_type = type(udata_clients._controlled_dispatch_gate)
+            original_dispatch = gate_type.__dict__["dispatch_async"]
+
+            async def replacement(*_: object, **__: object) -> object:
+                raise AssertionError("mutable dispatch gate was invoked")
+
+            type.__setattr__(gate_type, "dispatch_async", replacement)
+            client_type = type(client)
+            type.__setattr__(client_type, "_mutation_dispatch_gate", object())
             try:
                 return await client.root_profile.set_site(
                     SitePatchInput(title="Changed"),
@@ -1039,7 +1054,8 @@ def test_controlled_async_class_binding_override_cannot_replace_authority() -> N
                     mutation_policy=_site_policy(),
                 )
             finally:
-                type.__delattr__(transport_type, "_factory_bindings")
+                type.__setattr__(gate_type, "dispatch_async", original_dispatch)
+                type.__delattr__(client_type, "_mutation_dispatch_gate")
 
     result = asyncio.run(run())
 
