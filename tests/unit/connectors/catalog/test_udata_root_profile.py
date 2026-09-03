@@ -343,11 +343,13 @@ def test_bound_controlled_command_spec_ignores_mutable_module_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _controlled_compose_files(monkeypatch, tmp_path)
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
     bound_spec = udata_clients._make_bound_controlled_command_spec()
     original = bound_spec(("ps",))
 
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMPOSE_FILE", tmp_path / "compose.yaml")
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_ENV_FILE", tmp_path / ".env")
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMPOSE_FILE", tmp_path / "other-compose.yaml")
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_ENV_FILE", tmp_path / "other.env")
     monkeypatch.setattr(udata_clients, "_CONTROLLED_DOCKER_EXECUTABLES", ())
 
     assert bound_spec(("ps",)) == original
