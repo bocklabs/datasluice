@@ -68,10 +68,30 @@ _PERMISSIONS = EffectivePermissions.for_credential(
 
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
+    dependency_images = dict(udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS)
+    image_ids = {
+        "udata": "sha256:" + "a" * 64,
+        **{
+            service: f"sha256:{image.rsplit('@sha256:', 1)[1]}"
+            for service, image in udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS
+        },
+    }
+    image_identities = []
+    for service in udata_clients._CONTROLLED_SERVICE_NAMES:
+        config_image = (
+            udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY if service == "udata" else dependency_images[service]
+        )
+        repository_digest = (
+            f"{udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY}@{image_ids[service]}"
+            if service == "udata"
+            else dependency_images[service]
+        )
+        image_identities.append(f"{service}|{config_image}|{image_ids[service]}|{repository_digest}")
     return udata_clients._ControlledStackEvidence(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         site_id=site_id,
         docker_endpoint_sha256=hashlib.sha256(b"unix:///Users/nitish/.docker/run/docker.sock").hexdigest(),
+        image_digests=tuple(image_identities),
     )
 
 
@@ -218,6 +238,90 @@ def test_controlled_command_nonzero_exit_is_sanitized(monkeypatch: pytest.Monkey
 
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__context__ is None
+
+
+def test_controlled_command_closes_output_pipe_when_input_setup_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    closed: list[int] = []
+    calls = 0
+
+    def pipe() -> tuple[int, int]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 10, 11
+        raise OSError("input pipe")
+
+    monkeypatch.setattr(udata_clients.os, "pipe", pipe)
+    monkeypatch.setattr(udata_clients.os, "close", closed.append)
+
+    with pytest.raises(CatalogValidationError):
+        udata_clients._controlled_command(
+            ("ps",),
+            input_data=b"input",
+            timeout_message="timeout",
+            output_message="output",
+            failure_message="failure",
+        )
+
+    assert closed == [10, 11]
+
+
+def test_controlled_command_cleanup_failure_does_not_replace_primary_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
+
+    def spawn_failure(*_: object, **__: object) -> int:
+        raise OSError("spawn")
+
+    monkeypatch.setattr(udata_clients.os, "posix_spawnp", spawn_failure)
+
+    def close(fd: int) -> None:
+        if fd == 10:
+            raise RuntimeError("cleanup")
+
+    monkeypatch.setattr(udata_clients.os, "close", close)
+
+    with pytest.raises(CatalogValidationError, match="failure") as excinfo:
+        udata_clients._controlled_command(
+            ("ps",),
+            timeout_message="timeout",
+            output_message="output",
+            failure_message="failure",
+        )
+
+    assert str(excinfo.value) == "failure"
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert str(excinfo.value.__cause__) == "cleanup"
+
+
+def test_controlled_dependency_image_identity_rejects_unapproved_image_id() -> None:
+    container_id = "a" * 64
+    image_id = "sha256:" + "b" * 64
+    approved_image = "mongo@sha256:" + "c" * 64
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(approved_image)
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(image_id) + " " + json.dumps([approved_image])
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    with pytest.raises(CatalogValidationError, match="image ID is not approved"):
+        udata_clients._controlled_service_image_identity(
+            read,
+            "mongo",
+            "unix:///tmp/docker.sock",
+            approved_image,
+            "udata-evidence-udata",
+            udata_clients._controlled_error,
+        )
 
 
 def test_controlled_command_rejects_docker_environment_overrides(
@@ -525,6 +629,18 @@ class AsyncRouterTransport:
 
 
 def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
+    container_ids = {
+        service: f"{index:064x}" for index, service in enumerate(udata_clients._CONTROLLED_SERVICE_NAMES, 1)
+    }
+    dependency_images = dict(udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS)
+    image_ids = {
+        "udata": "sha256:" + "a" * 64,
+        **{
+            service: f"sha256:{image.rsplit('@sha256:', 1)[1]}"
+            for service, image in udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS
+        },
+    }
+
     def sync_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
         if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
             return '"unix:///Users/nitish/.docker/run/docker.sock"'
@@ -532,9 +648,27 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
             return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
         if args[-3:] == ("port", "udata", "7000"):
             return "127.0.0.1:5640"
-        if args[-8:] == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
+        if len(args) == 3 and args[:2] == ("ps", "-q"):
+            return container_ids[args[2]]
+        if args[:2] == ("inspect", "--format"):
+            container_id = args[-1]
+            service = next(service for service, value in container_ids.items() if value == container_id)
+            config_image = (
+                udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY if service == "udata" else dependency_images[service]
+            )
+            return " ".join((json.dumps(container_id), json.dumps(image_ids[service]), json.dumps(config_image)))
+        if args[:3] == ("image", "inspect", "--format"):
+            image_id = args[-1]
+            service = next(service for service, value in image_ids.items() if value == image_id)
+            repository_digest = (
+                f"{udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY}@{image_id}"
+                if service == "udata"
+                else dependency_images[service]
+            )
+            return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
+        if args[:3] == ("exec", container_ids["udata"], "git"):
             return "0546582058d84706812a1c37387576efc4e5ad1f"
-        if args[-5:] == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
+        if args[:3] == ("exec", container_ids["udata"], "printenv"):
             return "unit-test-stack"
         if args[-3] == "python":
             response = transport.routes.get(

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import select
 import signal
 import weakref
@@ -115,13 +116,19 @@ _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "f7acbcd1ea2f88f7b9361cbfadbd46e62be82bd707538f22f0615796e8bf09a3"
 _CONTROLLED_DOCKERFILE_SHA256 = "6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b"
-_CONTROLLED_IMAGE_DIGESTS = (
-    "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
-    "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
-    "elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
-    "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-    "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+_CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
+_CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
+    ("mongo", "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47"),
+    ("redis", "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256"),
+    (
+        "search",
+        "docker.elastic.co/elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+    ),
+    ("storage", "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"),
+    ("mailpit", "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf"),
 )
+_CONTROLLED_IMAGE_DIGESTS = tuple(image for _, image in _CONTROLLED_DEPENDENCY_IMAGE_SPECS)
+_CONTROLLED_SERVICE_NAMES = ("udata", "mongo", "redis", "search", "storage", "mailpit")
 _CONTROLLED_EVIDENCE_ROOT = Path(__file__).resolve().parents[5] / "dev" / "udata-evidence"
 _CONTROLLED_COMPOSE_FILE = _CONTROLLED_EVIDENCE_ROOT / "compose.yaml"
 _CONTROLLED_ENV_FILE = _CONTROLLED_EVIDENCE_ROOT / ".env"
@@ -363,6 +370,8 @@ class _ControlledStackEvidence:
 class _ControlledSourceIdentity:
     nonce_sha256: str = field(repr=False)
     docker_endpoint: str = field(repr=False)
+    udata_container_id: str = field(repr=False)
+    image_identities: tuple[str, ...] = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +394,7 @@ def _controlled_command_spec(
     *,
     input_data: bytes | None = None,
     docker_endpoint: str | None = None,
+    direct: bool = False,
 ) -> tuple[tuple[str, ...], dict[str, str]]:
     if not _CONTROLLED_COMPOSE_FILE.is_file() or not _CONTROLLED_ENV_FILE.is_file():
         raise _controlled_error("The controlled uData evidence configuration is unavailable.")
@@ -411,7 +421,7 @@ def _controlled_command_spec(
     executable_prefix = (str(executable),) if docker_endpoint is None else (str(executable), "--host", docker_endpoint)
     command = (
         (*executable_prefix, *args)
-        if args[:2] == ("context", "inspect")
+        if direct or args[:2] == ("context", "inspect")
         else (
             *executable_prefix,
             "compose",
@@ -443,6 +453,7 @@ def _make_bound_controlled_command_spec() -> Callable[..., tuple[tuple[str, ...]
         *,
         input_data: bytes | None = None,
         docker_endpoint: str | None = None,
+        direct: bool = False,
     ) -> tuple[tuple[str, ...], dict[str, str]]:
         if not compose_file_exists() or not env_file_exists():
             raise error("The controlled uData evidence configuration is unavailable.")
@@ -469,7 +480,7 @@ def _make_bound_controlled_command_spec() -> Callable[..., tuple[tuple[str, ...]
         executable_prefix = (executable,) if docker_endpoint is None else (executable, "--host", docker_endpoint)
         command = (
             (*executable_prefix, *args)
-            if args[:2] == ("context", "inspect")
+            if direct or args[:2] == ("context", "inspect")
             else (
                 *executable_prefix,
                 "compose",
@@ -560,19 +571,38 @@ def _run_controlled_command(
     *,
     input_data: bytes | None = None,
     docker_endpoint: str | None = None,
+    direct: bool = False,
     timeout_message: str,
     output_message: str,
     failure_message: str,
     runtime: _ControlledSyncRuntime,
 ) -> str:
-    command, environment = runtime.command_spec(args, input_data=input_data, docker_endpoint=docker_endpoint)
-    read_fd, write_fd = runtime.pipe()
-    input_read_fd = input_write_fd = -1
-    if input_data is not None:
-        input_read_fd, input_write_fd = runtime.pipe()
+    def close_descriptor(fd: int) -> BaseException | None:
+        if fd < 0:
+            return None
+        try:
+            runtime.close(fd)
+        except BaseException as error:
+            return error
+        return None
+
+    command, environment = runtime.command_spec(
+        args,
+        input_data=input_data,
+        docker_endpoint=docker_endpoint,
+        direct=direct,
+    )
+    read_fd = write_fd = input_read_fd = input_write_fd = -1
     process_id: int | None = None
-    deadline = runtime.monotonic() + runtime.timeout_seconds
+    wait_status: int | None = None
+    chunks: list[bytes] = []
+    primary_error: BaseException | None = None
+    cleanup_errors: list[BaseException] = []
     try:
+        read_fd, write_fd = runtime.pipe()
+        if input_data is not None:
+            input_read_fd, input_write_fd = runtime.pipe()
+        deadline = runtime.monotonic() + runtime.timeout_seconds
         file_actions = [
             (runtime.posix_spawn_dup2, write_fd, 1),
             (runtime.posix_spawn_dup2, write_fd, 2),
@@ -588,11 +618,15 @@ def _run_controlled_command(
                 )
             )
         process_id = runtime.posix_spawnp(command[0], command, environment, file_actions=tuple(file_actions))
-        runtime.close(write_fd)
+        close_error = close_descriptor(write_fd)
         write_fd = -1
+        if close_error is not None:
+            raise close_error
         if input_read_fd >= 0:
-            runtime.close(input_read_fd)
+            close_error = close_descriptor(input_read_fd)
             input_read_fd = -1
+            if close_error is not None:
+                raise close_error
         if input_write_fd >= 0:
             runtime.set_blocking(input_write_fd, False)
             offset = 0
@@ -606,9 +640,10 @@ def _run_controlled_command(
                     offset += runtime.write(input_write_fd, input_bytes[offset:])
                 except BlockingIOError:
                     continue
-            runtime.close(input_write_fd)
+            close_error = close_descriptor(input_write_fd)
             input_write_fd = -1
-        chunks: list[bytes] = []
+            if close_error is not None:
+                raise close_error
         output_size = 0
         while True:
             remaining = deadline - runtime.monotonic()
@@ -635,15 +670,25 @@ def _run_controlled_command(
     except (AttributeError, OSError) as error:
         if process_id is not None:
             _terminate_controlled_process_sync(process_id, runtime)
-        raise runtime.error(failure_message) from error
+        try:
+            raise runtime.error(failure_message) from error
+        except CatalogValidationError as sanitized:
+            primary_error = sanitized
+    except BaseException as error:
+        primary_error = error
     finally:
-        runtime.close(read_fd)
-        if write_fd >= 0:
-            runtime.close(write_fd)
-        if input_read_fd >= 0:
-            runtime.close(input_read_fd)
-        if input_write_fd >= 0:
-            runtime.close(input_write_fd)
+        for fd in (read_fd, write_fd, input_read_fd, input_write_fd):
+            close_error = close_descriptor(fd)
+            if close_error is not None:
+                cleanup_errors.append(close_error)
+    if primary_error is not None:
+        if cleanup_errors:
+            raise primary_error from cleanup_errors[0]
+        raise primary_error
+    if cleanup_errors:
+        raise runtime.error(failure_message) from cleanup_errors[0]
+    if wait_status is None:
+        raise runtime.error(failure_message)
     if runtime.waitstatus_to_exitcode(wait_status) != 0:
         raise runtime.error(failure_message)
     invalid_output = False
@@ -661,6 +706,7 @@ def _controlled_command(
     *,
     input_data: bytes | None = None,
     docker_endpoint: str | None = None,
+    direct: bool = False,
     timeout_message: str,
     output_message: str,
     failure_message: str,
@@ -669,6 +715,7 @@ def _controlled_command(
         args,
         input_data=input_data,
         docker_endpoint=docker_endpoint,
+        direct=direct,
         timeout_message=timeout_message,
         output_message=output_message,
         failure_message=failure_message,
@@ -684,6 +731,7 @@ def _make_bound_controlled_command(runtime: _ControlledSyncRuntime) -> Callable[
         *,
         input_data: bytes | None = None,
         docker_endpoint: str | None = None,
+        direct: bool = False,
         timeout_message: str,
         output_message: str,
         failure_message: str,
@@ -692,6 +740,7 @@ def _make_bound_controlled_command(runtime: _ControlledSyncRuntime) -> Callable[
             args,
             input_data=input_data,
             docker_endpoint=docker_endpoint,
+            direct=direct,
             timeout_message=timeout_message,
             output_message=output_message,
             failure_message=failure_message,
@@ -701,10 +750,11 @@ def _make_bound_controlled_command(runtime: _ControlledSyncRuntime) -> Callable[
     return command
 
 
-def _compose_read(*args: str, docker_endpoint: str | None = None) -> str:
+def _compose_read(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
     return _controlled_command(
         args,
         docker_endpoint=docker_endpoint,
+        direct=direct,
         timeout_message="The controlled uData stack identity check timed out.",
         output_message="The controlled uData stack identity check returned too much output.",
         failure_message="The controlled uData stack identity check failed.",
@@ -774,6 +824,7 @@ async def _run_controlled_command_async(
     *,
     input_data: bytes | None = None,
     docker_endpoint: str | None = None,
+    direct: bool = False,
     timeout_message: str,
     output_message: str,
     failure_message: str,
@@ -783,6 +834,7 @@ async def _run_controlled_command_async(
         args,
         input_data=input_data,
         docker_endpoint=docker_endpoint,
+        direct=direct,
     )
     process: asyncio.subprocess.Process | None = None
     chunks: list[bytes] = []
@@ -868,6 +920,7 @@ async def _controlled_command_async(
     *,
     input_data: bytes | None = None,
     docker_endpoint: str | None = None,
+    direct: bool = False,
     timeout_message: str,
     output_message: str,
     failure_message: str,
@@ -876,6 +929,7 @@ async def _controlled_command_async(
         args,
         input_data=input_data,
         docker_endpoint=docker_endpoint,
+        direct=direct,
         timeout_message=timeout_message,
         output_message=output_message,
         failure_message=failure_message,
@@ -891,6 +945,7 @@ def _make_bound_controlled_command_async(runtime: _ControlledAsyncRuntime) -> Ca
         *,
         input_data: bytes | None = None,
         docker_endpoint: str | None = None,
+        direct: bool = False,
         timeout_message: str,
         output_message: str,
         failure_message: str,
@@ -899,6 +954,7 @@ def _make_bound_controlled_command_async(runtime: _ControlledAsyncRuntime) -> Ca
             args,
             input_data=input_data,
             docker_endpoint=docker_endpoint,
+            direct=direct,
             timeout_message=timeout_message,
             output_message=output_message,
             failure_message=failure_message,
@@ -908,10 +964,11 @@ def _make_bound_controlled_command_async(runtime: _ControlledAsyncRuntime) -> Ca
     return command
 
 
-async def _compose_read_async(*args: str, docker_endpoint: str | None = None) -> str:
+async def _compose_read_async(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
     return await _controlled_command_async(
         args,
         docker_endpoint=docker_endpoint,
+        direct=direct,
         timeout_message="The controlled uData stack identity check timed out.",
         output_message="The controlled uData stack identity check returned too much output.",
         failure_message="The controlled uData stack identity check failed.",
@@ -936,9 +993,10 @@ def _controlled_patch_response(
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
     output = runner(
-        ("exec", "-T", "udata", "python", "-c", program),
+        ("exec", "-i", identity.udata_container_id, "python", "-c", program),
         input_data=input_data,
         docker_endpoint=identity.docker_endpoint,
+        direct=True,
         timeout_message="The controlled uData site PATCH timed out.",
         output_message="The controlled uData site PATCH returned too much output.",
         failure_message="The controlled uData site PATCH process failed.",
@@ -994,9 +1052,10 @@ async def _controlled_patch_response_async(
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
     output = await runner(
-        ("exec", "-T", "udata", "python", "-c", program),
+        ("exec", "-i", identity.udata_container_id, "python", "-c", program),
         input_data=input_data,
         docker_endpoint=identity.docker_endpoint,
+        direct=True,
         timeout_message="The controlled uData site PATCH timed out.",
         output_message="The controlled uData site PATCH returned too much output.",
         failure_message="The controlled uData site PATCH process failed.",
@@ -1048,13 +1107,170 @@ def _validate_controlled_context_endpoint(
     return endpoint
 
 
+def _parse_controlled_json_fields(
+    output: str, field_count: int, error_factory: Callable[[str], CatalogValidationError]
+) -> tuple[object, ...]:
+    fields = output.split(" ", field_count - 1)
+    if len(fields) != field_count:
+        raise error_factory("The controlled uData image identity output is invalid.")
+    try:
+        return tuple(json.loads(field) for field in fields)
+    except (TypeError, ValueError):
+        raise error_factory("The controlled uData image identity output is invalid.") from None
+
+
+def _controlled_service_image_identity(
+    read: Callable[..., str],
+    service: str,
+    docker_endpoint: str,
+    expected_image: str | None,
+    udata_image_repository: str,
+    error_factory: Callable[[str], CatalogValidationError],
+) -> tuple[str, str]:
+    container_output = read("ps", "-q", service, docker_endpoint=docker_endpoint)
+    container_ids = [value for value in container_output.splitlines() if value]
+    if len(container_ids) != 1 or re.fullmatch(r"[0-9a-f]{64}", container_ids[0]) is None:
+        raise error_factory("The controlled uData service container identity is invalid.")
+    container_id = container_ids[0]
+    container_fields = _parse_controlled_json_fields(
+        read(
+            "inspect",
+            "--format",
+            "{{json .Id}} {{json .Image}} {{json .Config.Image}}",
+            container_id,
+            docker_endpoint=docker_endpoint,
+            direct=True,
+        ),
+        3,
+        error_factory,
+    )
+    inspected_container_id, image_id, config_image = container_fields
+    if (
+        inspected_container_id != container_id
+        or not isinstance(image_id, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
+        or not isinstance(config_image, str)
+    ):
+        raise error_factory("The controlled uData container image identity is invalid.")
+    if service == "udata":
+        if config_image != udata_image_repository:
+            raise error_factory("The controlled uData service image is not the approved build.")
+    elif config_image != expected_image:
+        raise error_factory("A controlled uData dependency image is not approved.")
+    image_fields = _parse_controlled_json_fields(
+        read(
+            "image",
+            "inspect",
+            "--format",
+            "{{json .Id}} {{json .RepoDigests}}",
+            image_id,
+            docker_endpoint=docker_endpoint,
+            direct=True,
+        ),
+        2,
+        error_factory,
+    )
+    inspected_image_id, repository_digests = image_fields
+    if not isinstance(repository_digests, list) or not all(isinstance(value, str) for value in repository_digests):
+        raise error_factory("The controlled uData image digest output is invalid.")
+    if inspected_image_id != image_id:
+        raise error_factory("The controlled uData image ID does not match its container.")
+    if service == "udata":
+        expected_repository_digest = f"{udata_image_repository}@{image_id}"
+    else:
+        if not isinstance(expected_image, str) or "@" not in expected_image:
+            raise error_factory("The controlled uData dependency image allowlist is invalid.")
+        expected_repository_digest = expected_image
+        expected_digest = expected_image.rsplit("@sha256:", 1)[1]
+        expected_image_id = f"sha256:{expected_digest}"
+        if image_id != expected_image_id:
+            raise error_factory("The controlled uData dependency image ID is not approved.")
+    if expected_repository_digest not in repository_digests:
+        raise error_factory("The controlled uData image repository digest is not approved.")
+    return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
+
+
+async def _controlled_service_image_identity_async(
+    read: Callable[..., Awaitable[str]],
+    service: str,
+    docker_endpoint: str,
+    expected_image: str | None,
+    udata_image_repository: str,
+    error_factory: Callable[[str], CatalogValidationError],
+) -> tuple[str, str]:
+    container_output = await read("ps", "-q", service, docker_endpoint=docker_endpoint)
+    container_ids = [value for value in container_output.splitlines() if value]
+    if len(container_ids) != 1 or re.fullmatch(r"[0-9a-f]{64}", container_ids[0]) is None:
+        raise error_factory("The controlled uData service container identity is invalid.")
+    container_id = container_ids[0]
+    container_fields = _parse_controlled_json_fields(
+        await read(
+            "inspect",
+            "--format",
+            "{{json .Id}} {{json .Image}} {{json .Config.Image}}",
+            container_id,
+            docker_endpoint=docker_endpoint,
+            direct=True,
+        ),
+        3,
+        error_factory,
+    )
+    inspected_container_id, image_id, config_image = container_fields
+    if (
+        inspected_container_id != container_id
+        or not isinstance(image_id, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
+        or not isinstance(config_image, str)
+    ):
+        raise error_factory("The controlled uData container image identity is invalid.")
+    if service == "udata":
+        if config_image != udata_image_repository:
+            raise error_factory("The controlled uData service image is not the approved build.")
+    elif config_image != expected_image:
+        raise error_factory("A controlled uData dependency image is not approved.")
+    image_fields = _parse_controlled_json_fields(
+        await read(
+            "image",
+            "inspect",
+            "--format",
+            "{{json .Id}} {{json .RepoDigests}}",
+            image_id,
+            docker_endpoint=docker_endpoint,
+            direct=True,
+        ),
+        2,
+        error_factory,
+    )
+    inspected_image_id, repository_digests = image_fields
+    if not isinstance(repository_digests, list) or not all(isinstance(value, str) for value in repository_digests):
+        raise error_factory("The controlled uData image digest output is invalid.")
+    if inspected_image_id != image_id:
+        raise error_factory("The controlled uData image ID does not match its container.")
+    if service == "udata":
+        expected_repository_digest = f"{udata_image_repository}@{image_id}"
+    else:
+        if not isinstance(expected_image, str) or "@" not in expected_image:
+            raise error_factory("The controlled uData dependency image allowlist is invalid.")
+        expected_repository_digest = expected_image
+        expected_digest = expected_image.rsplit("@sha256:", 1)[1]
+        expected_image_id = f"sha256:{expected_digest}"
+        if image_id != expected_image_id:
+            raise error_factory("The controlled uData dependency image ID is not approved.")
+    if expected_repository_digest not in repository_digests:
+        raise error_factory("The controlled uData image repository digest is not approved.")
+    return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
+
+
 def _verify_controlled_source_and_nonce(
     *,
     compose_read: Callable[..., str] | None = None,
     source_nonce: Callable[[], str] | None = None,
     context_validator: Callable[[str], str] | None = None,
     source_commit: str = _CONTROLLED_SOURCE_COMMIT,
-    expected_services: frozenset[str] = frozenset({"udata", "mongo", "redis", "search", "storage", "mailpit"}),
+    service_names: tuple[str, ...] = _CONTROLLED_SERVICE_NAMES,
+    expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
+    dependency_image_specs: tuple[tuple[str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
+    udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1073,17 +1289,32 @@ def _verify_controlled_source_and_nonce(
         raise error_factory("The running services do not match the controlled uData stack.")
     if read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
         raise error_factory("The controlled uData service is not bound to the approved loopback port.")
+    dependency_images = dict(dependency_image_specs)
+    image_identities: list[str] = []
+    udata_container_id = ""
+    for service in service_names:
+        container_id, image_identity = _controlled_service_image_identity(
+            read,
+            service,
+            docker_endpoint,
+            dependency_images.get(service),
+            udata_image_repository,
+            error_factory,
+        )
+        image_identities.append(image_identity)
+        if service == "udata":
+            udata_container_id = container_id
     if (
         read(
             "exec",
-            "-T",
-            "udata",
+            udata_container_id,
             "git",
             "-C",
             "/opt/udata",
             "rev-parse",
             "HEAD",
             docker_endpoint=docker_endpoint,
+            direct=True,
         )
         != source_commit
     ):
@@ -1091,11 +1322,11 @@ def _verify_controlled_source_and_nonce(
     if (
         read(
             "exec",
-            "-T",
-            "udata",
+            udata_container_id,
             "printenv",
             "UDATA_EVIDENCE_STACK_NONCE",
             docker_endpoint=docker_endpoint,
+            direct=True,
         )
         != nonce
     ):
@@ -1103,6 +1334,8 @@ def _verify_controlled_source_and_nonce(
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,
+        udata_container_id=udata_container_id,
+        image_identities=tuple(image_identities),
     )
 
 
@@ -1112,7 +1345,10 @@ async def _verify_controlled_source_and_nonce_async(
     source_nonce: Callable[[], str] | None = None,
     context_validator: Callable[[str], str] | None = None,
     source_commit: str = _CONTROLLED_SOURCE_COMMIT,
-    expected_services: frozenset[str] = frozenset({"udata", "mongo", "redis", "search", "storage", "mailpit"}),
+    service_names: tuple[str, ...] = _CONTROLLED_SERVICE_NAMES,
+    expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
+    dependency_image_specs: tuple[tuple[str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
+    udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1131,17 +1367,32 @@ async def _verify_controlled_source_and_nonce_async(
         raise error_factory("The running services do not match the controlled uData stack.")
     if await read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
         raise error_factory("The controlled uData service is not bound to the approved loopback port.")
+    dependency_images = dict(dependency_image_specs)
+    image_identities: list[str] = []
+    udata_container_id = ""
+    for service in service_names:
+        container_id, image_identity = await _controlled_service_image_identity_async(
+            read,
+            service,
+            docker_endpoint,
+            dependency_images.get(service),
+            udata_image_repository,
+            error_factory,
+        )
+        image_identities.append(image_identity)
+        if service == "udata":
+            udata_container_id = container_id
     if (
         await read(
             "exec",
-            "-T",
-            "udata",
+            udata_container_id,
             "git",
             "-C",
             "/opt/udata",
             "rev-parse",
             "HEAD",
             docker_endpoint=docker_endpoint,
+            direct=True,
         )
         != source_commit
     ):
@@ -1149,11 +1400,11 @@ async def _verify_controlled_source_and_nonce_async(
     if (
         await read(
             "exec",
-            "-T",
-            "udata",
+            udata_container_id,
             "printenv",
             "UDATA_EVIDENCE_STACK_NONCE",
             docker_endpoint=docker_endpoint,
+            direct=True,
         )
         != nonce
     ):
@@ -1161,6 +1412,8 @@ async def _verify_controlled_source_and_nonce_async(
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,
+        udata_container_id=udata_container_id,
+        image_identities=tuple(image_identities),
     )
 
 
@@ -1197,7 +1450,7 @@ def _verify_controlled_sync_stack(
     *,
     source_verifier: Callable[..., _ControlledSourceIdentity] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
-    site_probe: Callable[[str], RuntimeResponse] | None = None,
+    site_probe: Callable[[str, str], RuntimeResponse] | None = None,
     controlled_origin: str = _CONTROLLED_ORIGIN,
     docker_endpoint: str | None = None,
 ) -> _ControlledVerification:
@@ -1215,12 +1468,13 @@ def _verify_controlled_sync_stack(
             )
         )
         if site_probe is None
-        else site_probe(identity.docker_endpoint)
+        else site_probe(identity.docker_endpoint, identity.udata_container_id)
     )
     evidence = _ControlledStackEvidence(
         nonce_sha256=identity.nonce_sha256,
         site_id=decode_peer(response),
         docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
+        image_digests=identity.image_identities,
     )
     return _ControlledVerification(identity=identity, evidence=evidence)
 
@@ -1230,7 +1484,7 @@ async def _verify_controlled_async_stack(
     *,
     source_verifier: Callable[..., Awaitable[_ControlledSourceIdentity]] | None = None,
     peer_evidence: Callable[[RuntimeResponse], str] | None = None,
-    site_probe: Callable[[str], Awaitable[RuntimeResponse]] | None = None,
+    site_probe: Callable[[str, str], Awaitable[RuntimeResponse]] | None = None,
     controlled_origin: str = _CONTROLLED_ORIGIN,
     docker_endpoint: str | None = None,
 ) -> _ControlledVerification:
@@ -1248,12 +1502,13 @@ async def _verify_controlled_async_stack(
             )
         )
         if site_probe is None
-        else await site_probe(identity.docker_endpoint)
+        else await site_probe(identity.docker_endpoint, identity.udata_container_id)
     )
     evidence = _ControlledStackEvidence(
         nonce_sha256=identity.nonce_sha256,
         site_id=decode_peer(response),
         docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
+        image_digests=identity.image_identities,
     )
     return _ControlledVerification(identity=identity, evidence=evidence)
 
@@ -1271,10 +1526,11 @@ class _ControlledAsyncOperations:
 
 
 def _make_controlled_compose_read(command: Callable[..., str]) -> Callable[..., str]:
-    def compose_read(*args: str, docker_endpoint: str | None = None) -> str:
+    def compose_read(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
         return command(
             args,
             docker_endpoint=docker_endpoint,
+            direct=direct,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
@@ -1284,10 +1540,11 @@ def _make_controlled_compose_read(command: Callable[..., str]) -> Callable[..., 
 
 
 def _make_controlled_compose_read_async(command: Callable[..., Awaitable[str]]) -> Callable[..., Awaitable[str]]:
-    async def compose_read(*args: str, docker_endpoint: str | None = None) -> str:
+    async def compose_read(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
         return await command(
             args,
             docker_endpoint=docker_endpoint,
+            direct=direct,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
@@ -1298,11 +1555,12 @@ def _make_controlled_compose_read_async(command: Callable[..., Awaitable[str]]) 
 
 def _make_controlled_site_probe(
     command: Callable[..., str], response_parser: Callable[[str], RuntimeResponse], program: str
-) -> Callable[[str], RuntimeResponse]:
-    def probe(docker_endpoint: str) -> RuntimeResponse:
+) -> Callable[[str, str], RuntimeResponse]:
+    def probe(docker_endpoint: str, container_id: str) -> RuntimeResponse:
         output = command(
-            ("exec", "-T", "udata", "python", "-c", program),
+            ("exec", "-i", container_id, "python", "-c", program),
             docker_endpoint=docker_endpoint,
+            direct=True,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
@@ -1314,11 +1572,12 @@ def _make_controlled_site_probe(
 
 def _make_controlled_site_probe_async(
     command: Callable[..., Awaitable[str]], response_parser: Callable[[str], RuntimeResponse], program: str
-) -> Callable[[str], Awaitable[RuntimeResponse]]:
-    async def probe(docker_endpoint: str) -> RuntimeResponse:
+) -> Callable[[str, str], Awaitable[RuntimeResponse]]:
+    async def probe(docker_endpoint: str, container_id: str) -> RuntimeResponse:
         output = await command(
-            ("exec", "-T", "udata", "python", "-c", program),
+            ("exec", "-i", container_id, "python", "-c", program),
             docker_endpoint=docker_endpoint,
+            direct=True,
             timeout_message="The controlled uData stack identity check timed out.",
             output_message="The controlled uData stack identity check returned too much output.",
             failure_message="The controlled uData stack identity check failed.",
