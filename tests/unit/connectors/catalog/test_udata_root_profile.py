@@ -978,7 +978,10 @@ def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: p
     monkeypatch.setattr(root_service, "_controlled_sync_site_id", lambda _: "site")
     monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
     monkeypatch.setattr(root_service, "_controlled_sync_evidence_digest", lambda _: _controlled_evidence().digest)
-    monkeypatch.setattr(udata_clients, "_controlled_sync_authorized", lambda _: True)
+
+    client_type = cast(Any, type(client))
+    with pytest.raises(AttributeError, match="factory-owned"):
+        client_type._mutation_dispatch_gate = object()
 
     with client, pytest.raises(CatalogValidationError):
         client.root_profile.set_site(

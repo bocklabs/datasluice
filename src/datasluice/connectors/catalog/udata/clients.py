@@ -458,6 +458,30 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
     return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=_controlled_peer_evidence(response))
 
 
+class _ImmutableDispatchGateType(type):
+    def __setattr__(cls, name: str, value: object) -> None:
+        if name in {"authorize_sync", "authorize_async"}:
+            raise AttributeError("Controlled dispatch authorization is immutable.")
+        super().__setattr__(name, value)
+
+    def __delattr__(cls, name: str) -> None:
+        if name in {"authorize_sync", "authorize_async"}:
+            raise AttributeError("Controlled dispatch authorization is immutable.")
+        super().__delattr__(name)
+
+
+class _ImmutableClientType(type):
+    def __setattr__(cls, name: str, value: object) -> None:
+        if name == "_mutation_dispatch_gate":
+            raise AttributeError("Controlled dispatch authorization is factory-owned.")
+        super().__setattr__(name, value)
+
+    def __delattr__(cls, name: str) -> None:
+        if name == "_mutation_dispatch_gate":
+            raise AttributeError("Controlled dispatch authorization is factory-owned.")
+        super().__delattr__(name)
+
+
 def _build_controlled_transport_types():
     type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float]
     type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float]
@@ -569,9 +593,6 @@ def _build_controlled_transport_types():
             and evidence.site_id == site_id
         )
 
-    def sync_authorized(value: object) -> bool:
-        return sync_state(value) is not None
-
     def async_site_id(value: object) -> str | None:
         state = async_state(value)
         return state[1].site_id if state is not None and state[1] is not None else None
@@ -592,9 +613,21 @@ def _build_controlled_transport_types():
             and evidence.site_id == site_id
         )
 
-    def async_authorized(value: object) -> bool:
-        state = async_state(value)
-        return state is not None and state[1] is not None
+    class _ControlledDispatchGate(metaclass=_ImmutableDispatchGateType):
+        __slots__ = ()
+
+        def __get__(self, instance: object | None, owner: type | None = None) -> _ControlledDispatchGate:
+            return self
+
+        def __set__(self, instance: object, value: object) -> None:
+            raise AttributeError("Controlled dispatch authorization is factory-owned.")
+
+        def authorize_sync(self, value: object) -> bool:
+            return sync_state(value) is not None
+
+        def authorize_async(self, value: object) -> bool:
+            state = async_state(value)
+            return state is not None and state[1] is not None
 
     return (
         _ControlledSyncTransport,
@@ -602,11 +635,10 @@ def _build_controlled_transport_types():
         sync_site_id,
         sync_evidence_digest,
         sync_revalidate,
-        sync_authorized,
         async_site_id,
         async_evidence_digest,
         async_revalidate,
-        async_authorized,
+        _ControlledDispatchGate(),
     )
 
 
@@ -616,16 +648,17 @@ def _build_controlled_transport_types():
     _controlled_sync_site_id,
     _controlled_sync_evidence_digest,
     _controlled_sync_revalidate,
-    _controlled_sync_authorized,
     _controlled_async_site_id,
     _controlled_async_evidence_digest,
     _controlled_async_revalidate,
-    _controlled_async_authorized,
+    _controlled_dispatch_gate,
 ) = _build_controlled_transport_types()
 
 
-class _UDataClientCore:
+class _UDataClientCore(metaclass=_ImmutableClientType):
     """Shared strict-gate state for the sync and async uData clients."""
+
+    _mutation_dispatch_gate = _controlled_dispatch_gate
 
     def __init__(
         self,
@@ -923,12 +956,11 @@ class SyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
-        _dispatch_authorized: Callable[[object], bool] = _controlled_sync_authorized,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The synchronous uData client is closed.")
-        if owning_operation == SET_SITE_OPERATION and not _dispatch_authorized(self._transport):
+        if owning_operation == SET_SITE_OPERATION and not self._mutation_dispatch_gate.authorize_sync(self._transport):
             raise _controlled_error("The uData site PATCH transport is not factory-bound.")
         owning_id = _operation_id_from(owning_operation)
         self._require_site_version()
@@ -1540,12 +1572,11 @@ class AsyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
-        _dispatch_authorized: Callable[[object], bool] = _controlled_async_authorized,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError("The asynchronous uData client is closed.")
-        if owning_operation == SET_SITE_OPERATION and not _dispatch_authorized(self._transport):
+        if owning_operation == SET_SITE_OPERATION and not self._mutation_dispatch_gate.authorize_async(self._transport):
             raise _controlled_error("The uData site PATCH transport is not factory-bound.")
         owning_id = _operation_id_from(owning_operation)
         await self.site_version()
