@@ -49,6 +49,7 @@ from datasluice.runtime.transport.base import TransportFailure
 
 _CSV_MEDIA_TYPE = "text/csv"
 _UNKNOWN_SITE = "unknown"
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 
 def _operation_id(operation: str) -> OperationId:
@@ -426,9 +427,17 @@ def _make_sync_set_site():
                 credential=resolved,
                 permissions=permissions,
                 idempotency_policy=IdempotencyPolicy(),
+                redirect_mode=True,
                 max_response_bytes=self._client._root_export_max_bytes,
                 emit_success=False,
             )
+            if status in _REDIRECT_STATUSES:
+                raise NativeCatalogError(
+                    "The uData site PATCH returned a redirect and was not followed.",
+                    operation=operation,
+                    platform="udata",
+                    status_code=status,
+                )
             return status, payload, response
 
         return _mutating(
@@ -495,9 +504,17 @@ def _make_async_set_site():
                 credential=resolved,
                 permissions=permissions,
                 idempotency_policy=IdempotencyPolicy(),
+                redirect_mode=True,
                 max_response_bytes=self._client._root_export_max_bytes,
                 emit_success=False,
             )
+            if status in _REDIRECT_STATUSES:
+                raise NativeCatalogError(
+                    "The uData site PATCH returned a redirect and was not followed.",
+                    operation=operation,
+                    platform="udata",
+                    status_code=status,
+                )
             return status, payload, response
 
         return await _amutating(

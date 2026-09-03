@@ -172,6 +172,16 @@ def test_controlled_command_nonzero_exit_is_sanitized(monkeypatch: pytest.Monkey
     assert excinfo.value.__context__ is None
 
 
+def test_controlled_command_rejects_docker_environment_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _controlled_compose_files(monkeypatch, tmp_path)
+    monkeypatch.setenv("DOCKER_CONTEXT", "remote")
+
+    with pytest.raises(CatalogValidationError, match="environment overrides"):
+        udata_clients._compose_read("ps")
+
+
 def test_controlled_peer_decode_failure_is_redacted() -> None:
     response = RuntimeResponse(status_code=200, headers={"Content-Type": "application/json"}, body=b"not-json")
 
@@ -441,6 +451,8 @@ def _sync_client(
     stack.enter_context(patch.object(httpx, "Client", client_factory))
 
     def compose_read(*args: str) -> str:
+        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
+            return '"unix:///Users/nitish/.docker/run/docker.sock"'
         if args == ("ps", "--status", "running", "--services"):
             return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
         if args == ("port", "udata", "7000"):
@@ -454,6 +466,29 @@ def _sync_client(
 
     stack.enter_context(patch.object(udata_clients, "_compose_read", compose_read))
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
+
+    def controlled_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
+        request_data = json.loads(input_data or b"{}")
+        transport._suppress_next = False
+        response = transport.send(
+            RuntimeRequest(
+                method="PATCH",
+                url=_SITE_URL,
+                headers={"Content-Type": "application/json", "X-API-KEY": request_data["token"]},
+                body=json.dumps(request_data["body"], separators=(",", ":")).encode(),
+            )
+        )
+        return json.dumps(
+            {
+                "status": response.status_code,
+                "content_type": response.headers.get("Content-Type", ""),
+                "location": response.headers.get("Location", ""),
+                "body": response.body.decode("utf-8", "replace"),
+            },
+            separators=(",", ":"),
+        )
+
+    stack.enter_context(patch.object(udata_clients, "_controlled_command", controlled_command))
     verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
     original_site_response = transport.routes.get(("GET", _SITE_URL))
     transport.routes[("GET", _SITE_URL)] = verification_response
@@ -533,6 +568,8 @@ def _async_client(
     stack.enter_context(patch.object(httpx, "AsyncClient", client_factory))
 
     def compose_read(*args: str) -> str:
+        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
+            return '"unix:///Users/nitish/.docker/run/docker.sock"'
         if args == ("ps", "--status", "running", "--services"):
             return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
         if args == ("port", "udata", "7000"):
@@ -546,6 +583,43 @@ def _async_client(
 
     stack.enter_context(patch.object(udata_clients, "_compose_read", compose_read))
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
+
+    async def controlled_command_async(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
+        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
+            return '"unix:///Users/nitish/.docker/run/docker.sock"'
+        if args == ("ps", "--status", "running", "--services"):
+            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
+        if args == ("port", "udata", "7000"):
+            return "127.0.0.1:5640"
+        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
+            return "0546582058d84706812a1c37387576efc4e5ad1f"
+        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
+            transport._suppress_next = True
+            return "unit-test-stack"
+        if args[:4] == ("exec", "-T", "udata", "python"):
+            request_data = json.loads(input_data or b"{}")
+            transport._suppress_next = False
+            response = transport.routes[("PATCH", _SITE_URL)]
+            transport.requests.append(
+                RuntimeRequest(
+                    method="PATCH",
+                    url=_SITE_URL,
+                    headers={"Content-Type": "application/json", "X-API-KEY": request_data["token"]},
+                    body=json.dumps(request_data["body"], separators=(",", ":")).encode(),
+                )
+            )
+            return json.dumps(
+                {
+                    "status": response.status_code,
+                    "content_type": response.headers.get("Content-Type", ""),
+                    "location": response.headers.get("Location", ""),
+                    "body": response.body.decode("utf-8", "replace"),
+                },
+                separators=(",", ":"),
+            )
+        raise AssertionError(f"unexpected controlled command {args}")
+
+    stack.enter_context(patch.object(udata_clients, "_controlled_command_async", controlled_command_async))
 
     verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
     original_site_response = transport.routes.get(("GET", _SITE_URL))
@@ -658,6 +732,22 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert patch_request.headers["Content-Type"] == "application/json"
     assert patch_request.headers["X-API-KEY"] == "site-key"
     assert len(transport.requests) == 3
+
+
+def test_row184_set_site_rejects_redirect_without_following() -> None:
+    location = "https://other.example/api/1/site/"
+    transport, client = _sync_client(
+        _routes(("PATCH", _SITE_URL, _json_response(307, None, {"Location": location}))),
+        credential=_CREDENTIAL,
+    )
+    with client, pytest.raises(NativeCatalogError, match="redirect"):
+        client.root_profile.set_site(
+            SitePatchInput(title="unchanged"),
+            permissions=_PERMISSIONS,
+            mutation_policy=_site_policy(),
+        )
+
+    assert [request.method for request in transport.requests] == ["GET", "GET", "PATCH"]
 
 
 def test_site_patch_omits_unset_fields_but_retains_explicit_null() -> None:

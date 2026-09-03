@@ -18,6 +18,7 @@ from pathlib import Path
 from time import monotonic, sleep
 from types import TracebackType
 from typing import TYPE_CHECKING, Self, cast
+from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.mapping import (
     _DATASETS_OPERATION_ID,
@@ -35,7 +36,7 @@ from datasluice.connectors.catalog.udata.probes import (
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings, normalize_origin
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
-from datasluice.domain.catalog.auth import EffectivePermissions
+from datasluice.domain.catalog.auth import EffectivePermissions, SecretValue, UDataCredential
 from datasluice.domain.catalog.auth import credential_scope as _credential_scope
 from datasluice.domain.catalog.models import ResultEnvelope
 from datasluice.domain.catalog.observability import TLSPolicy
@@ -127,6 +128,47 @@ _CONTROLLED_ENV_FILE = _CONTROLLED_EVIDENCE_ROOT / ".env"
 _CONTROLLED_AUTHORITY_TTL_SECONDS = 60.0
 _CONTROLLED_COMMAND_TIMEOUT_SECONDS = 15.0
 _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES = 65536
+_CONTROLLED_DOCKER_EXECUTABLES = (
+    Path("/usr/local/bin/docker"),
+    Path("/opt/homebrew/bin/docker"),
+    Path("/usr/bin/docker"),
+)
+_CONTROLLED_PATCH_PROGRAM = """
+import json
+import sys
+import urllib.error
+import urllib.request
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+def emit(response):
+    body = response.read(8193)
+    print(json.dumps({
+        "status": getattr(response, "status", getattr(response, "code", 0)),
+        "content_type": response.headers.get("Content-Type", ""),
+        "location": response.headers.get("Location", ""),
+        "body": body.decode("utf-8", "replace"),
+    }, separators=(",", ":")))
+
+request_data = json.loads(sys.stdin.read())
+request = urllib.request.Request(
+    "http://127.0.0.1:7000/api/1/site/",
+    data=json.dumps(request_data["body"], separators=(",", ":")).encode(),
+    headers={"Content-Type": "application/json", "X-API-KEY": request_data["token"]},
+    method="PATCH",
+)
+try:
+    response = urllib.request.build_opener(NoRedirect()).open(request, timeout=10)
+except urllib.error.HTTPError as error:
+    emit(error)
+else:
+    try:
+        emit(response)
+    finally:
+        response.close()
+""".strip()
 
 _STATUS_RESPONSE_CLASSES = {
     401: ProbeResponseClass.UNAUTHORIZED,
@@ -294,31 +336,81 @@ def _controlled_error(message: str) -> CatalogValidationError:
     )
 
 
-def _compose_read(*args: str) -> str:
+def _controlled_command_spec(
+    args: tuple[str, ...],
+    *,
+    input_data: bytes | None = None,
+) -> tuple[tuple[str, ...], dict[str, str]]:
     if not _CONTROLLED_COMPOSE_FILE.is_file() or not _CONTROLLED_ENV_FILE.is_file():
         raise _controlled_error("The controlled uData evidence configuration is unavailable.")
-    command = [
-        "docker",
-        "compose",
-        "--env-file",
-        str(_CONTROLLED_ENV_FILE),
-        "-f",
-        str(_CONTROLLED_COMPOSE_FILE),
-        *args,
-    ]
+    if input_data is not None and len(input_data) > _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES:
+        raise _controlled_error("The controlled uData command input is too large.")
+    executable = next(
+        (path for path in _CONTROLLED_DOCKER_EXECUTABLES if path.is_file() and os.access(path, os.X_OK)),
+        None,
+    )
+    if executable is None:
+        raise _controlled_error("The trusted Docker executable is unavailable.")
+    if os.environ.get("DOCKER_HOST") or os.environ.get("DOCKER_CONTEXT"):
+        raise _controlled_error("Controlled uData evidence cannot use Docker environment overrides.")
+    command = (
+        (str(executable), *args)
+        if args[:2] == ("context", "inspect")
+        else (
+            str(executable),
+            "compose",
+            "--env-file",
+            str(_CONTROLLED_ENV_FILE),
+            "-f",
+            str(_CONTROLLED_COMPOSE_FILE),
+            *args,
+        )
+    )
+    return command, {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+
+
+def _controlled_command(
+    args: tuple[str, ...],
+    *,
+    input_data: bytes | None = None,
+    timeout_message: str,
+    output_message: str,
+    failure_message: str,
+) -> str:
+    command, environment = _controlled_command_spec(args, input_data=input_data)
     read_fd, write_fd = os.pipe()
+    input_read_fd = input_write_fd = -1
+    if input_data is not None:
+        input_read_fd, input_write_fd = os.pipe()
     process_id: int | None = None
     try:
-        file_actions = (
+        file_actions = [
             (os.POSIX_SPAWN_DUP2, write_fd, 1),
             (os.POSIX_SPAWN_DUP2, write_fd, 2),
             (os.POSIX_SPAWN_CLOSE, read_fd),
             (os.POSIX_SPAWN_CLOSE, write_fd),
-        )
-        environment = {key: os.environ[key] for key in ("PATH", "DOCKER_HOST", "DOCKER_CONTEXT") if key in os.environ}
-        process_id = os.posix_spawnp(command[0], command, environment, file_actions=file_actions)
+        ]
+        if input_data is not None:
+            file_actions.extend(
+                (
+                    (os.POSIX_SPAWN_DUP2, input_read_fd, 0),
+                    (os.POSIX_SPAWN_CLOSE, input_read_fd),
+                    (os.POSIX_SPAWN_CLOSE, input_write_fd),
+                )
+            )
+        process_id = os.posix_spawnp(command[0], command, environment, file_actions=tuple(file_actions))
         os.close(write_fd)
         write_fd = -1
+        if input_read_fd >= 0:
+            os.close(input_read_fd)
+            input_read_fd = -1
+        if input_write_fd >= 0:
+            offset = 0
+            input_bytes = input_data or b""
+            while offset < len(input_bytes):
+                offset += os.write(input_write_fd, input_bytes[offset:])
+            os.close(input_write_fd)
+            input_write_fd = -1
         deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
         chunks: list[bytes] = []
         output_size = 0
@@ -327,7 +419,7 @@ def _compose_read(*args: str) -> str:
             if remaining <= 0 or not select.select([read_fd], [], [], remaining)[0]:
                 os.kill(process_id, signal.SIGKILL)
                 os.waitpid(process_id, 0)
-                raise _controlled_error("The controlled uData stack identity check timed out.")
+                raise _controlled_error(timeout_message)
             chunk = os.read(read_fd, 65536)
             if not chunk:
                 break
@@ -335,7 +427,7 @@ def _compose_read(*args: str) -> str:
             if output_size > _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES:
                 os.kill(process_id, signal.SIGKILL)
                 os.waitpid(process_id, 0)
-                raise _controlled_error("The controlled uData stack identity check returned too much output.")
+                raise _controlled_error(output_message)
             chunks.append(chunk)
         while True:
             completed_pid, wait_status = os.waitpid(process_id, os.WNOHANG)
@@ -345,7 +437,7 @@ def _compose_read(*args: str) -> str:
             if remaining <= 0:
                 os.kill(process_id, signal.SIGKILL)
                 os.waitpid(process_id, 0)
-                raise _controlled_error("The controlled uData stack identity check timed out.")
+                raise _controlled_error(timeout_message)
             select.select([], [], [], min(remaining, 0.05))
     except (AttributeError, OSError) as error:
         if process_id is not None:
@@ -357,24 +449,183 @@ def _compose_read(*args: str) -> str:
                 os.waitpid(process_id, 0)
             except OSError:
                 pass
-        raise _controlled_error("The controlled uData stack cannot be verified.") from error
+        raise _controlled_error(failure_message) from error
     finally:
         os.close(read_fd)
         if write_fd >= 0:
             os.close(write_fd)
+        if input_read_fd >= 0:
+            os.close(input_read_fd)
+        if input_write_fd >= 0:
+            os.close(input_write_fd)
     if os.waitstatus_to_exitcode(wait_status) != 0:
-        raise _controlled_error("The controlled uData stack identity check failed.")
+        raise _controlled_error(failure_message)
     invalid_output = False
     try:
         output = b"".join(chunks).decode().strip()
     except UnicodeDecodeError:
         invalid_output = True
     if invalid_output:
-        raise _controlled_error("The controlled uData stack identity check returned invalid output.")
+        raise _controlled_error(output_message)
     return output
 
 
-def _verify_controlled_source_and_nonce() -> str:
+def _compose_read(*args: str) -> str:
+    return _controlled_command(
+        args,
+        timeout_message="The controlled uData stack identity check timed out.",
+        output_message="The controlled uData stack identity check returned too much output.",
+        failure_message="The controlled uData stack identity check failed.",
+    )
+
+
+async def _terminate_controlled_process(process: asyncio.subprocess.Process | None) -> None:
+    if process is None or process.returncode is not None:
+        return
+    try:
+        process.kill()
+    except OSError:
+        return
+    try:
+        await process.wait()
+    except OSError:
+        return
+
+
+async def _controlled_command_async(
+    args: tuple[str, ...],
+    *,
+    input_data: bytes | None = None,
+    timeout_message: str,
+    output_message: str,
+    failure_message: str,
+) -> str:
+    command, environment = _controlled_command_spec(args, input_data=input_data)
+    process: asyncio.subprocess.Process | None = None
+    chunks: list[bytes] = []
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=environment,
+        )
+        if process.stdout is None:
+            raise OSError("controlled command stdout was unavailable")
+        if input_data is not None:
+            if process.stdin is None:
+                raise OSError("controlled command stdin was unavailable")
+            process.stdin.write(input_data)
+            await process.stdin.drain()
+            process.stdin.close()
+        deadline = monotonic() + _CONTROLLED_COMMAND_TIMEOUT_SECONDS
+        output_size = 0
+        while True:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                await _terminate_controlled_process(process)
+                raise _controlled_error(timeout_message)
+            try:
+                chunk = await asyncio.wait_for(process.stdout.read(65536), timeout=remaining)
+            except TimeoutError:
+                await _terminate_controlled_process(process)
+                raise _controlled_error(timeout_message) from None
+            if not chunk:
+                break
+            output_size += len(chunk)
+            if output_size > _CONTROLLED_COMMAND_MAX_OUTPUT_BYTES:
+                await _terminate_controlled_process(process)
+                raise _controlled_error(output_message)
+            chunks.append(chunk)
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            await _terminate_controlled_process(process)
+            raise _controlled_error(timeout_message)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=remaining)
+        except TimeoutError:
+            await _terminate_controlled_process(process)
+            raise _controlled_error(timeout_message) from None
+    except (OSError, ChildProcessError) as error:
+        await _terminate_controlled_process(process)
+        raise _controlled_error(failure_message) from error
+    finally:
+        await _terminate_controlled_process(process)
+    if process is None or process.returncode != 0:
+        raise _controlled_error(failure_message)
+    try:
+        return b"".join(chunks).decode().strip()
+    except UnicodeDecodeError:
+        raise _controlled_error(output_message) from None
+
+
+async def _compose_read_async(*args: str) -> str:
+    return await _controlled_command_async(
+        args,
+        timeout_message="The controlled uData stack identity check timed out.",
+        output_message="The controlled uData stack identity check returned too much output.",
+        failure_message="The controlled uData stack identity check failed.",
+    )
+
+
+def _controlled_patch_response(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
+    _verify_controlled_source_and_nonce()
+    token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
+    input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
+    output = _controlled_command(
+        ("exec", "-T", "udata", "python", "-c", _CONTROLLED_PATCH_PROGRAM),
+        input_data=input_data,
+        timeout_message="The controlled uData site PATCH timed out.",
+        output_message="The controlled uData site PATCH returned too much output.",
+        failure_message="The controlled uData site PATCH process failed.",
+    )
+    return _parse_controlled_patch_output(output)
+
+
+def _parse_controlled_patch_output(output: str) -> RuntimeResponse:
+    try:
+        result = json.loads(output)
+    except (TypeError, ValueError):
+        raise _controlled_error("The controlled uData site PATCH returned invalid output.") from None
+    if not isinstance(result, Mapping):
+        raise _controlled_error("The controlled uData site PATCH returned invalid output.")
+    status = result.get("status")
+    content_type = result.get("content_type")
+    location = result.get("location")
+    response_body = result.get("body")
+    if (
+        type(status) is not int
+        or not 100 <= status <= 599
+        or not isinstance(content_type, str)
+        or not isinstance(location, str)
+        or not isinstance(response_body, str)
+    ):
+        raise _controlled_error("The controlled uData site PATCH returned invalid output.")
+    headers: dict[str, str] = {"Content-Type": content_type}
+    if location:
+        headers["Location"] = location
+    encoded_body = response_body.encode()
+    if len(encoded_body) > 8192:
+        raise _controlled_error("The controlled uData site PATCH returned too much output.")
+    return RuntimeResponse(status, headers, encoded_body)
+
+
+async def _controlled_patch_response_async(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
+    await _verify_controlled_source_and_nonce_async()
+    token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
+    input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
+    output = await _controlled_command_async(
+        ("exec", "-T", "udata", "python", "-c", _CONTROLLED_PATCH_PROGRAM),
+        input_data=input_data,
+        timeout_message="The controlled uData site PATCH timed out.",
+        output_message="The controlled uData site PATCH returned too much output.",
+        failure_message="The controlled uData site PATCH process failed.",
+    )
+    return _parse_controlled_patch_output(output)
+
+
+def _controlled_source_nonce() -> str:
     nonce = os.environ.get("UDATA_EVIDENCE_STACK_NONCE")
     if not nonce:
         raise _controlled_error("The controlled uData stack nonce is unavailable.")
@@ -387,6 +638,28 @@ def _verify_controlled_source_and_nonce() -> str:
         raise _controlled_error("The controlled uData compose identity does not match the approved source.")
     if hashlib.sha256(dockerfile_text.encode()).hexdigest() != _CONTROLLED_DOCKERFILE_SHA256:
         raise _controlled_error("The controlled uData image identity does not match the approved source.")
+    return nonce
+
+
+def _validate_controlled_context_endpoint(context_endpoint: str) -> None:
+    try:
+        endpoint = json.loads(context_endpoint)
+    except (TypeError, ValueError):
+        raise _controlled_error("The active Docker context identity is invalid.") from None
+    parsed_endpoint = urlsplit(endpoint) if isinstance(endpoint, str) else None
+    if (
+        parsed_endpoint is None
+        or parsed_endpoint.scheme != "unix"
+        or bool(parsed_endpoint.netloc)
+        or not parsed_endpoint.path.startswith("/")
+    ):
+        raise _controlled_error("Controlled uData evidence requires a local Unix Docker context.")
+
+
+def _verify_controlled_source_and_nonce() -> str:
+    nonce = _controlled_source_nonce()
+    context_endpoint = _compose_read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
+    _validate_controlled_context_endpoint(context_endpoint)
     services = _compose_read("ps", "--status", "running", "--services").splitlines()
     expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
     if len(services) != len(expected_services) or set(services) != expected_services:
@@ -399,6 +672,26 @@ def _verify_controlled_source_and_nonce() -> str:
     ):
         raise _controlled_error("The controlled uData service source does not match the approved commit.")
     if _compose_read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
+        raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
+    return hashlib.sha256(nonce.encode()).hexdigest()
+
+
+async def _verify_controlled_source_and_nonce_async() -> str:
+    nonce = _controlled_source_nonce()
+    context_endpoint = await _compose_read_async("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
+    _validate_controlled_context_endpoint(context_endpoint)
+    services = (await _compose_read_async("ps", "--status", "running", "--services")).splitlines()
+    expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
+    if len(services) != len(expected_services) or set(services) != expected_services:
+        raise _controlled_error("The running services do not match the controlled uData stack.")
+    if await _compose_read_async("port", "udata", "7000") != "127.0.0.1:5640":
+        raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
+    if (
+        await _compose_read_async("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD")
+        != _CONTROLLED_SOURCE_COMMIT
+    ):
+        raise _controlled_error("The controlled uData service source does not match the approved commit.")
+    if await _compose_read_async("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
         raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
     return hashlib.sha256(nonce.encode()).hexdigest()
 
@@ -444,7 +737,7 @@ def _verify_controlled_sync_stack(transport: CatalogTransport) -> _ControlledSta
 
 
 async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _ControlledStackEvidence:
-    nonce_sha256 = _verify_controlled_source_and_nonce()
+    nonce_sha256 = await _verify_controlled_source_and_nonce_async()
     response = await transport.send(
         RuntimeRequest(
             method="GET",
@@ -1269,7 +1562,14 @@ class SyncUDataClient(_UDataClientCore):
             recorded = False
             before = self._breakers.inspect(key)
             try:
-                response = sync_transport.send(request)
+                if owning_operation == SET_SITE_OPERATION:
+                    if not isinstance(resolved_credential, UDataCredential) or not isinstance(json_body, Mapping):
+                        raise _controlled_error(
+                            "The controlled uData site PATCH requires a resolved credential and body."
+                        )
+                    response = _controlled_patch_response(resolved_credential, json_body)
+                else:
+                    response = sync_transport.send(request)
             except TransportFailure:
                 recorded = True
                 after = self._breakers.record_transport_failure(key)
@@ -1890,7 +2190,14 @@ class AsyncUDataClient(_UDataClientCore):
             recorded = False
             before = self._breakers.inspect(key)
             try:
-                response = await async_transport.send(request)
+                if owning_operation == SET_SITE_OPERATION:
+                    if not isinstance(resolved_credential, UDataCredential) or not isinstance(json_body, Mapping):
+                        raise _controlled_error(
+                            "The controlled uData site PATCH requires a resolved credential and body."
+                        )
+                    response = await _controlled_patch_response_async(resolved_credential, json_body)
+                else:
+                    response = await async_transport.send(request)
             except TransportFailure:
                 recorded = True
                 after = self._breakers.record_transport_failure(key)

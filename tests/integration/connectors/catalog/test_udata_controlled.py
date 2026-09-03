@@ -247,6 +247,7 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
         before = client.root_profile.get()
         assert before.feed_size is not None
         mutation_feed_size = before.feed_size + 1
+        primary_error: BaseException | None = None
         try:
             direct_status, direct_media, direct_fields = _direct_site_patch(
                 row, token, {"feed_size": mutation_feed_size}
@@ -269,11 +270,22 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
                 ),
             )
             after = client.root_profile.get()
-        finally:
+        except BaseException as error:
+            primary_error = error
+        cleanup_error: BaseException | None = None
+        try:
             restored_status, _, restored_fields = _direct_site_patch(row, token, {"feed_size": before.feed_size})
             assert restored_status in {200, 204}
             assert restored_fields["feed_size"] == before.feed_size
             assert client.root_profile.get().feed_size == before.feed_size
+        except BaseException as error:
+            cleanup_error = error
+        if primary_error is not None:
+            if cleanup_error is not None:
+                raise primary_error from cleanup_error
+            raise primary_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
     expected_media = row["response_media_type"]
     assert isinstance(expected_media, str)
