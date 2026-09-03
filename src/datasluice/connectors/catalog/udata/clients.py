@@ -117,6 +117,9 @@ _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "f7acbcd1ea2f88f7b9361cbfadbd46e62be82bd707538f22f0615796e8bf09a3"
 _CONTROLLED_DOCKERFILE_SHA256 = "6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
+_CONTROLLED_UDATA_IMAGE_SPEC = (
+    "udata-evidence-udata@sha256:c0603a681e8fb9a384dbd570c4b5ac74f32e327d044d1bccfd6707af7dc57b00"
+)
 _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
     ("mongo", "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47"),
     ("redis", "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256"),
@@ -1125,6 +1128,7 @@ def _controlled_service_image_identity(
     docker_endpoint: str,
     expected_image: str | None,
     udata_image_repository: str,
+    udata_image_spec: str,
     error_factory: Callable[[str], CatalogValidationError],
 ) -> tuple[str, str]:
     container_output = read("ps", "-q", service, docker_endpoint=docker_endpoint)
@@ -1152,11 +1156,25 @@ def _controlled_service_image_identity(
         or not isinstance(config_image, str)
     ):
         raise error_factory("The controlled uData container image identity is invalid.")
-    if service == "udata":
-        if config_image != udata_image_repository:
-            raise error_factory("The controlled uData service image is not the approved build.")
-    elif config_image != expected_image:
+    if not isinstance(expected_image, str) or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", expected_image) is None:
+        raise error_factory("The controlled uData image allowlist is invalid.")
+    expected_repository, expected_digest = expected_image.rsplit("@sha256:", 1)
+    if service == "udata" and (
+        expected_image != udata_image_spec
+        or expected_repository != udata_image_repository
+        or config_image != udata_image_repository
+    ):
+        raise error_factory("The controlled uData service image is not the approved build.")
+    if service != "udata" and config_image != expected_image:
         raise error_factory("A controlled uData dependency image is not approved.")
+    expected_image_id = f"sha256:{expected_digest}"
+    if image_id != expected_image_id:
+        message = (
+            "The controlled uData service image is not the approved build."
+            if service == "udata"
+            else "The controlled uData dependency image ID is not approved."
+        )
+        raise error_factory(message)
     image_fields = _parse_controlled_json_fields(
         read(
             "image",
@@ -1175,16 +1193,7 @@ def _controlled_service_image_identity(
         raise error_factory("The controlled uData image digest output is invalid.")
     if inspected_image_id != image_id:
         raise error_factory("The controlled uData image ID does not match its container.")
-    if service == "udata":
-        expected_repository_digest = f"{udata_image_repository}@{image_id}"
-    else:
-        if not isinstance(expected_image, str) or "@" not in expected_image:
-            raise error_factory("The controlled uData dependency image allowlist is invalid.")
-        expected_repository_digest = expected_image
-        expected_digest = expected_image.rsplit("@sha256:", 1)[1]
-        expected_image_id = f"sha256:{expected_digest}"
-        if image_id != expected_image_id:
-            raise error_factory("The controlled uData dependency image ID is not approved.")
+    expected_repository_digest = expected_image
     if expected_repository_digest not in repository_digests:
         raise error_factory("The controlled uData image repository digest is not approved.")
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
@@ -1196,6 +1205,7 @@ async def _controlled_service_image_identity_async(
     docker_endpoint: str,
     expected_image: str | None,
     udata_image_repository: str,
+    udata_image_spec: str,
     error_factory: Callable[[str], CatalogValidationError],
 ) -> tuple[str, str]:
     container_output = await read("ps", "-q", service, docker_endpoint=docker_endpoint)
@@ -1223,11 +1233,25 @@ async def _controlled_service_image_identity_async(
         or not isinstance(config_image, str)
     ):
         raise error_factory("The controlled uData container image identity is invalid.")
-    if service == "udata":
-        if config_image != udata_image_repository:
-            raise error_factory("The controlled uData service image is not the approved build.")
-    elif config_image != expected_image:
+    if not isinstance(expected_image, str) or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", expected_image) is None:
+        raise error_factory("The controlled uData image allowlist is invalid.")
+    expected_repository, expected_digest = expected_image.rsplit("@sha256:", 1)
+    if service == "udata" and (
+        expected_image != udata_image_spec
+        or expected_repository != udata_image_repository
+        or config_image != udata_image_repository
+    ):
+        raise error_factory("The controlled uData service image is not the approved build.")
+    if service != "udata" and config_image != expected_image:
         raise error_factory("A controlled uData dependency image is not approved.")
+    expected_image_id = f"sha256:{expected_digest}"
+    if image_id != expected_image_id:
+        message = (
+            "The controlled uData service image is not the approved build."
+            if service == "udata"
+            else "The controlled uData dependency image ID is not approved."
+        )
+        raise error_factory(message)
     image_fields = _parse_controlled_json_fields(
         await read(
             "image",
@@ -1246,16 +1270,7 @@ async def _controlled_service_image_identity_async(
         raise error_factory("The controlled uData image digest output is invalid.")
     if inspected_image_id != image_id:
         raise error_factory("The controlled uData image ID does not match its container.")
-    if service == "udata":
-        expected_repository_digest = f"{udata_image_repository}@{image_id}"
-    else:
-        if not isinstance(expected_image, str) or "@" not in expected_image:
-            raise error_factory("The controlled uData dependency image allowlist is invalid.")
-        expected_repository_digest = expected_image
-        expected_digest = expected_image.rsplit("@sha256:", 1)[1]
-        expected_image_id = f"sha256:{expected_digest}"
-        if image_id != expected_image_id:
-            raise error_factory("The controlled uData dependency image ID is not approved.")
+    expected_repository_digest = expected_image
     if expected_repository_digest not in repository_digests:
         raise error_factory("The controlled uData image repository digest is not approved.")
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
@@ -1271,6 +1286,7 @@ def _verify_controlled_source_and_nonce(
     expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
     dependency_image_specs: tuple[tuple[str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
+    udata_image_spec: str = _CONTROLLED_UDATA_IMAGE_SPEC,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1297,8 +1313,9 @@ def _verify_controlled_source_and_nonce(
             read,
             service,
             docker_endpoint,
-            dependency_images.get(service),
+            udata_image_spec if service == "udata" else dependency_images.get(service),
             udata_image_repository,
+            udata_image_spec,
             error_factory,
         )
         image_identities.append(image_identity)
@@ -1349,6 +1366,7 @@ async def _verify_controlled_source_and_nonce_async(
     expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
     dependency_image_specs: tuple[tuple[str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
+    udata_image_spec: str = _CONTROLLED_UDATA_IMAGE_SPEC,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1375,8 +1393,9 @@ async def _verify_controlled_source_and_nonce_async(
             read,
             service,
             docker_endpoint,
-            dependency_images.get(service),
+            udata_image_spec if service == "udata" else dependency_images.get(service),
             udata_image_repository,
+            udata_image_spec,
             error_factory,
         )
         image_identities.append(image_identity)
@@ -1788,7 +1807,6 @@ class _ImmutableTransportType(type):
         mcls, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object
     ) -> _ImmutableTransportType:
         reserved = {
-            "_factory_bindings",
             "__init__",
             "send",
             "send_stream",
@@ -1806,7 +1824,6 @@ class _ImmutableTransportType(type):
 
     def __setattr__(cls, name: str, value: object) -> None:
         if name in {
-            "_factory_bindings",
             "__init__",
             "send",
             "send_stream",
@@ -1822,7 +1839,6 @@ class _ImmutableTransportType(type):
 
     def __delattr__(cls, name: str) -> None:
         if name in {
-            "_factory_bindings",
             "__init__",
             "send",
             "send_stream",
@@ -1898,27 +1914,29 @@ def _build_controlled_transport_types():
         except TypeError:
             return None
 
+    sync_transport_type = HttpxCatalogTransport
+    sync_transport_initializer = HttpxCatalogTransport.__init__
+    sync_transport_send = HttpxCatalogTransport.send
+    sync_transport_send_stream = HttpxCatalogTransport.send_stream
+    sync_transport_close = HttpxCatalogTransport.close
+    async_transport_type = AsyncHttpxCatalogTransport
+    async_transport_initializer = AsyncHttpxCatalogTransport.__init__
+    async_transport_send = AsyncHttpxCatalogTransport.send
+    async_transport_send_stream = AsyncHttpxCatalogTransport.send_stream
+    async_transport_close = AsyncHttpxCatalogTransport.aclose
+
     class _ControlledSyncTransport(metaclass=_ImmutableTransportType):
         """Own a stock transport after live controlled-stack verification."""
 
         __slots__ = ("__weakref__",)
-        _factory_bindings = (
-            HttpxCatalogTransport,
-            HttpxCatalogTransport.__init__,
-            HttpxCatalogTransport.send,
-            HttpxCatalogTransport.send_stream,
-            HttpxCatalogTransport.close,
-            trusted_sync_operations,
-        )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport_type, transport_initializer, _, _, close, operations = type(self)._factory_bindings
-            transport = object.__new__(transport_type)
+            transport = object.__new__(sync_transport_type)
             try:
-                cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
-                verification = operations.verify(transport)
+                cast(Callable[..., None], sync_transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
+                verification = trusted_sync_operations.verify(transport)
             except BaseException:
-                cast(Callable[[HttpxCatalogTransport], None], close)(transport)
+                cast(Callable[[HttpxCatalogTransport], None], sync_transport_close)(transport)
                 raise
             sync_registry.set(
                 self,
@@ -1926,7 +1944,7 @@ def _build_controlled_transport_types():
                     transport,
                     verification.evidence,
                     clock(),
-                    operations,
+                    trusted_sync_operations,
                     verification.identity.docker_endpoint,
                 ),
             )
@@ -1935,52 +1953,40 @@ def _build_controlled_transport_types():
             state = sync_state(self)
             if state is None:
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
-            send = cast(
-                Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeResponse],
-                type(self)._factory_bindings[2],
+            return cast(Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeResponse], sync_transport_send)(
+                cast(HttpxCatalogTransport, state[0]), request
             )
-            return send(cast(HttpxCatalogTransport, state[0]), request)
 
         def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
             state = sync_state(self)
             if state is None:
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
-            send_stream = cast(
-                Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeStreamResponse],
-                type(self)._factory_bindings[3],
-            )
-            return send_stream(cast(HttpxCatalogTransport, state[0]), request)
+            return cast(
+                Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeStreamResponse], sync_transport_send_stream
+            )(cast(HttpxCatalogTransport, state[0]), request)
 
         def close(self) -> None:
             state = sync_state(self)
             if state is not None:
-                close = cast(Callable[[HttpxCatalogTransport], None], type(self)._factory_bindings[4])
-                close(cast(HttpxCatalogTransport, state[0]))
+                cast(Callable[[HttpxCatalogTransport], None], sync_transport_close)(
+                    cast(HttpxCatalogTransport, state[0])
+                )
 
     class _ControlledAsyncTransport(metaclass=_ImmutableTransportType):
         """Own a stock asynchronous transport after live controlled-stack verification."""
 
         __slots__ = ("__weakref__",)
-        _factory_bindings = (
-            AsyncHttpxCatalogTransport,
-            AsyncHttpxCatalogTransport.__init__,
-            AsyncHttpxCatalogTransport.send,
-            AsyncHttpxCatalogTransport.send_stream,
-            AsyncHttpxCatalogTransport.aclose,
-            trusted_async_operations,
-        )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport_type, transport_initializer, _, _, _, operations = type(self)._factory_bindings
-            transport = object.__new__(transport_type)
-            cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
+            transport = object.__new__(async_transport_type)
+            cast(Callable[..., None], async_transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
             async_registry.set(
                 self,
                 (
                     transport,
                     None,
                     0.0,
-                    operations,
+                    trusted_async_operations,
                     None,
                 ),
             )
@@ -1993,8 +1999,9 @@ def _build_controlled_transport_types():
             try:
                 verification = await state[3].verify(state[0])
             except BaseException:
-                _, _, _, _, aclose, _ = type(self)._factory_bindings
-                await aclose(cast(AsyncHttpxCatalogTransport, state[0]))
+                await cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], async_transport_close)(
+                    cast(AsyncHttpxCatalogTransport, state[0])
+                )
                 async_registry.discard(self)
                 raise
             async_registry.set(
@@ -2012,27 +2019,26 @@ def _build_controlled_transport_types():
             state = async_state(self)
             if state is None or state[1] is None:
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
-            send = cast(
+            return await cast(
                 Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[RuntimeResponse]],
-                type(self)._factory_bindings[2],
-            )
-            return await send(cast(AsyncHttpxCatalogTransport, state[0]), request)
+                async_transport_send,
+            )(cast(AsyncHttpxCatalogTransport, state[0]), request)
 
         async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
             state = async_state(self)
             if state is None or state[1] is None:
                 raise _controlled_error("The controlled uData transport is not factory-bound.")
-            send_stream = cast(
+            return await cast(
                 Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]],
-                type(self)._factory_bindings[3],
-            )
-            return await send_stream(cast(AsyncHttpxCatalogTransport, state[0]), request)
+                async_transport_send_stream,
+            )(cast(AsyncHttpxCatalogTransport, state[0]), request)
 
         async def aclose(self) -> None:
             state = async_state(self)
             if state is not None:
-                aclose = cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], type(self)._factory_bindings[4])
-                await aclose(cast(AsyncHttpxCatalogTransport, state[0]))
+                await cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], async_transport_close)(
+                    cast(AsyncHttpxCatalogTransport, state[0])
+                )
 
     def sync_site_id(value: object) -> str | None:
         state = sync_state(value)

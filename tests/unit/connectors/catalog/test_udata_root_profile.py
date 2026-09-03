@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
+from types import FunctionType
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -65,28 +66,31 @@ _CREDENTIAL = UDataCredential(api_key="site-key")
 _PERMISSIONS = EffectivePermissions.for_credential(
     _CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
 )
+_TEST_CONTROLLED_IMAGE_SPECS = (
+    (
+        "udata",
+        "udata-evidence-udata@sha256:c0603a681e8fb9a384dbd570c4b5ac74f32e327d044d1bccfd6707af7dc57b00",
+    ),
+    ("mongo", "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47"),
+    ("redis", "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256"),
+    (
+        "search",
+        "docker.elastic.co/elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+    ),
+    ("storage", "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"),
+    ("mailpit", "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf"),
+)
+_TEST_CONTROLLED_SERVICE_NAMES = tuple(service for service, _ in _TEST_CONTROLLED_IMAGE_SPECS)
 
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
-    dependency_images = dict(udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS)
-    image_ids = {
-        "udata": "sha256:" + "a" * 64,
-        **{
-            service: f"sha256:{image.rsplit('@sha256:', 1)[1]}"
-            for service, image in udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS
-        },
-    }
+    image_specs = dict(_TEST_CONTROLLED_IMAGE_SPECS)
+    image_ids = {service: f"sha256:{image.rsplit('@sha256:', 1)[1]}" for service, image in _TEST_CONTROLLED_IMAGE_SPECS}
     image_identities = []
-    for service in udata_clients._CONTROLLED_SERVICE_NAMES:
-        config_image = (
-            udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY if service == "udata" else dependency_images[service]
-        )
-        repository_digest = (
-            f"{udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY}@{image_ids[service]}"
-            if service == "udata"
-            else dependency_images[service]
-        )
-        image_identities.append(f"{service}|{config_image}|{image_ids[service]}|{repository_digest}")
+    for service in _TEST_CONTROLLED_SERVICE_NAMES:
+        image_spec = image_specs[service]
+        config_image = image_spec.split("@", 1)[0] if service == "udata" else image_spec
+        image_identities.append(f"{service}|{config_image}|{image_ids[service]}|{image_spec}")
     return udata_clients._ControlledStackEvidence(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         site_id=site_id,
@@ -320,6 +324,7 @@ def test_controlled_dependency_image_identity_rejects_unapproved_image_id() -> N
             "unix:///tmp/docker.sock",
             approved_image,
             "udata-evidence-udata",
+            "udata-evidence-udata@sha256:" + "d" * 64,
             udata_clients._controlled_error,
         )
 
@@ -629,23 +634,15 @@ class AsyncRouterTransport:
 
 
 def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
-    container_ids = {
-        service: f"{index:064x}" for index, service in enumerate(udata_clients._CONTROLLED_SERVICE_NAMES, 1)
-    }
-    dependency_images = dict(udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS)
-    image_ids = {
-        "udata": "sha256:" + "a" * 64,
-        **{
-            service: f"sha256:{image.rsplit('@sha256:', 1)[1]}"
-            for service, image in udata_clients._CONTROLLED_DEPENDENCY_IMAGE_SPECS
-        },
-    }
+    container_ids = {service: f"{index:064x}" for index, service in enumerate(_TEST_CONTROLLED_SERVICE_NAMES, 1)}
+    image_specs = dict(_TEST_CONTROLLED_IMAGE_SPECS)
+    image_ids = {service: f"sha256:{image.rsplit('@sha256:', 1)[1]}" for service, image in _TEST_CONTROLLED_IMAGE_SPECS}
 
     def sync_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
         if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
             return '"unix:///Users/nitish/.docker/run/docker.sock"'
         if args[-4:] == ("ps", "--status", "running", "--services"):
-            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
+            return "\n".join(_TEST_CONTROLLED_SERVICE_NAMES)
         if args[-3:] == ("port", "udata", "7000"):
             return "127.0.0.1:5640"
         if len(args) == 3 and args[:2] == ("ps", "-q"):
@@ -653,24 +650,19 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
         if args[:2] == ("inspect", "--format"):
             container_id = args[-1]
             service = next(service for service, value in container_ids.items() if value == container_id)
-            config_image = (
-                udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY if service == "udata" else dependency_images[service]
-            )
+            image_spec = image_specs[service]
+            config_image = image_spec.split("@", 1)[0] if service == "udata" else image_spec
             return " ".join((json.dumps(container_id), json.dumps(image_ids[service]), json.dumps(config_image)))
         if args[:3] == ("image", "inspect", "--format"):
             image_id = args[-1]
             service = next(service for service, value in image_ids.items() if value == image_id)
-            repository_digest = (
-                f"{udata_clients._CONTROLLED_UDATA_IMAGE_REPOSITORY}@{image_id}"
-                if service == "udata"
-                else dependency_images[service]
-            )
+            repository_digest = image_specs[service]
             return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
         if args[:3] == ("exec", container_ids["udata"], "git"):
             return "0546582058d84706812a1c37387576efc4e5ad1f"
         if args[:3] == ("exec", container_ids["udata"], "printenv"):
             return "unit-test-stack"
-        if args[-3] == "python":
+        if len(args) >= 3 and args[-3] == "python":
             response = transport.routes.get(
                 ("PATCH", _SITE_URL),
                 _json_response(200, _site_body(), {"Content-Type": "application/json"}),
@@ -693,24 +685,19 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
 
     sync_type = udata_clients._ControlledSyncTransport
     async_type = udata_clients._ControlledAsyncTransport
-    sync_bindings = sync_type._factory_bindings
-    async_bindings = async_type._factory_bindings
-    type.__setattr__(
-        sync_type,
-        "_factory_bindings",
-        (*sync_bindings[:5], udata_clients._make_controlled_sync_operations(sync_command)),
-    )
-    type.__setattr__(
-        async_type,
-        "_factory_bindings",
-        (*async_bindings[:5], udata_clients._make_controlled_async_operations(async_command)),
-    )
+    sync_operations = udata_clients._make_controlled_sync_operations(sync_command)
+    async_operations = udata_clients._make_controlled_async_operations(async_command)
 
-    def restore_bindings() -> None:
-        type.__setattr__(sync_type, "_factory_bindings", sync_bindings)
-        type.__setattr__(async_type, "_factory_bindings", async_bindings)
+    def replace_closure_cell(function: Callable[..., object], name: str, value: object) -> None:
+        function_type = cast(FunctionType, function)
+        cells = dict(zip(function_type.__code__.co_freevars, function_type.__closure__ or (), strict=True))
+        cell = cells[name]
+        previous = cell.cell_contents
+        cell.cell_contents = value
+        stack.callback(setattr, cell, "cell_contents", previous)
 
-    stack.callback(restore_bindings)
+    replace_closure_cell(cast(Callable[..., object], sync_type.__init__), "trusted_sync_operations", sync_operations)
+    replace_closure_cell(cast(Callable[..., object], async_type.__init__), "trusted_async_operations", async_operations)
 
 
 def _sync_client(
@@ -966,6 +953,33 @@ def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_ov
     assert called is False
 
 
+def test_controlled_sync_class_binding_override_cannot_replace_authority() -> None:
+    transport, client = _sync_client(
+        _routes(
+            (
+                "PATCH",
+                _SITE_URL,
+                _json_response(200, _site_body(title="Changed"), {"Content-Type": "application/json"}),
+            )
+        ),
+        credential=_CREDENTIAL,
+    )
+
+    with client:
+        transport_type = type(client.transport)
+        type.__setattr__(transport_type, "_factory_bindings", object())
+        try:
+            result = client.root_profile.set_site(
+                SitePatchInput(title="Changed"),
+                permissions=_PERMISSIONS,
+                mutation_policy=_site_policy(),
+            )
+        finally:
+            type.__delattr__(transport_type, "_factory_bindings")
+
+    assert result.receipt.outcome == "succeeded"
+
+
 def test_controlled_async_dispatch_keeps_factory_bound_operations_after_helper_override() -> None:
     transport, client = _async_client(
         _routes(
@@ -1000,6 +1014,36 @@ def test_controlled_async_dispatch_keeps_factory_bound_operations_after_helper_o
 
     assert result.receipt.outcome == "succeeded"
     assert called is False
+
+
+def test_controlled_async_class_binding_override_cannot_replace_authority() -> None:
+    _, client = _async_client(
+        _routes(
+            (
+                "PATCH",
+                _SITE_URL,
+                _json_response(200, _site_body(title="Changed"), {"Content-Type": "application/json"}),
+            )
+        ),
+        credential=_CREDENTIAL,
+    )
+
+    async def run() -> SiteMutationResult:
+        async with client:
+            transport_type = type(client.transport)
+            type.__setattr__(transport_type, "_factory_bindings", object())
+            try:
+                return await client.root_profile.set_site(
+                    SitePatchInput(title="Changed"),
+                    permissions=_PERMISSIONS,
+                    mutation_policy=_site_policy(),
+                )
+            finally:
+                type.__delattr__(transport_type, "_factory_bindings")
+
+    result = asyncio.run(run())
+
+    assert result.receipt.outcome == "succeeded"
 
 
 def test_controlled_sync_construction_ignores_preconstruction_helper_override() -> None:
