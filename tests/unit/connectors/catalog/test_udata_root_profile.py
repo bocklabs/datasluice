@@ -8,8 +8,8 @@ import json
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack
 from pathlib import Path
+from types import FunctionType
 from typing import Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -386,6 +386,19 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
+def _controlled_dependencies() -> Any:
+    function = cast(FunctionType, udata_clients._ControlledSyncTransport.__init__)
+    cells = dict(zip(function.__code__.co_freevars, function.__closure__ or (), strict=True))
+    return cells["dependencies"].cell_contents
+
+
+def _replace_controlled_dependency(stack: ExitStack, name: str, value: object) -> None:
+    dependencies = _controlled_dependencies()
+    previous = getattr(dependencies, name)
+    object.__setattr__(dependencies, name, value)
+    stack.callback(object.__setattr__, dependencies, name, previous)
+
+
 def _sync_client(
     routes: Mapping[tuple[str, str], RuntimeResponse],
     *,
@@ -398,16 +411,14 @@ def _sync_client(
 ) -> tuple[RouterTransport, SyncUDataClient]:
     transport = test_transport or RouterTransport(routes)
     stack = ExitStack()
-    stack.enter_context(patch.object(udata_clients, "create_default_sync_transport", lambda **_: transport))
-    stack.enter_context(patch.object(udata_clients, "_verify_controlled_sync_stack", lambda _: _controlled_evidence()))
+    _replace_controlled_dependency(stack, "_sync_builder", lambda **_: transport)
+    _replace_controlled_dependency(stack, "_sync_verifier", lambda _: _controlled_evidence())
     controlled_transport = udata_clients._ControlledSyncTransport()
     if revalidate is not None:
-        stack.enter_context(
-            patch.object(
-                udata_clients,
-                "_verify_controlled_sync_stack",
-                lambda _: _controlled_evidence() if revalidate(site_id="site") else _controlled_evidence("changed"),
-            )
+        _replace_controlled_dependency(
+            stack,
+            "_sync_verifier",
+            lambda _: _controlled_evidence() if revalidate(site_id="site") else _controlled_evidence("changed"),
         )
     settings = UDataClientSettings(
         base_url=origin,
@@ -445,12 +456,12 @@ def _async_client(
 ) -> tuple[AsyncRouterTransport, AsyncUDataClient]:
     transport = AsyncRouterTransport(routes)
     stack = ExitStack()
-    stack.enter_context(patch.object(udata_clients, "create_default_async_transport", lambda **_: transport))
+    _replace_controlled_dependency(stack, "_async_builder", lambda **_: transport)
 
     async def verify(_: object) -> Any:
         return _controlled_evidence()
 
-    stack.enter_context(patch.object(udata_clients, "_verify_controlled_async_stack", verify))
+    _replace_controlled_dependency(stack, "_async_verifier", verify)
     controlled_transport = udata_clients._ControlledAsyncTransport()
     asyncio.run(controlled_transport.verify())
     settings = UDataClientSettings(
