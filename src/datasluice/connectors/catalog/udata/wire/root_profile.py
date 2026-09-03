@@ -447,7 +447,8 @@ def digest_stream_document(
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
     complete_ready = False
-    decode_failure: NativeCatalogError | None = None
+    primary_error: BaseException | None = None
+    failure_report_error: BaseException | None = None
     try:
         media_type = response_media_type(
             response.headers,
@@ -472,20 +473,36 @@ def digest_stream_document(
         decoder.decode(b"", final=True)
         complete_ready = True
     except UnicodeDecodeError:
-        decode_failure = NativeCatalogError(
+        error = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
             operation=operation,
             platform="udata",
             status_code=response.status_code,
         )
-        response.fail(decode_failure)
+        primary_error = error
+        try:
+            response.fail(error)
+        except BaseException as report_error:
+            failure_report_error = report_error
     except BaseException as error:
-        response.fail(error)
-        raise
-    finally:
+        primary_error = error
+        try:
+            response.fail(error)
+        except BaseException as report_error:
+            failure_report_error = report_error
+    cleanup_error: BaseException | None = None
+    try:
         response.close()
-    if decode_failure is not None:
-        raise decode_failure
+    except BaseException as error:
+        cleanup_error = error
+    if primary_error is not None:
+        if cleanup_error is not None:
+            raise primary_error from cleanup_error
+        if failure_report_error is not None:
+            raise primary_error from failure_report_error
+        raise primary_error
+    if cleanup_error is not None:
+        raise cleanup_error
     if complete_ready:
         try:
             response.complete()
@@ -521,7 +538,8 @@ async def digest_stream_document_async(
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
     complete_ready = False
-    decode_failure: NativeCatalogError | None = None
+    primary_error: BaseException | None = None
+    failure_report_error: BaseException | None = None
     try:
         media_type = response_media_type(
             response.headers,
@@ -548,20 +566,36 @@ async def digest_stream_document_async(
         decoder.decode(b"", final=True)
         complete_ready = True
     except UnicodeDecodeError:
-        decode_failure = NativeCatalogError(
+        error = NativeCatalogError(
             "The uData site document is not valid UTF-8.",
             operation=operation,
             platform="udata",
             status_code=response.status_code,
         )
-        await response.fail(decode_failure)
+        primary_error = error
+        try:
+            await response.fail(error)
+        except BaseException as report_error:
+            failure_report_error = report_error
     except BaseException as error:
-        await response.fail(error)
-        raise
-    finally:
+        primary_error = error
+        try:
+            await response.fail(error)
+        except BaseException as report_error:
+            failure_report_error = report_error
+    cleanup_error: BaseException | None = None
+    try:
         await response.aclose()
-    if decode_failure is not None:
-        raise decode_failure
+    except BaseException as error:
+        cleanup_error = error
+    if primary_error is not None:
+        if cleanup_error is not None:
+            raise primary_error from cleanup_error
+        if failure_report_error is not None:
+            raise primary_error from failure_report_error
+        raise primary_error
+    if cleanup_error is not None:
+        raise cleanup_error
     if complete_ready:
         try:
             await response.complete()

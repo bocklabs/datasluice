@@ -569,18 +569,28 @@ async def _compose_read_async(*args: str) -> str:
     )
 
 
-def _controlled_patch_response(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
-    _verify_controlled_source_and_nonce()
+def _controlled_patch_response(
+    credential: UDataCredential,
+    body: Mapping[str, object],
+    *,
+    command: Callable[..., str] | None = None,
+    source_verifier: Callable[[], str] | None = None,
+    response_parser: Callable[[str], RuntimeResponse] | None = None,
+) -> RuntimeResponse:
+    runner = _controlled_command if command is None else command
+    verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
+    parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
+    verify_source()
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
-    output = _controlled_command(
+    output = runner(
         ("exec", "-T", "udata", "python", "-c", _CONTROLLED_PATCH_PROGRAM),
         input_data=input_data,
         timeout_message="The controlled uData site PATCH timed out.",
         output_message="The controlled uData site PATCH returned too much output.",
         failure_message="The controlled uData site PATCH process failed.",
     )
-    return _parse_controlled_patch_output(output)
+    return parse_response(output)
 
 
 def _parse_controlled_patch_output(output: str) -> RuntimeResponse:
@@ -611,18 +621,28 @@ def _parse_controlled_patch_output(output: str) -> RuntimeResponse:
     return RuntimeResponse(status, headers, encoded_body)
 
 
-async def _controlled_patch_response_async(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
-    await _verify_controlled_source_and_nonce_async()
+async def _controlled_patch_response_async(
+    credential: UDataCredential,
+    body: Mapping[str, object],
+    *,
+    command: Callable[..., Awaitable[str]] | None = None,
+    source_verifier: Callable[[], Awaitable[str]] | None = None,
+    response_parser: Callable[[str], RuntimeResponse] | None = None,
+) -> RuntimeResponse:
+    runner = _controlled_command_async if command is None else command
+    verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
+    parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
+    await verify_source()
     token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
     input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
-    output = await _controlled_command_async(
+    output = await runner(
         ("exec", "-T", "udata", "python", "-c", _CONTROLLED_PATCH_PROGRAM),
         input_data=input_data,
         timeout_message="The controlled uData site PATCH timed out.",
         output_message="The controlled uData site PATCH returned too much output.",
         failure_message="The controlled uData site PATCH process failed.",
     )
-    return _parse_controlled_patch_output(output)
+    return parse_response(output)
 
 
 def _controlled_source_nonce() -> str:
@@ -656,42 +676,52 @@ def _validate_controlled_context_endpoint(context_endpoint: str) -> None:
         raise _controlled_error("Controlled uData evidence requires a local Unix Docker context.")
 
 
-def _verify_controlled_source_and_nonce() -> str:
-    nonce = _controlled_source_nonce()
-    context_endpoint = _compose_read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-    _validate_controlled_context_endpoint(context_endpoint)
-    services = _compose_read("ps", "--status", "running", "--services").splitlines()
+def _verify_controlled_source_and_nonce(
+    *,
+    compose_read: Callable[..., str] | None = None,
+    source_nonce: Callable[[], str] | None = None,
+    context_validator: Callable[[str], None] | None = None,
+) -> str:
+    read = _compose_read if compose_read is None else compose_read
+    nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
+    validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
+    nonce = nonce_reader()
+    context_endpoint = read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
+    validate_context(context_endpoint)
+    services = read("ps", "--status", "running", "--services").splitlines()
     expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
     if len(services) != len(expected_services) or set(services) != expected_services:
         raise _controlled_error("The running services do not match the controlled uData stack.")
-    if _compose_read("port", "udata", "7000") != "127.0.0.1:5640":
+    if read("port", "udata", "7000") != "127.0.0.1:5640":
         raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
-    if (
-        _compose_read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD")
-        != _CONTROLLED_SOURCE_COMMIT
-    ):
+    if read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD") != _CONTROLLED_SOURCE_COMMIT:
         raise _controlled_error("The controlled uData service source does not match the approved commit.")
-    if _compose_read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
+    if read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
         raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
     return hashlib.sha256(nonce.encode()).hexdigest()
 
 
-async def _verify_controlled_source_and_nonce_async() -> str:
-    nonce = _controlled_source_nonce()
-    context_endpoint = await _compose_read_async("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-    _validate_controlled_context_endpoint(context_endpoint)
-    services = (await _compose_read_async("ps", "--status", "running", "--services")).splitlines()
+async def _verify_controlled_source_and_nonce_async(
+    *,
+    compose_read: Callable[..., Awaitable[str]] | None = None,
+    source_nonce: Callable[[], str] | None = None,
+    context_validator: Callable[[str], None] | None = None,
+) -> str:
+    read = _compose_read_async if compose_read is None else compose_read
+    nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
+    validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
+    nonce = nonce_reader()
+    context_endpoint = await read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
+    validate_context(context_endpoint)
+    services = (await read("ps", "--status", "running", "--services")).splitlines()
     expected_services = {"udata", "mongo", "redis", "search", "storage", "mailpit"}
     if len(services) != len(expected_services) or set(services) != expected_services:
         raise _controlled_error("The running services do not match the controlled uData stack.")
-    if await _compose_read_async("port", "udata", "7000") != "127.0.0.1:5640":
+    if await read("port", "udata", "7000") != "127.0.0.1:5640":
         raise _controlled_error("The controlled uData service is not bound to the approved loopback port.")
-    if (
-        await _compose_read_async("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD")
-        != _CONTROLLED_SOURCE_COMMIT
-    ):
+    if await read("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD") != _CONTROLLED_SOURCE_COMMIT:
         raise _controlled_error("The controlled uData service source does not match the approved commit.")
-    if await _compose_read_async("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
+    if await read("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE") != nonce:
         raise _controlled_error("The controlled uData service nonce does not match the local evidence nonce.")
     return hashlib.sha256(nonce.encode()).hexdigest()
 
@@ -722,8 +752,15 @@ def _controlled_peer_evidence(response: RuntimeResponse) -> str:
     return payload["id"]
 
 
-def _verify_controlled_sync_stack(transport: CatalogTransport) -> _ControlledStackEvidence:
-    nonce_sha256 = _verify_controlled_source_and_nonce()
+def _verify_controlled_sync_stack(
+    transport: CatalogTransport,
+    *,
+    source_verifier: Callable[[], str] | None = None,
+    peer_evidence: Callable[[RuntimeResponse], str] | None = None,
+) -> _ControlledStackEvidence:
+    verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
+    decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
+    nonce_sha256 = verify_source()
     response = transport.send(
         RuntimeRequest(
             method="GET",
@@ -733,11 +770,18 @@ def _verify_controlled_sync_stack(transport: CatalogTransport) -> _ControlledSta
             max_response_bytes=8192,
         )
     )
-    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=_controlled_peer_evidence(response))
+    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=decode_peer(response))
 
 
-async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _ControlledStackEvidence:
-    nonce_sha256 = await _verify_controlled_source_and_nonce_async()
+async def _verify_controlled_async_stack(
+    transport: AsyncCatalogTransport,
+    *,
+    source_verifier: Callable[[], Awaitable[str]] | None = None,
+    peer_evidence: Callable[[RuntimeResponse], str] | None = None,
+) -> _ControlledStackEvidence:
+    verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
+    decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
+    nonce_sha256 = await verify_source()
     response = await transport.send(
         RuntimeRequest(
             method="GET",
@@ -747,7 +791,107 @@ async def _verify_controlled_async_stack(transport: AsyncCatalogTransport) -> _C
             max_response_bytes=8192,
         )
     )
-    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=_controlled_peer_evidence(response))
+    return _ControlledStackEvidence(nonce_sha256=nonce_sha256, site_id=decode_peer(response))
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledSyncOperations:
+    verify: Callable[[CatalogTransport], _ControlledStackEvidence]
+    patch: Callable[[UDataCredential, Mapping[str, object]], RuntimeResponse]
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledAsyncOperations:
+    verify: Callable[[AsyncCatalogTransport], Awaitable[_ControlledStackEvidence]]
+    patch: Callable[[UDataCredential, Mapping[str, object]], Awaitable[RuntimeResponse]]
+
+
+def _make_controlled_compose_read(command: Callable[..., str]) -> Callable[..., str]:
+    def compose_read(*args: str) -> str:
+        return command(
+            args,
+            timeout_message="The controlled uData stack identity check timed out.",
+            output_message="The controlled uData stack identity check returned too much output.",
+            failure_message="The controlled uData stack identity check failed.",
+        )
+
+    return compose_read
+
+
+def _make_controlled_compose_read_async(command: Callable[..., Awaitable[str]]) -> Callable[..., Awaitable[str]]:
+    async def compose_read(*args: str) -> str:
+        return await command(
+            args,
+            timeout_message="The controlled uData stack identity check timed out.",
+            output_message="The controlled uData stack identity check returned too much output.",
+            failure_message="The controlled uData stack identity check failed.",
+        )
+
+    return compose_read
+
+
+def _make_controlled_sync_operations(command: Callable[..., str]) -> _ControlledSyncOperations:
+    compose_read = _make_controlled_compose_read(command)
+    source_checker = _verify_controlled_source_and_nonce
+    source_nonce = _controlled_source_nonce
+    context_validator = _validate_controlled_context_endpoint
+    stack_verifier = _verify_controlled_sync_stack
+    peer_evidence = _controlled_peer_evidence
+    patch_response = _controlled_patch_response
+    response_parser = _parse_controlled_patch_output
+
+    def verify_source() -> str:
+        return source_checker(
+            compose_read=compose_read,
+            source_nonce=source_nonce,
+            context_validator=context_validator,
+        )
+
+    def verify(transport: CatalogTransport) -> _ControlledStackEvidence:
+        return stack_verifier(transport, source_verifier=verify_source, peer_evidence=peer_evidence)
+
+    def patch(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
+        return patch_response(
+            credential,
+            body,
+            command=command,
+            source_verifier=verify_source,
+            response_parser=response_parser,
+        )
+
+    return _ControlledSyncOperations(verify=verify, patch=patch)
+
+
+def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) -> _ControlledAsyncOperations:
+    compose_read = _make_controlled_compose_read_async(command)
+    source_checker = _verify_controlled_source_and_nonce_async
+    source_nonce = _controlled_source_nonce
+    context_validator = _validate_controlled_context_endpoint
+    stack_verifier = _verify_controlled_async_stack
+    peer_evidence = _controlled_peer_evidence
+    patch_response = _controlled_patch_response_async
+    response_parser = _parse_controlled_patch_output
+
+    async def verify_source() -> str:
+        return await source_checker(
+            compose_read=compose_read,
+            source_nonce=source_nonce,
+            context_validator=context_validator,
+        )
+
+    async def verify(transport: AsyncCatalogTransport) -> _ControlledStackEvidence:
+        return await stack_verifier(transport, source_verifier=verify_source, peer_evidence=peer_evidence)
+
+    async def patch(credential: UDataCredential, body: Mapping[str, object]) -> RuntimeResponse:
+        return await patch_response(
+            credential,
+            body,
+            command=command,
+            source_verifier=verify_source,
+            response_parser=response_parser,
+        )
+
+    return _ControlledAsyncOperations(verify=verify, patch=patch)
 
 
 class _ImmutableDispatchGateType(type):
@@ -757,10 +901,10 @@ class _ImmutableDispatchGateType(type):
         reserved = {
             "authorize_sync",
             "authorize_async",
+            "dispatch_sync",
+            "dispatch_async",
             "bind_sync_client",
             "bind_async_client",
-            "_sync_verifier",
-            "_async_verifier",
         }
         inherited: set[str] = set()
         for base in bases:
@@ -774,10 +918,10 @@ class _ImmutableDispatchGateType(type):
         if name in {
             "authorize_sync",
             "authorize_async",
+            "dispatch_sync",
+            "dispatch_async",
             "bind_sync_client",
             "bind_async_client",
-            "_sync_verifier",
-            "_async_verifier",
         }:
             raise AttributeError("Controlled dispatch authorization is immutable.")
         super().__setattr__(name, value)
@@ -786,10 +930,10 @@ class _ImmutableDispatchGateType(type):
         if name in {
             "authorize_sync",
             "authorize_async",
+            "dispatch_sync",
+            "dispatch_async",
             "bind_sync_client",
             "bind_async_client",
-            "_sync_verifier",
-            "_async_verifier",
         }:
             raise AttributeError("Controlled dispatch authorization is immutable.")
         super().__delattr__(name)
@@ -929,8 +1073,8 @@ class _IdentityRegistry[T]:
 
 
 def _build_controlled_transport_types():
-    type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float]
-    type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float]
+    type SyncState = tuple[CatalogTransport, _ControlledStackEvidence, float, _ControlledSyncOperations]
+    type AsyncState = tuple[AsyncCatalogTransport, _ControlledStackEvidence | None, float, _ControlledAsyncOperations]
     sync_registry: _IdentityRegistry[SyncState] = _IdentityRegistry()
     async_registry: _IdentityRegistry[AsyncState] = _IdentityRegistry()
     sync_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
@@ -958,19 +1102,22 @@ def _build_controlled_transport_types():
             HttpxCatalogTransport.send,
             HttpxCatalogTransport.send_stream,
             HttpxCatalogTransport.close,
-            _verify_controlled_sync_stack,
+            _make_controlled_sync_operations,
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport_type, transport_initializer, _, _, close, verifier = type(self)._factory_bindings
+            transport_type, transport_initializer, _, _, close, operation_factory = type(self)._factory_bindings
             transport = object.__new__(transport_type)
+            operations = cast(Callable[[Callable[..., str]], _ControlledSyncOperations], operation_factory)(
+                _controlled_command
+            )
             try:
                 cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
-                evidence = verifier(transport)
+                evidence = operations.verify(transport)
             except BaseException:
                 cast(Callable[[HttpxCatalogTransport], None], close)(transport)
                 raise
-            sync_registry.set(self, (transport, evidence, monotonic()))
+            sync_registry.set(self, (transport, evidence, monotonic(), operations))
 
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = sync_state(self)
@@ -1008,12 +1155,15 @@ def _build_controlled_transport_types():
             AsyncHttpxCatalogTransport.send,
             AsyncHttpxCatalogTransport.send_stream,
             AsyncHttpxCatalogTransport.aclose,
-            _verify_controlled_async_stack,
+            _make_controlled_async_operations,
         )
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
-            transport_type, transport_initializer, _, _, _, _ = type(self)._factory_bindings
+            transport_type, transport_initializer, _, _, _, operation_factory = type(self)._factory_bindings
             transport = object.__new__(transport_type)
+            operations = cast(Callable[[Callable[..., Awaitable[str]]], _ControlledAsyncOperations], operation_factory)(
+                _controlled_command_async
+            )
             cast(Callable[..., None], transport_initializer)(transport, tls_policy=tls_policy, budget=budget)
             async_registry.set(
                 self,
@@ -1021,6 +1171,7 @@ def _build_controlled_transport_types():
                     transport,
                     None,
                     0.0,
+                    operations,
                 ),
             )
 
@@ -1030,14 +1181,13 @@ def _build_controlled_transport_types():
             if state is None:
                 return
             try:
-                _, _, _, _, _, verifier = type(self)._factory_bindings
-                evidence = await verifier(state[0])
+                evidence = await state[3].verify(state[0])
             except BaseException:
                 _, _, _, _, aclose, _ = type(self)._factory_bindings
                 await aclose(cast(AsyncHttpxCatalogTransport, state[0]))
                 async_registry.discard(self)
                 raise
-            async_registry.set(self, (state[0], evidence, monotonic()))
+            async_registry.set(self, (state[0], evidence, monotonic(), state[3]))
 
         async def send(self, request: RuntimeRequest) -> RuntimeResponse:
             state = async_state(self)
@@ -1077,8 +1227,7 @@ def _build_controlled_transport_types():
         state = sync_state(value)
         if state is None:
             return False
-        _, _, _, _, _, verifier = _ControlledSyncTransport._factory_bindings
-        evidence = verifier(state[0])
+        evidence = state[3].verify(state[0])
         return (
             origin == _CONTROLLED_ORIGIN
             and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
@@ -1098,8 +1247,7 @@ def _build_controlled_transport_types():
         state = async_state(value)
         if state is None or state[1] is None:
             return False
-        _, _, _, _, _, verifier = _ControlledAsyncTransport._factory_bindings
-        evidence = await verifier(state[0])
+        evidence = await state[3].verify(state[0])
         return (
             origin == _CONTROLLED_ORIGIN
             and monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS
@@ -1109,8 +1257,6 @@ def _build_controlled_transport_types():
 
     class _ControlledDispatchGate(metaclass=_ImmutableDispatchGateType):
         __slots__ = ()
-        _sync_verifier = _ControlledSyncTransport._factory_bindings[5]
-        _async_verifier = _ControlledAsyncTransport._factory_bindings[5]
 
         def __get__(self, instance: object | None, owner: type | None = None) -> _ControlledDispatchGate:
             return self
@@ -1144,10 +1290,27 @@ def _build_controlled_transport_types():
             if state is None:
                 return False
             try:
-                evidence = type(self)._sync_verifier(state[0])
+                evidence = state[3].verify(state[0])
             except Exception:
                 return False
             return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
+
+        def dispatch_sync(
+            self,
+            client: object,
+            transport: object,
+            request: RuntimeRequest,
+            credential: object,
+            body: object,
+            *,
+            origin: str,
+        ) -> RuntimeResponse:
+            if not self.authorize_sync(client, transport, request, origin=origin):
+                raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
+            state = sync_state(transport)
+            if state is None or not isinstance(credential, UDataCredential) or not isinstance(body, Mapping):
+                raise _controlled_error("The controlled uData site PATCH requires a resolved credential and body.")
+            return state[3].patch(credential, body)
 
         async def authorize_async(
             self,
@@ -1167,10 +1330,27 @@ def _build_controlled_transport_types():
             if state is None or state[1] is None:
                 return False
             try:
-                evidence = await type(self)._async_verifier(state[0])
+                evidence = await state[3].verify(state[0])
             except Exception:
                 return False
             return monotonic() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
+
+        async def dispatch_async(
+            self,
+            client: object,
+            transport: object,
+            request: RuntimeRequest,
+            credential: object,
+            body: object,
+            *,
+            origin: str,
+        ) -> RuntimeResponse:
+            if not await self.authorize_async(client, transport, request, origin=origin):
+                raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
+            state = async_state(transport)
+            if state is None or not isinstance(credential, UDataCredential) or not isinstance(body, Mapping):
+                raise _controlled_error("The controlled uData site PATCH requires a resolved credential and body.")
+            return await state[3].patch(credential, body)
 
     return (
         _ControlledSyncTransport,
@@ -1537,10 +1717,6 @@ class SyncUDataClient(_UDataClientCore):
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
-        if owning_operation == SET_SITE_OPERATION and not self._mutation_dispatch_gate.authorize_sync(
-            self, self._transport, request, origin=self._origin
-        ):
-            raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         sync_transport = cast(CatalogTransport, self._transport)
@@ -1563,11 +1739,14 @@ class SyncUDataClient(_UDataClientCore):
             before = self._breakers.inspect(key)
             try:
                 if owning_operation == SET_SITE_OPERATION:
-                    if not isinstance(resolved_credential, UDataCredential) or not isinstance(json_body, Mapping):
-                        raise _controlled_error(
-                            "The controlled uData site PATCH requires a resolved credential and body."
-                        )
-                    response = _controlled_patch_response(resolved_credential, json_body)
+                    response = self._mutation_dispatch_gate.dispatch_sync(
+                        self,
+                        self._transport,
+                        request,
+                        resolved_credential,
+                        json_body,
+                        origin=self._origin,
+                    )
                 else:
                     response = sync_transport.send(request)
             except TransportFailure:
@@ -2165,10 +2344,6 @@ class AsyncUDataClient(_UDataClientCore):
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
-        if owning_operation == SET_SITE_OPERATION and not await self._mutation_dispatch_gate.authorize_async(
-            self, self._transport, request, origin=self._origin
-        ):
-            raise _controlled_error("The uData site PATCH is not bound to the verified controlled client.")
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         async_transport = cast(AsyncCatalogTransport, self._transport)
@@ -2191,11 +2366,14 @@ class AsyncUDataClient(_UDataClientCore):
             before = self._breakers.inspect(key)
             try:
                 if owning_operation == SET_SITE_OPERATION:
-                    if not isinstance(resolved_credential, UDataCredential) or not isinstance(json_body, Mapping):
-                        raise _controlled_error(
-                            "The controlled uData site PATCH requires a resolved credential and body."
-                        )
-                    response = await _controlled_patch_response_async(resolved_credential, json_body)
+                    response = await self._mutation_dispatch_gate.dispatch_async(
+                        self,
+                        self._transport,
+                        request,
+                        resolved_credential,
+                        json_body,
+                        origin=self._origin,
+                    )
                 else:
                     response = await async_transport.send(request)
             except TransportFailure:

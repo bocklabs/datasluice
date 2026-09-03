@@ -250,6 +250,63 @@ def test_async_stream_document_decode_failure_is_redacted() -> None:
     asyncio.run(run())
 
 
+def test_stream_document_cleanup_failure_preserves_primary_error() -> None:
+    def chunks() -> Generator[bytes, None, None]:
+        yield b"valid\n"
+        raise ValueError("primary")
+
+    def close() -> None:
+        raise RuntimeError("cleanup")
+
+    response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=chunks(),
+        close_callback=close,
+    )
+
+    with pytest.raises(ValueError, match="primary") as excinfo:
+        wire.digest_stream_document(
+            response,
+            endpoint=_SITE_URL,
+            expected_media_type="text/csv",
+            max_bytes=8,
+        )
+
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert str(excinfo.value.__cause__) == "cleanup"
+
+
+def test_async_stream_document_cleanup_failure_preserves_primary_error() -> None:
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"valid\n"
+        raise ValueError("primary")
+
+    async def close() -> None:
+        raise RuntimeError("cleanup")
+
+    response = AsyncRuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=chunks(),
+        close_callback=close,
+    )
+
+    async def run() -> None:
+        with pytest.raises(ValueError, match="primary") as excinfo:
+            await wire.digest_stream_document_async(
+                response,
+                endpoint=_SITE_URL,
+                expected_media_type="text/csv",
+                max_bytes=8,
+            )
+
+        assert isinstance(excinfo.value.__cause__, RuntimeError)
+        assert str(excinfo.value.__cause__) == "cleanup"
+
+    asyncio.run(run())
+
+
 def test_sync_root_json_decode_failure_does_not_retain_response_body() -> None:
     transport, client = _sync_client(
         _routes(("GET", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"})))
@@ -468,6 +525,19 @@ def _sync_client(
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
 
     def controlled_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
+        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
+            return '"unix:///Users/nitish/.docker/run/docker.sock"'
+        if args == ("ps", "--status", "running", "--services"):
+            return "udata\nmongo\nredis\nsearch\nstorage\nmailpit"
+        if args == ("port", "udata", "7000"):
+            return "127.0.0.1:5640"
+        if args == ("exec", "-T", "udata", "git", "-C", "/opt/udata", "rev-parse", "HEAD"):
+            return "0546582058d84706812a1c37387576efc4e5ad1f"
+        if args == ("exec", "-T", "udata", "printenv", "UDATA_EVIDENCE_STACK_NONCE"):
+            transport._suppress_next = True
+            return "unit-test-stack"
+        if args[:4] != ("exec", "-T", "udata", "python"):
+            raise AssertionError(f"unexpected controlled command {args}")
         request_data = json.loads(input_data or b"{}")
         transport._suppress_next = False
         response = transport.send(
@@ -732,6 +802,75 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert patch_request.headers["Content-Type"] == "application/json"
     assert patch_request.headers["X-API-KEY"] == "site-key"
     assert len(transport.requests) == 3
+
+
+def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_override() -> None:
+    transport, client = _sync_client(
+        _routes(
+            (
+                "PATCH",
+                _SITE_URL,
+                _json_response(200, _site_body(title="Changed"), {"Content-Type": "application/json"}),
+            )
+        ),
+        credential=_CREDENTIAL,
+    )
+    called = False
+
+    def replacement(*_: object, **__: object) -> object:
+        nonlocal called
+        called = True
+        raise AssertionError("mutable controlled helper was invoked")
+
+    with client:
+        with (
+            patch.object(udata_clients, "_controlled_command", replacement),
+            patch.object(udata_clients, "_controlled_patch_response", replacement),
+        ):
+            result = client.root_profile.set_site(
+                SitePatchInput(title="Changed"),
+                permissions=_PERMISSIONS,
+                mutation_policy=_site_policy(),
+            )
+
+    assert result.receipt.outcome == "succeeded"
+    assert called is False
+
+
+def test_controlled_async_dispatch_keeps_factory_bound_operations_after_helper_override() -> None:
+    transport, client = _async_client(
+        _routes(
+            (
+                "PATCH",
+                _SITE_URL,
+                _json_response(200, _site_body(title="Changed"), {"Content-Type": "application/json"}),
+            )
+        ),
+        credential=_CREDENTIAL,
+    )
+    called = False
+
+    async def replacement(*_: object, **__: object) -> object:
+        nonlocal called
+        called = True
+        raise AssertionError("mutable controlled helper was invoked")
+
+    async def run() -> SiteMutationResult:
+        async with client:
+            with (
+                patch.object(udata_clients, "_controlled_command_async", replacement),
+                patch.object(udata_clients, "_controlled_patch_response_async", replacement),
+            ):
+                return await client.root_profile.set_site(
+                    SitePatchInput(title="Changed"),
+                    permissions=_PERMISSIONS,
+                    mutation_policy=_site_policy(),
+                )
+
+    result = asyncio.run(run())
+
+    assert result.receipt.outcome == "succeeded"
+    assert called is False
 
 
 def test_row184_set_site_rejects_redirect_without_following() -> None:
