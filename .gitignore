@@ -33,6 +33,7 @@ coverage.xml
 .commandcode
 .gsd
 .codeboarding
+.vscode/
 
 # GSD Code reviews
 dev/*/reviews
