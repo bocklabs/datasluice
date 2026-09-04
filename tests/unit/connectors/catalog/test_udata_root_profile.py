@@ -698,6 +698,8 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
     cast(Any, transport)._controlled_patch_bodies = controlled_patch_bodies
 
     def execute_program(program: str, input_data: bytes | None, response: RuntimeResponse) -> str:
+        opened = False
+
         class FakeResponse:
             status = response.status_code
             headers = dict(response.headers)
@@ -727,6 +729,8 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
 
         class FakeOpener:
             def open(self, request: FakeRequest, timeout: float) -> FakeResponse:
+                nonlocal opened
+                opened = True
                 assert timeout == 10
                 assert request.full_url == "http://127.0.0.1:7000/api/1/site/"
                 assert (request.method or "GET") == ("PATCH" if input_data is not None else "GET")
@@ -761,6 +765,7 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
             redirect_stdout(output),
         ):
             exec(program, {"__name__": "__main__"})
+        assert opened is True
         return output.getvalue().strip()
 
     def sync_command(
