@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import os
+import sys
 from collections.abc import AsyncIterator, Callable, Generator, Mapping
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
-from types import FunctionType
+from types import FunctionType, ModuleType
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -695,6 +697,72 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
     controlled_patch_bodies: list[dict[str, object]] = []
     cast(Any, transport)._controlled_patch_bodies = controlled_patch_bodies
 
+    def execute_program(program: str, input_data: bytes | None, response: RuntimeResponse) -> str:
+        class FakeResponse:
+            status = response.status_code
+            headers = dict(response.headers)
+
+            def read(self, _: int) -> bytes:
+                return response.body
+
+            def close(self) -> None:
+                return None
+
+        class FakeRequest:
+            def __init__(
+                self,
+                url: str,
+                data: bytes | None = None,
+                headers: Mapping[str, str] | None = None,
+                method: str | None = None,
+            ) -> None:
+                self.full_url = url
+                self.data = data
+                self.headers = dict(headers or {})
+                self.method = method
+
+        class FakeRedirectHandler:
+            def redirect_request(self, *_: object, **__: object) -> None:
+                return None
+
+        class FakeOpener:
+            def open(self, request: FakeRequest, timeout: float) -> FakeResponse:
+                assert timeout == 10
+                assert request.full_url == "http://127.0.0.1:7000/api/1/site/"
+                assert (request.method or "GET") == ("PATCH" if input_data is not None else "GET")
+                if input_data is not None:
+                    assert {key.lower(): value for key, value in request.headers.items()} == {
+                        "content-type": "application/json",
+                        "x-api-key": "site-key",
+                    }
+                    assert request.data is not None
+                    assert json.loads(request.data) == json.loads(input_data)["body"]
+                return FakeResponse()
+
+        fake_request = ModuleType("urllib.request")
+        fake_request_module = cast(Any, fake_request)
+        fake_request_module.Request = FakeRequest
+        fake_request_module.HTTPRedirectHandler = FakeRedirectHandler
+        fake_request_module.build_opener = lambda *_: FakeOpener()
+        fake_error = ModuleType("urllib.error")
+        cast(Any, fake_error).HTTPError = type("FakeHTTPError", (Exception,), {})
+        fake_urllib = ModuleType("urllib")
+        fake_urllib_module = cast(Any, fake_urllib)
+        fake_urllib_module.__path__ = []
+        fake_urllib_module.request = fake_request
+        fake_urllib_module.error = fake_error
+        output = io.StringIO()
+        with (
+            patch.dict(
+                sys.modules,
+                {"urllib": fake_urllib, "urllib.request": fake_request, "urllib.error": fake_error},
+            ),
+            patch.object(sys, "stdin", io.StringIO("" if input_data is None else input_data.decode())),
+            redirect_stdout(output),
+        ):
+            exec(program, {"__name__": "__main__"})
+        return output.getvalue().strip()
+
     def sync_command(
         args: tuple[str, ...],
         *,
@@ -738,20 +806,10 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
                 assert isinstance(body, dict)
                 controlled_patch_bodies.append(cast(dict[str, object], body))
             response = transport.routes.get(
-                ("PATCH", _SITE_URL),
+                ("PATCH", _SITE_URL) if input_data is not None else ("GET", _SITE_URL),
                 _json_response(200, _site_body(), {"Content-Type": "application/json"}),
             )
-            if 'method="PATCH"' not in args[-1]:
-                response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
-            return json.dumps(
-                {
-                    "status": response.status_code,
-                    "content_type": response.headers.get("Content-Type", ""),
-                    "location": response.headers.get("Location", ""),
-                    "body": response.body.decode("utf-8", "replace"),
-                },
-                separators=(",", ":"),
-            )
+            return execute_program(args[-1], input_data, response)
         raise AssertionError(f"unexpected controlled command {args}")
 
     async def async_command(
@@ -827,12 +885,19 @@ def _sync_client(
 
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
     _controlled_process_setup(stack, transport)
+    verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
+    original_site_response = transport.routes.get(("GET", _SITE_URL))
+    transport.routes[("GET", _SITE_URL)] = verification_response
     try:
         controlled_transport = udata_clients._ControlledSyncTransport()
     except BaseException:
         stack.close()
         raise
     finally:
+        if original_site_response is None:
+            transport.routes.pop(("GET", _SITE_URL), None)
+        else:
+            transport.routes[("GET", _SITE_URL)] = original_site_response
         transport.requests.clear()
     if revalidate is not None and not revalidate(site_id="site"):
         changed_site = _site_body()
@@ -900,6 +965,9 @@ def _async_client(
 
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
     _controlled_process_setup(stack, transport)
+    verification_response = _json_response(200, _site_body(), {"Content-Type": "application/json"})
+    original_site_response = transport.routes.get(("GET", _SITE_URL))
+    transport.routes[("GET", _SITE_URL)] = verification_response
     try:
         controlled_transport = udata_clients._ControlledAsyncTransport()
         asyncio.run(controlled_transport.verify())
@@ -907,6 +975,10 @@ def _async_client(
         stack.close()
         raise
     finally:
+        if original_site_response is None:
+            transport.routes.pop(("GET", _SITE_URL), None)
+        else:
+            transport.routes[("GET", _SITE_URL)] = original_site_response
         transport.requests.clear()
     settings = UDataClientSettings(
         base_url=origin,
