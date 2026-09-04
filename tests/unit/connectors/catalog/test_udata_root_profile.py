@@ -345,6 +345,10 @@ def test_bound_controlled_command_spec_ignores_mutable_module_configuration(
     _controlled_compose_files(monkeypatch, tmp_path)
     monkeypatch.delenv("DOCKER_HOST", raising=False)
     monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    docker_stub = tmp_path / "docker"
+    docker_stub.write_text("", encoding="utf-8")
+    docker_stub.chmod(0o755)
+    monkeypatch.setattr(udata_clients, "_CONTROLLED_DOCKER_EXECUTABLES", (docker_stub,))
     bound_spec = udata_clients._make_bound_controlled_command_spec()
     original = bound_spec(("ps",))
 
