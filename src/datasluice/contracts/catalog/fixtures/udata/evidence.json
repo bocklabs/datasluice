@@ -1,11 +1,11 @@
 {
-  "platform_version": "uData 17.3.0",
+  "platform_version": "uData 17.6.0",
   "api_version": "uData API v1",
-  "official_source_uri": "https://udata.readthedocs.io/en/17.3/",
-  "source_accessed_at": "2026-08-15",
+  "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
+  "source_accessed_at": "2026-08-27",
   "public_read": {
     "deployment_url": "https://www.data.gouv.fr/api/1/datasets/",
-    "accessed_at": "2026-08-15",
+    "accessed_at": "2026-08-27",
     "response_class": "success",
     "sanitized": true
   },

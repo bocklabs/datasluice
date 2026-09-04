@@ -13,6 +13,7 @@ httpx = pytest.importorskip("httpx")
 
 from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import (
+    RedirectPolicy,
     RuntimeRequest,
     TransportFailure,
 )
@@ -38,6 +39,27 @@ def test_httpx_transport_maps_injected_response() -> None:
     assert response.body == b"fixture"
     assert response.retry_after == 2
     assert seen[0].headers["X-Test"] == "yes"
+
+
+def test_httpx_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.host == "origin.test":
+            return httpx.Response(302, headers={"Location": "https://target.test/secret"})
+        pytest.fail("the redirect target must not receive a request")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        response = transport.send(
+            RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW)
+        )
+    finally:
+        transport.close()
+
+    assert response.status_code == 302
+    assert seen == ["https://origin.test/root"]
 
 
 def test_httpx_transport_parses_retry_after_http_date_form() -> None:
@@ -359,6 +381,29 @@ def test_httpx_credential_scope_follows_downgraded_redirect_and_strips_authoriza
     assert "authorization" not in seen[1].headers
 
 
+def test_async_httpx_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.host == "origin.test":
+            return httpx.Response(302, headers={"Location": "https://target.test/secret"})
+        pytest.fail("the redirect target must not receive a request")
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            response = await transport.send(
+                RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW)
+            )
+        finally:
+            await transport.aclose()
+        assert response.status_code == 302
+
+    asyncio.run(send())
+    assert seen == ["https://origin.test/root"]
+
+
 def test_async_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() -> None:
     seen: list[httpx.Request] = []
 
@@ -534,3 +579,82 @@ def test_async_httpx_refuses_non_http_redirect_target_and_redacts_failure_surfac
 
     assert "topsecret" not in str(failure)
     assert "keep=value" in str(failure)
+
+
+def test_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
+    response = httpx.Response(200)
+
+    def failing_bytes(*args: object, **kwargs: object):
+        yield b"ok"
+        raise httpx.ReadError("connection dropped", request=httpx.Request("GET", "https://example.test/"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        response.iter_bytes = failing_bytes  # ty: ignore[invalid-assignment]: test seam
+        return response
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        response = transport.send_stream(
+            RuntimeRequest("GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW)
+        )
+        with pytest.raises(TransportFailure):
+            list(response)
+    finally:
+        transport.close()
+
+
+def test_async_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
+    response = httpx.Response(200)
+
+    async def failing_bytes(*args: object, **kwargs: object):
+        yield b"ok"
+        raise httpx.ReadError("connection dropped", request=httpx.Request("GET", "https://example.test/"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        response.aiter_bytes = failing_bytes
+        return response
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            response = await transport.send_stream(
+                RuntimeRequest("GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW)
+            )
+            with pytest.raises(TransportFailure):
+                async for _ in response:
+                    pass
+        finally:
+            await transport.aclose()
+
+    asyncio.run(send())
+
+
+def test_httpx_send_enforces_max_response_bytes() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(200, content=b"abcdef")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(TransportFailure, match="byte limit"):
+            transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+    finally:
+        transport.close()
+
+
+def test_async_httpx_send_enforces_max_response_bytes() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(200, content=b"abcdef")
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            with pytest.raises(TransportFailure, match="byte limit"):
+                await transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+        finally:
+            await transport.aclose()
+
+    asyncio.run(send())

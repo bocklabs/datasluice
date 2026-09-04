@@ -33,8 +33,11 @@ coverage.xml
 .commandcode
 .gsd
 .codeboarding
-# dev compose secrets (see dev/ckan-evidence/compose.yaml)
-dev/ckan-evidence/.env
+.vscode/
+
+# GSD Code reviews
+dev/*/reviews
+
 # uv
 #   Generally recommended to include uv.lock in version control for
 #   reproducibility. Uncomment for libraries where you want consumers

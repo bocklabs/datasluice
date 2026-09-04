@@ -71,10 +71,18 @@ class ProbeEvidence:
     role_classification: RoleClassification
     observed_response_class: ProbeResponseClass
     provenance: EvidenceProvenance = EvidenceProvenance.VERIFIED_LINE
+    credential_scope: str | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "credential_classification", CredentialClassification(self.credential_classification))
+        object.__setattr__(self, "role_classification", RoleClassification(self.role_classification))
+        object.__setattr__(self, "observed_response_class", ProbeResponseClass(self.observed_response_class))
         object.__setattr__(self, "provenance", EvidenceProvenance(self.provenance))
         object.__setattr__(self, "deployment_url", _sanitize_deployment_url(self.deployment_url))
+        if self.credential_scope is not None and (
+            not isinstance(self.credential_scope, str) or not self.credential_scope
+        ):
+            raise ValueError("Credential scope must be a non-empty string when supplied.")
 
 
 @dataclass(frozen=True, slots=True)

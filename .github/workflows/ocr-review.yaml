@@ -1,0 +1,81 @@
+name: OpenCodeReview PR Review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-review:
+    name: AI code review
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Configure OCR
+        run: npx -y "@alibaba-group/open-code-review@${OCR_VERSION}" config set max_tokens 1000000
+
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@66120291271b2e605e420e9f11fbd6448f06163f # v1.9.10
+        with:
+          llm_url: ${{ secrets.OCR_LLM_URL }}
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: ${{ secrets.OCR_LLM_MODEL }}
+          llm_use_anthropic: ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
+          llm_extra_body: '{"reasoning_effort": "max", "max_tokens": 131072}'
+          review_concurrency: '4'
+          language: 'English'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          sticky_summary: 'true'
+          incremental: 'true'
+          incremental_overlap_threshold: '0.8'
+          upload_artifacts: 'true'
+
+          background: >-
+            Review DataSluice as a contract-first Python 3.12+ open-data SDK and CLI.
+            Treat AGENTS.md, pyproject.toml, the applicable public contracts, and the
+            current roadmap/design documentation as context, but review the changed
+            implementation and its relevant call paths. The project is a deliberate
+            clean break: do not preserve retired public surfaces, historical runtime
+            semantics, or automatic adaptation to vendor drift unless the applicable
+            contract explicitly requires it. The shared catalog contract and runtime
+            are authoritative: connector families use typed native service groups
+            behind typed facades and factories, the injected entry-point PluginManager
+            is the only registry, and third-party discovery is opt-in and
+            failure-isolated. Use the existing dual-mode guarded transport/client
+            seams; do not add raw HTTP stacks, module-level registries, import-time
+            side effects, or connector-local compatibility layers. Sync and async
+            paths require intentional parity, context-managed ownership, bounded
+            response/upload handling, cancellation and cleanup guarantees, and correct
+            retry, breaker, timeout, pagination, and redirect behavior. Credentials are
+            explicit by default; capability and authorization checks occur before I/O;
+            redirect handling must not leak credential-bearing headers. Mutations,
+            administration, uploads, and bulk work require target-specific safety
+            policy, concurrency/overwrite intent, appropriate idempotency, redacted
+            immutable receipts, and controlled environments where required. One-time
+            secrets, credentials, raw bodies, private origins, and deployment
+            configuration must not reach logs, events, receipts, artifacts, or
+            committed files. Optional dependencies and integrations remain lazy so the
+            base installation stays lean. Future roadmap work may add connector
+            families, plugin/discovery behavior, developer tooling, and drift/release
+            verification; do not report a future-phase feature as missing from an
+            in-scope change, and do not treat a planned namespace as a runtime
+            capability. Trace changed code through callers and relevant contracts,
+            verify negative paths and error propagation, and report only actionable
+            correctness, security, or maintainability defects; omit style-only findings
+            covered by Ruff or ty.

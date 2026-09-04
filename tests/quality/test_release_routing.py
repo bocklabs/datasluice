@@ -1,7 +1,7 @@
 """Release-routing contracts for the dual-distribution manifest and publication gates.
 
 establishes the typed reusable publication interface in
-``.github/workflows/publish.yml``: build/attest the exact Release Please ref,
+``.github/workflows/publish.yaml``: build/attest the exact Release Please ref,
 publish the candidate to the selected TestPyPI environment, install the exact
 ``name==version`` candidate from TestPyPI with PyPI resolving dependencies,
 smoke the package, and only then promote the SAME attested artifact through the
@@ -24,8 +24,8 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
-RELEASE_PLEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-please.yml"
+PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yaml"
+RELEASE_PLEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-please.yaml"
 RELEASE_CONFIG = REPO_ROOT / "release-please-config.json"
 RELEASE_MANIFEST = REPO_ROOT / ".release-please-manifest.json"
 REGISTRY_PATH = REPO_ROOT / "providers" / "registry.json"
@@ -432,8 +432,8 @@ def test_release_outputs_route_without_release_event() -> None:
 
     core = jobs["publish-core"]
     providers = jobs["publish-providers"]
-    assert core["uses"] == "./.github/workflows/publish.yml"
-    assert providers["uses"] == "./.github/workflows/publish.yml"
+    assert core["uses"] == "./.github/workflows/publish.yaml"
+    assert providers["uses"] == "./.github/workflows/publish.yaml"
     assert "core--release_created" in str(core.get("if", ""))
     assert "'true'" in str(core.get("if", ""))
 

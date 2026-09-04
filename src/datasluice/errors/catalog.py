@@ -20,11 +20,37 @@ def _platform_value(platform: CatalogPlatform | str) -> str:
 
 
 def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) -> Mapping[str, object]:
-    """Return total, redacted error metadata, truncating values beyond public bounds."""
+    """Return total, redacted, deeply immutable error metadata."""
     if value is None:
         return MappingProxyType({})
+
+    def freeze(node: object) -> object:
+        if isinstance(node, Mapping):
+            return MappingProxyType({key: freeze(item) for key, item in node.items() if isinstance(key, str) and key})
+        if isinstance(node, (list, tuple)):
+            return tuple(freeze(item) for item in node)
+        if isinstance(node, float):
+            return node if isfinite(node) else redact_string(repr(node))
+        if node is None or isinstance(node, (str, bool)) or isinstance(node, int):
+            return node
+        return redact_string(repr(node))
+
     redacted = redact_mapping(value, _depth=_depth)
-    return MappingProxyType(redacted)
+    return MappingProxyType({key: freeze(item) for key, item in redacted.items()})
+
+
+def attach_catalog_metadata(error: BaseException, additions: Mapping[str, object]) -> BaseException:
+    """Attach bounded metadata to an exception without replacing its error type."""
+    existing = getattr(error, "metadata", {})
+    current = dict(existing) if isinstance(existing, Mapping) else {}
+    try:
+        metadata = _bounded_metadata({**current, **dict(additions)})
+    except (TypeError, ValueError):
+        return error
+    error_dict = getattr(error, "__dict__", None)
+    if isinstance(error_dict, dict):
+        error_dict["metadata"] = metadata
+    return error
 
 
 class CatalogError(DataSluiceError):
@@ -66,6 +92,8 @@ class NativeCatalogError(DataSluiceError):
         status_code: int | None = None,
         vendor_code: str | None = None,
         retry_after: float | None = None,
+        capability_state: str | None = None,
+        safe_action: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> None:
         if not isinstance(message, str) or not message:
@@ -82,12 +110,18 @@ class NativeCatalogError(DataSluiceError):
             or retry_after < 0
         ):
             raise ValueError("Native catalog error Retry-After must be a non-negative number.")
+        if capability_state is not None and (not isinstance(capability_state, str) or not capability_state):
+            raise ValueError("Native catalog error capability states must be non-empty strings when supplied.")
+        if safe_action is not None and (not isinstance(safe_action, str) or not safe_action):
+            raise ValueError("Native catalog errors require a non-empty safe action when supplied.")
         super().__init__(redact_string(message))
         self.operation = operation
         self.platform = _platform_value(platform)
         self.status_code = status_code
         self.vendor_code = vendor_code
         self.retry_after = float(retry_after) if retry_after is not None else None
+        self.capability_state = capability_state
+        self.safe_action = safe_action or "Inspect the native catalog response and retry when the deployment is ready."
         self.metadata = _bounded_metadata(metadata)
 
 
@@ -206,6 +240,14 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
     elif status_code == 409:
         error_type = CatalogConflictError
         safe_action = "Refresh the target version token before retrying."
+    elif status_code == 410:
+        error_type = CatalogConflictError
+        capability_state = "unavailable"
+        safe_action = "The target is deleted or retired; recreate it or address the archived resource."
+    elif status_code == 423:
+        error_type = CatalogUnavailableError
+        capability_state = "deployment-disabled"
+        safe_action = "The deployment is read-only; mutations require a writable deployment."
     elif status_code == 422:
         error_type = CatalogValidationError
         safe_action = "Correct the request according to the platform validation details."
@@ -220,6 +262,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
         error_type = CatalogValidationError
         safe_action = "Correct the request before retrying."
     error: CatalogError
+    metadata = {**native.metadata, "status_code": status_code}
     if error_type is CatalogRateLimitError:
         error = CatalogRateLimitError(
             str(native),
@@ -228,7 +271,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
             capability_state=capability_state,
             safe_action=safe_action,
             retry_after=native.retry_after,
-            metadata=native.metadata,
+            metadata=metadata,
         )
     else:
         error = error_type(
@@ -237,7 +280,7 @@ def map_catalog_error(native: NativeCatalogError) -> CatalogError:
             platform=native.platform,
             capability_state=capability_state,
             safe_action=safe_action,
-            metadata=native.metadata,
+            metadata=metadata,
         )
     error.__cause__ = native
     return error

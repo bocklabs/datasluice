@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 from collections.abc import Mapping, Set
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -104,6 +107,8 @@ class CredentialResolutionPolicy:
 
 _NO_CREDENTIAL_DISCOVERY = CredentialResolutionPolicy()
 
+_CREDENTIAL_SCOPE_KEY = secrets.token_bytes(32)
+
 
 @dataclass(frozen=True, slots=True)
 class CredentialResolver:
@@ -130,6 +135,22 @@ class CredentialResolver:
             if source in policy.enabled_sources and source in discovered:
                 return discovered[source]
         return None
+
+
+def credential_scope(credentials: object | None) -> str:
+    """Return a stable, non-reversible scope for one credential identity."""
+    credential = credentials.explicit if isinstance(credentials, CredentialResolver) else credentials
+    if credential is None:
+        return "anonymous"
+    dataclass_fields = getattr(credential, "__dataclass_fields__", None)
+    if not isinstance(dataclass_fields, dict) or not dataclass_fields:
+        return f"{type(credential).__name__.lower()}-unrecognized"
+    digest = hmac.new(_CREDENTIAL_SCOPE_KEY, digestmod=hashlib.sha256)
+    for name in dataclass_fields:
+        value = getattr(credential, name)
+        digest.update(name.encode())
+        digest.update((value.reveal() if isinstance(value, SecretValue) else str(value)).encode())
+    return f"{type(credential).__name__.lower()}-{digest.hexdigest()[:16]}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +202,7 @@ class EffectivePermissions:
     roles: frozenset[str] = frozenset()
     authenticated: bool = False
     operation_scopes: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    credential_scope: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.platform, CatalogPlatform):
@@ -190,10 +212,35 @@ class EffectivePermissions:
                 raise ValueError(f"Effective permission {name}s must be immutable non-empty strings.")
         if type(self.authenticated) is not bool:
             raise ValueError("Effective permission authentication state must be a boolean.")
+        if self.credential_scope is not None and (
+            not isinstance(self.credential_scope, str) or not self.credential_scope
+        ):
+            raise ValueError("Effective permission credential scope must be a non-empty string when supplied.")
         operations = {operation: frozenset(required) for operation, required in self.operation_scopes.items()}
         if not all(isinstance(operation, str) and operation for operation in operations):
             raise ValueError("Operation permission requirements must use non-empty operation names.")
         object.__setattr__(self, "operation_scopes", MappingProxyType(operations))
+
+    @classmethod
+    def for_credential(
+        cls,
+        credential: CatalogCredential,
+        *,
+        platform: CatalogPlatform,
+        scopes: frozenset[str] = frozenset(),
+        roles: frozenset[str] = frozenset(),
+        authenticated: bool = True,
+        operation_scopes: Mapping[str, frozenset[str]] | None = None,
+    ) -> EffectivePermissions:
+        """Bind effective permission evidence to one explicit credential identity."""
+        return cls(
+            platform=platform,
+            scopes=scopes,
+            roles=roles,
+            authenticated=authenticated,
+            operation_scopes=operation_scopes or {},
+            credential_scope=credential_scope(credential),
+        )
 
     def require(
         self,

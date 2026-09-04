@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 
@@ -16,6 +17,13 @@ SENSITIVE_REDIRECT_HEADERS = frozenset(
 
 _HOP_BODYLESS_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding"})
 _POST_TO_GET_STATUSES = frozenset({301, 302})
+
+
+class RedirectPolicy(StrEnum):
+    """Declare whether a transport may follow an HTTP redirect."""
+
+    FOLLOW = "follow"
+    NO_FOLLOW = "no-follow"
 
 
 def strip_sensitive_redirect_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -96,6 +104,8 @@ class RuntimeRequest:
     headers: Mapping[str, str] = field(default_factory=dict, repr=False)
     body: bytes | None = field(default=None, repr=False)
     files: tuple[UploadPart, ...] = field(default=(), repr=False)
+    redirect_policy: RedirectPolicy = RedirectPolicy.FOLLOW
+    max_response_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.method, str) or not self.method:
@@ -110,6 +120,12 @@ class RuntimeRequest:
             raise ValueError("Runtime request multipart parts must be UploadPart instances.")
         if self.body is not None and self.files:
             raise ValueError("Runtime requests cannot carry a byte body and multipart parts together.")
+        if not isinstance(self.redirect_policy, RedirectPolicy):
+            raise ValueError("Runtime request redirect policies must use RedirectPolicy.")
+        if self.max_response_bytes is not None and (
+            type(self.max_response_bytes) is not int or self.max_response_bytes < 1
+        ):
+            raise ValueError("Runtime request response limits must be positive integers when supplied.")
         if self.headers is None or not isinstance(self.headers, Mapping):
             raise ValueError("Runtime request headers must be a mapping of string names to string values.")
         headers = dict(self.headers)
@@ -168,6 +184,126 @@ class RuntimeResponse:
         return hash((self.status_code, self.retry_after))
 
 
+@dataclass(slots=True)
+class RuntimeStreamResponse:
+    """One closeable synchronous response whose bytes are yielded incrementally."""
+
+    status_code: int
+    headers: Mapping[str, str]
+    chunks: Iterator[bytes] = field(repr=False)
+    close_callback: Callable[[], None] = field(repr=False)
+    retry_after: float | None = None
+    failure_callback: Callable[[BaseException], None] | None = field(default=None, repr=False)
+    completion_callback: Callable[[], None] | None = field(default=None, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.status_code) is not int or not 100 <= self.status_code <= 599:
+            raise ValueError("Runtime stream response status codes must be valid HTTP status codes.")
+        if self.headers is None or not isinstance(self.headers, Mapping):
+            raise ValueError("Runtime stream response headers must be a mapping of string names to string values.")
+        headers = dict(self.headers)
+        if not all(isinstance(key, str) and key and isinstance(value, str) for key, value in headers.items()):
+            raise ValueError("Runtime stream response headers must contain non-empty string names and string values.")
+        if not callable(self.close_callback):
+            raise ValueError("Runtime stream responses require a close callback.")
+        if self.retry_after is not None and (
+            type(self.retry_after) not in (int, float) or not math.isfinite(self.retry_after) or self.retry_after < 0
+        ):
+            raise ValueError("Runtime stream response Retry-After must be a finite non-negative number.")
+        self.headers = MappingProxyType(headers)
+        if self.retry_after is not None:
+            self.retry_after = float(self.retry_after)
+
+    def __iter__(self) -> Iterator[bytes]:
+        for chunk in self.chunks:
+            if not isinstance(chunk, bytes):
+                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+            if chunk:
+                yield chunk
+
+    def close(self) -> None:
+        """Release the stream resource exactly once."""
+        if not self._closed:
+            self._closed = True
+            self.close_callback()
+
+    def fail(self, error: BaseException) -> None:
+        """Report a failure discovered while consuming the stream."""
+        if self.failure_callback is not None:
+            self.failure_callback(error)
+
+    def complete(self) -> None:
+        """Report that the caller consumed and validated the complete stream."""
+        if self.completion_callback is not None:
+            self.completion_callback()
+
+
+@dataclass(slots=True)
+class AsyncRuntimeStreamResponse:
+    """One closeable asynchronous response whose bytes are yielded incrementally."""
+
+    status_code: int
+    headers: Mapping[str, str]
+    chunks: AsyncIterator[bytes] = field(repr=False)
+    close_callback: Callable[[], Awaitable[None] | None] = field(repr=False)
+    retry_after: float | None = None
+    failure_callback: Callable[[BaseException], Awaitable[None] | None] | None = field(default=None, repr=False)
+    completion_callback: Callable[[], Awaitable[None] | None] | None = field(default=None, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.status_code) is not int or not 100 <= self.status_code <= 599:
+            raise ValueError("Async runtime stream response status codes must be valid HTTP status codes.")
+        if self.headers is None or not isinstance(self.headers, Mapping):
+            raise ValueError(
+                "Async runtime stream response headers must be a mapping of string names to string values."
+            )
+        headers = dict(self.headers)
+        if not all(isinstance(key, str) and key and isinstance(value, str) for key, value in headers.items()):
+            raise ValueError(
+                "Async runtime stream response headers must contain non-empty string names and string values."
+            )
+        if not callable(self.close_callback):
+            raise ValueError("Async runtime stream responses require a close callback.")
+        if self.retry_after is not None and (
+            type(self.retry_after) not in (int, float) or not math.isfinite(self.retry_after) or self.retry_after < 0
+        ):
+            raise ValueError("Async runtime stream response Retry-After must be a finite non-negative number.")
+        self.headers = MappingProxyType(headers)
+        if self.retry_after is not None:
+            self.retry_after = float(self.retry_after)
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        async for chunk in self.chunks:
+            if not isinstance(chunk, bytes):
+                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+            if chunk:
+                yield chunk
+
+    async def aclose(self) -> None:
+        """Release the asynchronous stream resource exactly once."""
+        if not self._closed:
+            self._closed = True
+            result = self.close_callback()
+            if result is not None:
+                await result
+
+    async def fail(self, error: BaseException) -> None:
+        """Report a failure discovered while consuming the stream."""
+        if self.failure_callback is not None:
+            result = self.failure_callback(error)
+            if result is not None:
+                await result
+
+    async def complete(self) -> None:
+        """Report that the caller consumed and validated the complete stream."""
+        if self.completion_callback is not None:
+            result = self.completion_callback()
+            if result is not None:
+                await result
+
+
 class TransportFailure(RuntimeError):
     """A connectivity failure distinct from an HTTP status outcome."""
 
@@ -180,3 +316,10 @@ class CatalogTransport(Protocol):
 
     def close(self) -> None:
         """Release transport resources."""
+
+
+class StreamingCatalogTransport(CatalogTransport, Protocol):
+    """Synchronous transport port that can expose a response body incrementally."""
+
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        """Send one request without pre-buffering its response body."""

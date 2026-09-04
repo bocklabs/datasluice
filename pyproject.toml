@@ -145,6 +145,9 @@ exclude_also = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+markers = [
+    "udata_controlled: integration evidence requiring the local loopback uData evidence stack",
+]
 
 [tool.uv]
 package = true

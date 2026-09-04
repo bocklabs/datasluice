@@ -1,0 +1,237 @@
+{
+  "schema_version": "1.0",
+  "platform": "udata",
+  "profile_version": "17.6.0",
+  "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+  "redirect_query_policy": {
+    "comparison": "normalized-key-to-values-multimap",
+    "catalog_defaults": {
+      "page": "1",
+      "page_size": "100"
+    }
+  },
+  "query_schemas": {
+    "dataset_catalog": {
+      "defaults": {
+        "page": 1,
+        "page_size": 100
+      },
+      "repeatable": ["tag"],
+      "boolean": ["featured", "archived", "deleted", "private"],
+      "scalar": [
+        "q", "sort", "license", "geozone", "granularity", "temporal_coverage", "access_type",
+        "organization", "badge", "organization_badge", "owner", "followed_by", "format", "schema",
+        "schema_version", "topic", "dataservice", "reuse"
+      ],
+      "choices": {
+        "access_type": ["open", "open_with_account", "restricted"],
+        "badge": ["pivotal-data", "spd", "inspire", "hvd", "sl", "sr"],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"]
+      }
+    },
+    "dataset_csv": {
+      "defaults": {
+        "page": 1,
+        "page_size": 20
+      },
+      "repeatable": ["tag", "granularity", "format", "schema"],
+      "boolean": ["featured"],
+      "scalar": [
+        "q", "sort", "badge", "organization", "organization_name", "organization_badge", "owner", "license",
+        "geozone", "temporal_coverage", "topic", "access_type", "format_family", "producer_type",
+        "last_update_range"
+      ],
+      "choices": {
+        "access_type": ["open", "open_with_account", "restricted"],
+        "badge": ["pivotal-data", "spd", "inspire", "hvd", "sl", "sr"],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"],
+        "format_family": ["tabular", "machine_readable", "geographical", "documents", "other"],
+        "last_update_range": ["last_30_days", "last_12_months", "last_3_years"],
+        "producer_type": ["public-service", "association", "company", "local-authority", "user", "not-specified"]
+      }
+    },
+    "organization_csv": {
+      "repeatable": [],
+      "scalar": ["q", "badge", "name", "business_number_id"]
+    },
+    "reuse_csv": {
+      "defaults": {
+        "page": 1,
+        "page_size": 20
+      },
+      "repeatable": ["tag"],
+      "boolean": ["private", "featured"],
+      "scalar": ["q", "sort", "dataset", "dataservice", "organization_badge", "type", "topic", "owner", "organization"],
+      "choices": {
+        "type": ["api", "application", "idea", "news_article", "paper", "post", "visualization", "hardware"],
+        "topic": [
+          "health", "transport_and_mobility", "housing_and_development", "food_and_agriculture",
+          "culture_and_recreation", "economy_and_business", "environment_and_energy", "work_and_training",
+          "politics_and_public_life", "safety_and_security", "education_and_research", "society_and_demography",
+          "law_and_justice", "open_data_tools", "others"
+        ],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"]
+      }
+    },
+    "dataservice_csv": {
+      "defaults": {
+        "page": 1,
+        "page_size": 20
+      },
+      "repeatable": ["tag"],
+      "boolean": ["featured"],
+      "scalar": [
+        "q", "sort", "contact_point", "dataset", "organization_badge", "topic", "reuse", "access_type", "owner",
+        "organization"
+      ],
+      "choices": {
+        "access_type": ["open", "open_with_account", "restricted"],
+        "organization_badge": ["public-service", "certified", "association", "company", "local-authority"]
+      }
+    }
+  },
+  "failure_cases": [
+    {
+      "id": "root_invalid_format_pre_dispatch",
+      "modes": ["sync", "async"],
+      "expected": "typed-validation-before-transport"
+    },
+    {
+      "id": "root_external_redirect",
+      "modes": ["sync", "async"],
+      "expected": "typed-rejection-before-target-request"
+    },
+    {
+      "id": "root_missing_or_conflicting_media",
+      "modes": ["sync", "async"],
+      "expected": "typed-media-rejection"
+    },
+    {
+      "id": "root_export_limit_and_close",
+      "modes": ["sync", "async"],
+      "expected": "bounded-consumption-and-deterministic-close"
+    },
+    {
+      "id": "root_set_site_denial_isolated",
+      "modes": ["sync", "async"],
+      "expected": "mutation-capability-does-not-poison-reads"
+    },
+    {
+      "id": "root_async_parity",
+      "modes": ["sync", "async"],
+      "expected": "equivalent-wire-and-error-contract"
+    }
+  ],
+  "rows": [
+    {
+      "row": 183,
+      "operation": "udata.v1.get_site",
+      "method": "GET",
+      "path": "/api/1/site/",
+      "response_media_type": "application/json"
+    },
+    {
+      "row": 184,
+      "operation": "udata.v1.set_site",
+      "method": "PATCH",
+      "path": "/api/1/site/",
+      "request_media_type": "application/json",
+      "request_fields": ["title", "feed_size"],
+      "response_media_type": "application/json",
+      "controlled_only": true
+    },
+    {
+      "row": 185,
+      "operation": "udata.v1.SiteDataPortal_get",
+      "method": "GET",
+      "path": "/api/1/site/data.<format>",
+      "redirect_path": "/api/1/site/catalog.<format>",
+      "formats": ["xml", "rdf", "owl", "n3", "ttl", "turtle", "nt", "json", "jsonld", "trig"]
+    },
+    {
+      "row": 186,
+      "operation": "udata.v1.SiteRdfCatalog_get",
+      "method": "GET",
+      "path": "/api/1/site/catalog",
+      "redirect_path": "/api/1/site/catalog.<format>",
+      "query_schema": "dataset_catalog"
+    },
+    {
+      "row": 187,
+      "operation": "udata.v1.SiteRdfCatalogFormat_get",
+      "method": "GET",
+      "path": "/api/1/site/catalog.<format>",
+      "response_media_type": "format-selected-rdf",
+      "formats": ["xml", "rdf", "owl", "n3", "ttl", "turtle", "nt", "json", "jsonld", "trig"],
+      "query_schema": "dataset_catalog"
+    },
+    {
+      "row": 188,
+      "operation": "udata.v1.SiteDatasetsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/datasets.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "dataset_csv"
+    },
+    {
+      "row": 189,
+      "operation": "udata.v1.SiteResourcesCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/resources.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "dataset_csv"
+    },
+    {
+      "row": 190,
+      "operation": "udata.v1.SiteOrganizationsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/organizations.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "organization_csv"
+    },
+    {
+      "row": 191,
+      "operation": "udata.v1.SiteReusesCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/reuses.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "reuse_csv"
+    },
+    {
+      "row": 192,
+      "operation": "udata.v1.SiteDataservicesCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/dataservices.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "dataservice_csv"
+    },
+    {
+      "row": 193,
+      "operation": "udata.v1.SiteHarvestsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/harvests.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "none"
+    },
+    {
+      "row": 194,
+      "operation": "udata.v1.SiteTagsCsv_get",
+      "method": "GET",
+      "path": "/api/1/site/tags.csv",
+      "response_media_type": "text/csv",
+      "query_schema": "none"
+    },
+    {
+      "row": 195,
+      "operation": "udata.v1.SiteJsonLdContext_get",
+      "method": "GET",
+      "path": "/api/1/site/context.jsonld",
+      "response_media_type": "application/ld+json"
+    }
+  ],
+  "controlled_evidence": {
+    "required": true,
+    "mutation_origin": "http://127.0.0.1:5640",
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f"
+  }
+}

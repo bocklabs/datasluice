@@ -1,11 +1,23 @@
 {
   "schema_version": "1.0",
   "platform": "udata",
-  "profile_version": "17.3.0",
+  "profile_version": "17.6.0",
   "cases": [
     {
       "operation": "udata/api-v1.root-and-effective-profile-probe",
       "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "deployment-disabled"
     },
     {
       "operation": "udata/deployment-plugin-and-configuration-dependent-routes",

@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import json
-import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from time import monotonic, sleep
 from types import TracebackType
@@ -20,6 +17,9 @@ from datasluice.domain.catalog.auth import (
     SecretValue,
     SocrataCredential,
     UDataCredential,
+)
+from datasluice.domain.catalog.auth import (
+    credential_scope as _credential_scope,
 )
 from datasluice.domain.catalog.models import DatasetRecord, OrganizationRecord, ResourceRecord, ResultEnvelope
 from datasluice.domain.catalog.operations import OperationId
@@ -54,10 +54,14 @@ from datasluice.runtime.constants import (
 )
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import (
+    AsyncRuntimeStreamResponse,
+    CatalogTransport,
+    RuntimeRequest,
+    RuntimeResponse,
+    TransportFailure,
+)
 from datasluice.runtime.transport.user_agent import build_user_agent
-
-_CREDENTIAL_SCOPE_KEY = secrets.token_bytes(32)
 
 
 class AsyncCatalogTransport(Protocol):
@@ -68,6 +72,13 @@ class AsyncCatalogTransport(Protocol):
 
     async def aclose(self) -> None:
         """Release asynchronous resources."""
+
+
+class AsyncStreamingCatalogTransport(AsyncCatalogTransport, Protocol):
+    """Asynchronous transport port that can expose a response body incrementally."""
+
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        """Send one request without pre-buffering its response body."""
 
 
 def _revealed(value: object) -> str:
@@ -120,21 +131,6 @@ def _default_budget() -> TimeBudget:
         write=DEFAULT_WRITE_BUDGET_SECONDS,
         total=DEFAULT_OPERATION_TOTAL_BUDGET_SECONDS,
     )
-
-
-def _credential_scope(credentials: object | None) -> str:
-    credential = credentials.explicit if isinstance(credentials, CredentialResolver) else credentials
-    if credential is None:
-        return "anonymous"
-    dataclass_fields = getattr(credential, "__dataclass_fields__", None)
-    if not isinstance(dataclass_fields, dict) or not dataclass_fields:
-        return "anonymous"
-    digest = hmac.new(_CREDENTIAL_SCOPE_KEY, digestmod=hashlib.sha256)
-    for name in dataclass_fields:
-        value = getattr(credential, name)
-        digest.update(name.encode())
-        digest.update((value.reveal() if isinstance(value, SecretValue) else str(value)).encode())
-    return f"{type(credential).__name__.lower()}-{digest.hexdigest()[:16]}"
 
 
 def _circuit_key(request: RuntimeRequest, credentials: object | None) -> CircuitKey:

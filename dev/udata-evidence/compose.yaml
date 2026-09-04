@@ -1,0 +1,104 @@
+name: udata-evidence
+
+services:
+  udata:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UDATA_COMMIT: 0546582058d84706812a1c37387576efc4e5ad1f
+    platform: linux/amd64
+    pull_policy: build
+    ports:
+      - "127.0.0.1:5640:7000"
+    environment:
+      HOME: /tmp
+      UDATA_SECRET_KEY: ${UDATA_SECRET_KEY:?set a disposable local secret in .env}
+      UDATA_API_TOKEN_SECRET: ${UDATA_API_TOKEN_SECRET:?set a disposable local secret in .env}
+      UDATA_EVIDENCE_STACK_NONCE: ${UDATA_EVIDENCE_STACK_NONCE:?set a disposable stack nonce in .env}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/api/1/site/', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      search:
+        condition: service_healthy
+      storage:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/lib/udata
+    restart: "no"
+
+  mongo:
+    image: mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47
+    platform: linux/amd64
+    pull_policy: never
+    tmpfs:
+      - /data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: "no"
+
+  redis:
+    image: redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256
+    platform: linux/amd64
+    pull_policy: never
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: "no"
+
+  search:
+    image: docker.elastic.co/elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356
+    platform: linux/amd64
+    pull_policy: never
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    tmpfs:
+      - /usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    restart: "no"
+
+  storage:
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    platform: linux/amd64
+    pull_policy: never
+    environment:
+      MINIO_ROOT_USER: evidence
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set a disposable local secret in .env}
+    command: server /data
+    tmpfs:
+      - /data
+    restart: "no"
+
+  mailpit:
+    image: axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf
+    platform: linux/amd64
+    pull_policy: never
+    tmpfs:
+      - /data
+    restart: "no"

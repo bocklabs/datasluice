@@ -74,6 +74,13 @@ CANONICAL_LIVE_CLIENT_EXPORTS: dict[str, tuple[str, ...]] = {
         "create_ckan_connector",
         "create_sync_client",
     ),
+    "udata": (
+        "UDataClientSettings",
+        "UDataConnector",
+        "create_async_client",
+        "create_sync_client",
+        "create_udata_connector",
+    ),
 }
 
 CONNECTOR_MODULE_PATHS: dict[str, str] = {
@@ -193,7 +200,7 @@ NEGATIVE_AUDIT_ALLOWLIST: dict[str, frozenset[str]] = {
             "example_datasluice",
         }
     ),
-    ".github/workflows/docs.yml": frozenset({"DataSluiceOperator", "DataSluiceSession"}),
+    ".github/workflows/docs.yaml": frozenset({"DataSluiceOperator", "DataSluiceSession"}),
 }
 
 PROVIDER_RETIRED_TOKENS: tuple[str, ...] = (
@@ -375,6 +382,11 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "AsyncUDataServices",
             "root_profile",
         ),
+        "udata/api-v1.set_site": (
+            "SyncUDataRootProfileService",
+            "AsyncUDataRootProfileService",
+            "set_site",
+        ),
         "udata/api-v1.dataset-list-search-show-create-update-delete": (
             "SyncUDataServices",
             "AsyncUDataServices",
@@ -515,6 +527,36 @@ def _row_to_operation_id(row: str) -> str:
     return f"{platform}/{name}"
 
 
+LOCKED_DATASET_ROUTE_OPERATIONS = frozenset(
+    {
+        "udata/api-v1.set_site",
+        "udata/api-v1.list-datasets",
+        "udata/api-v1.create-dataset",
+        "udata/api-v1.recent-datasets-atom",
+        "udata/api-v1.get-dataset",
+        "udata/api-v1.update-dataset",
+        "udata/api-v1.delete-dataset",
+        "udata/api-v1.feature-dataset",
+        "udata/api-v1.unfeature-dataset",
+        "udata/api-v1.rdf-dataset",
+        "udata/api-v1.rdf-dataset-format",
+        "udata/api-v1.suggest-datasets",
+        "udata/api-v2.search-datasets",
+        "udata/api-v2.list-datasets",
+        "udata/api-v2.get-dataset",
+        "udata/api-v2.get-dataset-extras",
+        "udata/api-v2.update-dataset-extras",
+        "udata/api-v2.delete-dataset-extras",
+    }
+)
+
+LOCKED_EXTRA_OPERATION_IDS = LOCKED_DATASET_ROUTE_OPERATIONS & {"udata/api-v1.set_site"}
+
+PLATFORM_APPROVED_ROUTE_OPERATIONS = {
+    "udata": LOCKED_DATASET_ROUTE_OPERATIONS,
+}
+
+
 def _retired_word_violations() -> list[str]:
     """Scan connector-facing surfaces for any casing of the retired word.
 
@@ -600,7 +642,7 @@ def _entry_point_violations() -> list[str]:
 def _fixture_linkage_violations() -> list[str]:
     """Check profile operations, the locked matrix, and case corpora agree statically."""
     violations = []
-    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS}
+    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS} | LOCKED_EXTRA_OPERATION_IDS
     for platform in PLATFORMS:
         try:
             profile = _profile(platform)
@@ -609,7 +651,8 @@ def _fixture_linkage_violations() -> list[str]:
             continue
         operations = {operation["id"] for operation in profile["operations"]}
         expected = {operation_id for operation_id in integrate_ids if operation_id.startswith(f"{platform}/")}
-        if operations != expected:
+        approved_routes = PLATFORM_APPROVED_ROUTE_OPERATIONS.get(platform, frozenset())
+        if operations != expected | approved_routes:
             violations.append(f"{platform} profile diverges from the locked matrix")
         cases_path = REPO_ROOT / "src/datasluice/contracts/catalog/fixtures" / platform / "cases.json"
         try:
@@ -918,13 +961,14 @@ def test_locked_coverage_matrix_matches_profiles_exactly() -> None:
         file_opt_out = {f"{platform}.{name}" for platform, name, decision in rows if decision == "OPT-OUT"}
         assert file_integrate == set(LOCKED_INTEGRATE_ROWS)
         assert file_opt_out == set(LOCKED_OPT_OUT_ROWS)
-    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS}
+    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS} | LOCKED_EXTRA_OPERATION_IDS
     for platform in PLATFORMS:
         profile = _profile(platform)
         operations = [operation["id"] for operation in profile["operations"]]
         assert len(operations) == len(set(operations)), f"{platform} declares duplicate operations"
         platform_ids = {operation_id for operation_id in integrate_ids if operation_id.startswith(f"{platform}/")}
-        assert set(operations) == platform_ids, f"{platform} profile diverges from the locked matrix"
+        approved_routes = PLATFORM_APPROVED_ROUTE_OPERATIONS.get(platform, frozenset())
+        assert set(operations) == platform_ids | approved_routes, f"{platform} profile diverges from the locked matrix"
         locked_outs = {row for row in LOCKED_OPT_OUT_ROWS if row.startswith(f"{platform}.")}
         opt_out_ids = {entry["id"] for entry in profile.get("opt_out_operations", [])}
         for row in locked_outs:
@@ -941,7 +985,7 @@ def test_locked_coverage_matrix_matches_profiles_exactly() -> None:
 
 def test_every_integrate_operation_has_both_native_protocol_modes() -> None:
     """Test 3: each operation maps uniquely onto typed sync and async native Protocols."""
-    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS}
+    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS} | LOCKED_EXTRA_OPERATION_IDS
     mapped_ids = {operation_id for platform in NATIVE_OPERATION_MEMBERS.values() for operation_id in platform}
     assert mapped_ids == integrate_ids
     for platform, operations in NATIVE_OPERATION_MEMBERS.items():
@@ -961,7 +1005,7 @@ def test_every_integrate_operation_reaches_report_outcomes_in_both_modes() -> No
     from datasluice.contracts.catalog.fakes import AsyncReferenceConnector, SyncReferenceConnector
     from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 
-    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS}
+    integrate_ids = {_row_to_operation_id(row) for row in LOCKED_INTEGRATE_ROWS} | LOCKED_EXTRA_OPERATION_IDS
     for platform in PLATFORMS:
         fixture_set = load_reference_fixture_set(platform)
         assert {str(case.operation_id) for case in fixture_set.cases} == {

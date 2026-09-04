@@ -15,7 +15,7 @@ from datasluice.contracts.catalog.protocols import (
 )
 from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
-_UDATA_PROFILE_VERSION = "17.3.0"
+_UDATA_PROFILE_VERSION = "17.6.0"
 _UDATA_API_VERSION = "uData API v1"
 _UDATA_PLATFORM = "udata"
 
@@ -50,7 +50,7 @@ def _require_udata_profile(profile: EffectiveCapabilityProfile | None) -> Effect
         raise ValueError("uData connectors require an effective uData capability profile.")
     declared = profile.declared_profile
     if declared.profile_version != _UDATA_PROFILE_VERSION or declared.platform_api_version != _UDATA_API_VERSION:
-        raise ValueError("uData connectors require the pinned uData 17.3.0 API v1 profile.")
+        raise ValueError("uData connectors require the pinned uData 17.6.0 API v1 profile.")
     if not declared.operations or any(operation_id.platform != _UDATA_PLATFORM for operation_id in declared.operations):
         raise ValueError("uData connectors require a profile whose operations identify the uData platform.")
     return profile

@@ -9,8 +9,11 @@ from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport.base import (
+    AsyncRuntimeStreamResponse,
+    RedirectPolicy,
     RuntimeRequest,
     RuntimeResponse,
+    RuntimeStreamResponse,
     TransportFailure,
     drop_body_transfer_headers,
     redirect_method_and_body,
@@ -27,6 +30,45 @@ def _require_plain_http_target(url: str) -> None:
     if parsed.scheme.lower() not in _ALLOWED_REDIRECT_SCHEMES:
         raise ValueError(f"non-HTTP redirect target scheme {parsed.scheme!r}")
     _ = parsed.port
+
+
+def _build_request(client: Any, request: RuntimeRequest) -> Any:
+    if request.files:
+        return client.build_request(
+            request.method,
+            request.url,
+            headers=dict(drop_body_transfer_headers(request.headers)),
+            data=None,
+            files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
+        )
+    return client.build_request(
+        request.method,
+        request.url,
+        headers=dict(request.headers),
+        content=request.body,
+    )
+
+
+def _read_body(response: Any, max_bytes: int | None) -> bytes:
+    if max_bytes is None:
+        return response.content
+    body = bytearray()
+    for chunk in response.iter_bytes():
+        if len(body) + len(chunk) > max_bytes:
+            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        body.extend(chunk)
+    return bytes(body)
+
+
+async def _read_body_async(response: Any, max_bytes: int | None) -> bytes:
+    if max_bytes is None:
+        return await response.aread()
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        if len(body) + len(chunk) > max_bytes:
+            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        body.extend(chunk)
+    return bytes(body)
 
 
 class HttpxCatalogTransport:
@@ -64,35 +106,34 @@ class HttpxCatalogTransport:
         current = request
         for _ in range(self._max_redirects + 1):
             try:
-                if current.files:
-                    response = self._client.request(
-                        current.method,
-                        current.url,
-                        headers=dict(drop_body_transfer_headers(current.headers)),
-                        data=None,
-                        files=[
-                            (part.field_name, (part.file_name, part.data, part.content_type)) for part in current.files
-                        ],
-                        follow_redirects=False,
-                    )
-                else:
-                    response = self._client.request(
-                        current.method,
-                        current.url,
-                        headers=dict(current.headers),
-                        content=current.body,
-                        follow_redirects=False,
-                    )
+                response = self._client.send(
+                    _build_request(self._client, current),
+                    stream=current.max_response_bytes is not None,
+                    follow_redirects=False,
+                )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
+            if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
+                try:
+                    return RuntimeResponse(
+                        response.status_code,
+                        dict(response.headers),
+                        _read_body(response, current.max_response_bytes),
+                        _retry_after(response.headers.get("retry-after")),
+                    )
+                finally:
+                    response.close()
             location = response.headers.get("location")
             if not response.is_redirect or location is None:
-                return RuntimeResponse(
-                    response.status_code,
-                    dict(response.headers),
-                    response.content,
-                    _retry_after(response.headers.get("retry-after")),
-                )
+                try:
+                    return RuntimeResponse(
+                        response.status_code,
+                        dict(response.headers),
+                        _read_body(response, current.max_response_bytes),
+                        _retry_after(response.headers.get("retry-after")),
+                    )
+                finally:
+                    response.close()
             try:
                 next_url = urljoin(current.url, location)
                 _require_plain_http_target(next_url)
@@ -110,7 +151,15 @@ class HttpxCatalogTransport:
             )
             if next_body is None and not next_files:
                 headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(next_method, next_url, headers, next_body, next_files)
+            current = RuntimeRequest(
+                next_method,
+                next_url,
+                headers,
+                next_body,
+                next_files,
+                current.redirect_policy,
+                current.max_response_bytes,
+            )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     def close(self) -> None:
@@ -118,6 +167,46 @@ class HttpxCatalogTransport:
         if not self._closed:
             self._closed = True
             self._client.close()
+
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        """Send one no-follow request while leaving its response body unbuffered."""
+        if self._closed:
+            raise TransportFailure("The httpx catalog transport is closed.")
+        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
+            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        try:
+            if request.files:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(drop_body_transfer_headers(request.headers)),
+                    data=None,
+                    files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
+                )
+            else:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(request.headers),
+                    content=request.body,
+                )
+            response = self._client.send(prepared, stream=True, follow_redirects=False)
+        except self._httpx.HTTPError as exc:
+            raise TransportFailure("httpx could not open the catalog response stream.") from exc
+
+        def chunks() -> Any:
+            try:
+                yield from response.iter_bytes()
+            except self._httpx.HTTPError as exc:
+                raise TransportFailure("httpx could not read the catalog response stream.") from exc
+
+        return RuntimeStreamResponse(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            chunks=chunks(),
+            close_callback=response.close,
+            retry_after=_retry_after(response.headers.get("retry-after")),
+        )
 
 
 class AsyncHttpxCatalogTransport:
@@ -155,35 +244,38 @@ class AsyncHttpxCatalogTransport:
         current = request
         for _ in range(self._max_redirects + 1):
             try:
-                if current.files:
-                    response = await self._client.request(
-                        current.method,
-                        current.url,
-                        headers=dict(drop_body_transfer_headers(current.headers)),
-                        data=None,
-                        files=[
-                            (part.field_name, (part.file_name, part.data, part.content_type)) for part in current.files
-                        ],
-                        follow_redirects=False,
-                    )
-                else:
-                    response = await self._client.request(
-                        current.method,
-                        current.url,
-                        headers=dict(current.headers),
-                        content=current.body,
-                        follow_redirects=False,
-                    )
+                response = await self._client.send(
+                    _build_request(self._client, current),
+                    stream=current.max_response_bytes is not None,
+                    follow_redirects=False,
+                )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
+            if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
+                try:
+                    return RuntimeResponse(
+                        response.status_code,
+                        dict(response.headers),
+                        await _read_body_async(response, current.max_response_bytes),
+                        _retry_after(response.headers.get("retry-after")),
+                    )
+                except self._httpx.HTTPError as exc:
+                    raise TransportFailure("httpx could not read the catalog response.") from exc
+                finally:
+                    await response.aclose()
             location = response.headers.get("location")
             if not response.is_redirect or location is None:
-                return RuntimeResponse(
-                    response.status_code,
-                    dict(response.headers),
-                    response.content,
-                    _retry_after(response.headers.get("retry-after")),
-                )
+                try:
+                    return RuntimeResponse(
+                        response.status_code,
+                        dict(response.headers),
+                        await _read_body_async(response, current.max_response_bytes),
+                        _retry_after(response.headers.get("retry-after")),
+                    )
+                except self._httpx.HTTPError as exc:
+                    raise TransportFailure("httpx could not read the catalog response.") from exc
+                finally:
+                    await response.aclose()
             try:
                 next_url = urljoin(current.url, location)
                 _require_plain_http_target(next_url)
@@ -201,7 +293,15 @@ class AsyncHttpxCatalogTransport:
             )
             if next_body is None and not next_files:
                 headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(next_method, next_url, headers, next_body, next_files)
+            current = RuntimeRequest(
+                next_method,
+                next_url,
+                headers,
+                next_body,
+                next_files,
+                current.redirect_policy,
+                current.max_response_bytes,
+            )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     async def aclose(self) -> None:
@@ -209,6 +309,47 @@ class AsyncHttpxCatalogTransport:
         if not self._closed:
             self._closed = True
             await self._client.aclose()
+
+    async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
+        """Send one no-follow request while leaving its response body unbuffered."""
+        if self._closed:
+            raise TransportFailure("The async httpx catalog transport is closed.")
+        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
+            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        try:
+            if request.files:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(drop_body_transfer_headers(request.headers)),
+                    data=None,
+                    files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
+                )
+            else:
+                prepared = self._client.build_request(
+                    request.method,
+                    request.url,
+                    headers=dict(request.headers),
+                    content=request.body,
+                )
+            response = await self._client.send(prepared, stream=True, follow_redirects=False)
+        except self._httpx.HTTPError as exc:
+            raise TransportFailure("httpx could not open the catalog response stream.") from exc
+
+        async def chunks() -> Any:
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            except self._httpx.HTTPError as exc:
+                raise TransportFailure("httpx could not read the catalog response stream.") from exc
+
+        return AsyncRuntimeStreamResponse(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            chunks=chunks(),
+            close_callback=response.aclose,
+            retry_after=_retry_after(response.headers.get("retry-after")),
+        )
 
 
 def _retains_credentials(scope: CredentialScope | None, current_url: str, next_url: str) -> bool:
