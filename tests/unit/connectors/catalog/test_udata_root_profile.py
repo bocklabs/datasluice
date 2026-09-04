@@ -328,23 +328,41 @@ def test_controlled_command_cleanup_failure_does_not_replace_primary_error(
     assert str(excinfo.value.__cause__) == "cleanup"
 
 
-def test_controlled_dependency_image_identity_rejects_unapproved_image_id() -> None:
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    (
+        ("config", "dependency image is not approved"),
+        ("image", "image ID is not approved"),
+        ("repository", "repository digest is not approved"),
+    ),
+)
+def test_controlled_dependency_image_identity_rejects_unapproved_identity(mismatch: str, message: str) -> None:
     container_id = "a" * 64
-    image_id = "sha256:" + "b" * 64
     approved_config_image = "mongo@sha256:" + "c" * 64
     approved_image_id = "sha256:" + "c" * 64
     approved_repository_digest = "mongo@sha256:" + "c" * 64
+    observed_config_image = approved_config_image
+    observed_image_id = approved_image_id
+    observed_repository_digest = approved_repository_digest
+    if mismatch == "config":
+        observed_config_image = "mongo@sha256:" + "d" * 64
+    elif mismatch == "image":
+        observed_image_id = "sha256:" + "d" * 64
+    else:
+        observed_repository_digest = "mongo@sha256:" + "d" * 64
 
     def read(*args: str, **_: object) -> str:
         if args[:2] == ("ps", "-q"):
             return container_id
         if args[:2] == ("inspect", "--format"):
-            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(approved_config_image)
+            return (
+                json.dumps(container_id) + " " + json.dumps(observed_image_id) + " " + json.dumps(observed_config_image)
+            )
         if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(image_id) + " " + json.dumps([approved_repository_digest])
+            return json.dumps(observed_image_id) + " " + json.dumps([observed_repository_digest])
         raise AssertionError(f"unexpected image identity command {args}")
 
-    with pytest.raises(CatalogValidationError, match="image ID is not approved"):
+    with pytest.raises(CatalogValidationError, match=message):
         udata_clients._controlled_service_image_identity(
             read,
             "mongo",
@@ -674,8 +692,17 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
         for service, config_image, image_id, repository_digest in _TEST_CONTROLLED_IMAGE_SPECS
     }
     image_ids: dict[str, str] = {service: image_id for service, _, image_id, _ in _TEST_CONTROLLED_IMAGE_SPECS}
+    controlled_patch_bodies: list[dict[str, object]] = []
+    cast(Any, transport)._controlled_patch_bodies = controlled_patch_bodies
 
-    def sync_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
+    def sync_command(
+        args: tuple[str, ...],
+        *,
+        input_data: bytes | None = None,
+        docker_endpoint: str | None = None,
+        direct: bool = False,
+        **_: object,
+    ) -> str:
         if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
             return '"unix:///Users/nitish/.docker/run/docker.sock"'
         if args[-4:] == ("ps", "--status", "running", "--services"):
@@ -699,6 +726,17 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
         if args[:3] == ("exec", container_ids["udata"], "printenv"):
             return "unit-test-stack"
         if len(args) >= 3 and args[-3] == "python":
+            assert args[:3] == ("exec", "-i", container_ids["udata"])
+            assert docker_endpoint == "unix:///Users/nitish/.docker/run/docker.sock"
+            assert direct is True
+            if input_data is not None:
+                request_payload = json.loads(input_data)
+                assert isinstance(request_payload, dict)
+                assert set(request_payload) == {"token", "body"}
+                assert request_payload["token"] == "site-key"
+                body = request_payload["body"]
+                assert isinstance(body, dict)
+                controlled_patch_bodies.append(cast(dict[str, object], body))
             response = transport.routes.get(
                 ("PATCH", _SITE_URL),
                 _json_response(200, _site_body(), {"Content-Type": "application/json"}),
@@ -716,8 +754,15 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
             )
         raise AssertionError(f"unexpected controlled command {args}")
 
-    async def async_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
-        return sync_command(args, input_data=input_data)
+    async def async_command(
+        args: tuple[str, ...],
+        *,
+        input_data: bytes | None = None,
+        docker_endpoint: str | None = None,
+        direct: bool = False,
+        **_: object,
+    ) -> str:
+        return sync_command(args, input_data=input_data, docker_endpoint=docker_endpoint, direct=direct)
 
     sync_type = udata_clients._ControlledSyncTransport
     async_type = udata_clients._ControlledAsyncTransport
@@ -950,6 +995,7 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
 
     assert isinstance(result, SiteMutationResult)
     assert result.profile is not None and result.profile.title == "Changed"
+    assert cast(Any, transport)._controlled_patch_bodies == [{"title": "Changed", "configs": None}]
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.target.value == "site"
     assert result.receipt.audit_metadata["controlled_evidence_digest"] == _controlled_evidence().digest
