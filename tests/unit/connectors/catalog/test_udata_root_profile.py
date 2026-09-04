@@ -69,28 +69,53 @@ _PERMISSIONS = EffectivePermissions.for_credential(
 _TEST_CONTROLLED_IMAGE_SPECS = (
     (
         "udata",
-        "udata-evidence-udata@sha256:c0603a681e8fb9a384dbd570c4b5ac74f32e327d044d1bccfd6707af7dc57b00",
+        "udata-evidence-udata",
+        "sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
+        "udata-evidence-udata@sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
     ),
-    ("mongo", "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47"),
-    ("redis", "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256"),
+    (
+        "mongo",
+        "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+        "sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+        "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+    ),
+    (
+        "redis",
+        "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+        "sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+        "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+    ),
     (
         "search",
         "docker.elastic.co/elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+        "sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+        "docker.elastic.co/elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
     ),
-    ("storage", "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"),
-    ("mailpit", "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf"),
+    (
+        "storage",
+        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+    ),
+    (
+        "mailpit",
+        "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+        "sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+        "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+    ),
 )
-_TEST_CONTROLLED_SERVICE_NAMES = tuple(service for service, _ in _TEST_CONTROLLED_IMAGE_SPECS)
+_TEST_CONTROLLED_SERVICE_NAMES = tuple(spec[0] for spec in _TEST_CONTROLLED_IMAGE_SPECS)
 
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
-    image_specs = dict(_TEST_CONTROLLED_IMAGE_SPECS)
-    image_ids = {service: f"sha256:{image.rsplit('@sha256:', 1)[1]}" for service, image in _TEST_CONTROLLED_IMAGE_SPECS}
+    image_specs: dict[str, tuple[str, str, str]] = {
+        service: (config_image, image_id, repository_digest)
+        for service, config_image, image_id, repository_digest in _TEST_CONTROLLED_IMAGE_SPECS
+    }
     image_identities = []
     for service in _TEST_CONTROLLED_SERVICE_NAMES:
-        image_spec = image_specs[service]
-        config_image = image_spec.split("@", 1)[0] if service == "udata" else image_spec
-        image_identities.append(f"{service}|{config_image}|{image_ids[service]}|{image_spec}")
+        config_image, image_id, repository_digest = image_specs[service]
+        image_identities.append(f"{service}|{config_image}|{image_id}|{repository_digest}")
     return udata_clients._ControlledStackEvidence(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         site_id=site_id,
@@ -306,15 +331,17 @@ def test_controlled_command_cleanup_failure_does_not_replace_primary_error(
 def test_controlled_dependency_image_identity_rejects_unapproved_image_id() -> None:
     container_id = "a" * 64
     image_id = "sha256:" + "b" * 64
-    approved_image = "mongo@sha256:" + "c" * 64
+    approved_config_image = "mongo@sha256:" + "c" * 64
+    approved_image_id = "sha256:" + "c" * 64
+    approved_repository_digest = "mongo@sha256:" + "c" * 64
 
     def read(*args: str, **_: object) -> str:
         if args[:2] == ("ps", "-q"):
             return container_id
         if args[:2] == ("inspect", "--format"):
-            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(approved_image)
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(approved_config_image)
         if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(image_id) + " " + json.dumps([approved_image])
+            return json.dumps(image_id) + " " + json.dumps([approved_repository_digest])
         raise AssertionError(f"unexpected image identity command {args}")
 
     with pytest.raises(CatalogValidationError, match="image ID is not approved"):
@@ -322,9 +349,9 @@ def test_controlled_dependency_image_identity_rejects_unapproved_image_id() -> N
             read,
             "mongo",
             "unix:///tmp/docker.sock",
-            approved_image,
+            (approved_config_image, approved_image_id, approved_repository_digest),
             "udata-evidence-udata",
-            "udata-evidence-udata@sha256:" + "d" * 64,
+            ("udata-evidence-udata", "sha256:" + "d" * 64, "udata-evidence-udata@sha256:" + "d" * 64),
             udata_clients._controlled_error,
         )
 
@@ -642,8 +669,11 @@ class AsyncRouterTransport:
 
 def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
     container_ids = {service: f"{index:064x}" for index, service in enumerate(_TEST_CONTROLLED_SERVICE_NAMES, 1)}
-    image_specs = dict(_TEST_CONTROLLED_IMAGE_SPECS)
-    image_ids = {service: f"sha256:{image.rsplit('@sha256:', 1)[1]}" for service, image in _TEST_CONTROLLED_IMAGE_SPECS}
+    image_specs: dict[str, tuple[str, str, str]] = {
+        service: (config_image, image_id, repository_digest)
+        for service, config_image, image_id, repository_digest in _TEST_CONTROLLED_IMAGE_SPECS
+    }
+    image_ids: dict[str, str] = {service: image_id for service, _, image_id, _ in _TEST_CONTROLLED_IMAGE_SPECS}
 
     def sync_command(args: tuple[str, ...], *, input_data: bytes | None = None, **_: object) -> str:
         if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
@@ -657,13 +687,12 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
         if args[:2] == ("inspect", "--format"):
             container_id = args[-1]
             service = next(service for service, value in container_ids.items() if value == container_id)
-            image_spec = image_specs[service]
-            config_image = image_spec.split("@", 1)[0] if service == "udata" else image_spec
+            config_image, _image_id, _repository_digest = image_specs[service]
             return " ".join((json.dumps(container_id), json.dumps(image_ids[service]), json.dumps(config_image)))
         if args[:3] == ("image", "inspect", "--format"):
             image_id = args[-1]
             service = next(service for service, value in image_ids.items() if value == image_id)
-            repository_digest = image_specs[service]
+            _config_image, _image_id, repository_digest = image_specs[service]
             return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
         if args[:3] == ("exec", container_ids["udata"], "git"):
             return "0546582058d84706812a1c37387576efc4e5ad1f"

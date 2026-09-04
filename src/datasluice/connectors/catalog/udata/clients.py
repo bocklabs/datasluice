@@ -118,19 +118,45 @@ _CONTROLLED_COMPOSE_SHA256 = "f7acbcd1ea2f88f7b9361cbfadbd46e62be82bd707538f22f0
 _CONTROLLED_DOCKERFILE_SHA256 = "6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
 _CONTROLLED_UDATA_IMAGE_SPEC = (
-    "udata-evidence-udata@sha256:c0603a681e8fb9a384dbd570c4b5ac74f32e327d044d1bccfd6707af7dc57b00"
+    "udata-evidence-udata",
+    "sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
+    "udata-evidence-udata@sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
 )
 _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
-    ("mongo", "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47"),
-    ("redis", "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256"),
+    (
+        "mongo",
+        "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+        "sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+        "mongo@sha256:d3d7c7fbbbb18f61baac3f8d13f0834c28a0e000cae444691def321d568abe47",
+    ),
+    (
+        "redis",
+        "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+        "sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+        "redis@sha256:28bd5e15c3674c48a472a3dd475ba446d0a3cd876e7addb988b5840a286b2256",
+    ),
     (
         "search",
         "docker.elastic.co/elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+        "sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
+        "docker.elastic.co/elasticsearch/elasticsearch@sha256:5496dd095a610571a02c362cd5f60ddd29a2cac5225d52f953241a5189871356",
     ),
-    ("storage", "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"),
-    ("mailpit", "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf"),
+    (
+        "storage",
+        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+    ),
+    (
+        "mailpit",
+        "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+        "sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+        "axllent/mailpit@sha256:fa9d90f91a042f92cc28cf6dc4c75c6d57ac693b2737cdd30a6bfd9879838bbf",
+    ),
 )
-_CONTROLLED_IMAGE_DIGESTS = tuple(image for _, image in _CONTROLLED_DEPENDENCY_IMAGE_SPECS)
+_CONTROLLED_IMAGE_DIGESTS = tuple(
+    repository_digest for _, _, _, repository_digest in _CONTROLLED_DEPENDENCY_IMAGE_SPECS
+)
 _CONTROLLED_SERVICE_NAMES = ("udata", "mongo", "redis", "search", "storage", "mailpit")
 _CONTROLLED_EVIDENCE_ROOT = Path(__file__).resolve().parents[5] / "dev" / "udata-evidence"
 _CONTROLLED_COMPOSE_FILE = _CONTROLLED_EVIDENCE_ROOT / "compose.yaml"
@@ -1126,9 +1152,9 @@ def _controlled_service_image_identity(
     read: Callable[..., str],
     service: str,
     docker_endpoint: str,
-    expected_image: str | None,
+    expected_image: tuple[str, str, str] | None,
     udata_image_repository: str,
-    udata_image_spec: str,
+    udata_image_spec: tuple[str, str, str],
     error_factory: Callable[[str], CatalogValidationError],
 ) -> tuple[str, str]:
     container_output = read("ps", "-q", service, docker_endpoint=docker_endpoint)
@@ -1156,18 +1182,21 @@ def _controlled_service_image_identity(
         or not isinstance(config_image, str)
     ):
         raise error_factory("The controlled uData container image identity is invalid.")
-    if not isinstance(expected_image, str) or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", expected_image) is None:
+    if (
+        not isinstance(expected_image, tuple)
+        or len(expected_image) != 3
+        or not all(isinstance(value, str) for value in expected_image)
+    ):
         raise error_factory("The controlled uData image allowlist is invalid.")
-    expected_repository, expected_digest = expected_image.rsplit("@sha256:", 1)
+    expected_config_image, expected_image_id, expected_repository_digest = expected_image
     if service == "udata" and (
         expected_image != udata_image_spec
-        or expected_repository != udata_image_repository
-        or config_image != udata_image_repository
+        or expected_config_image != udata_image_repository
+        or config_image != expected_config_image
     ):
         raise error_factory("The controlled uData service image is not the approved build.")
-    if service != "udata" and config_image != expected_image:
+    if service != "udata" and config_image != expected_config_image:
         raise error_factory("A controlled uData dependency image is not approved.")
-    expected_image_id = f"sha256:{expected_digest}"
     if image_id != expected_image_id:
         message = (
             "The controlled uData service image is not the approved build."
@@ -1193,7 +1222,6 @@ def _controlled_service_image_identity(
         raise error_factory("The controlled uData image digest output is invalid.")
     if inspected_image_id != image_id:
         raise error_factory("The controlled uData image ID does not match its container.")
-    expected_repository_digest = expected_image
     if expected_repository_digest not in repository_digests:
         raise error_factory("The controlled uData image repository digest is not approved.")
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
@@ -1203,9 +1231,9 @@ async def _controlled_service_image_identity_async(
     read: Callable[..., Awaitable[str]],
     service: str,
     docker_endpoint: str,
-    expected_image: str | None,
+    expected_image: tuple[str, str, str] | None,
     udata_image_repository: str,
-    udata_image_spec: str,
+    udata_image_spec: tuple[str, str, str],
     error_factory: Callable[[str], CatalogValidationError],
 ) -> tuple[str, str]:
     container_output = await read("ps", "-q", service, docker_endpoint=docker_endpoint)
@@ -1233,18 +1261,21 @@ async def _controlled_service_image_identity_async(
         or not isinstance(config_image, str)
     ):
         raise error_factory("The controlled uData container image identity is invalid.")
-    if not isinstance(expected_image, str) or re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", expected_image) is None:
+    if (
+        not isinstance(expected_image, tuple)
+        or len(expected_image) != 3
+        or not all(isinstance(value, str) for value in expected_image)
+    ):
         raise error_factory("The controlled uData image allowlist is invalid.")
-    expected_repository, expected_digest = expected_image.rsplit("@sha256:", 1)
+    expected_config_image, expected_image_id, expected_repository_digest = expected_image
     if service == "udata" and (
         expected_image != udata_image_spec
-        or expected_repository != udata_image_repository
-        or config_image != udata_image_repository
+        or expected_config_image != udata_image_repository
+        or config_image != expected_config_image
     ):
         raise error_factory("The controlled uData service image is not the approved build.")
-    if service != "udata" and config_image != expected_image:
+    if service != "udata" and config_image != expected_config_image:
         raise error_factory("A controlled uData dependency image is not approved.")
-    expected_image_id = f"sha256:{expected_digest}"
     if image_id != expected_image_id:
         message = (
             "The controlled uData service image is not the approved build."
@@ -1270,7 +1301,6 @@ async def _controlled_service_image_identity_async(
         raise error_factory("The controlled uData image digest output is invalid.")
     if inspected_image_id != image_id:
         raise error_factory("The controlled uData image ID does not match its container.")
-    expected_repository_digest = expected_image
     if expected_repository_digest not in repository_digests:
         raise error_factory("The controlled uData image repository digest is not approved.")
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
@@ -1284,9 +1314,9 @@ def _verify_controlled_source_and_nonce(
     source_commit: str = _CONTROLLED_SOURCE_COMMIT,
     service_names: tuple[str, ...] = _CONTROLLED_SERVICE_NAMES,
     expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
-    dependency_image_specs: tuple[tuple[str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
+    dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
-    udata_image_spec: str = _CONTROLLED_UDATA_IMAGE_SPEC,
+    udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1305,7 +1335,10 @@ def _verify_controlled_source_and_nonce(
         raise error_factory("The running services do not match the controlled uData stack.")
     if read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
         raise error_factory("The controlled uData service is not bound to the approved loopback port.")
-    dependency_images = dict(dependency_image_specs)
+    dependency_images = {
+        service: (config_image, image_id, repository_digest)
+        for service, config_image, image_id, repository_digest in dependency_image_specs
+    }
     image_identities: list[str] = []
     udata_container_id = ""
     for service in service_names:
@@ -1364,9 +1397,9 @@ async def _verify_controlled_source_and_nonce_async(
     source_commit: str = _CONTROLLED_SOURCE_COMMIT,
     service_names: tuple[str, ...] = _CONTROLLED_SERVICE_NAMES,
     expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
-    dependency_image_specs: tuple[tuple[str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
+    dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
-    udata_image_spec: str = _CONTROLLED_UDATA_IMAGE_SPEC,
+    udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1385,7 +1418,10 @@ async def _verify_controlled_source_and_nonce_async(
         raise error_factory("The running services do not match the controlled uData stack.")
     if await read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
         raise error_factory("The controlled uData service is not bound to the approved loopback port.")
-    dependency_images = dict(dependency_image_specs)
+    dependency_images = {
+        service: (config_image, image_id, repository_digest)
+        for service, config_image, image_id, repository_digest in dependency_image_specs
+    }
     image_identities: list[str] = []
     udata_container_id = ""
     for service in service_names:
