@@ -16,6 +16,7 @@ from datasluice.connectors.catalog.ckan.services.organizations import (
     AsyncOrganizationsService,
     SyncOrganizationsService,
 )
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import CKANCredential
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
@@ -106,19 +107,13 @@ class AsyncCaptureTransport:
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
     return SyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
 def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
     return AsyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
@@ -285,8 +280,9 @@ def test_unconfirmed_organization_purge_refuses_at_zero_transport_io() -> None:
     transport = SyncCaptureTransport(body=_success_body(None))
     client = _client(transport)
 
+    policy = MutationPolicy(destructive=True)
     with pytest.raises(CatalogValidationError) as excinfo:
-        client.organizations.organization_purge(id="org-1", policy=MutationPolicy(destructive=True))
+        client.organizations.organization_purge(id="org-1", policy=policy)
 
     assert transport.requests == []
     assert "destructive" in str(excinfo.value)
@@ -310,8 +306,7 @@ def test_confirmed_organization_purge_dispatches_once_with_redacted_receipt() ->
     client = SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        credentials=credential,
+        CKANClientSettings(base_url=LOOPBACK_ORIGIN, credential=credential),
         owns_transport=False,
     )
 

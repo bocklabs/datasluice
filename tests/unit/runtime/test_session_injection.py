@@ -170,7 +170,7 @@ def test_runtime_options_do_not_replace_an_injected_transport() -> None:
     session = DataSluiceSession(
         transport=stub,
         budget=TimeBudget(connect=1.0, read=2.0, write=3.0, total=4.0),
-        tls_policy=TLSPolicy(verify=False, override_scope="development"),
+        tls_policy=TLSPolicy(),
     )
     assert session._transport is stub
 
@@ -258,11 +258,14 @@ def test_session_aclose_disposes_owned_default_transports_idempotently() -> None
 
     asyncio.run(dispose_twice())
 
+    request = RuntimeRequest("GET", "https://example.test/")
     with pytest.raises(TransportFailure, match="closed"):
-        session._transport.send(RuntimeRequest("GET", "https://example.test/"))
+        session._transport.send(request)
     if session._async_transport is not None:
+        request_2 = RuntimeRequest("GET", "https://example.test/")
+        coroutine = session._async_transport.send(request_2)
         with pytest.raises(TransportFailure, match="closed"):
-            asyncio.run(session._async_transport.send(RuntimeRequest("GET", "https://example.test/")))
+            asyncio.run(coroutine)
     session.close()
     session.close()
 
@@ -362,8 +365,9 @@ def test_open_catalog_rejects_non_callable_factory() -> None:
     """Catalog construction requires a callable factory."""
     session = DataSluiceSession(transport=_StubTransport())
     non_callable = cast("Callable[[CatalogConnectorContext], object]", object())
+    catalog_context = _catalog_context()
     with pytest.raises(TypeError, match="callable factory"):
-        session.open_catalog(non_callable, _catalog_context())
+        session.open_catalog(non_callable, catalog_context)
 
 
 def test_open_catalog_rejects_portal_shaped_context() -> None:

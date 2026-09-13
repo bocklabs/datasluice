@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Protocol
 from urllib.parse import urlsplit
 
+from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import ProbeEvidence, ProbeResponseClass
 from datasluice.domain.detection import DetectionEvidence, DetectionResult
 from datasluice.errors.catalog import CatalogValidationError
@@ -67,6 +68,44 @@ def _require_probe_runners(installed: frozenset[str], probe_engines: Mapping[str
             )
 
 
+def _probe_operation(
+    connector_id: str,
+    platform: str,
+    engine: EffectiveCapabilityCache,
+    operation_id: OperationId,
+    normalized_origin: str,
+) -> tuple[DetectionEvidence, bool]:
+    try:
+        effective = engine.resolve(operation_id)
+        probe_evidence = effective.for_operation(operation_id).evidence
+    except (PortalError, OSError, TransportFailure) as exc:
+        return DetectionEvidence(check=str(operation_id), matched=False, detail=f"probe failed: {exc}"), False
+    if probe_evidence is None:
+        raise CatalogValidationError(
+            f"The capability cache wired for {connector_id} produced no probe evidence for {operation_id}.",
+            operation=str(operation_id),
+            platform=platform,
+            capability_state="missing-probe-evidence",
+            safe_action="Wire an EffectiveCapabilityCache built with a probe runner for every installed connector.",
+        )
+    matched = probe_evidence.observed_response_class is ProbeResponseClass.SUCCESS
+    return _detection_evidence(probe_evidence, normalized_origin, matched), matched
+
+
+def _probe_connector(
+    connector_id: str, platform: str, engine: EffectiveCapabilityCache | None, normalized_origin: str
+) -> tuple[list[DetectionEvidence], bool]:
+    if engine is None:
+        return [DetectionEvidence(check=connector_id, matched=False, detail="no probe engine configured")], False
+    rows = []
+    matched = False
+    for operation_id in engine.baseline_profile.declared_profile.operations:
+        row, operation_matched = _probe_operation(connector_id, platform, engine, operation_id, normalized_origin)
+        rows.append(row)
+        matched = matched or operation_matched
+    return rows, matched
+
+
 def detect(
     url: str,
     probe_engines: Mapping[str, EffectiveCapabilityCache],
@@ -102,34 +141,10 @@ def detect(
         if connector_id not in installed:
             continue
         engine = probe_engines.get(connector_id)
-        if engine is None:
-            evidence_rows.append(
-                DetectionEvidence(check=connector_id, matched=False, detail="no probe engine configured")
-            )
-            continue
-        for operation_id in engine.baseline_profile.declared_profile.operations:
-            try:
-                effective = engine.resolve(operation_id)
-                probe_evidence = effective.for_operation(operation_id).evidence
-            except (PortalError, OSError, TransportFailure) as exc:
-                evidence_rows.append(
-                    DetectionEvidence(check=str(operation_id), matched=False, detail=f"probe failed: {exc}")
-                )
-                continue
-            if probe_evidence is None:
-                raise CatalogValidationError(
-                    f"The capability cache wired for {connector_id} produced no probe evidence for {operation_id}.",
-                    operation=str(operation_id),
-                    platform=platform,
-                    capability_state="missing-probe-evidence",
-                    safe_action=(
-                        "Wire an EffectiveCapabilityCache built with a probe runner for every installed connector."
-                    ),
-                )
-            matched = probe_evidence.observed_response_class is ProbeResponseClass.SUCCESS
-            evidence_rows.append(_detection_evidence(probe_evidence, normalized_origin, matched))
-            if matched and matched_platform is None:
-                matched_platform = platform
+        rows, matched = _probe_connector(connector_id, platform, engine, normalized_origin)
+        evidence_rows.extend(rows)
+        if matched and matched_platform is None:
+            matched_platform = platform
 
     return DetectionResult(
         portal_type=matched_platform,

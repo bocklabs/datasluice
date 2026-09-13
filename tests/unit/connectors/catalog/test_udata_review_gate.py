@@ -12,7 +12,8 @@ _MODULE_PATH = Path(__file__).resolve().parents[4] / "scripts" / "check_udata_re
 if not _MODULE_PATH.is_file():
     pytest.skip("scripts/check_udata_review_gate.py requires a full repository checkout", allow_module_level=True)
 _spec = importlib.util.spec_from_file_location("check_udata_review_gate", _MODULE_PATH)
-assert _spec is not None and _spec.loader is not None
+assert _spec is not None
+assert _spec.loader is not None
 review_gate = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(review_gate)
 

@@ -143,22 +143,36 @@ def test_source_requires_explicit_typed_client_and_query() -> None:
 
     assert tuple(signature.parameters)[:2] == ("client", "query")
     assert "portal" not in signature.parameters
+    typed_value = cast(Any, "https://portal.example.test")
+    query = _query()
     with pytest.raises(TypeError, match="SyncCatalogClient"):
-        datasluice_source(cast(Any, "https://portal.example.test"), _query())
+        datasluice_source(typed_value, query)
+    reference_dlt_connector = _ReferenceDltConnector(())
+    typed_value_2 = cast(SyncCatalogClient, reference_dlt_connector)
+    typed_value_3 = cast(Any, "search")
     with pytest.raises(TypeError, match="CatalogOperationRequest"):
-        datasluice_source(cast(SyncCatalogClient, _ReferenceDltConnector(())), cast(Any, "search"))
+        datasluice_source(typed_value_2, typed_value_3)
 
 
 def test_source_requires_a_client_exposing_the_public_transport_accessor() -> None:
     """A protocol-compatible client without a public transport accessor is rejected early."""
+    transportless_dlt_connector = _TransportlessDltConnector()
+    typed_value = cast(SyncCatalogClient, transportless_dlt_connector)
+    query = _query()
     with pytest.raises(TypeError, match="transport"):
-        datasluice_source(cast(SyncCatalogClient, _TransportlessDltConnector()), _query())
+        datasluice_source(typed_value, query)
 
+    null_transport_dlt_connector = _NullTransportDltConnector(())
+    typed_value_2 = cast(SyncCatalogClient, null_transport_dlt_connector)
+    query_2 = _query()
     with pytest.raises(TypeError, match="transport"):
-        datasluice_source(cast(SyncCatalogClient, _NullTransportDltConnector(())), _query())
+        datasluice_source(typed_value_2, query_2)
 
+    invalid_transport_dlt_connector = _InvalidTransportDltConnector(())
+    typed_value_3 = cast(SyncCatalogClient, invalid_transport_dlt_connector)
+    query_3 = _query()
     with pytest.raises(TypeError, match="transport"):
-        datasluice_source(cast(SyncCatalogClient, _InvalidTransportDltConnector(())), _query())
+        datasluice_source(typed_value_3, query_3)
 
 
 def test_source_uses_reference_connector_resources(tmp_path: Path) -> None:
@@ -264,8 +278,11 @@ def test_source_rejects_missing_resource_url() -> None:
         url=None,
     )
 
+    reference_dlt_connector = _ReferenceDltConnector((missing_url,))
+    typed_value = cast(SyncCatalogClient, reference_dlt_connector)
+    query = _query()
     with pytest.raises(ValueError, match="direct URL"):
-        datasluice_source(cast(SyncCatalogClient, _ReferenceDltConnector((missing_url,))), _query())
+        datasluice_source(typed_value, query)
 
 
 @pytest.mark.parametrize(

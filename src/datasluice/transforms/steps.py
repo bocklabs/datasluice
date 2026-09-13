@@ -169,26 +169,49 @@ class NormalizeTimestamps:
             new_fields: list[Any] = []
             new_columns: list[Any] = []
             for field in batch.schema:
-                col = batch.column(field.name)
-                if pt.is_timestamp(field.type):
-                    try:
-                        if field.type.tz is None:
-                            col = pc.cast(assume_timezone(col, self.assume_naive_tz), target_type, safe=True)
-                        elif field.type.tz != self.target_tz:
-                            col = pc.cast(col, target_type, safe=True)
-                        elif field.type.unit != self.target_unit:
-                            col = pc.cast(col, target_type, safe=True)
-                    except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
-                        from datasluice.exceptions import TransformError
-
-                        raise TransformError(
-                            f"Timestamp normalization failed for {field.name!r} (possible DST fold/gap): {exc}"
-                        ) from exc
-                    new_fields.append(field.with_type(col.type))
-                else:
-                    new_fields.append(field)
+                normalized_field, col = _normalize_timestamp_column(
+                    field,
+                    batch.column(field.name),
+                    target_type,
+                    assume_timezone,
+                    self.target_tz,
+                    self.assume_naive_tz,
+                    self.target_unit,
+                    pc,
+                    pt,
+                    pa,
+                )
+                new_fields.append(normalized_field)
                 new_columns.append(col)
             yield pa.RecordBatch.from_arrays(new_columns, schema=pa.schema(new_fields))
+
+
+def _normalize_timestamp_column(
+    field: Any,
+    column: Any,
+    target_type: Any,
+    assume_timezone: Any,
+    target_tz: str,
+    assume_naive_tz: str,
+    target_unit: str,
+    pc: Any,
+    pt: Any,
+    pa: Any,
+) -> tuple[Any, Any]:
+    if not pt.is_timestamp(field.type):
+        return field, column
+    try:
+        if field.type.tz is None:
+            column = pc.cast(assume_timezone(column, assume_naive_tz), target_type, safe=True)
+        elif field.type.tz != target_tz or field.type.unit != target_unit:
+            column = pc.cast(column, target_type, safe=True)
+    except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
+        from datasluice.exceptions import TransformError
+
+        raise TransformError(
+            f"Timestamp normalization failed for {field.name!r} (possible DST fold/gap): {exc}"
+        ) from exc
+    return field.with_type(column.type), column
 
 
 @dataclass(frozen=True)
@@ -229,15 +252,19 @@ class Flatten:
             for _ in range(self.max_depth):
                 if not any(pt.is_struct(f.type) for f in table.schema):
                     break
-                new_fields: list[Any] = []
-                new_columns: list[Any] = []
-                for field in table.schema:
-                    if pt.is_struct(field.type):
-                        for child in field.type:
-                            new_fields.append(pa.field(f"{field.name}{self.separator}{child.name}", child.type))
-                            new_columns.append(struct_field(table.column(field.name), child.name))
-                    else:
-                        new_fields.append(field)
-                        new_columns.append(table.column(field.name))
-                table = pa.Table.from_arrays(new_columns, schema=pa.schema(new_fields))
+                table = _flatten_struct_fields(table, struct_field, pa, pt, self.separator)
             yield from table.to_batches()
+
+
+def _flatten_struct_fields(table: Any, struct_field: Any, pa: Any, pt: Any, separator: str) -> Any:
+    fields: list[Any] = []
+    columns: list[Any] = []
+    for field in table.schema:
+        if pt.is_struct(field.type):
+            for child in field.type:
+                fields.append(pa.field(f"{field.name}{separator}{child.name}", child.type))
+                columns.append(struct_field(table.column(field.name), child.name))
+        else:
+            fields.append(field)
+            columns.append(table.column(field.name))
+    return pa.Table.from_arrays(columns, schema=pa.schema(fields))

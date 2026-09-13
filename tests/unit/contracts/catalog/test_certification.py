@@ -156,22 +156,24 @@ def test_certification_rejects_implicit_activation_mismatched_bindings_and_incom
             report=report,
             selected_connector_id=None,
         )
+    updated_value = replace(profile, fixture_fingerprint="other")
     with pytest.raises(ValueError, match="fixture fingerprint"):
         catalog.certify_catalog_report(
             manifest=manifest,
-            profile=replace(profile, fixture_fingerprint="other"),
+            profile=updated_value,
             fixture_set=fixture_set,
             cases=cases,
             report=report,
             selected_connector_id=connector_id,
         )
+    updated_value_2 = replace(report, expected_case_ids=report.expected_case_ids[:-1])
     with pytest.raises(ValueError, match="complete case evidence"):
         catalog.certify_catalog_report(
             manifest=manifest,
             profile=profile,
             fixture_set=fixture_set,
             cases=cases,
-            report=replace(report, expected_case_ids=report.expected_case_ids[:-1]),
+            report=updated_value_2,
             selected_connector_id=connector_id,
         )
 

@@ -125,8 +125,9 @@ def test_truncated_gzip_raises_decompression_error() -> None:
     raw = _csv_bytes(rows=10)
     truncated = gzip.compress(raw)[:-8]
     source = io.BytesIO(truncated)
+    apply_compression_2 = apply_compression(source)
     with pytest.raises(DecompressionError):
-        apply_compression(source).read()
+        apply_compression_2.read()
 
 
 def test_content_encoding_hint_gzip() -> None:

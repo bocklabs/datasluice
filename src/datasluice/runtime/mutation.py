@@ -142,20 +142,14 @@ class MutationEnforcer:
         except Exception:
             try:
                 self._receipt(operation_id, target, policy, "failed", metadata)
-            except Exception as receipt_error:
-                logger.error(
-                    "Failed mutation receipt for %s could not be built: %s",
-                    operation_id,
-                    receipt_error,
-                )
+            except Exception:
+                logger.exception("Failed mutation receipt for %s could not be built", operation_id)
             raise
         try:
             return self._receipt(operation_id, target, policy, "succeeded", metadata)
-        except Exception as receipt_error:
-            logger.error(
-                "Succeeded mutation receipt for %s could not be built after the dispatch was applied: %s",
-                operation_id,
-                receipt_error,
+        except Exception:
+            logger.exception(
+                "Succeeded mutation receipt for %s could not be built after the dispatch was applied", operation_id
             )
             raise
 

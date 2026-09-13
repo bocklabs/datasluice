@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-import random
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,6 +17,8 @@ from datasluice.sync._identity import canonical_identity
 
 if TYPE_CHECKING:
     from datasluice.domain import Artifact
+
+_PARQUET_MEDIA_TYPE = "application/x-parquet"
 
 LegacyArtifactRecord = tuple[str, str, int, str]
 
@@ -89,7 +91,7 @@ def materialize(
             table = to_arrow(stream)
         content_digest = logical_sha256(table)
         final_uri = f"{base_uri}/{identity}.parquet"
-        media_type = "application/x-parquet"
+        media_type = _PARQUET_MEDIA_TYPE
         existing = _existing_record(fs, final_uri, media_type, content_digest, stored_checksum)
         if existing is not None:
             uri, existing_media_type, size, existing_content_digest = existing
@@ -203,7 +205,7 @@ def _materialize_stream(
     return _artifact(
         resource,
         uri=final_uri,
-        media_type="application/x-parquet",
+        media_type=_PARQUET_MEDIA_TYPE,
         size=len(payload),
         content_digest=content_digest,
         blob_digest=blob_digest,
@@ -248,12 +250,7 @@ def materialize_checkpointed(
     identity = canonical_identity(resource)
     partial_uri = f"{base_uri}/.datasluice-partial/{identity}"
     fs.makedirs(partial_uri, exist_ok=True)
-    for batch_index in range(start_batch_index):
-        shard_uri = _batch_shard_uri(partial_uri, batch_index)
-        if not fs.exists(shard_uri):
-            raise DataSluiceError(
-                f"Corrupt continuation for resource {resource.id!r}: completed shard {batch_index} is missing"
-            )
+    _require_checkpoint_shards(fs, partial_uri, start_batch_index, resource.id)
 
     next_batch_index = start_batch_index
     with stream:
@@ -268,24 +265,8 @@ def materialize_checkpointed(
             on_batch_persisted(cursor)
             next_batch_index = cursor.next_batch_index
 
-    if next_batch_index == 0:
-        # Valid empty Parquet: the cursor reader yielded no batches because
-        # the file has no non-empty row groups. Publish a zero-row table that
-        # retains the source schema — the previous code raised, so a
-        # schema-bearing empty Parquet could not be synchronized.
-        table = pa.Table.from_batches([], schema=stream.schema)
-    else:
-        shard_uris = [_batch_shard_uri(partial_uri, index) for index in range(next_batch_index)]
-        for batch_index, shard_uri in enumerate(shard_uris):
-            if not fs.exists(shard_uri):
-                raise DataSluiceError(
-                    f"Corrupt continuation for resource {resource.id!r}: completed shard {batch_index} is missing"
-                )
-        tables = []
-        for shard_uri in shard_uris:
-            with fs.open(shard_uri, "rb") as source:
-                tables.append(pq.read_table(source))
-        table = pa.concat_tables(tables)
+    _require_checkpoint_shards(fs, partial_uri, next_batch_index, resource.id)
+    table = _read_checkpoint_shards(fs, partial_uri, next_batch_index, stream.schema, pa, pq)
     checksum = logical_sha256(table)
     sink = pa.BufferOutputStream()
     pq.write_table(table, sink)
@@ -296,7 +277,7 @@ def materialize_checkpointed(
     return _artifact(
         resource,
         uri=final_uri,
-        media_type="application/x-parquet",
+        media_type=_PARQUET_MEDIA_TYPE,
         size=len(payload),
         content_digest=checksum,
         blob_digest=blob_digest,
@@ -305,6 +286,24 @@ def materialize_checkpointed(
         created_at=created_at,
         transforms=transforms,
     )
+
+
+def _require_checkpoint_shards(fs: Any, partial_uri: str, count: int, resource_id: str) -> None:
+    for batch_index in range(count):
+        if not fs.exists(_batch_shard_uri(partial_uri, batch_index)):
+            raise DataSluiceError(
+                f"Corrupt continuation for resource {resource_id!r}: completed shard {batch_index} is missing"
+            )
+
+
+def _read_checkpoint_shards(fs: Any, partial_uri: str, count: int, schema: Any, pa: Any, pq: Any) -> Any:
+    if count == 0:
+        return pa.Table.from_batches([], schema=schema)
+    tables = []
+    for batch_index in range(count):
+        with fs.open(_batch_shard_uri(partial_uri, batch_index), "rb") as source:
+            tables.append(pq.read_table(source))
+    return pa.concat_tables(tables)
 
 
 def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
@@ -376,7 +375,7 @@ def _publish_batch_shard(fs: Any, shard_uri: str, batch: Any) -> None:
 
 
 def _atomic_pipe(fs: Any, final_uri: str, payload: bytes) -> None:
-    tmp_uri = f"{final_uri}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
+    tmp_uri = f"{final_uri}.tmp.{os.getpid()}.{secrets.token_hex(8)}"
     try:
         fs.pipe_file(tmp_uri, payload)
         fs.mv(tmp_uri, final_uri)
@@ -407,7 +406,7 @@ def _existing_record(
 
 
 def _destination_checksum(fs: Any, final_uri: str, media_type: str) -> str:
-    if media_type == "application/x-parquet":
+    if media_type == _PARQUET_MEDIA_TYPE:
         import pyarrow.parquet as pq
 
         from datasluice.sync._hashing import logical_sha256

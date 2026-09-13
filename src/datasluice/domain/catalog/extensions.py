@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]*$")
-_ENTRY_POINT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$")
+_ENTRY_POINT = re.compile(r"^[A-Za-z_][\w.]*:[A-Za-z_]\w*$", re.ASCII)
 _RUNTIME_INSTALL_INSTRUCTIONS = ("pip install", "uv add", "uv sync", "poetry add", "conda install")
 _BUILTIN_PLATFORMS = frozenset({"ckan", "socrata", "udata"})
 

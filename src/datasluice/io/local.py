@@ -33,7 +33,7 @@ def save_bytes(data: bytes, dest: str | Path, filename: str | None = None) -> Pa
 
     try:
         full_path.write_bytes(data)
-        os.chmod(full_path, 0o644)
+        os.chmod(full_path, 0o600)
     except OSError as exc:
         raise DownloadError(f"Failed to write {full_path}: {exc}") from exc
 

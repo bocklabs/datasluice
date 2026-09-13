@@ -19,7 +19,7 @@ logger = get_logger("integrations.dlt")
 
 def _sanitize(resource_id: str) -> str:
     """Return a deterministic destination-safe name for a resource ID."""
-    name = re.sub(r"[^A-Za-z0-9_]", "_", resource_id) or "_"
+    name = re.sub(r"\W", "_", resource_id, flags=re.ASCII) or "_"
     if name[0].isdigit():
         name = f"_{name}"
     return name[:64]
@@ -46,6 +46,87 @@ def _resource_from_record(record: Any) -> Any:
     return Resource(id=record.id.value, name=record.name, url=record.url, access=access)
 
 
+def _register_resource(
+    record: Any, include_metadata: bool, seen_identities: dict[str, str], seen_table_names: dict[str, str]
+) -> tuple[Any, str, str]:
+    from datasluice.sync._identity import canonical_identity
+
+    resource = _resource_from_record(record)
+    identity = canonical_identity(resource)
+    table_name = _sanitize(resource.id)
+    if identity in seen_identities:
+        raise ValueError(
+            f"Resource IDs {seen_identities[identity]!r} and {resource.id!r} collide on canonical identity {identity}"
+        )
+    if include_metadata and table_name.casefold() == "resources":
+        raise ValueError(
+            f"Resource ID {resource.id!r} maps to reserved dlt table name 'resources' "
+            "(reserved for the metadata resource emitted when include_metadata=True)"
+        )
+    normalized_table_name = table_name.casefold()
+    if normalized_table_name in seen_table_names:
+        raise ValueError(
+            f"Resource IDs {seen_table_names[normalized_table_name]!r} and {resource.id!r} "
+            f"collide on sanitized dlt table name {table_name!r}"
+        )
+    seen_identities[identity] = resource.id
+    seen_table_names[normalized_table_name] = resource.id
+    return resource, identity, table_name
+
+
+def _make_dlt_resource(
+    dlt: Any, resource: Any, identity: str, table_name: str, transport: Any, state_store: Any
+) -> Any:
+    @dlt.resource(name=table_name, table_name=table_name, write_disposition="replace")
+    def _resource_body(resource: Any = resource, identity: str = identity) -> Any:
+        from datasluice.data.access import DataPlaneResourceReader
+        from datasluice.integrations.arrow import to_arrow
+        from datasluice.sync._hashing import logical_sha256
+
+        reader = DataPlaneResourceReader(transport=cast(CatalogTransport, transport))
+        state: dict[str, Any] = {"identity": identity, "watermark": None}
+        if state_store is not None:
+            prior = state_store.get(identity)
+            state["watermark"] = prior.cursor.get(identity) if prior is not None else None
+        dlt.current.resource_state()["datasluice"] = state
+        with reader.open(resource) as stream:
+            table = to_arrow(stream)
+        yield table
+        dlt.current.resource_state()["datasluice"]["watermark"] = logical_sha256(table)
+
+    return _resource_body
+
+
+def _make_metadata_resource(dlt: Any, records: Any) -> Any:
+    @dlt.resource(name="resources", write_disposition="replace")
+    def _resources() -> Any:
+        for record in records:
+            yield {
+                "id": record.id.to_dict(),
+                "dataset_id": record.dataset_id.to_dict(),
+                "name": record.name,
+                "url": record.url,
+            }
+
+    return _resources
+
+
+def _make_dlt_source(dlt: Any, records: Any, transport: Any, state_store: Any, include_metadata: bool) -> Any:
+    @dlt.source(name="datasluice")
+    def _source() -> Any:
+        seen_identities: dict[str, str] = {}
+        seen_table_names: dict[str, str] = {}
+        for record in records:
+            resource, identity, table_name = _register_resource(
+                record, include_metadata, seen_identities, seen_table_names
+            )
+            yield _make_dlt_resource(dlt, resource, identity, table_name, transport, state_store)
+        if include_metadata:
+            yield _make_metadata_resource(dlt, records)
+
+    return _source()
+
+
 def datasluice_source(
     client: SyncCatalogClient,
     query: CatalogOperationRequest,
@@ -70,7 +151,6 @@ def datasluice_source(
         raise ImportError("dlt integration requires the dlt extra. Install with: uv sync --extra dlt") from exc
 
     from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest, SyncCatalogClient
-    from datasluice.data.access import DataPlaneResourceReader
 
     if not isinstance(client, SyncCatalogClient):
         raise TypeError("datasluice_source requires a SyncCatalogClient-compatible normalized client")
@@ -90,72 +170,7 @@ def datasluice_source(
         )
 
     records = client.resources.list(query, CatalogOperationGuard(operation_id=query.operation_id)).items
-
-    @dlt.source(name="datasluice")
-    def _source() -> Any:
-        from datasluice.sync._identity import canonical_identity
-
-        seen_identities: dict[str, str] = {}
-        seen_table_names: dict[str, str] = {}
-
-        for record in records:
-            resource = _resource_from_record(record)
-            identity = canonical_identity(resource)
-            table_name = _sanitize(resource.id)
-            if identity in seen_identities:
-                raise ValueError(
-                    f"Resource IDs {seen_identities[identity]!r} and {resource.id!r} "
-                    f"collide on canonical identity {identity}"
-                )
-            if include_metadata and table_name.casefold() == "resources":
-                raise ValueError(
-                    f"Resource ID {resource.id!r} maps to reserved dlt table name 'resources' "
-                    "(reserved for the metadata resource emitted when include_metadata=True)"
-                )
-            normalized_table_name = table_name.casefold()
-            if normalized_table_name in seen_table_names:
-                raise ValueError(
-                    f"Resource IDs {seen_table_names[normalized_table_name]!r} and {resource.id!r} "
-                    f"collide on sanitized dlt table name {table_name!r}"
-                )
-            seen_identities[identity] = resource.id
-            seen_table_names[normalized_table_name] = resource.id
-
-            @dlt.resource(name=table_name, table_name=table_name, write_disposition="replace")
-            def _resource_body(resource: Any = resource, identity: str = identity) -> Any:
-                from datasluice.integrations.arrow import to_arrow
-                from datasluice.sync._hashing import logical_sha256
-
-                reader = DataPlaneResourceReader(transport=cast(CatalogTransport, transport))
-                state: dict[str, Any] = {"identity": identity, "watermark": None}
-                if state_store is not None:
-                    prior = state_store.get(identity)
-                    state["watermark"] = prior.cursor.get(identity) if prior is not None else None
-                dlt.current.resource_state()["datasluice"] = state
-
-                with reader.open(resource) as stream:
-                    table = to_arrow(stream)
-                yield table
-
-                dlt.current.resource_state()["datasluice"]["watermark"] = logical_sha256(table)
-
-            yield _resource_body
-
-        if include_metadata:
-
-            @dlt.resource(name="resources", write_disposition="replace")
-            def _resources() -> Any:
-                for record in records:
-                    yield {
-                        "id": record.id.to_dict(),
-                        "dataset_id": record.dataset_id.to_dict(),
-                        "name": record.name,
-                        "url": record.url,
-                    }
-
-            yield _resources
-
-    return _source()
+    return _make_dlt_source(dlt, records, transport, state_store, include_metadata)
 
 
 def mirror_dlt_state(pipeline: Any, state_store: Any, *, source_name: str = "datasluice") -> None:

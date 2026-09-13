@@ -766,12 +766,10 @@ def test_canonical_platform_packages_export_exactly_the_typed_surface() -> None:
         assert sorted(module.__all__) == sorted(expected)
         connector = getattr(module, connector_name)
         factory = getattr(module, factory_name)
-        assert inspect.isclass(connector) and connector.__module__.startswith(
-            f"datasluice.connectors.catalog.{platform}."
-        )
-        assert inspect.isfunction(factory) and factory.__module__.startswith(
-            f"datasluice.connectors.catalog.{platform}."
-        )
+        assert inspect.isclass(connector)
+        assert connector.__module__.startswith(f"datasluice.connectors.catalog.{platform}.")
+        assert inspect.isfunction(factory)
+        assert factory.__module__.startswith(f"datasluice.connectors.catalog.{platform}.")
         for extra in set(expected) - {connector_name, factory_name}:
             assert getattr(module, extra).__module__.startswith(f"datasluice.connectors.catalog.{platform}.")
 
@@ -789,7 +787,8 @@ def test_namespaced_entry_points_declare_and_install_the_canonical_factories() -
     }
     assert installed == EXPECTED_ENTRY_POINTS
     scripts = project["scripts"]
-    assert isinstance(scripts, dict) and scripts == {"datasluice": "datasluice.cli.app:app"}
+    assert isinstance(scripts, dict)
+    assert scripts == {"datasluice": "datasluice.cli.app:app"}
     for name, target in EXPECTED_ENTRY_POINTS.items():
         module_name, _, attribute = target.partition(":")
         resolved = getattr(importlib.import_module(module_name), attribute)
@@ -860,7 +859,8 @@ def test_removed_fixture_trees_and_example_page_stay_deleted() -> None:
         assert not (REPO_ROOT / removed_fixture).exists(), f"{removed_fixture} must stay deleted"
     assert not (REPO_ROOT / "docs/examples/datagouv.md").exists()
     navigation = ZENSICAL.read_text(encoding="utf-8")
-    assert "datagouv" not in navigation and "data.gouv" not in navigation
+    assert "datagouv" not in navigation
+    assert "data.gouv" not in navigation
     for platform in PLATFORMS:
         for fixture_file in ("cases.json", "evidence.json"):
             assert (REPO_ROOT / "src/datasluice/contracts/catalog/fixtures" / platform / fixture_file).is_file()
@@ -1296,14 +1296,16 @@ def test_outputs_are_secret_safe_by_default() -> None:
     )
     assert report.warnings[0] == "api_key: [REDACTED]"
     serialized = json.dumps(report.to_dict())
-    assert "abc123" not in serialized and "secret-value" not in serialized
+    assert "abc123" not in serialized
+    assert "secret-value" not in serialized
 
     secret = "Bearer aBcDeFgH1234"
+    catalog_id = CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather")
     with pytest.raises(DataSluiceError):
         MutationReceipt(
             operation="datasets.update",
             outcome="succeeded",
-            target=CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+            target=catalog_id,
             audit_metadata={"details": {"value": secret}},
         )
     receipt = MutationReceipt(

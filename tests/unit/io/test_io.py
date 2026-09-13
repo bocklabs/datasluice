@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -60,4 +61,5 @@ def test_local_storage(tmp_path: Path) -> None:
     assert not storage.exists("file1")
     storage.write(b"content", "file1")
     assert storage.exists("file1")
+    assert stat.S_IMODE((tmp_path / "store" / "file1").stat().st_mode) == 0o600
     assert storage.read("file1") == b"content"

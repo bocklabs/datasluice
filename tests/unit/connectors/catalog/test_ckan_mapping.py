@@ -157,7 +157,8 @@ def test_every_mapped_error_carries_operation_platform_and_safe_action(
 
     assert error.operation == _OPERATION
     assert error.platform == "ckan"
-    assert isinstance(error.safe_action, str) and error.safe_action
+    assert isinstance(error.safe_action, str)
+    assert error.safe_action
 
 
 def test_package_show_shapes_to_a_lossless_dataset_native_record() -> None:
@@ -184,7 +185,8 @@ def test_package_list_shapes_scalars_with_page_total_from_the_list_length() -> N
 
     assert all(isinstance(item, ValueRecord) for item in envelope.items)
     assert [item.value for item in envelope.items if isinstance(item, ValueRecord)] == ["a", "b"]
-    assert envelope.page is not None and envelope.page.total_items == 2
+    assert envelope.page is not None
+    assert envelope.page.total_items == 2
 
 
 def test_status_show_shapes_to_a_single_lossless_mapping_record() -> None:
@@ -221,8 +223,10 @@ def test_follower_counts_and_am_following_shape_to_single_value_envelopes() -> N
     counted = shape_result_envelope("dataset_follower_count", 7)
     following = shape_result_envelope("am_following_dataset", False)
 
-    assert isinstance(counted.items[0], ValueRecord) and counted.items[0].value == 7
-    assert isinstance(following.items[0], ValueRecord) and following.items[0].value is False
+    assert isinstance(counted.items[0], ValueRecord)
+    assert counted.items[0].value == 7
+    assert isinstance(following.items[0], ValueRecord)
+    assert following.items[0].value is False
 
 
 def test_package_search_shapes_multi_records_with_the_platform_count_total() -> None:
@@ -232,7 +236,8 @@ def test_package_search_shapes_multi_records_with_the_platform_count_total() -> 
 
     assert len(envelope.items) == 1
     assert all(isinstance(item, NativeRecord) for item in envelope.items)
-    assert envelope.page is not None and envelope.page.total_items == 500
+    assert envelope.page is not None
+    assert envelope.page.total_items == 500
 
 
 def test_member_lists_shape_to_lossless_member_mappings() -> None:
@@ -243,7 +248,8 @@ def test_member_lists_shape_to_lossless_member_mappings() -> None:
     item = envelope.items[0]
     assert isinstance(item, MappingRecord)
     assert dict(item.payload) == {"id": "member-1", "type": "user", "capacity": "admin"}
-    assert envelope.page is not None and envelope.page.total_items == 1
+    assert envelope.page is not None
+    assert envelope.page.total_items == 1
 
 
 def test_api_token_create_shapes_to_a_secret_safe_token_result() -> None:
@@ -286,8 +292,9 @@ def test_unknown_actions_shape_losslessly_through_the_mapping_fallback() -> None
 def test_destructive_tier_refusal_names_operation_and_confirmation_remedy() -> None:
     operation = OperationId("ckan", "datasets", "purge")
 
+    policy = MutationPolicy(destructive=False)
     with pytest.raises(CatalogValidationError) as raised:
-        require_mutation_tier("destructive", operation, MutationPolicy(destructive=False))
+        require_mutation_tier("destructive", operation, policy)
 
     assert "purge" in str(raised.value)
     assert "confirmation" in raised.value.safe_action.lower()
@@ -306,8 +313,9 @@ def test_destructive_tier_refusal_names_operation_and_confirmation_remedy() -> N
     ],
 )
 def test_destructive_tier_rejects_partially_confirmed_policies(policy: MutationPolicy) -> None:
+    operation_id = OperationId("ckan", "datasets", "purge")
     with pytest.raises(CatalogValidationError):
-        require_mutation_tier("destructive", OperationId("ckan", "datasets", "purge"), policy)
+        require_mutation_tier("destructive", operation_id, policy)
 
 
 def test_confirmed_destructive_policy_passes_the_gate() -> None:

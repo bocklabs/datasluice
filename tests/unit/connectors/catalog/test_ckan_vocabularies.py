@@ -17,6 +17,7 @@ from datasluice.connectors.catalog.ckan.services.vocabularies_licenses import (
     SyncVocabulariesLicensesService,
     TranslationBatch,
 )
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
@@ -101,19 +102,13 @@ class AsyncCaptureTransport:
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
     return SyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
 def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
     return AsyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
@@ -170,7 +165,8 @@ def test_tag_reads_pass_q_and_vocabulary_id_verbatim() -> None:
     assert json.loads(request.body or b"{}") == {"q": "hea", "vocabulary_id": "genres", "limit": 5, "offset": 2}
     mapping = next(item for item in envelope.items if isinstance(item, MappingRecord))
     results = dict(mapping.payload)["results"]
-    assert isinstance(results, tuple) and dict(results[0])["name"] == "health"
+    assert isinstance(results, tuple)
+    assert dict(results[0])["name"] == "health"
 
     autocomplete_transport = SyncCaptureTransport(body=_success_body([TAG_RESULT]))
     autocomplete_client = _client(autocomplete_transport)

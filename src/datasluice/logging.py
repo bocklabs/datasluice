@@ -75,9 +75,12 @@ class RedactingFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if os.environ.get("DATASLUICE_NO_REDACT") == "1":
-            return True
+        if os.environ.get("DATASLUICE_NO_REDACT") != "1":
+            self._redact_record(record)
+        return bool(super().filter(record))
 
+    @staticmethod
+    def _redact_record(record: logging.LogRecord) -> None:
         extras = {key: value for key, value in record.__dict__.items() if key not in _STANDARD_RECORD_ATTRS}
         if extras:
             try:
@@ -92,7 +95,6 @@ class RedactingFilter(logging.Filter):
                 record.args = tuple(redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args)
             except Exception:
                 record.args = tuple(REDACTED if isinstance(arg, Mapping) else arg for arg in args)
-        return True
 
 
 def configure_logging(

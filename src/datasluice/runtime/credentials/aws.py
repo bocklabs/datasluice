@@ -5,17 +5,21 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from threading import RLock
-from typing import Protocol, cast
+from typing import Protocol, TypedDict, Unpack, cast
 
 from datasluice.domain.catalog.auth import CatalogCredential, CredentialSource
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.runtime.credentials import _resolution_error, credential_from_fields, credential_from_secret
 
 
+class _GetSecretValueRequest(TypedDict):
+    SecretId: str
+
+
 class AwsSecretsManagerClient(Protocol):
     """Synchronous subset of an AWS Secrets Manager client."""
 
-    def get_secret_value(self, *, SecretId: str) -> Mapping[str, object]:
+    def get_secret_value(self, **kwargs: Unpack[_GetSecretValueRequest]) -> Mapping[str, object]:
         """Return one secret response."""
 
 
@@ -53,8 +57,8 @@ class AwsSecretsManagerProvider:
             credential = _credential_from_aws_secret(platform, secret)
         except ImportError:
             raise
-        except Exception as exc:
-            raise _resolution_error("AWS Secrets Manager", platform, exc) from None
+        except Exception:
+            raise _resolution_error("AWS Secrets Manager", platform) from None
         return {CredentialSource.SECRET_MANAGER: credential}
 
 

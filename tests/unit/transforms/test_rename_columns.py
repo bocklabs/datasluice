@@ -50,11 +50,16 @@ def test_rename_missing_source_raises() -> None:
     from datasluice.exceptions import TransformError
 
     schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    rename_columns = RenameColumns({"nonexistent": "x"})
+    batches = iter([])
+    context = _ctx(schema)
+    apply = rename_columns.apply(batches, context)
     with pytest.raises(TransformError) as exc_info:
-        list(RenameColumns({"nonexistent": "x"}).apply(iter([]), _ctx(schema)))
+        list(apply)
     msg = str(exc_info.value)
     assert "nonexistent" in msg
-    assert "id" in msg and "name" in msg
+    assert "id" in msg
+    assert "name" in msg
 
 
 def test_rename_preserves_values() -> None:

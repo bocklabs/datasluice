@@ -42,8 +42,10 @@ def test_mutations_require_confirmed_policy_before_dispatch() -> None:
     sent = []
     enforcer = MutationEnforcer(lambda request: sent.append(request) or RuntimeResponse(200, {}, b""))
 
+    operation_id = OperationId("ckan", "datasets", "update")
+    target = _target()
     with pytest.raises(CatalogValidationError) as raised:
-        enforcer.execute(OperationId("ckan", "datasets", "update"), _target(), None)
+        enforcer.execute(operation_id, target, None)
 
     assert raised.value.operation == "ckan/datasets.update"
     assert raised.value.platform == "ckan"
@@ -62,8 +64,10 @@ def test_destructive_mutations_require_explicit_confirmation() -> None:
         concurrency=ConcurrencyPolicy(token="v1"),
     )
 
+    operation_id = OperationId("ckan", "datasets", "update")
+    target = _target()
     with pytest.raises(CatalogValidationError) as raised:
-        enforcer.execute(OperationId("ckan", "datasets", "update"), _target(), unconfirmed)
+        enforcer.execute(operation_id, target, unconfirmed)
 
     assert sent == []
     assert raised.value.safe_action == "Provide a confirmed mutation policy with a version token or explicit overwrite."
@@ -78,8 +82,10 @@ def test_confirmed_mutations_require_a_concurrency_instruction() -> None:
         concurrency=None,
     )
 
+    operation_id = OperationId("ckan", "datasets", "update")
+    target = _target()
     with pytest.raises(CatalogValidationError) as raised:
-        enforcer.execute(OperationId("ckan", "datasets", "update"), _target(), confirmed)
+        enforcer.execute(operation_id, target, confirmed)
 
     assert sent == []
     assert raised.value.safe_action == "Provide a confirmed mutation policy with a version token or explicit overwrite."
@@ -106,12 +112,12 @@ def test_unsafe_idempotency_does_not_retry_retryable_response() -> None:
         sleep=lambda _: None,
     )
 
+    operation_id = OperationId("ckan", "datasets", "update")
+    target = _target()
+    idempotency_policy = IdempotencyPolicy(safe=False)
+    policy = _policy(idempotency=idempotency_policy)
     with pytest.raises(CatalogUnavailableError):
-        enforcer.execute(
-            OperationId("ckan", "datasets", "update"),
-            _target(),
-            _policy(idempotency=IdempotencyPolicy(safe=False)),
-        )
+        enforcer.execute(operation_id, target, policy)
 
     assert responses == []
     assert enforcer.last_receipt is not None
@@ -140,8 +146,11 @@ def test_safe_idempotency_retries_a_retryable_response_then_succeeds() -> None:
 def test_conflict_response_maps_to_catalog_conflict() -> None:
     enforcer = MutationEnforcer(lambda request: RuntimeResponse(409, {}, b""))
 
+    operation_id = OperationId("ckan", "datasets", "update")
+    target = _target()
+    policy = _policy()
     with pytest.raises(CatalogConflictError):
-        enforcer.execute(OperationId("ckan", "datasets", "update"), _target(), _policy())
+        enforcer.execute(operation_id, target, policy)
 
 
 def test_receipts_redact_credential_shaped_audit_values(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,26 +172,22 @@ def test_failed_dispatch_receipt_construction_does_not_mask_the_original_error()
 
     enforcer = MutationEnforcer(explode, sleep=lambda _: None)
 
+    operation_id = OperationId("ckan", "datasets", "update")
+    target = _target()
+    policy = _policy()
     with pytest.raises(RuntimeError, match="dispatch exploded"):
-        enforcer.execute(
-            OperationId("ckan", "datasets", "update"),
-            _target(),
-            _policy(),
-            audit_metadata={"auth_header": "Bearer aBcDeFgH1234"},
-        )
+        enforcer.execute(operation_id, target, policy, audit_metadata={"auth_header": "Bearer aBcDeFgH1234"})
 
 
 def test_succeeded_receipt_construction_failure_surfaces_after_the_dispatch() -> None:
     sent: list[object] = []
     enforcer = MutationEnforcer(lambda request: sent.append(request) or RuntimeResponse(200, {}, b""))
 
+    operation_id = OperationId("ckan", "datasets", "update")
+    target = _target()
+    policy = _policy()
     with pytest.raises(DataSluiceError):
-        enforcer.execute(
-            OperationId("ckan", "datasets", "update"),
-            _target(),
-            _policy(),
-            audit_metadata={"auth_header": "Bearer aBcDeFgH1234"},
-        )
+        enforcer.execute(operation_id, target, policy, audit_metadata={"auth_header": "Bearer aBcDeFgH1234"})
 
     assert len(sent) == 1
 

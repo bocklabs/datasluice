@@ -94,8 +94,17 @@ class CKANClientSettings:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", normalize_origin(self.base_url))
+        self._validate_credentials()
+        self._validate_transport_overrides()
+        self._validate_options()
+        self._validate_probe_options()
+        self._validate_limits()
+
+    def _validate_credentials(self) -> None:
         if self.credential is not None and not isinstance(self.credential, CKANCredential | CredentialResolver):
             raise TypeError("CKAN client settings require a CKAN credential or resolver.")
+
+    def _validate_transport_overrides(self) -> None:
         for field_name in ("sync_transport", "async_transport"):
             override = getattr(self, field_name)
             if override is None:
@@ -105,6 +114,8 @@ class CKANClientSettings:
                 raise TypeError(f"CKAN {field_name} must be a transport instance or a zero-argument factory.")
             if role == "ambiguous":
                 raise TypeError(f"CKAN {field_name} cannot be both a transport instance and a factory.")
+
+    def _validate_options(self) -> None:
         if self.tls_policy is not None and not isinstance(self.tls_policy, TLSPolicy):
             raise TypeError("CKAN client TLS policy must use TLSPolicy.")
         if self.budget is not None and not isinstance(self.budget, TimeBudget):
@@ -113,6 +124,8 @@ class CKANClientSettings:
             raise TypeError("CKAN client breakers must use BreakerRegistry.")
         if type(self.max_attempts) is not int or self.max_attempts < 1:
             raise ValueError("CKAN client attempts require a positive integer.")
+
+    def _validate_probe_options(self) -> None:
         if self.retry_sleep is not None and not callable(self.retry_sleep):
             raise TypeError("CKAN sync retry sleep must be callable.")
         if self.async_retry_sleep is not None and not callable(self.async_retry_sleep):
@@ -123,14 +136,16 @@ class CKANClientSettings:
             raise TypeError("CKAN async probe runners must implement AsyncProbeRunner.")
         if self.probe_policy not in PROBE_POLICIES:
             raise ValueError("CKAN probe policies are 'auto' or 'declared-baseline'.")
+        if self.rate_policy is not None and not isinstance(self.rate_policy, PortalRatePolicy):
+            raise TypeError("CKAN rate policies must satisfy the PortalRatePolicy record contract.")
+
+    def _validate_limits(self) -> None:
         if (
             type(self.capability_cache_ttl) not in (int, float)
             or not math.isfinite(self.capability_cache_ttl)
             or self.capability_cache_ttl < 0
         ):
             raise ValueError("Capability cache TTL must be a finite non-negative number.")
-        if self.rate_policy is not None and not isinstance(self.rate_policy, PortalRatePolicy):
-            raise TypeError("CKAN rate policies must satisfy the PortalRatePolicy record contract.")
         if self.max_upload_bytes is not None and (type(self.max_upload_bytes) is not int or self.max_upload_bytes < 1):
             raise ValueError("Upload byte ceilings must be positive integers when supplied.")
 

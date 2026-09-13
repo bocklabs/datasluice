@@ -123,20 +123,36 @@ class EffectiveCapabilityCache:
         if operation_id not in self._declared_profile.operations or self._probe_runner is None:
             return self._baseline
 
+        flight, leader = self._sync_flight(cache_key)
+        if not leader:
+            return self._wait_sync_flight(flight)
+        return self._resolve_sync_leader(operation_id, credential_scope, cache_key, flight)
+
+    def _sync_flight(self, cache_key: tuple[str, str, str, OperationId]) -> tuple[_SyncFlight, bool]:
         with self._lock:
             flight = self._sync_flights.get(cache_key)
-            leader = flight is None
-            if leader:
-                flight = _SyncFlight(event=threading.Event())
-                self._sync_flights[cache_key] = flight
-        if not leader:
-            flight.event.wait()
-            if flight.error is not None:
-                raise flight.error
-            if flight.profile is None:
-                raise RuntimeError("Capability probe completed without an effective profile.")
-            return flight.profile
+            if flight is not None:
+                return flight, False
+            flight = _SyncFlight(event=threading.Event())
+            self._sync_flights[cache_key] = flight
+            return flight, True
 
+    @staticmethod
+    def _wait_sync_flight(flight: _SyncFlight) -> EffectiveCapabilityProfile:
+        flight.event.wait()
+        if flight.error is not None:
+            raise flight.error
+        if flight.profile is None:
+            raise RuntimeError("Capability probe completed without an effective profile.")
+        return flight.profile
+
+    def _resolve_sync_leader(
+        self,
+        operation_id: OperationId,
+        credential_scope: str,
+        cache_key: tuple[str, str, str, OperationId],
+        flight: _SyncFlight,
+    ) -> EffectiveCapabilityProfile:
         try:
             effective = self._resolve_from_runner(operation_id, credential_scope=credential_scope)
             completed_at = self._clock()
@@ -195,7 +211,7 @@ class EffectiveCapabilityCache:
                 if self._async_flights.get(cache_key) is flight:
                     self._async_flights.pop(cache_key, None)
                 if not flight.done():
-                    flight.set_exception(self._follower_failure(operation_id, exc))
+                    flight.set_exception(self._async_follower_failure(operation_id, exc))
                     flight.exception()
             raise
         with self._lock:
@@ -265,33 +281,39 @@ class EffectiveCapabilityCache:
             self._validate_operation_id(operation_id)
         with self._lock:
             if operation_id is None:
-                self._entries.clear()
-                for key, flight in self._sync_flights.items():
-                    flight.cancelled = True
-                    flight.error = self._invalidation_error(key[3])
-                    flight.event.set()
-                self._sync_flights.clear()
-                for key, flight in list(self._async_flights.items()):
-                    if not flight.done():
-                        flight.set_exception(self._invalidation_error(key[3]))
-                        flight.exception()
-                self._async_flights.clear()
+                self._invalidate_all()
             else:
-                keys = [key for key in self._entries if key[3] == operation_id]
-                for key in keys:
-                    self._entries.pop(key, None)
-                for key, flight in tuple(self._sync_flights.items()):
-                    if key[3] == operation_id:
-                        flight.cancelled = True
-                        flight.error = self._invalidation_error(operation_id)
-                        flight.event.set()
-                        self._sync_flights.pop(key, None)
-                for key, flight in tuple(self._async_flights.items()):
-                    if key[3] == operation_id:
-                        if not flight.done():
-                            flight.set_exception(self._invalidation_error(operation_id))
-                            flight.exception()
-                        self._async_flights.pop(key, None)
+                self._invalidate_operation(operation_id)
+
+    def _invalidate_all(self) -> None:
+        self._entries.clear()
+        for key, flight in self._sync_flights.items():
+            flight.cancelled = True
+            flight.error = self._invalidation_error(key[3])
+            flight.event.set()
+        self._sync_flights.clear()
+        for key, flight in tuple(self._async_flights.items()):
+            if not flight.done():
+                flight.set_exception(self._invalidation_error(key[3]))
+                flight.exception()
+        self._async_flights.clear()
+
+    def _invalidate_operation(self, operation_id: OperationId) -> None:
+        for key in tuple(self._entries):
+            if key[3] == operation_id:
+                self._entries.pop(key, None)
+        for key, flight in tuple(self._sync_flights.items()):
+            if key[3] == operation_id:
+                flight.cancelled = True
+                flight.error = self._invalidation_error(operation_id)
+                flight.event.set()
+                self._sync_flights.pop(key, None)
+        for key, flight in tuple(self._async_flights.items()):
+            if key[3] == operation_id:
+                if not flight.done():
+                    flight.set_exception(self._invalidation_error(operation_id))
+                    flight.exception()
+                self._async_flights.pop(key, None)
 
     def _follower_failure(self, operation_id: OperationId, exc: BaseException) -> BaseException:
         """Convert leader cancellation into a typed failure shared with waiting followers."""
@@ -304,6 +326,19 @@ class EffectiveCapabilityCache:
                 safe_action="Retry the operation once the catalog deployment is reachable.",
             )
         return exc
+
+    def _async_follower_failure(self, operation_id: OperationId, exc: BaseException) -> CatalogUnavailableError:
+        if isinstance(exc, asyncio.CancelledError):
+            message = "The capability probe was cancelled before it completed."
+        else:
+            message = "The capability probe failed before it completed."
+        return CatalogUnavailableError(
+            message,
+            operation=str(operation_id),
+            platform=operation_id.platform,
+            capability_state="unavailable",
+            safe_action="Retry the operation once the catalog deployment is reachable.",
+        )
 
     def _invalidation_error(self, operation_id: OperationId) -> CatalogUnavailableError:
         return CatalogUnavailableError(
@@ -377,6 +412,13 @@ class EffectiveCapabilityCache:
             raise TypeError("Capability probe runners must return ProbeEvidence.")
         if evidence.operation_id != operation_id:
             raise ValueError("Capability probe evidence must match the requested operation.")
+        self._validate_credential_evidence(evidence, credential_scope)
+        evidence_origin = self._origin_from_evidence(evidence.deployment_url)
+        if self._deployment_origin is not None and evidence_origin != self._deployment_origin:
+            raise ValueError("Capability probe evidence must match the configured deployment origin.")
+
+    @staticmethod
+    def _validate_credential_evidence(evidence: ProbeEvidence, credential_scope: str) -> None:
         evidence_scope = getattr(evidence, "credential_scope", None)
         if credential_scope != "anonymous" and evidence_scope != credential_scope:
             raise ValueError("Capability probe evidence must match the resolved credential scope.")
@@ -392,8 +434,11 @@ class EffectiveCapabilityCache:
             and getattr(evidence, "role_classification", None) is RoleClassification.ANONYMOUS
         ):
             raise ValueError("Authenticated capability probes cannot carry anonymous role evidence.")
+
+    @staticmethod
+    def _origin_from_evidence(deployment_url: str) -> str:
         try:
-            parsed = urlsplit(evidence.deployment_url)
+            parsed = urlsplit(deployment_url)
         except ValueError as exc:
             raise ValueError("Capability probe evidence must contain a valid deployment URL.") from exc
         if (
@@ -405,9 +450,7 @@ class EffectiveCapabilityCache:
             or parsed.fragment
         ):
             raise ValueError("Capability probe evidence must contain a sanitized HTTPS deployment URL.")
-        evidence_origin = urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), "", "", ""))
-        if self._deployment_origin is not None and evidence_origin != self._deployment_origin:
-            raise ValueError("Capability probe evidence must match the configured deployment origin.")
+        return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), "", "", ""))
 
     def _invalid_evidence_error(self, operation_id: OperationId) -> CatalogValidationError:
         return CatalogValidationError(

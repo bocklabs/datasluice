@@ -210,16 +210,15 @@ def test_closed_facade_rejects_catalog_and_data_plane_work(monkeypatch: pytest.M
     data_sluice.close()
     data_sluice.close()
 
+    catalog_context = _catalog_context()
     with pytest.raises(StreamClosedError):
-        data_sluice.open_catalog(lambda received: received, _catalog_context())
+        data_sluice.open_catalog(lambda received: received, catalog_context)
+    locator = DirectResourceLocator(uri="file:///data/example.csv")
     with pytest.raises(StreamClosedError):
-        data_sluice.open(DirectResourceLocator(uri="file:///data/example.csv"))
+        data_sluice.open(locator)
+    locator_2 = DirectResourceLocator(uri="file:///data/example.csv")
     with pytest.raises(StreamClosedError):
-        data_sluice.materialize(
-            DirectResourceLocator(uri="file:///data/example.csv"),
-            "memory://destination",
-            mode="raw",
-        )
+        data_sluice.materialize(locator_2, "memory://destination", mode="raw")
 
     assert service.calls == []
     assert reader.opened == []

@@ -82,9 +82,9 @@ def test_dst_fold_raises_transform_error() -> None:
         [pa.array([1604194200000000], type=pa.timestamp("us"))],
         schema=schema,
     )
+    normalizer = NormalizeTimestamps(target_tz="America/New_York", assume_naive_tz="America/New_York")
+    batches = iter([batch])
+    context = _ctx(schema)
+    apply = normalizer.apply(batches, context)
     with pytest.raises(TransformError):
-        list(
-            NormalizeTimestamps(target_tz="America/New_York", assume_naive_tz="America/New_York").apply(
-                iter([batch]), _ctx(schema)
-            )
-        )
+        list(apply)

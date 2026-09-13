@@ -103,19 +103,24 @@ def _validate_filters(
     value: Mapping[str, object], allowed: frozenset[str], field: str, *, boolean_filters: frozenset[str]
 ) -> None:
     for key, item in value.items():
-        if not isinstance(key, str) or not key:
-            raise ValueError(f"{field} filter names must be non-empty strings.")
-        if key not in allowed:
-            raise ValueError(f"Unknown {field} filters: {[key]}.")
-        if isinstance(item, tuple):
-            if not item or not all(isinstance(part, str) and part for part in item):
-                raise ValueError(f"{field} repeated filters must contain non-empty strings.")
-        elif type(item) is bool:
-            if key not in boolean_filters:
-                raise ValueError(f"{field} filter {key!r} does not accept a boolean value.")
-            continue
-        elif not isinstance(item, str) or not item:
-            raise ValueError(f"{field} filter values must be strings, booleans, or string tuples.")
+        _validate_filter(key, item, allowed, boolean_filters, field)
+
+
+def _validate_filter(
+    key: object, item: object, allowed: frozenset[str], boolean_filters: frozenset[str], field: str
+) -> None:
+    if not isinstance(key, str) or not key:
+        raise ValueError(f"{field} filter names must be non-empty strings.")
+    if key not in allowed:
+        raise ValueError(f"Unknown {field} filters: {[key]}.")
+    if isinstance(item, tuple):
+        if not item or not all(isinstance(part, str) and part for part in item):
+            raise ValueError(f"{field} repeated filters must contain non-empty strings.")
+    elif type(item) is bool:
+        if key not in boolean_filters:
+            raise ValueError(f"{field} filter {key!r} does not accept a boolean value.")
+    elif not isinstance(item, str) or not item:
+        raise ValueError(f"{field} filter values must be strings, booleans, or string tuples.")
 
 
 @dataclass(frozen=True, slots=True)

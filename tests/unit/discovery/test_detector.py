@@ -199,8 +199,9 @@ def test_probe_evidence_must_target_the_normalized_detection_origin() -> None:
     """A stale probe target cannot create a false identity claim."""
     engines, _ = _engines("https://different.example.test")
 
+    registry = _Registry(("datasluice/ckan",))
     with pytest.raises(ValueError, match="detection origin"):
-        detect("https://127.0.0.1", engines, _Registry(("datasluice/ckan",)))
+        detect("https://127.0.0.1", engines, registry)
 
 
 def test_installed_connectors_without_engines_record_miss_evidence_rows() -> None:
@@ -241,8 +242,9 @@ def test_runner_less_cache_fails_fast_before_any_probing() -> None:
         "datasluice/udata": engines["datasluice/udata"],
     }
 
+    registry = _Registry(("datasluice/ckan", "datasluice/udata"))
     with pytest.raises(CatalogValidationError, match="datasluice/ckan"):
-        detect("https://127.0.0.1", wired_engines, _Registry(("datasluice/ckan", "datasluice/udata")))
+        detect("https://127.0.0.1", wired_engines, registry)
 
     assert runners["udata"].calls == []
 
@@ -251,10 +253,12 @@ def test_detection_urls_must_be_sanitized_https_origins() -> None:
     """Plain HTTP and userinfo-bearing URLs are rejected before any probing."""
     engines, runners = _engines("https://127.0.0.1")
 
+    registry = _Registry(("datasluice/ckan",))
     with pytest.raises(ValueError, match="sanitized HTTPS origins"):
-        detect("http://127.0.0.1", engines, _Registry(("datasluice/ckan",)))
+        detect("http://127.0.0.1", engines, registry)
+    registry_2 = _Registry(("datasluice/ckan",))
     with pytest.raises(ValueError, match="sanitized HTTPS origins"):
-        detect("https://user:secret@127.0.0.1", engines, _Registry(("datasluice/ckan",)))
+        detect("https://user:secret@127.0.0.1", engines, registry_2)
 
     assert all(runner.calls == [] for runner in runners.values())
 
@@ -328,5 +332,6 @@ def test_resolve_without_evidence_fails_fast_with_typed_wiring_error() -> None:
     engine = EffectiveCapabilityCache(profile, runner)
     engine.record_response(operation, ProbeResponseClass.SUCCESS)
 
+    registry = _Registry(("datasluice/ckan",))
     with pytest.raises(CatalogValidationError, match="no probe evidence"):
-        detect("https://127.0.0.1", {"datasluice/ckan": engine}, _Registry(("datasluice/ckan",)))
+        detect("https://127.0.0.1", {"datasluice/ckan": engine}, registry)

@@ -108,7 +108,8 @@ def test_controlled_stack_proves_exact_version_then_one_dataset_read() -> None:
         )
 
     assert envelope.page is not None
-    assert envelope.page.total_items is not None and envelope.page.total_items > 0
+    assert envelope.page.total_items is not None
+    assert envelope.page.total_items > 0
     assert envelope.items, "expected seeded datasets on the controlled stack"
     for record in envelope.items:
         assert record.id.value
@@ -121,7 +122,8 @@ def test_controlled_stack_proves_dataset_family_reads() -> None:
         suggestions = client.datasets.suggest(DatasetSuggestQuery(q="evidence", size=3))
         v2_page = client.datasets.list_v2(DatasetListQuery(page=1, page_size=3))
 
-    assert page.page is not None and page.page.total_items is not None
+    assert page.page is not None
+    assert page.page.total_items is not None
     assert page.items, "expected seeded datasets on the controlled stack"
     assert isinstance(suggestions, tuple)
     assert v2_page.page is not None
@@ -226,7 +228,8 @@ def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -
             ),
         )
 
-    assert result.profile is not None and result.profile.title == before.title
+    assert result.profile is not None
+    assert result.profile.title == before.title
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.audit_metadata["status_code"] in {200, 204}
 
@@ -247,16 +250,12 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
         before = client.root_profile.get()
         assert before.feed_size is not None
         mutation_feed_size = before.feed_size + 1
-        primary_error: BaseException | None = None
         try:
             direct_status, direct_media, direct_fields = _direct_site_patch(
                 row, token, {"feed_size": mutation_feed_size}
             )
-            assert direct_fields["feed_size"] == mutation_feed_size
             reset_status, _, reset_fields = _direct_site_patch(row, token, {"feed_size": before.feed_size})
-            assert reset_status in {200, 204}
-            assert reset_fields["feed_size"] == before.feed_size
-            assert client.root_profile.get().feed_size == before.feed_size
+            reset_observed_feed_size = client.root_profile.get().feed_size
             typed = client.root_profile.set_site(
                 SitePatchInput(feed_size=mutation_feed_size),
                 permissions=permissions,
@@ -270,27 +269,21 @@ def test_controlled_row_184_differential_matches_independent_fixture_contract() 
                 ),
             )
             after = client.root_profile.get()
-        except BaseException as error:
-            primary_error = error
-        cleanup_error: BaseException | None = None
-        try:
+        finally:
             restored_status, _, restored_fields = _direct_site_patch(row, token, {"feed_size": before.feed_size})
-            assert restored_status in {200, 204}
-            assert restored_fields["feed_size"] == before.feed_size
-            assert client.root_profile.get().feed_size == before.feed_size
-        except BaseException as error:
-            cleanup_error = error
-        if primary_error is not None:
-            if cleanup_error is not None:
-                raise primary_error from cleanup_error
-            raise primary_error
-        if cleanup_error is not None:
-            raise cleanup_error
+            restored_observed_feed_size = client.root_profile.get().feed_size
 
     expected_media = row["response_media_type"]
     assert isinstance(expected_media, str)
     assert direct_status in {200, 204}
     assert direct_media == expected_media
+    assert direct_fields["feed_size"] == mutation_feed_size
+    assert reset_status in {200, 204}
+    assert reset_fields["feed_size"] == before.feed_size
+    assert reset_observed_feed_size == before.feed_size
+    assert restored_status in {200, 204}
+    assert restored_fields["feed_size"] == before.feed_size
+    assert restored_observed_feed_size == before.feed_size
     assert typed.receipt.audit_metadata["status_code"] == direct_status
     assert typed.profile is not None
     assert typed.profile.feed_size == mutation_feed_size
@@ -333,7 +326,8 @@ def test_controlled_async_stack_proves_site_patch_is_confirmed_and_receipt_beari
             return before, result
 
     before, result = asyncio.run(run())
-    assert result.profile is not None and result.profile.title == before.title
+    assert result.profile is not None
+    assert result.profile.title == before.title
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.audit_metadata["status_code"] in {200, 204}
 
@@ -355,4 +349,5 @@ def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> 
     version, total = asyncio.run(run())
 
     assert version == "17.6.0"
-    assert total is not None and total >= 0
+    assert total is not None
+    assert total >= 0

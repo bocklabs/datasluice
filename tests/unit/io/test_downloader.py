@@ -46,8 +46,9 @@ def test_downloader_rejects_unsuccessful_status_with_sanitized_url(tmp_path: Pat
     transport = _Transport(RuntimeResponse(404, {}, b"missing"))
     resource = _resource("https://catalog.example.test/data.csv?token=raw-secret")
 
+    downloader = Downloader(transport)
     with pytest.raises(DownloadError, match="HTTP 404") as raised:
-        Downloader(transport).download(resource, tmp_path)
+        downloader.download(resource, tmp_path)
 
     assert "raw-secret" not in str(raised.value)
 
@@ -55,8 +56,11 @@ def test_downloader_rejects_unsuccessful_status_with_sanitized_url(tmp_path: Pat
 def test_downloader_wraps_transport_failure_with_preserved_cause(tmp_path: Path) -> None:
     failure = TransportFailure("connection closed")
 
+    transport = _Transport(failure)
+    downloader = Downloader(transport)
+    resource = _resource()
     with pytest.raises(DownloadError) as raised:
-        Downloader(_Transport(failure)).download(_resource(), tmp_path)
+        downloader.download(resource, tmp_path)
 
     assert raised.value.__cause__ is failure
 

@@ -77,26 +77,29 @@ def test_operation_spec_has_complete_typed_operation_taxonomy() -> None:
 def test_declared_profile_rejects_duplicate_or_missing_operation_ids() -> None:
     operation = _operation()
 
+    date_value = date(2026, 8, 15)
     with pytest.raises(ValueError, match="missing operation IDs"):
         DeclaredCapabilityProfile(
             profile_version="1.0",
             schema_version="1.0",
             platform_api_version="3.0",
             official_source_uri="https://docs.ckan.org/en/latest/api/",
-            source_accessed_at=date(2026, 8, 15),
+            source_accessed_at=date_value,
             fixture_fingerprint="sha256:fixture",
             operations={},
         )
 
+    date_value_2 = date(2026, 8, 15)
+    operation_id = OperationId(platform="ckan", service="datasets", method="alias")
     with pytest.raises(ValueError, match="duplicate operation ID"):
         DeclaredCapabilityProfile(
             profile_version="1.0",
             schema_version="1.0",
             platform_api_version="3.0",
             official_source_uri="https://docs.ckan.org/en/latest/api/",
-            source_accessed_at=date(2026, 8, 15),
+            source_accessed_at=date_value_2,
             fixture_fingerprint="sha256:fixture",
-            operations={OperationId(platform="ckan", service="datasets", method="alias"): operation},
+            operations={operation_id: operation},
         )
 
 

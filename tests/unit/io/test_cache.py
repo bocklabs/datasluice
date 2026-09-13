@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -27,11 +28,6 @@ def test_key_path_has_no_path_separators(tmp_path: Path) -> None:
         assert "\\" not in name
 
 
-def test_key_path_is_deterministic(tmp_path: Path) -> None:
-    cache = FileCache(tmp_path / "cache")
-    assert cache._key_path("k1") == cache._key_path("k1")
-
-
 def test_different_keys_map_to_different_paths(tmp_path: Path) -> None:
     cache = FileCache(tmp_path / "cache")
     assert cache._key_path("k1") != cache._key_path("k2")
@@ -41,6 +37,7 @@ def test_put_get_round_trip(tmp_path: Path) -> None:
     cache = FileCache(tmp_path / "cache", ttl=3600)
     assert cache.get("k1") is None
     cache.put("k1", b"payload")
+    assert stat.S_IMODE(cache._key_path("k1").stat().st_mode) == 0o600
     assert cache.get("k1") == b"payload"
     assert cache.has("k1")
 

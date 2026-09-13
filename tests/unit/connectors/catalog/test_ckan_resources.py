@@ -15,6 +15,7 @@ from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKAN
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.models import NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
@@ -92,18 +93,14 @@ def _client(
     return SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
+        CKANClientSettings(base_url=LOOPBACK_ORIGIN, max_upload_bytes=max_upload_bytes),
         owns_transport=False,
-        max_upload_bytes=max_upload_bytes,
     )
 
 
 def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
     return AsyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
@@ -160,8 +157,9 @@ def test_oversized_source_refuses_before_any_transport_io() -> None:
     transport = SyncCaptureTransport(body=_success_body({}))
     client = _client(transport, max_upload_bytes=8)
 
+    bytes_i_o = io.BytesIO(b"x" * 100)
     with pytest.raises(CatalogValidationError) as excinfo:
-        client.resources.resource_create(package_id="pkg-1", upload=io.BytesIO(b"x" * 100))
+        client.resources.resource_create(package_id="pkg-1", upload=bytes_i_o)
 
     assert transport.requests == []
     assert "8" in str(excinfo.value)
@@ -175,8 +173,9 @@ def test_server_size_limit_envelope_maps_to_a_size_mentioning_safe_action() -> N
     )
     client = _client(transport)
 
+    bytes_i_o = io.BytesIO(b"data")
     with pytest.raises(CatalogValidationError) as excinfo:
-        client.resources.resource_create(package_id="pkg-1", upload=io.BytesIO(b"data"))
+        client.resources.resource_create(package_id="pkg-1", upload=bytes_i_o)
 
     assert len(transport.requests) == 1
     assert "Reduce the uploaded file size" in excinfo.value.safe_action

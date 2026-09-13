@@ -50,8 +50,8 @@ def discover_enabled(
                 discovered.update(provider.discover(platform, context))
             except (CredentialResolutionError, ImportError):
                 raise
-            except Exception as exc:
-                raise _resolution_error(source.value, platform, exc) from None
+            except Exception:
+                raise _resolution_error(source.value, platform) from None
     return discovered
 
 
@@ -94,7 +94,7 @@ def _required_secret(fields: Mapping[str, object], key: str) -> str:
     return value
 
 
-def _resolution_error(source: str, platform: CatalogPlatform, exc: Exception) -> CredentialResolutionError:
+def _resolution_error(source: str, platform: CatalogPlatform) -> CredentialResolutionError:
     return CredentialResolutionError(
         f"Unable to resolve {platform!s} credentials from {source}; details redacted: ***.",
         operation="credentials.resolve",

@@ -1,25 +1,3 @@
-"""Concrete ``ResourceReader`` implementation with access-kind dispatch.
-
-The :class:`DataPlaneResourceReader` resolves how a resource is reached, acquires
-a byte source, transparently decompresses it, dispatches to the right format
-reader, and wraps the resulting ``RecordBatch`` iterator in a
-:class:`datasluice.data.batch_stream.BatchStream`.
-
-Dispatch by ``resource.access.kind``:
-
-* ``http_download`` (default when ``resource.access`` is None — every resource has
-  a URL today): fetch through the injected :class:`~datasluice.runtime.transport.base.CatalogTransport`
-  in one request. Both runtime transports return the complete body inside
-  ``RuntimeResponse.body``, so HTTP downloads are fully buffered in memory and
-  wrapped in :class:`io.BytesIO`; no chunk-streaming seam exists today.
-* ``object_storage``: ``open_filesystem(uri).open(path)`` returning a seekable
-  BinaryIO.
-* ``local_file``: ``open(path, 'rb')``.
-* ``query``: raises :class:`UnsupportedAccessError` (adds query readers
-  for CKAN datastore and Socrata SoQL).
-* ``stream``: raises :class:`UnsupportedAccessError` (out of scope).
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -60,17 +38,17 @@ class _StreamClosingBytesIO(IterableBytesIO):
         first_exc: BaseException | None = None
         try:
             super().close()
-        except BaseException as exc:
+        except Exception as exc:
             first_exc = exc
         if hasattr(self._response, "close"):
             try:
                 self._response.close()
-            except BaseException as exc:
+            except Exception as exc:
                 if first_exc is None:
                     first_exc = exc
         try:
             self._stream_cm.__exit__(None, None, None)
-        except BaseException as exc:
+        except Exception as exc:
             if first_exc is None:
                 first_exc = exc
         if first_exc is not None:
@@ -131,71 +109,86 @@ class DataPlaneResourceReader:
         effective_batch_size = batch_size if batch_size is not None else self.default_batch_size
         _validate_batch_size(effective_batch_size)
         access = self._resolve_access(resource)
-
+        source, content_encoding = self._open_source(access, resource)
         kind = access.kind
-        if kind == "http_download":
-            source, content_encoding = self._open_http_download(access)
-        elif kind == "object_storage":
-            source, content_encoding = self._open_object_storage(access)
-        elif kind == "local_file":
-            source, content_encoding = self._open_local_file(access)
-        elif kind == "query":
+        if (resource.format or "").upper() == "PARQUET" and kind in ("local_file", "object_storage"):
+            return self._open_checkpointable_parquet(resource, source, content_encoding)
+        if (resource.format or "").upper() == "PARQUET" and kind == "http_download":
+            return self._open_http_parquet(resource, source, content_encoding, effective_batch_size)
+        return self._open_compressed(source, content_encoding, resource, effective_batch_size)
+
+    def _open_source(self, access: Any, resource: Resource) -> tuple[Any, str | None]:
+        if access.kind == "http_download":
+            return self._open_http_download(access)
+        if access.kind == "object_storage":
+            return self._open_object_storage(access)
+        if access.kind == "local_file":
+            return self._open_local_file(access)
+        if access.kind == "query":
             raise UnsupportedAccessError(
                 "Access kind 'query' is not implemented; query readers "
                 f"(CKAN datastore, Socrata SoQL) are not yet available for endpoint "
                 f"{getattr(access, 'endpoint', '<unknown>')!r}"
             )
-        elif kind == "stream":
+        if access.kind == "stream":
             raise UnsupportedAccessError(
                 "Access kind 'stream' is out of scope — no target portal supports live streaming endpoints"
             )
-        else:
-            raise UnsupportedAccessError(f"Unknown access kind {kind!r} on resource {resource.id!r}")
+        raise UnsupportedAccessError(f"Unknown access kind {access.kind!r} on resource {resource.id!r}")
 
-        if (resource.format or "").upper() == "PARQUET" and kind in ("local_file", "object_storage"):
-            if content_encoding is not None:
-                source.close()
-                raise UnsupportedAccessError(
-                    f"Checkpointable Parquet resource {resource.id!r} must not be transport-compressed"
-                )
-            from datasluice.data.compression import _detect_format
+    def _open_checkpointable_parquet(
+        self, resource: Resource, source: Any, content_encoding: str | None
+    ) -> BatchStream:
+        if content_encoding is not None:
+            source.close()
+            raise UnsupportedAccessError(
+                f"Checkpointable Parquet resource {resource.id!r} must not be transport-compressed"
+            )
+        from datasluice.data.compression import _detect_format
 
-            magic = source.read(6)
-            source.seek(0)
-            if _detect_format(magic, None) != "none":
-                source.close()
-                raise UnsupportedAccessError(f"Checkpointable Parquet resource {resource.id!r} must not be compressed")
-            return self._build_parquet_cursor_stream(source, start_row_group_index=0, start_batch_index=0)
-        if (resource.format or "").upper() == "PARQUET" and kind == "http_download":
-            from datasluice.data.compression import _detect_format
+        magic = source.read(6)
+        source.seek(0)
+        if _detect_format(magic, None) != "none":
+            source.close()
+            raise UnsupportedAccessError(f"Checkpointable Parquet resource {resource.id!r} must not be compressed")
+        return self._build_parquet_cursor_stream(source, start_row_group_index=0, start_batch_index=0)
 
-            magic = source.read(6)
-            source.seek(0)
-            header_hint = content_encoding
-            if header_hint not in (None, "identity") and _detect_format(magic, None) == "none":
-                header_hint = None
-            if _detect_format(magic, header_hint) == "none":
-                return self._build_batch_stream(resource, source, effective_batch_size)
-            import io
+    def _open_http_parquet(
+        self, resource: Resource, source: Any, content_encoding: str | None, batch_size: int
+    ) -> BatchStream:
+        from datasluice.data.compression import _detect_format
 
-            try:
-                decompressed = apply_compression(source, header_hint)
-            except BaseException:
-                _close_source(source)
-                raise
-            try:
-                body = decompressed.read()
-            except BaseException:
-                _close_source(decompressed)
-                raise
-            decompressed.close()
-            return self._build_batch_stream(resource, io.BytesIO(body), effective_batch_size)
+        magic = source.read(6)
+        source.seek(0)
+        header_hint = content_encoding
+        if header_hint not in (None, "identity") and _detect_format(magic, None) == "none":
+            header_hint = None
+        if _detect_format(magic, header_hint) == "none":
+            return self._build_batch_stream(resource, source, batch_size)
+        import io
+
+        try:
+            decompressed = apply_compression(source, header_hint)
+        except BaseException:
+            _close_source(source)
+            raise
+        try:
+            body = decompressed.read()
+        except BaseException:
+            _close_source(decompressed)
+            raise
+        decompressed.close()
+        return self._build_batch_stream(resource, io.BytesIO(body), batch_size)
+
+    def _open_compressed(
+        self, source: Any, content_encoding: str | None, resource: Resource, batch_size: int
+    ) -> BatchStream:
         try:
             decompressed = apply_compression(source, content_encoding)
         except BaseException:
             source.close()
             raise
-        return self._build_batch_stream(resource, decompressed, effective_batch_size)
+        return self._build_batch_stream(resource, decompressed, batch_size)
 
     def open_response(
         self,

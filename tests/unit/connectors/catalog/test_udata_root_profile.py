@@ -1071,7 +1071,8 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
         )
 
     assert isinstance(result, SiteMutationResult)
-    assert result.profile is not None and result.profile.title == "Changed"
+    assert result.profile is not None
+    assert result.profile.title == "Changed"
     assert cast(Any, transport)._controlled_patch_bodies == [{"title": "Changed", "configs": None}]
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.target.value == "site"
@@ -1280,12 +1281,10 @@ def test_row184_set_site_rejects_redirect_without_following() -> None:
         _routes(("PATCH", _SITE_URL, _json_response(307, None, {"Location": location}))),
         credential=_CREDENTIAL,
     )
+    patch = SitePatchInput(title="unchanged")
+    mutation_policy = _site_policy()
     with client, pytest.raises(NativeCatalogError, match="redirect"):
-        client.root_profile.set_site(
-            SitePatchInput(title="unchanged"),
-            permissions=_PERMISSIONS,
-            mutation_policy=_site_policy(),
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
@@ -1450,7 +1449,8 @@ def test_async_site_patch_matches_sync_target_and_receipt_contract() -> None:
             )
 
     result = asyncio.run(run())
-    assert result.profile is not None and result.profile.site_id == "site"
+    assert result.profile is not None
+    assert result.profile.site_id == "site"
     assert result.receipt.target.value == "site"
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
@@ -1535,8 +1535,9 @@ def test_rdf_xml_aliases_are_supported(fmt: str) -> None:
 
 
 def test_route_specific_csv_query_models_do_not_share_dataset_filters() -> None:
+    typed_value = cast(Any, SiteOrganizationCsvQuery)
     with pytest.raises(TypeError):
-        cast(Any, SiteOrganizationCsvQuery)(name="org", page_size=2)
+        typed_value(name="org", page_size=2)
     with pytest.raises(ValueError):
         SiteDatasetCsvQuery(filters={"last_update_range": "not-a-range"})
     assert wire.reuses_csv_request(SiteReuseCsvQuery(filters={"tag": ("one", "two")}))[1].endswith("tag=one&tag=two")
@@ -1586,12 +1587,10 @@ def test_set_site_rejects_public_origins_before_any_dispatch_and_keeps_receipt()
         credentials=_CREDENTIAL,
         owns_transport=False,
     )
+    patch = SitePatchInput(title="unsafe")
+    mutation_policy = _site_policy()
     with client, pytest.raises(CatalogValidationError) as excinfo:
-        client.root_profile.set_site(
-            SitePatchInput(title="unsafe"),
-            permissions=_PERMISSIONS,
-            mutation_policy=_site_policy(),
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     receipt = _receipt_from(excinfo.value)
     assert receipt.outcome == "rejected"
@@ -1603,12 +1602,10 @@ def test_set_site_rejects_wrong_confirmation_without_dispatch() -> None:
         _routes(("PATCH", _SITE_URL, _json_response(200, _site_body()))),
         credential=_CREDENTIAL,
     )
+    patch = SitePatchInput(title="unsafe")
+    mutation_policy = _site_policy(target="other-site")
     with client, pytest.raises(ForbiddenError) as excinfo:
-        client.root_profile.set_site(
-            SitePatchInput(title="unsafe"),
-            permissions=_PERMISSIONS,
-            mutation_policy=_site_policy(target="other-site"),
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert _receipt_from(excinfo.value).outcome == "rejected"
     assert transport.requests == []
@@ -1619,12 +1616,10 @@ def test_set_site_maps_423_to_non_retryable_deployment_disabled_with_receipt() -
         _routes(("PATCH", _SITE_URL, _json_response(423, None))),
         credential=_CREDENTIAL,
     )
+    patch = SitePatchInput(title="read-only")
+    mutation_policy = _site_policy()
     with client, pytest.raises(CatalogUnavailableError) as excinfo:
-        client.root_profile.set_site(
-            SitePatchInput(title="read-only"),
-            permissions=_PERMISSIONS,
-            mutation_policy=_site_policy(),
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     error = excinfo.value
     assert error.capability_state == "deployment-disabled"
@@ -1638,12 +1633,10 @@ def test_site_patch_post_dispatch_media_failure_is_ambiguous() -> None:
         _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "text/plain"}))),
         credential=_CREDENTIAL,
     )
+    patch = SitePatchInput(title="possibly-written")
+    mutation_policy = _site_policy()
     with client, pytest.raises(NativeCatalogError) as excinfo:
-        client.root_profile.set_site(
-            SitePatchInput(title="possibly-written"),
-            permissions=_PERMISSIONS,
-            mutation_policy=_site_policy(),
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     receipt = _receipt_from(excinfo.value)
     assert receipt.outcome == "ambiguous"
@@ -1656,12 +1649,10 @@ def test_set_site_denial_does_not_poison_the_root_read_capability() -> None:
         credential=_CREDENTIAL,
     )
     with client:
+        patch = SitePatchInput(title="read-only")
+        mutation_policy = _site_policy()
         with pytest.raises(CatalogUnavailableError):
-            client.root_profile.set_site(
-                SitePatchInput(title="read-only"),
-                permissions=_PERMISSIONS,
-                mutation_policy=_site_policy(),
-            )
+            client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
         assert client.root_profile.get().id == "site"
 
     assert [request.method for request in transport.requests] == ["GET", "GET", "GET"]
@@ -1676,12 +1667,10 @@ def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
         credentials=_CREDENTIAL,
         owns_transport=False,
     )
+    patch = SitePatchInput(title="unattested")
+    mutation_policy = _site_policy()
     with client, pytest.raises(CatalogValidationError) as excinfo:
-        client.root_profile.set_site(
-            SitePatchInput(title="unattested"),
-            permissions=_PERMISSIONS,
-            mutation_policy=_site_policy(),
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert _receipt_from(excinfo.value).outcome == "rejected"
     assert transport.requests == []
@@ -1689,14 +1678,17 @@ def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
 
 def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport() -> None:
     transport = RouterTransport(_routes())
+    typed_value = cast(Any, udata_clients._ControlledSyncTransport)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        cast(Any, udata_clients._ControlledSyncTransport)(transport=transport)
+        typed_value(transport=transport)
+    typed_value_2 = cast(Any, UDataClientSettings)
+    object_2 = object()
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        cast(Any, UDataClientSettings)(
+        typed_value_2(
             base_url=_ORIGIN,
             credential=_CREDENTIAL,
             sync_transport=transport,
-            controlled_stack_attestation=object(),
+            controlled_stack_attestation=object_2,
         )
 
     fabricated = object.__new__(udata_clients._ControlledSyncTransport)
@@ -1710,10 +1702,10 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport()
         owns_transport=False,
     )
     with client:
+        patch = SitePatchInput(title="unattested")
+        mutation_policy = _site_policy()
         with pytest.raises((CatalogValidationError, ForbiddenError)):
-            client.root_profile.set_site(
-                SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-            )
+            client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
     assert transport.requests == []
 
 
@@ -1730,10 +1722,10 @@ def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: p
     with pytest.raises(AttributeError, match="factory-owned"):
         client_type._mutation_dispatch_gate = object()
 
+    patch = SitePatchInput(title="unattested")
+    mutation_policy = _site_policy()
     with client, pytest.raises(CatalogValidationError):
-        client.root_profile.set_site(
-            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
@@ -1755,10 +1747,10 @@ def test_registered_transport_cannot_be_rebound_to_another_origin(monkeypatch: p
     monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
     monkeypatch.setattr(root_service, "_controlled_sync_evidence_digest", lambda _: _controlled_evidence().digest)
 
+    patch = SitePatchInput(title="unattested")
+    mutation_policy = _site_policy()
     with client, pytest.raises(CatalogValidationError):
-        client.root_profile.set_site(
-            SitePatchInput(title="unattested"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
@@ -1775,14 +1767,9 @@ def test_injected_transport_remains_available_for_read_only_behavior() -> None:
 
 def test_controlled_factory_rejects_injected_transport_before_any_dispatch() -> None:
     transport = RouterTransport(_routes())
+    settings = UDataClientSettings(base_url=_ORIGIN, credential=_CREDENTIAL, sync_transport=transport)
     with pytest.raises(CatalogValidationError):
-        _create_controlled_sync_client(
-            UDataClientSettings(
-                base_url=_ORIGIN,
-                credential=_CREDENTIAL,
-                sync_transport=transport,
-            )
-        )
+        _create_controlled_sync_client(settings)
 
     assert transport.requests == []
 
@@ -1819,10 +1806,10 @@ def test_unrelated_local_listener_loses_authority_before_patch_dispatch() -> Non
         revalidate=lambda *, site_id: False,
     )
 
+    patch = SitePatchInput(title="unchanged")
+    mutation_policy = _site_policy()
     with client, pytest.raises(CatalogValidationError):
-        client.root_profile.set_site(
-            SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
@@ -1834,10 +1821,10 @@ def test_forwarding_listener_loses_authority_before_patch_dispatch() -> None:
         revalidate=lambda *, site_id: False,
     )
 
+    patch = SitePatchInput(title="unchanged")
+    mutation_policy = _site_policy()
     with client, pytest.raises(CatalogValidationError):
-        client.root_profile.set_site(
-            SitePatchInput(title="unchanged"), permissions=_PERMISSIONS, mutation_policy=_site_policy()
-        )
+        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
@@ -1878,8 +1865,9 @@ def test_root_profile_wire_operations_use_the_existing_broad_capability_identity
 
 def test_root_profile_models_are_typed_and_immutable() -> None:
     profile = SiteProfile.from_payload(_site_body())
+    typed_value = cast(dict[str, object], profile.payload)
     with pytest.raises(TypeError):
-        dict.__setitem__(cast(dict[str, object], profile.payload), "title", "changed")
+        dict.__setitem__(typed_value, "title", "changed")
 
     assert isinstance(profile.catalog_id.value, str)
     assert isinstance(profile.to_dict(), dict)

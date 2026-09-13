@@ -96,24 +96,9 @@ class NativeCatalogError(DataSluiceError):
         safe_action: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> None:
-        if not isinstance(message, str) or not message:
-            raise ValueError("Native catalog error messages must be non-empty strings.")
-        if not isinstance(operation, str) or not operation:
-            raise ValueError("Native catalog error operations must be non-empty strings.")
-        if status_code is not None and (type(status_code) is not int or not 100 <= status_code <= 599):
-            raise ValueError("Native catalog error status codes must be valid HTTP status codes.")
-        if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > MAX_TEXT_LENGTH):
-            raise ValueError("Native catalog error vendor codes must be bounded strings.")
-        if retry_after is not None and (
-            (type(retry_after) is not int and type(retry_after) is not float)
-            or not isfinite(retry_after)
-            or retry_after < 0
-        ):
-            raise ValueError("Native catalog error Retry-After must be a non-negative number.")
-        if capability_state is not None and (not isinstance(capability_state, str) or not capability_state):
-            raise ValueError("Native catalog error capability states must be non-empty strings when supplied.")
-        if safe_action is not None and (not isinstance(safe_action, str) or not safe_action):
-            raise ValueError("Native catalog errors require a non-empty safe action when supplied.")
+        _validate_native_error_identity(message, operation)
+        _validate_native_error_details(status_code, vendor_code, retry_after)
+        _validate_native_error_context(capability_state, safe_action)
         super().__init__(redact_string(message))
         self.operation = operation
         self.platform = _platform_value(platform)
@@ -123,6 +108,33 @@ class NativeCatalogError(DataSluiceError):
         self.capability_state = capability_state
         self.safe_action = safe_action or "Inspect the native catalog response and retry when the deployment is ready."
         self.metadata = _bounded_metadata(metadata)
+
+
+def _validate_native_error_identity(message: str, operation: str) -> None:
+    if not isinstance(message, str) or not message:
+        raise ValueError("Native catalog error messages must be non-empty strings.")
+    if not isinstance(operation, str) or not operation:
+        raise ValueError("Native catalog error operations must be non-empty strings.")
+
+
+def _validate_native_error_details(status_code: int | None, vendor_code: str | None, retry_after: float | None) -> None:
+    if status_code is not None and (type(status_code) is not int or not 100 <= status_code <= 599):
+        raise ValueError("Native catalog error status codes must be valid HTTP status codes.")
+    if vendor_code is not None and (not isinstance(vendor_code, str) or len(vendor_code) > MAX_TEXT_LENGTH):
+        raise ValueError("Native catalog error vendor codes must be bounded strings.")
+    if retry_after is not None and (
+        (type(retry_after) is not int and type(retry_after) is not float)
+        or not isfinite(retry_after)
+        or retry_after < 0
+    ):
+        raise ValueError("Native catalog error Retry-After must be a non-negative number.")
+
+
+def _validate_native_error_context(capability_state: str | None, safe_action: str | None) -> None:
+    if capability_state is not None and (not isinstance(capability_state, str) or not capability_state):
+        raise ValueError("Native catalog error capability states must be non-empty strings when supplied.")
+    if safe_action is not None and (not isinstance(safe_action, str) or not safe_action):
+        raise ValueError("Native catalog errors require a non-empty safe action when supplied.")
 
 
 class UnsupportedCapabilityError(CatalogError):

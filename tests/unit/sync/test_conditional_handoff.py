@@ -100,16 +100,16 @@ def test_response_aware_reader_closes_untransferred_response_on_failure(tmp_path
     transport = HttpxCatalogTransport()
     reader = _FailingResponseAwareReader(transport)
 
+    state_store = _inmemory_state_store()
+    sync_resources_2 = sync_resources(
+        [resource],
+        state_store=state_store,
+        reader=reader,
+        destination_uri=f"file://{tmp_path}/dest",
+        transport=transport,
+    )
     with pytest.raises(RuntimeError, match="materialization handoff failed"):
-        list(
-            sync_resources(
-                [resource],
-                state_store=_inmemory_state_store(),
-                reader=reader,
-                destination_uri=f"file://{tmp_path}/dest",
-                transport=transport,
-            )
-        )
+        list(sync_resources_2)
 
     assert server.captured_paths == ["/data.csv"]
     stream_cm = reader.response_streams[0]

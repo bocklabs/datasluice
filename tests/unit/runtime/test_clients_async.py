@@ -109,8 +109,10 @@ def test_async_client_matches_sync_guard_and_error_semantics() -> None:
         client = AsyncCatalogClient(transport, _profile())
         operation = OperationId("reference", "resources", "get")
 
+        request = _request(operation)
+        guard = _guard(operation)
         with pytest.raises(UnsupportedCapabilityError) as unsupported:
-            await client.datasets.get(_request(operation), _guard(operation))
+            await client.datasets.get(request, guard)
         assert unsupported.value.safe_action
         assert transport.requests == []
 
@@ -120,8 +122,10 @@ def test_async_client_matches_sync_guard_and_error_semantics() -> None:
 
         not_found = AsyncCatalogClient(_NotFoundTransport(), _profile())
         try:
+            request_2 = _request()
+            guard_2 = _guard()
             with pytest.raises(CatalogNotFoundError):
-                await not_found.datasets.get(_request(), _guard())
+                await not_found.datasets.get(request_2, guard_2)
         finally:
             await not_found.aclose()
 
@@ -143,8 +147,10 @@ def test_async_client_rejects_denied_caller_guard_before_probe_or_transport(serv
         runner = _AsyncProbeRunner(ProbeResponseClass.SUCCESS)
         client = AsyncCatalogClient(transport, _profile(), probe_runner=runner)
 
+        getattr_2 = getattr(client.datasets, service_method)
+        request = _request()
         with pytest.raises(ForbiddenError):
-            await getattr(client.datasets, service_method)(_request(), guard)
+            await getattr_2(request, guard)
 
         assert runner.calls == 0
         assert transport.requests == []
@@ -160,8 +166,9 @@ def test_async_client_rejects_guard_for_different_operation_before_probe_or_tran
         runner = _AsyncProbeRunner(ProbeResponseClass.SUCCESS)
         client = AsyncCatalogClient(transport, _profile(), probe_runner=runner)
 
+        request = _request(operation)
         with pytest.raises(ValueError, match="does not match request"):
-            await client.datasets.get(_request(operation), guard)
+            await client.datasets.get(request, guard)
 
         assert runner.calls == 0
         assert transport.requests == []
@@ -176,8 +183,10 @@ def test_async_client_allowed_caller_guard_does_not_bypass_denied_effective_capa
         runner = _AsyncProbeRunner(ProbeResponseClass.UNAVAILABLE)
         client = AsyncCatalogClient(transport, _profile(), probe_runner=runner)
 
+        request = _request(operation)
+        guard = _guard(operation)
         with pytest.raises(UnsupportedCapabilityError):
-            await client.datasets.get(_request(operation), _guard(operation))
+            await client.datasets.get(request, guard)
 
         assert runner.calls == 1
         assert transport.requests == []
@@ -223,8 +232,10 @@ def test_async_client_aclose_marks_closed_without_closing_borrowed_transport() -
         await client.datasets.get(_request(), _guard())
         await client.aclose()
         await client.aclose()
+        request = _request()
+        guard = _guard()
         with pytest.raises(RuntimeError, match="closed"):
-            await client.datasets.get(_request(), _guard())
+            await client.datasets.get(request, guard)
         return transport.close_count
 
     assert asyncio.run(exercise()) == 0

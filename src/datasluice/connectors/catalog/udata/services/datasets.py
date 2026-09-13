@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -40,6 +41,8 @@ from datasluice.runtime.transport.base import TransportFailure
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+
+_CREATE_OPERATION = "<create>"
 
 
 def _require_mutation_permission(
@@ -189,8 +192,9 @@ def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseExcep
     return error
 
 
-def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> None:
-    raise _attach_receipt(error, receipt)
+def _raise_with_receipt(error: Exception | asyncio.CancelledError, receipt: MutationReceipt) -> Never:
+    _attach_receipt(error, receipt)
+    raise error
 
 
 def _error_status(error: BaseException, response: object | None = None) -> int:
@@ -205,7 +209,7 @@ def _error_status(error: BaseException, response: object | None = None) -> int:
 
 
 def _mutation_outcome(error: BaseException, response: object | None = None) -> str:
-    if isinstance(error, BaseException) and error.__class__.__name__ == "CancelledError":
+    if isinstance(error, asyncio.CancelledError):
         return "cancelled"
     metadata = getattr(error, "metadata", None)
     if isinstance(metadata, Mapping) and metadata.get("ambiguous") is True:
@@ -587,7 +591,7 @@ def _mutating(
     try:
         status, payload, response = dispatch()
         value = decode(payload)
-    except BaseException as error:
+    except Exception as error:
         receipt = _build_receipt(
             operation,
             target_id,
@@ -623,7 +627,7 @@ async def _amutating(
     try:
         status, payload, response = await cast("Awaitable[tuple[int, object, object]]", dispatch())
         value = decode(payload)
-    except BaseException as error:
+    except (Exception, asyncio.CancelledError) as error:
         receipt = _build_receipt(
             operation,
             target_id,
@@ -654,7 +658,7 @@ class SyncDatasetsService:
         """GET /api/1/datasets/ (row 39)."""
         operation = wire.DATASET_OPERATIONS["list"]
         method, path, _, _ = wire.list_request(query or DatasetListQuery())
-        status, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
+        _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
         return _shape_page(payload, operation=operation)
 
     def create(
@@ -667,20 +671,20 @@ class SyncDatasetsService:
         operation = wire.DATASET_OPERATIONS["create"]
         return _mutating(
             operation,
-            getattr(client_input, "title", "<create>"),
+            getattr(client_input, "title", _CREATE_OPERATION),
             mutation_policy,
             lambda: _sync_create_dispatch(self._client, client_input, operation, permissions, mutation_policy),
             lambda payload: wire.parse_dataset_detail(payload, operation=operation),
             "created",
             opaque_target=True,
-            success_target=lambda value: value.id.value if isinstance(value, NativeRecord) else "<create>",
+            success_target=lambda value: value.id.value if isinstance(value, NativeRecord) else _CREATE_OPERATION,
         )
 
     def recent_atom(self, query: DatasetListQuery | None = None) -> NativeRecord:
         """GET /api/1/datasets/recent.atom (row 41)."""
         operation = wire.DATASET_OPERATIONS["atom"]
         method, path, _, _ = wire.atom_request(query or DatasetListQuery())
-        status, text, response = self._client._dataset_call(
+        _, text, response = self._client._dataset_call(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
         negotiated = _header(response.headers, "content-type")
@@ -691,7 +695,7 @@ class SyncDatasetsService:
     def get(self, dataset_id: str) -> NativeRecord:
         """GET /api/1/datasets/<id>/ (row 42)."""
         operation = wire.DATASET_OPERATIONS["get"]
-        status, payload, _ = self._client._dataset_call(
+        _, payload, _ = self._client._dataset_call(
             method="GET",
             path=f"/api/1/datasets/{wire._path_segment(wire._required_id(dataset_id, operation=operation))}/",
             owning_operation=operation,
@@ -800,7 +804,7 @@ class SyncDatasetsService:
         """GET /api/1/datasets/<id>/rdf.<format> (row 48)."""
         operation = wire.DATASET_OPERATIONS["rdf_format"]
         method, path, _, _ = wire.rdf_request(dataset_id, fmt)
-        status, body, response = self._client._dataset_call(
+        _, body, response = self._client._dataset_call(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
         negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
@@ -812,28 +816,28 @@ class SyncDatasetsService:
         """GET /api/1/datasets/suggest/ (row 67)."""
         operation = wire.DATASET_OPERATIONS["suggest"]
         method, path, _, _ = wire.suggest_request(query)
-        status, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
+        _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
         return wire.parse_suggestions(payload, operation=operation)
 
     def search_v2(self, query: DatasetSearchQuery | None = None) -> UDataPageEnvelope:
         """GET /api/2/datasets/search/ (row 75); retains facets and native links."""
         operation = wire.DATASET_OPERATIONS["v2_search"]
         method, path, _, _ = wire.v2_search_request(query or DatasetSearchQuery())
-        status, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
+        _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
         return _shape_page(payload, operation=operation)
 
     def list_v2(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope:
         """GET /api/2/datasets/ (row 76); retains native pagination links."""
         operation = wire.DATASET_OPERATIONS["v2_list"]
         method, path, _, _ = wire.v2_list_request(query or DatasetListQuery())
-        status, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
+        _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
         return _shape_page(payload, operation=operation)
 
     def get_v2(self, dataset_id: str) -> NativeRecord:
         """GET /api/2/datasets/<id>/ (row 77)."""
         operation = wire.DATASET_OPERATIONS["v2_get"]
         identifier = wire._required_id(dataset_id, operation=operation)
-        status, payload, _ = self._client._dataset_call(
+        _, payload, _ = self._client._dataset_call(
             method="GET", path=f"/api/2/datasets/{wire._path_segment(identifier)}/", owning_operation=operation
         )
         return wire.parse_dataset_detail(payload, operation=operation)
@@ -842,7 +846,7 @@ class SyncDatasetsService:
         """GET /api/2/datasets/<id>/extras/ (row 78)."""
         operation = wire.DATASET_OPERATIONS["v2_get_extras"]
         identifier = wire._required_id(dataset_id, operation=operation)
-        status, payload, _ = self._client._dataset_call(
+        _, payload, _ = self._client._dataset_call(
             method="GET",
             path=f"/api/2/datasets/{wire._path_segment(identifier)}/extras/",
             owning_operation=operation,
@@ -1000,9 +1004,7 @@ class AsyncDatasetsService:
         """GET /api/1/datasets/ (row 39)."""
         operation = wire.DATASET_OPERATIONS["list"]
         method, path, _, _ = wire.list_request(query or DatasetListQuery())
-        status, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=operation
-        )
+        _, payload, _ = await self._client._dataset_call_async(method=method, path=path, owning_operation=operation)
         return _shape_page(payload, operation=operation)
 
     async def create(
@@ -1015,20 +1017,20 @@ class AsyncDatasetsService:
         operation = wire.DATASET_OPERATIONS["create"]
         return await _amutating(
             operation,
-            getattr(client_input, "title", "<create>"),
+            getattr(client_input, "title", _CREATE_OPERATION),
             mutation_policy,
             lambda: _async_create_dispatch(self._client, client_input, operation, permissions, mutation_policy),
             lambda payload: wire.parse_dataset_detail(payload, operation=operation),
             "created",
             opaque_target=True,
-            success_target=lambda value: value.id.value if isinstance(value, NativeRecord) else "<create>",
+            success_target=lambda value: value.id.value if isinstance(value, NativeRecord) else _CREATE_OPERATION,
         )
 
     async def recent_atom(self, query: DatasetListQuery | None = None) -> NativeRecord:
         """GET /api/1/datasets/recent.atom (row 41)."""
         operation = wire.DATASET_OPERATIONS["atom"]
         method, path, _, _ = wire.atom_request(query or DatasetListQuery())
-        status, body, response = await self._client._dataset_call_async(
+        _, body, response = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
         negotiated = _header(response.headers, "content-type")
@@ -1040,7 +1042,7 @@ class AsyncDatasetsService:
         """GET /api/1/datasets/<id>/ (row 42)."""
         operation = wire.DATASET_OPERATIONS["get"]
         identifier = wire._required_id(dataset_id, operation=operation)
-        status, payload, _ = await self._client._dataset_call_async(
+        _, payload, _ = await self._client._dataset_call_async(
             method="GET", path=f"/api/1/datasets/{wire._path_segment(identifier)}/", owning_operation=operation
         )
         return wire.parse_dataset_detail(payload, operation=operation)
@@ -1147,7 +1149,7 @@ class AsyncDatasetsService:
         """GET /api/1/datasets/<id>/rdf.<format> (row 48)."""
         operation = wire.DATASET_OPERATIONS["rdf_format"]
         method, path, _, _ = wire.rdf_request(dataset_id, fmt)
-        status, body, response = await self._client._dataset_call_async(
+        _, body, response = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
         negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
@@ -1159,34 +1161,28 @@ class AsyncDatasetsService:
         """GET /api/1/datasets/suggest/ (row 67)."""
         operation = wire.DATASET_OPERATIONS["suggest"]
         method, path, _, _ = wire.suggest_request(query)
-        status, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=operation
-        )
+        _, payload, _ = await self._client._dataset_call_async(method=method, path=path, owning_operation=operation)
         return wire.parse_suggestions(payload, operation=operation)
 
     async def search_v2(self, query: DatasetSearchQuery | None = None) -> UDataPageEnvelope:
         """GET /api/2/datasets/search/ (row 75); retains facets and native links."""
         operation = wire.DATASET_OPERATIONS["v2_search"]
         method, path, _, _ = wire.v2_search_request(query or DatasetSearchQuery())
-        status, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=operation
-        )
+        _, payload, _ = await self._client._dataset_call_async(method=method, path=path, owning_operation=operation)
         return _shape_page(payload, operation=operation)
 
     async def list_v2(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope:
         """GET /api/2/datasets/ (row 76); retains native pagination links."""
         operation = wire.DATASET_OPERATIONS["v2_list"]
         method, path, _, _ = wire.v2_list_request(query or DatasetListQuery())
-        status, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=operation
-        )
+        _, payload, _ = await self._client._dataset_call_async(method=method, path=path, owning_operation=operation)
         return _shape_page(payload, operation=operation)
 
     async def get_v2(self, dataset_id: str) -> NativeRecord:
         """GET /api/2/datasets/<id>/ (row 77)."""
         operation = wire.DATASET_OPERATIONS["v2_get"]
         identifier = wire._required_id(dataset_id, operation=operation)
-        status, payload, _ = await self._client._dataset_call_async(
+        _, payload, _ = await self._client._dataset_call_async(
             method="GET", path=f"/api/2/datasets/{wire._path_segment(identifier)}/", owning_operation=operation
         )
         return wire.parse_dataset_detail(payload, operation=operation)
@@ -1195,7 +1191,7 @@ class AsyncDatasetsService:
         """GET /api/2/datasets/<id>/extras/ (row 78)."""
         operation = wire.DATASET_OPERATIONS["v2_get_extras"]
         identifier = wire._required_id(dataset_id, operation=operation)
-        status, payload, _ = await self._client._dataset_call_async(
+        _, payload, _ = await self._client._dataset_call_async(
             method="GET",
             path=f"/api/2/datasets/{wire._path_segment(identifier)}/extras/",
             owning_operation=operation,

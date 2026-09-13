@@ -226,8 +226,10 @@ def test_sync_client_emits_failed_outcome_exactly_once_on_error() -> None:
         emitter=EventEmitter(sinks=(sink,)),
     )
 
+    request = _request()
+    guard = _guard()
     with pytest.raises(CatalogValidationError):
-        client.get(_request(), _guard())
+        client.get(request, guard)
 
     assert [event.outcome for event in sink.events] == ["failed"]
 
@@ -253,8 +255,10 @@ def test_async_client_emits_failed_outcome_exactly_once_on_error() -> None:
             _profile(),
             emitter=EventEmitter(sinks=(sink,)),
         )
+        request = _request()
+        guard = _guard()
         with pytest.raises(CatalogValidationError):
-            await client.get(_request(), _guard())
+            await client.get(request, guard)
         return tuple(event.outcome for event in sink.events)
 
     assert asyncio.run(exercise()) == ("failed",)

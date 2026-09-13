@@ -97,6 +97,7 @@ def test_absolute_uri_passthrough() -> None:
     storage = FsspecStorage(fs)
     storage.write(b"abs", "memory:///bucket/key")
     assert fs.cat_file("/bucket/key") == b"abs"
+    assert storage._resolve("https://example.test/data") == "https://example.test/data"
 
 
 def test_init_signature_storage_port_compat() -> None:
@@ -119,6 +120,12 @@ def test_fsspec_rejects_dotdot_on_read() -> None:
     storage = _memory_storage()
     with pytest.raises(DownloadError):
         storage.read("../escape.txt")
+
+
+def test_fsspec_rejects_unencrypted_remote_paths() -> None:
+    storage = _memory_storage()
+    with pytest.raises(DownloadError, match="Unencrypted HTTP"):
+        storage.read("http://example.test/data")
 
 
 def test_fsspec_write_failure_wraps_in_download_error() -> None:

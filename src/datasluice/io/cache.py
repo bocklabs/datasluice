@@ -44,7 +44,7 @@ class FileCache:
         """Store *data* under *key* and return the cache file path."""
         path = self._key_path(key)
         path.write_bytes(data)
-        os.chmod(path, 0o644)
+        os.chmod(path, 0o600)
         return path
 
     def has(self, key: str) -> bool:

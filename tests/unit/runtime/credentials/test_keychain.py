@@ -22,8 +22,9 @@ from datasluice.runtime.credentials.keychain import KeychainCredentialProvider
 def test_missing_keyring_names_the_keychain_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "keyring", None)
 
+    keychain_credential_provider = KeychainCredentialProvider()
     with pytest.raises(ImportError, match=r"datasluice\[keychain\]"):
-        KeychainCredentialProvider().discover(CatalogPlatform.CKAN, {})
+        keychain_credential_provider.discover(CatalogPlatform.CKAN, {})
 
 
 @pytest.mark.parametrize(
@@ -78,8 +79,9 @@ def test_keychain_backend_errors_are_redacted() -> None:
     def get_password(service: str, username: str) -> str | None:
         raise RuntimeError("keychain-secret")
 
+    keychain_credential_provider = KeychainCredentialProvider(get_password)
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*") as exc_info:
-        KeychainCredentialProvider(get_password).discover(CatalogPlatform.CKAN, {})
+        keychain_credential_provider.discover(CatalogPlatform.CKAN, {})
 
     assert "keychain-secret" not in str(exc_info.value)
 
@@ -91,8 +93,9 @@ def test_keychain_backend_errors_redact_the_entire_cause_chain() -> None:
     def get_password(service: str, username: str) -> str | None:
         raise RuntimeError(planted_secret)
 
+    keychain_credential_provider = KeychainCredentialProvider(get_password)
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*") as exc_info:
-        KeychainCredentialProvider(get_password).discover(CatalogPlatform.CKAN, {})
+        keychain_credential_provider.discover(CatalogPlatform.CKAN, {})
 
     rendered = _redaction_surface(exc_info.value)
     assert planted_secret not in rendered
@@ -116,8 +119,9 @@ def test_keychain_backend_errors_redact_credential_shaped_cause_chain(
     def get_password(service: str, username: str) -> str | None:
         raise RuntimeError(backend_message)
 
+    keychain_credential_provider = KeychainCredentialProvider(get_password)
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*") as exc_info:
-        KeychainCredentialProvider(get_password).discover(CatalogPlatform.CKAN, {})
+        keychain_credential_provider.discover(CatalogPlatform.CKAN, {})
 
     assert planted_secret not in _redaction_surface(exc_info.value)
 

@@ -54,23 +54,26 @@ def test_third_party_manifests_need_explicit_activation_and_certification_metada
     assert manifest.certification is not None
     assert manifest.certification.report_id == "sha256:compliance-report"
 
+    requirement = _requirement()
+    certification = _certification(connector_id)
     with pytest.raises(ValueError, match="entry point"):
         ConnectorManifest(
             connector_id=connector_id,
             entry_point="",
             profile_version="2026.08",
             activation_policy=ActivationPolicy.EXPLICIT,
-            optional_requirements=(_requirement(),),
-            certification=_certification(connector_id),
+            optional_requirements=(requirement,),
+            certification=certification,
         )
 
+    requirement_2 = _requirement()
     with pytest.raises(ValueError, match="certification"):
         ConnectorManifest(
             connector_id=connector_id,
             entry_point="acme_portal.connector:create_connector",
             profile_version="2026.08",
             activation_policy=ActivationPolicy.EXPLICIT,
-            optional_requirements=(_requirement(),),
+            optional_requirements=(requirement_2,),
             certification=None,
         )
 

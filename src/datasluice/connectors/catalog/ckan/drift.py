@@ -1,18 +1,3 @@
-"""Runnable CKAN drift-read checker producing advisory-shaped output (D-21).
-
-The checker executes per-target bounded typed reads against representative
-public deployments and classifies each read as ``matched``, ``drifted``, or
-``unavailable``. ``AdvisoryRecord`` is a separate redacted schema, not the
-RUN-05 event envelope: it carries exactly five operator-facing keys and never
-serializes server-controlled payload content. Version position propagates from
-the Plan 05 ``version_line_state`` helper through every record of a target;
-foreign-line and unverified targets complete their run without blocking (D-08).
-Scheduling lives in Phase 8 (QUAL-01); this module ships only the runnable
-single-shot proof.
-
->>> python -m datasluice.connectors.catalog.ckan.drift --help
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -24,7 +9,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol
 
 from datasluice.connectors.catalog.ckan.clients import create_sync_client
-from datasluice.connectors.catalog.ckan.probes import version_line_state
+from datasluice.connectors.catalog.ckan.probes import LineState, version_line_state
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
@@ -323,6 +308,32 @@ def _unavailable_detail(exc: Exception) -> str:
     return f"endpoint unavailable: {type(exc).__name__}"
 
 
+def _line_state(observations: list[tuple[DriftCheck, object]]) -> LineState:
+    for check, observed in observations:
+        if check.action == "status_show" and isinstance(observed, Mapping):
+            version = observed.get("ckan_version")
+            if isinstance(version, str):
+                return version_line_state(version)
+    return version_line_state(None)
+
+
+def _advisory_record(target: DriftTarget, check: DriftCheck, observed: object, line_state: LineState) -> AdvisoryRecord:
+    if isinstance(observed, Exception):
+        outcome, detail = OUTCOME_UNAVAILABLE, _unavailable_detail(observed)
+    elif canonical_compare(observed, check.expected_keys, check.ordering):
+        outcome, detail = OUTCOME_MATCHED, MATCHED_DETAIL
+    else:
+        outcome, detail = OUTCOME_DRIFTED, DRIFTED_DETAIL
+    redacted = redact_for_output(detail)
+    return AdvisoryRecord(
+        target=target.origin,
+        operation=check.action,
+        line_state=line_state.value,
+        outcome=outcome,
+        detail=redacted if isinstance(redacted, str) else str(redacted),
+    )
+
+
 def _run_target(target: DriftTarget, client_factory: DriftClientFactory) -> list[AdvisoryRecord]:
     """Run one target's checks and classify them under the propagated line state."""
     client = client_factory(CKANClientSettings(base_url=target.origin))
@@ -333,35 +344,8 @@ def _run_target(target: DriftTarget, client_factory: DriftClientFactory) -> list
                 observations.append((check, _observed_from(check.action, _invoke_typed_read(client, check))))
             except Exception as exc:
                 observations.append((check, exc))
-        version = None
-        for check, observed in observations:
-            if check.action == "status_show" and isinstance(observed, Mapping):
-                candidate = observed.get("ckan_version")
-                if isinstance(candidate, str):
-                    version = candidate
-        line_state = version_line_state(version)
-        records: list[AdvisoryRecord] = []
-        for check, observed in observations:
-            if isinstance(observed, Exception):
-                outcome = OUTCOME_UNAVAILABLE
-                detail = _unavailable_detail(observed)
-            elif canonical_compare(observed, check.expected_keys, check.ordering):
-                outcome = OUTCOME_MATCHED
-                detail = MATCHED_DETAIL
-            else:
-                outcome = OUTCOME_DRIFTED
-                detail = DRIFTED_DETAIL
-            redacted = redact_for_output(detail)
-            records.append(
-                AdvisoryRecord(
-                    target=target.origin,
-                    operation=check.action,
-                    line_state=line_state.value,
-                    outcome=outcome,
-                    detail=redacted if isinstance(redacted, str) else str(redacted),
-                )
-            )
-        return records
+        line_state = _line_state(observations)
+        return [_advisory_record(target, check, observed, line_state) for check, observed in observations]
     finally:
         client.close()
 

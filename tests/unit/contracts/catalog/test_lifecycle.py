@@ -105,7 +105,10 @@ def test_guard_rejection_prevents_executor_dispatch() -> None:
     context = CatalogConnectorContext(sync_executor=sync_executor, async_executor=async_executor)
     operation, guard = _call()
 
+    sync_managed_executor = SyncManagedExecutor(context)
+    denied_guard = DeniedGuard()
+    typed_value = cast(CatalogOperationGuard, denied_guard)
     with pytest.raises(RuntimeError, match="blocked"):
-        SyncManagedExecutor(context).execute(operation, cast(CatalogOperationGuard, DeniedGuard()))
+        sync_managed_executor.execute(operation, typed_value)
 
     assert sync_executor.calls == []

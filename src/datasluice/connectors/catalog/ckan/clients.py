@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import date
 from functools import lru_cache
 from importlib import resources
@@ -67,7 +68,6 @@ from datasluice.runtime.clients import (
 from datasluice.runtime.constants import (
     DEFAULT_BREAKER_COOLDOWN_SECONDS,
     DEFAULT_BREAKER_FAILURE_THRESHOLD,
-    DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
 )
 from datasluice.runtime.defaults import create_default_async_transport, create_default_sync_transport
 from datasluice.runtime.events import EventEmitter
@@ -202,49 +202,39 @@ class SyncCKANClient:
         self,
         transport: CatalogTransport,
         profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile,
+        settings: CKANClientSettings,
         *,
-        origin: str,
-        credentials: object | None = None,
-        budget: TimeBudget | None = None,
-        breakers: BreakerRegistry | None = None,
-        breaker_failure_threshold: int = DEFAULT_BREAKER_FAILURE_THRESHOLD,
-        breaker_cooldown: float = DEFAULT_BREAKER_COOLDOWN_SECONDS,
-        max_attempts: int = 3,
         clock: Callable[[], float] = monotonic,
-        retry_sleep: Callable[[float], None] = sleep,
         emitter: EventEmitter | None = None,
-        probe_runner: ProbeRunner | None = None,
-        capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         owns_transport: bool = True,
         inventory: ActionInventory = CKAN_ACTIONS,
-        probe_policy: str = "auto",
-        rate_policy: object | None = None,
-        max_upload_bytes: int | None = None,
     ) -> None:
         self._transport = transport
         self._owns_transport = owns_transport
-        self._origin = normalize_origin(origin)
+        self._origin = settings.base_url
         self._capabilities = EffectiveCapabilityCache(
             profile,
-            probe_runner=probe_runner,
-            ttl_seconds=capability_cache_ttl,
+            probe_runner=settings.probe_runner,
+            ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
         )
         self._profile = self._capabilities.baseline_profile
-        self._probe_runner = probe_runner
-        self._probe_policy = probe_policy
-        self._credentials = credentials
-        self._budget = budget or TimeBudget()
-        self._breakers = breakers or BreakerRegistry(
-            failure_threshold=breaker_failure_threshold, cooldown=breaker_cooldown, clock=clock
+        self._probe_runner = settings.probe_runner
+        self._probe_policy = settings.probe_policy
+        self._credentials = settings.credential
+        self._budget = settings.budget or TimeBudget()
+        self._breakers = settings.breakers or BreakerRegistry(
+            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
+            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
+            clock=clock,
         )
-        self._max_attempts = max_attempts
+        self._max_attempts = settings.max_attempts
         self._clock = clock
-        self._retry_sleep = retry_sleep
+        self._retry_sleep = settings.retry_sleep or sleep
         self._emitter = emitter or EventEmitter()
         self._inventory = inventory
-        self._rate_policy = rate_policy
-        self._max_upload_bytes = max_upload_bytes
+        self._rate_policy = settings.rate_policy
+        self._max_upload_bytes = settings.max_upload_bytes
         self._closed = False
 
     @property
@@ -553,49 +543,39 @@ class AsyncCKANClient:
         self,
         transport: AsyncCatalogTransport,
         profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile,
+        settings: CKANClientSettings,
         *,
-        origin: str,
-        credentials: object | None = None,
-        budget: TimeBudget | None = None,
-        breakers: BreakerRegistry | None = None,
-        breaker_failure_threshold: int = DEFAULT_BREAKER_FAILURE_THRESHOLD,
-        breaker_cooldown: float = DEFAULT_BREAKER_COOLDOWN_SECONDS,
-        max_attempts: int = 3,
         clock: Callable[[], float] = monotonic,
-        retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         emitter: EventEmitter | None = None,
-        probe_runner: AsyncProbeRunner | None = None,
-        capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         owns_transport: bool = True,
         inventory: ActionInventory = CKAN_ACTIONS,
-        probe_policy: str = "auto",
-        rate_policy: object | None = None,
-        max_upload_bytes: int | None = None,
     ) -> None:
         self._transport = transport
         self._owns_transport = owns_transport
-        self._origin = normalize_origin(origin)
+        self._origin = settings.base_url
         self._capabilities = EffectiveCapabilityCache(
             profile,
-            async_probe_runner=probe_runner,
-            ttl_seconds=capability_cache_ttl,
+            async_probe_runner=settings.async_probe_runner,
+            ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
         )
         self._profile = self._capabilities.baseline_profile
-        self._probe_runner = probe_runner
-        self._probe_policy = probe_policy
-        self._credentials = credentials
-        self._budget = budget or TimeBudget()
-        self._breakers = breakers or BreakerRegistry(
-            failure_threshold=breaker_failure_threshold, cooldown=breaker_cooldown, clock=clock
+        self._probe_runner = settings.async_probe_runner
+        self._probe_policy = settings.probe_policy
+        self._credentials = settings.credential
+        self._budget = settings.budget or TimeBudget()
+        self._breakers = settings.breakers or BreakerRegistry(
+            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
+            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
+            clock=clock,
         )
-        self._max_attempts = max_attempts
+        self._max_attempts = settings.max_attempts
         self._clock = clock
-        self._retry_sleep = retry_sleep
+        self._retry_sleep = settings.async_retry_sleep or asyncio.sleep
         self._emitter = emitter or EventEmitter()
         self._inventory = inventory
-        self._rate_policy = rate_policy
-        self._max_upload_bytes = max_upload_bytes
+        self._rate_policy = settings.rate_policy
+        self._max_upload_bytes = settings.max_upload_bytes
         self._closed = False
 
     @property
@@ -1539,21 +1519,16 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
         transport = factory()
         owns_transport = True
     sync_probe_runner, _ = _default_probe_runners(settings, transport)
+    runtime_settings = replace(
+        settings,
+        probe_runner=sync_probe_runner,
+        rate_policy=resolve_rate_policy(settings),
+    )
     return SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=settings.base_url,
-        credentials=settings.credential,
-        budget=settings.budget,
-        breakers=settings.breakers,
-        max_attempts=settings.max_attempts,
-        retry_sleep=settings.retry_sleep if settings.retry_sleep is not None else sleep,
-        probe_runner=sync_probe_runner,
-        capability_cache_ttl=settings.capability_cache_ttl,
+        runtime_settings,
         owns_transport=owns_transport,
-        rate_policy=resolve_rate_policy(settings),
-        probe_policy=settings.probe_policy,
-        max_upload_bytes=settings.max_upload_bytes,
     )
 
 
@@ -1572,19 +1547,14 @@ def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
         transport = factory()
         owns_transport = True
     _, async_probe_runner = _default_probe_runners(settings, transport)
+    runtime_settings = replace(
+        settings,
+        async_probe_runner=async_probe_runner,
+        rate_policy=resolve_rate_policy(settings),
+    )
     return AsyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=settings.base_url,
-        credentials=settings.credential,
-        budget=settings.budget,
-        breakers=settings.breakers,
-        max_attempts=settings.max_attempts,
-        retry_sleep=settings.async_retry_sleep if settings.async_retry_sleep is not None else asyncio.sleep,
-        probe_runner=async_probe_runner,
-        capability_cache_ttl=settings.capability_cache_ttl,
+        runtime_settings,
         owns_transport=owns_transport,
-        rate_policy=resolve_rate_policy(settings),
-        probe_policy=settings.probe_policy,
-        max_upload_bytes=settings.max_upload_bytes,
     )

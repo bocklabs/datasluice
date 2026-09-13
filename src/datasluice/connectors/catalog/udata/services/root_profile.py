@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Never, cast
 from urllib.parse import urlsplit
@@ -46,6 +47,8 @@ from datasluice.errors.catalog import (
 )
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse, TransportFailure
+
+_JSON_MEDIA_TYPE = "application/json"
 
 _CSV_MEDIA_TYPE = "text/csv"
 _UNKNOWN_SITE = "unknown"
@@ -164,7 +167,7 @@ def _error_status(error: BaseException, response: object | None = None) -> int:
 
 
 def _mutation_outcome(error: BaseException, response: object | None = None) -> str:
-    if error.__class__.__name__ == "CancelledError":
+    if isinstance(error, asyncio.CancelledError):
         return "cancelled"
     metadata = getattr(error, "metadata", None)
     if isinstance(metadata, Mapping) and metadata.get("ambiguous") is True:
@@ -189,8 +192,9 @@ def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseExcep
     return error
 
 
-def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> Never:
-    raise _attach_receipt(error, receipt)
+def _raise_with_receipt(error: Exception | asyncio.CancelledError, receipt: MutationReceipt) -> Never:
+    _attach_receipt(error, receipt)
+    raise error
 
 
 def _require_controlled_authority(*, authorized: bool, operation: str) -> None:
@@ -263,7 +267,7 @@ def _mutating(
     try:
         status, payload, response = dispatch()
         profile = decode(payload, response)
-    except BaseException as error:
+    except Exception as error:
         emit("failed")
         receipt = _build_receipt(
             policy,
@@ -293,7 +297,7 @@ async def _amutating(
     try:
         status, payload, response = await dispatch()
         profile = decode(payload, response)
-    except BaseException as error:
+    except (Exception, asyncio.CancelledError) as error:
         emit("failed")
         receipt = _build_receipt(
             policy,
@@ -321,7 +325,7 @@ def _decode_patch(payload: object, response: object) -> SiteProfile | None:
             cast(Mapping[str, str], getattr(response, "headers", {})),
             operation=SET_SITE_OPERATION,
             status_code=cast(int, getattr(response, "status_code", 0)),
-            expected_media_type="application/json",
+            expected_media_type=_JSON_MEDIA_TYPE,
         )
     return None if payload is None else wire.parse_site_profile(payload, operation=SET_SITE_OPERATION)
 
@@ -351,12 +355,12 @@ def _parse_and_close_redirect(response: RuntimeStreamResponse, parse: Callable[[
     primary_error: BaseException | None = None
     try:
         document = parse()
-    except BaseException as error:
+    except Exception as error:
         primary_error = error
     cleanup_error: BaseException | None = None
     try:
         response.close()
-    except BaseException as error:
+    except Exception as error:
         cleanup_error = error
     if primary_error is not None:
         if cleanup_error is not None:
@@ -375,12 +379,12 @@ async def _parse_and_close_redirect_async(
     primary_error: BaseException | None = None
     try:
         document = parse()
-    except BaseException as error:
+    except (Exception, asyncio.CancelledError) as error:
         primary_error = error
     cleanup_error: BaseException | None = None
     try:
         await response.aclose()
-    except BaseException as error:
+    except (Exception, asyncio.CancelledError) as error:
         cleanup_error = error
     if primary_error is not None:
         if cleanup_error is not None:
@@ -603,7 +607,7 @@ class SyncRootProfileService:
                 response.headers,
                 operation=ROOT_OPERATION,
                 status_code=status,
-                expected_media_type="application/json",
+                expected_media_type=_JSON_MEDIA_TYPE,
             )
             return _decode_profile(payload)
 
@@ -664,7 +668,7 @@ class SyncRootProfileService:
         sink: Callable[[bytes], None] | None = None,
     ) -> SiteDocument:
         """GET /api/1/site/catalog.<format> (row 187)."""
-        method, path, headers, _ = wire.rdf_catalog_format_request(fmt, query or SiteCatalogQuery())
+        _, path, headers, _ = wire.rdf_catalog_format_request(fmt, query or SiteCatalogQuery())
         response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
@@ -698,7 +702,7 @@ class SyncRootProfileService:
         *,
         sink: Callable[[bytes], None] | None = None,
     ) -> SiteDocument:
-        method, path, headers, _ = wire.csv_request(name, query)
+        _, path, headers, _ = wire.csv_request(name, query)
         response = self._client._root_stream_call(path=path, owning_operation=ROOT_OPERATION, headers=headers)
         if response.status_code in {301, 302, 303, 307, 308}:
             try:
@@ -833,7 +837,7 @@ class AsyncRootProfileService:
                 response.headers,
                 operation=ROOT_OPERATION,
                 status_code=status,
-                expected_media_type="application/json",
+                expected_media_type=_JSON_MEDIA_TYPE,
             )
             return _decode_profile(payload)
 
@@ -893,7 +897,7 @@ class AsyncRootProfileService:
         sink: Callable[[bytes], Awaitable[None] | None] | None = None,
     ) -> SiteDocument:
         """GET /api/1/site/catalog.<format> (row 187)."""
-        method, path, headers, _ = wire.rdf_catalog_format_request(fmt, query or SiteCatalogQuery())
+        _, path, headers, _ = wire.rdf_catalog_format_request(fmt, query or SiteCatalogQuery())
         response = await self._client._root_stream_call_async(
             path=path, owning_operation=ROOT_OPERATION, headers=headers
         )
@@ -929,7 +933,7 @@ class AsyncRootProfileService:
         *,
         sink: Callable[[bytes], Awaitable[None] | None] | None = None,
     ) -> SiteDocument:
-        method, path, headers, _ = wire.csv_request(name, query)
+        _, path, headers, _ = wire.csv_request(name, query)
         response = await self._client._root_stream_call_async(
             path=path, owning_operation=ROOT_OPERATION, headers=headers
         )

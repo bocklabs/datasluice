@@ -23,6 +23,11 @@ from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, _freeze_json
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
+_PINNED_SOURCE_ORACLE_ACTION = "Verify the response against the pinned source oracle."
+_RDF_XML_MEDIA_TYPE = "application/rdf+xml"
+_TURTLE_MEDIA_TYPE = "application/x-turtle"
+_JSON_LD_MEDIA_TYPE = "application/ld+json"
+
 DATASET_OPERATIONS = {
     "list": "udata/api-v1.list-datasets",
     "create": "udata/api-v1.create-dataset",
@@ -139,7 +144,7 @@ def _invalid_field(field: str, operation: str, expected: str) -> CatalogValidati
         f"The uData dataset field {field!r} must be {expected}.",
         operation=operation,
         platform=PLATFORM.value,
-        safe_action="Verify the response against the pinned source oracle.",
+        safe_action=_PINNED_SOURCE_ORACLE_ACTION,
     )
 
 
@@ -187,62 +192,102 @@ def _validate_nested_string_fields(
 
 
 def _validate_dataset_nested_fields(payload: Mapping[str, object], *, operation: str) -> None:
-    for field in ("organization", "owner"):
+    _validate_nested_mapping_fields(
+        payload, ("organization", "owner"), frozenset({"id", "name", "slug"}), operation=operation
+    )
+    _validate_nested_mapping_fields(
+        payload,
+        ("schema", "temporal_coverage"),
+        frozenset({"name", "version", "url", "start", "end"}),
+        operation=operation,
+    )
+    _validate_nested_list_fields(
+        payload,
+        ("resources", "badges", "community_resources", "access_audiences", "contact_points"),
+        frozenset({"id", "title", "name", "slug", "url"}),
+        operation=operation,
+    )
+
+
+def _validate_nested_mapping_fields(
+    payload: Mapping[str, object], fields: tuple[str, ...], nested_fields: frozenset[str], *, operation: str
+) -> None:
+    for field in fields:
         value = payload.get(field)
         if isinstance(value, Mapping):
-            _validate_nested_string_fields(value, frozenset({"id", "name", "slug"}), operation=operation, path=field)
-    for field in ("schema", "temporal_coverage"):
-        value = payload.get(field)
-        if isinstance(value, Mapping):
-            _validate_nested_string_fields(
-                value,
-                frozenset({"name", "version", "url", "start", "end"}),
-                operation=operation,
-                path=field,
-            )
-    for field in ("resources", "badges", "community_resources", "access_audiences", "contact_points"):
+            _validate_nested_string_fields(value, nested_fields, operation=operation, path=field)
+
+
+def _validate_nested_list_fields(
+    payload: Mapping[str, object], fields: tuple[str, ...], nested_fields: frozenset[str], *, operation: str
+) -> None:
+    for field in fields:
         value = payload.get(field)
         if isinstance(value, list):
             for index, item in enumerate(value):
                 if isinstance(item, Mapping):
                     _validate_nested_string_fields(
                         item,
-                        frozenset({"id", "title", "name", "slug", "url"}),
+                        nested_fields,
                         operation=operation,
                         path=f"{field}[{index}]",
                     )
 
 
 def _validate_dataset_fields(payload: Mapping[str, object], *, operation: str, detail: bool) -> None:
+    _validate_required_dataset_fields(payload, operation=operation, detail=detail)
+    for field, value in payload.items():
+        _validate_dataset_field(field, value, operation=operation)
+        _validate_json_value(value, operation=operation, path=field)
+    _validate_dataset_nested_fields(payload, operation=operation)
+
+
+def _validate_required_dataset_fields(payload: Mapping[str, object], *, operation: str, detail: bool) -> None:
     required = ("id", "title", "slug") if detail else ("id",)
     for field in required:
         value = payload.get(field)
         if not isinstance(value, str) or not value:
             raise _invalid_field(field, operation, "a non-empty string")
-    for field, value in payload.items():
-        if field in _DATASET_STRING_FIELDS:
-            if value is not None and (not isinstance(value, str) or not value):
-                raise _invalid_field(field, operation, "a non-empty string or null")
-        elif field in _DATASET_BOOLEAN_FIELDS:
-            if type(value) is not bool:
-                raise _invalid_field(field, operation, "a boolean")
-        elif field in _DATASET_MAPPING_FIELDS:
-            if value is not None and not isinstance(value, Mapping):
-                raise _invalid_field(field, operation, "an object or null")
-        elif field in _DATASET_LINK_FIELDS and operation.startswith("udata/api-v2."):
-            _validate_dataset_link(value, field=field, operation=operation)
-        elif field in _DATASET_LIST_FIELDS or field in _DATASET_LINK_FIELDS:
-            if not isinstance(value, list):
-                raise _invalid_field(field, operation, "a list")
-            if field == "tags" and not all(isinstance(tag, str) and tag for tag in value):
-                raise _invalid_field(field, operation, "a list of non-empty strings")
-            if field != "tags" and not all(isinstance(item, Mapping) for item in value):
-                raise _invalid_field(field, operation, "a list of objects")
-        _validate_json_value(value, operation=operation, path=field)
-    _validate_dataset_nested_fields(payload, operation=operation)
 
 
-def _native_dataset(payload: Mapping[str, object], *, operation: str) -> NativeRecord:
+def _validate_dataset_field(field: str, value: object, *, operation: str) -> None:
+    if field in _DATASET_STRING_FIELDS:
+        _validate_dataset_optional_string(field, value, operation=operation)
+    elif field in _DATASET_BOOLEAN_FIELDS:
+        _validate_dataset_boolean(field, value, operation=operation)
+    elif field in _DATASET_MAPPING_FIELDS:
+        _validate_dataset_optional_mapping(field, value, operation=operation)
+    elif field in _DATASET_LINK_FIELDS and operation.startswith("udata/api-v2."):
+        _validate_dataset_link(value, field=field, operation=operation)
+    elif field in _DATASET_LIST_FIELDS or field in _DATASET_LINK_FIELDS:
+        _validate_dataset_list(field, value, operation=operation)
+
+
+def _validate_dataset_optional_string(field: str, value: object, *, operation: str) -> None:
+    if value is not None and (not isinstance(value, str) or not value):
+        raise _invalid_field(field, operation, "a non-empty string or null")
+
+
+def _validate_dataset_boolean(field: str, value: object, *, operation: str) -> None:
+    if type(value) is not bool:
+        raise _invalid_field(field, operation, "a boolean")
+
+
+def _validate_dataset_optional_mapping(field: str, value: object, *, operation: str) -> None:
+    if value is not None and not isinstance(value, Mapping):
+        raise _invalid_field(field, operation, "an object or null")
+
+
+def _validate_dataset_list(field: str, value: object, *, operation: str) -> None:
+    if not isinstance(value, list):
+        raise _invalid_field(field, operation, "a list")
+    if field == "tags" and not all(isinstance(tag, str) and tag for tag in value):
+        raise _invalid_field(field, operation, "a list of non-empty strings")
+    if field != "tags" and not all(isinstance(item, Mapping) for item in value):
+        raise _invalid_field(field, operation, "a list of objects")
+
+
+def _native_dataset(payload: Mapping[str, object]) -> NativeRecord:
     identifier = cast(str, payload["id"])
     known = {key: value for key, value in payload.items() if key in _DATASET_DETAIL_FIELDS}
     extensions = {"udata.dataset": {key: value for key, value in payload.items() if key not in _DATASET_DETAIL_FIELDS}}
@@ -364,10 +409,10 @@ def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATIO
             "The uData dataset document must be a JSON object.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned source oracle.",
+            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
         )
     _validate_dataset_fields(payload, operation=operation, detail=True)
-    return _native_dataset(payload, operation=operation)
+    return _native_dataset(payload)
 
 
 def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> tuple[NativeRecord, ...]:
@@ -377,7 +422,7 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
             "The uData suggest response must be a JSON array of objects.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned source oracle.",
+            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
         )
     records = []
     for item in payload:
@@ -388,7 +433,7 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
                 "The uData suggestion requires a non-empty string title.",
                 operation=operation,
                 platform=PLATFORM.value,
-                safe_action="Verify the response against the pinned source oracle.",
+                safe_action=_PINNED_SOURCE_ORACLE_ACTION,
             )
         records.append(
             NativeRecord(
@@ -415,7 +460,7 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
             "The uData extras response must be a JSON object.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned source oracle.",
+            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
         )
     for key, value in payload.items():
         _validate_json_value(value, operation=operation, path=key)
@@ -425,20 +470,20 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
             "The uData extras response must be a JSON object.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned source oracle.",
+            safe_action=_PINNED_SOURCE_ORACLE_ACTION,
         )
     return frozen
 
 
 RDF_FORMAT_MEDIA_TYPES = {
-    "rdf": "application/rdf+xml",
-    "xml": "application/rdf+xml",
-    "ttl": "application/x-turtle",
-    "turtle": "application/x-turtle",
+    "rdf": _RDF_XML_MEDIA_TYPE,
+    "xml": _RDF_XML_MEDIA_TYPE,
+    "ttl": _TURTLE_MEDIA_TYPE,
+    "turtle": _TURTLE_MEDIA_TYPE,
     "nt": "application/n-triples",
     "n3": "text/n3",
-    "json": "application/ld+json",
-    "jsonld": "application/ld+json",
+    "json": _JSON_LD_MEDIA_TYPE,
+    "jsonld": _JSON_LD_MEDIA_TYPE,
     "trig": "application/trig",
 }
 
@@ -446,11 +491,11 @@ _APPROVED_TEXT_MEDIA_TYPES = frozenset(
     {
         "application/atom+xml",
         "application/json",
-        "application/ld+json",
+        _JSON_LD_MEDIA_TYPE,
         "application/n-triples",
-        "application/rdf+xml",
+        _RDF_XML_MEDIA_TYPE,
         "application/trig",
-        "application/x-turtle",
+        _TURTLE_MEDIA_TYPE,
         "text/n3",
         "text/turtle",
         "text/xml",

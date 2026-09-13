@@ -346,7 +346,7 @@ class DataSluice:
         for closeable in self._collect_owned_closeables(self._session_kwargs):
             try:
                 _drain_owned_close(closeable)
-            except BaseException as exc:
+            except Exception as exc:
                 if first_error is None:
                     first_error = exc
         if first_error is not None:
@@ -361,7 +361,7 @@ class DataSluice:
         for closeable in self._collect_owned_closeables(self._session_kwargs):
             try:
                 await _drain_owned_aclose(closeable)
-            except BaseException as exc:
+            except (Exception, asyncio.CancelledError) as exc:
                 if first_error is None:
                     first_error = exc
         if first_error is not None:
@@ -375,8 +375,7 @@ class DataSluice:
         self.close()
 
     async def __aenter__(self) -> DataSluice:
-        self._ensure_open()
-        return self
+        return self.__enter__()
 
     async def __aexit__(self, *exc: Any) -> None:
         await self.aclose()
@@ -386,34 +385,52 @@ class DataSluice:
             raise StreamClosedError("DataSluice is closed")
 
     def _collect_owned_closeables(self, session_kwargs: Mapping[str, Any]) -> tuple[Any, ...]:
-        candidates: list[Any] = []
-        if self._owns_reader:
-            candidates.append(self._reader)
+        candidates = [self._reader] if self._owns_reader else []
         if self._owns_session_dependencies:
-            if session_kwargs.get("transport") is None:
-                candidates.append(self._session._transport)
-            if session_kwargs.get("async_transport") is None:
-                candidates.append(getattr(self._session, "_async_transport", None))
-            if session_kwargs.get("cache") is None:
-                candidates.append(self._session._cache)
-            if session_kwargs.get("storage") is None:
-                candidates.append(self._session.storage)
-            if session_kwargs.get("state_store") is None:
-                candidates.append(self._session.state_store)
-            if session_kwargs.get("plugins") is None:
-                candidates.append(self._session.plugins)
-        closeables: list[Any] = []
-        seen: set[int] = set()
-        for candidate in candidates:
-            if (
-                candidate is None
-                or not (hasattr(candidate, "close") or hasattr(candidate, "aclose"))
-                or id(candidate) in seen
-            ):
-                continue
-            seen.add(id(candidate))
-            closeables.append(candidate)
-        return tuple(closeables)
+            candidates.extend(self._owned_session_dependencies(session_kwargs))
+        return _unique_closeables(candidates)
+
+    def _owned_session_dependencies(self, session_kwargs: Mapping[str, Any]) -> list[Any]:
+        candidates = []
+        for key, value in (
+            ("transport", self._session._transport),
+            ("async_transport", getattr(self._session, "_async_transport", None)),
+            ("cache", self._session._cache),
+            ("storage", self._session.storage),
+            ("state_store", self._session.state_store),
+            ("plugins", self._session.plugins),
+        ):
+            if session_kwargs.get(key) is None:
+                candidates.append(value)
+        return candidates
+
+
+def _unique_closeables(candidates: list[Any]) -> tuple[Any, ...]:
+    closeables: list[Any] = []
+    seen: set[int] = set()
+    for candidate in candidates:
+        if (
+            candidate is None
+            or not (hasattr(candidate, "close") or hasattr(candidate, "aclose"))
+            or id(candidate) in seen
+        ):
+            continue
+        seen.add(id(candidate))
+        closeables.append(candidate)
+    return tuple(closeables)
+
+
+def _close_streams(closeables: tuple[Any | None, ...]) -> BaseException | None:
+    first_error: BaseException | None = None
+    for closeable in closeables:
+        if closeable is None:
+            continue
+        try:
+            closeable.close()
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+    return first_error
 
 
 class OpenedResource:
@@ -546,28 +563,15 @@ class OpenedResource:
         self._raw_stream = None
         self._transformed_stream = None
         self._closed = True
-        first_error: BaseException | None = None
-        for candidate in (stream, raw_stream):
-            if candidate is None or candidate is raw_stream and stream is raw_stream:
-                continue
-            try:
-                candidate.close()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
-        if raw_stream is not None and stream is raw_stream:
-            try:
-                raw_stream.close()
-            except BaseException as exc:
-                if first_error is None:
-                    first_error = exc
+        closeables = (raw_stream,) if stream is raw_stream else (stream, raw_stream)
+        first_error = _close_streams(closeables)
         if first_error is not None:
             raise first_error
 
     def _finish_after_failure(self, raw_stream: Any | None, stream: Any | None) -> None:
         try:
             self._finish(raw_stream, stream)
-        except BaseException:
+        except Exception:
             pass
 
     def _ensure_available(self) -> None:

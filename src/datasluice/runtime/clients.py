@@ -234,8 +234,6 @@ class SyncCatalogClient:
         credentials: object | None = None,
         budget: TimeBudget | None = None,
         breakers: BreakerRegistry | None = None,
-        breaker_failure_threshold: int = DEFAULT_BREAKER_FAILURE_THRESHOLD,
-        breaker_cooldown: float = DEFAULT_BREAKER_COOLDOWN_SECONDS,
         max_attempts: int = 3,
         clock: Callable[[], float] = monotonic,
         retry_sleep: Callable[[float], None] = sleep,
@@ -256,7 +254,9 @@ class SyncCatalogClient:
         self._credentials = credentials
         self._budget = budget or _default_budget()
         self._breakers = breakers or BreakerRegistry(
-            failure_threshold=breaker_failure_threshold, cooldown=breaker_cooldown, clock=clock
+            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
+            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
+            clock=clock,
         )
         self._max_attempts = max_attempts
         self._clock = clock
@@ -427,8 +427,6 @@ class AsyncCatalogClient:
         credentials: object | None = None,
         budget: TimeBudget | None = None,
         breakers: BreakerRegistry | None = None,
-        breaker_failure_threshold: int = DEFAULT_BREAKER_FAILURE_THRESHOLD,
-        breaker_cooldown: float = DEFAULT_BREAKER_COOLDOWN_SECONDS,
         max_attempts: int = 3,
         clock: Callable[[], float] = monotonic,
         retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -449,7 +447,9 @@ class AsyncCatalogClient:
         self._credentials = credentials
         self._budget = budget or _default_budget()
         self._breakers = breakers or BreakerRegistry(
-            failure_threshold=breaker_failure_threshold, cooldown=breaker_cooldown, clock=clock
+            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
+            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
+            clock=clock,
         )
         self._max_attempts = max_attempts
         self._clock = clock

@@ -1,19 +1,3 @@
-"""Transparent decompression decorator pipeline.
-
-Sits BETWEEN access acquisition (``access.py``) and the format reader
-(``data/readers/``). The pipeline peeks the first few bytes of the byte source,
-detects compression by magic bytes (or an HTTP ``Content-Encoding`` hint), wraps
-the source in the appropriate decompressor, and returns a new ``BinaryIO``.
-
-GZIP / BZIP2 / ZSTD stream on non-seekable input — they
-need no seek and honour the bounded-memory contract. ZIP requires seekable
-input; the pipeline
-spools the full body to :class:`io.BytesIO` before ``zipfile.ZipFile`` and
-extracts the LARGEST member (RESEARCH Open Question 5 — open-data ZIPs often
-bundle a small README alongside the data file; largest avoids picking the
-README).
-"""
-
 from __future__ import annotations
 
 import bz2
@@ -28,6 +12,8 @@ from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
     from _typeshed import WriteableBuffer
+
+_CLOSED_FILE_IO_ERROR = "I/O operation on closed file"
 
 logger = get_logger("data.compression")
 
@@ -132,7 +118,7 @@ class PeekableReader(io.RawIOBase):
         """
 
         if self._closed:
-            raise ValueError("I/O operation on closed file")
+            raise ValueError(_CLOSED_FILE_IO_ERROR)
         needed = n - len(self._buffer)
         while needed > 0:
             chunk = self._source.read(needed)
@@ -144,7 +130,7 @@ class PeekableReader(io.RawIOBase):
 
     def readinto(self, b: WriteableBuffer) -> int:
         if self._closed:
-            raise ValueError("I/O operation on closed file")
+            raise ValueError(_CLOSED_FILE_IO_ERROR)
         mv = memoryview(b)
         if not self._buffer:
             chunk = self._source.read(len(mv))
@@ -162,7 +148,7 @@ class PeekableReader(io.RawIOBase):
 
     def read(self, n: int = -1) -> bytes:
         if self._closed:
-            raise ValueError("I/O operation on closed file")
+            raise ValueError(_CLOSED_FILE_IO_ERROR)
         if n is None or n < 0:
             chunks = [bytes(self._buffer)]
             self._buffer.clear()
@@ -218,9 +204,9 @@ def _detect_format(magic: bytes, content_encoding: str | None) -> str:
 def _wrap_gzip(source: Any) -> Any:
     try:
         decompressor = gzip.GzipFile(fileobj=source)
-    except (gzip.BadGzipFile, EOFError, OSError) as exc:
+    except (EOFError, OSError) as exc:
         raise DecompressionError(f"GZIP decompression failed: {exc}") from exc
-    return _ErrorTranslatingReader(decompressor, (gzip.BadGzipFile, EOFError, OSError), "GZIP")
+    return _ErrorTranslatingReader(decompressor, (EOFError, OSError), "GZIP")
 
 
 def _wrap_bzip2(source: Any) -> Any:

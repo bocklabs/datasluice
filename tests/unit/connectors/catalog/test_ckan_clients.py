@@ -6,7 +6,8 @@ import asyncio
 import importlib.util
 import inspect
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from typing import Literal
 
 import pytest
 
@@ -20,6 +21,7 @@ from datasluice.connectors.catalog.ckan.clients import (
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEntry, ActionInventory
 from datasluice.connectors.catalog.ckan.rate_limits import (
     DocumentedPortalLimit,
+    PortalRatePolicy,
     UnlimitedRatePolicy,
     resolve_rate_policy,
 )
@@ -127,23 +129,23 @@ def _direct_client(
     transport: SyncCaptureTransport,
     *,
     inventory: ActionInventory = CKAN_ACTIONS,
-    probe_policy: str = "auto",
+    probe_policy: Literal["auto", "declared-baseline"] = "auto",
     probe_runner: StubProbeRunner | None = None,
     owns_transport: bool = True,
-    rate_policy: object | None = None,
-    retry_sleep: object | None = None,
+    rate_policy: PortalRatePolicy | None = None,
+    retry_sleep: Callable[[float], None] | None = None,
 ) -> SyncCKANClient:
-    client_kwargs: dict[str, object] = {
-        "origin": LOOPBACK_ORIGIN,
-        "inventory": inventory,
-        "probe_policy": probe_policy,
-        "probe_runner": probe_runner,
-        "owns_transport": owns_transport,
-        "rate_policy": rate_policy,
-    }
-    if retry_sleep is not None:
-        client_kwargs["retry_sleep"] = retry_sleep
-    return SyncCKANClient(transport, declared_ckan_profile(), **client_kwargs)  # ty: ignore[invalid-argument-type]
+    settings = CKANClientSettings(
+        base_url=LOOPBACK_ORIGIN,
+        sync_transport=transport,
+        probe_policy=probe_policy,
+        probe_runner=probe_runner,
+        rate_policy=rate_policy,
+        retry_sleep=retry_sleep,
+    )
+    return SyncCKANClient(
+        transport, declared_ckan_profile(), settings, owns_transport=owns_transport, inventory=inventory
+    )
 
 
 def _datastore_inventory() -> ActionInventory:
@@ -373,10 +375,7 @@ class AsyncCaptureTransport:
 
 def _async_client(transport: AsyncCaptureTransport, *, owns_transport: bool = True) -> AsyncCKANClient:
     return AsyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=owns_transport,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=owns_transport
     )
 
 
@@ -419,10 +418,6 @@ def test_sync_async_clients_maintain_strict_structural_parity() -> None:
     assert set(inspect.signature(SyncCKANClient.__init__).parameters) == set(
         inspect.signature(AsyncCKANClient.__init__).parameters
     )
-    sync_annotation = inspect.signature(SyncCKANClient.__init__).parameters["retry_sleep"].annotation
-    async_annotation = inspect.signature(AsyncCKANClient.__init__).parameters["retry_sleep"].annotation
-    assert "Awaitable" in str(async_annotation)
-    assert "Awaitable" not in str(sync_annotation)
 
     families = (
         "datasets",
@@ -585,15 +580,17 @@ def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None
     """The controlled-stack posture is an explicit choice, never a silent bypass."""
     transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
 
+    settings = CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=transport)
     with pytest.raises(UnsupportedCapabilityError) as excinfo:
-        create_sync_client(CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=transport))
+        create_sync_client(settings)
 
     assert transport.requests == []
     assert "declared-baseline" in excinfo.value.safe_action
 
     async_transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    settings_2 = CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=async_transport)
     with pytest.raises(UnsupportedCapabilityError):
-        create_async_client(CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=async_transport))
+        create_async_client(settings_2)
     assert async_transport.requests == []
 
 
@@ -605,8 +602,9 @@ def test_async_https_factories_attach_the_default_async_probe_runner() -> None:
 
     assert len(transport.requests) == 0
     operation, guard = _collaborator_dispatch()
+    list_show_search = client.datasets.list_show_search(operation, guard)
     with pytest.raises(UnsupportedCapabilityError):
-        asyncio.run(client.datasets.list_show_search(operation, guard))
+        asyncio.run(list_show_search)
     status_reads = [request for request in transport.requests if request.url.endswith("/api/3/action/status_show")]
     assert transport.requests == status_reads
     assert len(status_reads) == 1

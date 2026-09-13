@@ -112,8 +112,9 @@ def test_detection_result_confidence_range_enforced() -> None:
 
 def test_detection_result_evidence_is_immutable() -> None:
     result = DetectionResult(portal_type="ckan", evidence=[DetectionEvidence(check="api", matched=True)])
+    evidence = DetectionEvidence(check="other", matched=False)
     with pytest.raises((AttributeError, TypeError)):
-        result.evidence.append(DetectionEvidence(check="other", matched=False))  # type: ignore
+        result.evidence.append(evidence)  # type: ignore
 
 
 def test_detection_result_extra_is_immutable() -> None:

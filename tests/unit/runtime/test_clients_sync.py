@@ -163,8 +163,10 @@ def test_sync_client_dispatches_guarded_dataset_get_and_closes_once() -> None:
 def test_sync_client_rejects_malformed_json_body() -> None:
     client = SyncCatalogClient(_Transport(RuntimeResponse(200, {}, b"<html>not-json</html>")), _profile())
 
+    request = _request()
+    guard = _guard()
     with pytest.raises(NativeCatalogError, match="invalid JSON"):
-        client.datasets.get(_request(), _guard())
+        client.datasets.get(request, guard)
 
 
 def test_sync_client_rejects_unsupported_operation_without_dispatch() -> None:
@@ -172,8 +174,10 @@ def test_sync_client_rejects_unsupported_operation_without_dispatch() -> None:
     client = SyncCatalogClient(transport, _profile())
     operation = OperationId("reference", "resources", "get")
 
+    request = _request(operation)
+    guard = _guard(operation)
     with pytest.raises(UnsupportedCapabilityError) as raised:
-        client.datasets.get(_request(operation), _guard(operation))
+        client.datasets.get(request, guard)
 
     assert raised.value.safe_action
     assert transport.requests == []
@@ -182,8 +186,10 @@ def test_sync_client_rejects_unsupported_operation_without_dispatch() -> None:
 def test_sync_client_maps_not_found_response() -> None:
     client = SyncCatalogClient(_Transport(RuntimeResponse(404, {}, b"")), _profile())
 
+    request = _request()
+    guard = _guard()
     with pytest.raises(CatalogNotFoundError):
-        client.datasets.get(_request(), _guard())
+        client.datasets.get(request, guard)
 
 
 def test_sync_capability_reads_cached_state_without_probe_or_transport_dispatch() -> None:
@@ -230,8 +236,10 @@ def test_sync_client_rejects_denied_caller_guard_before_probe_or_transport(servi
     runner = _ProbeRunner(ProbeResponseClass.SUCCESS)
     client = SyncCatalogClient(transport, _profile(), probe_runner=runner)
 
+    getattr_2 = getattr(client.datasets, service_method)
+    request = _request()
     with pytest.raises(ForbiddenError):
-        getattr(client.datasets, service_method)(_request(), guard)
+        getattr_2(request, guard)
 
     assert runner.calls == 0
     assert transport.requests == []
@@ -244,8 +252,9 @@ def test_sync_client_rejects_guard_for_different_operation_before_probe_or_trans
     runner = _ProbeRunner(ProbeResponseClass.SUCCESS)
     client = SyncCatalogClient(transport, _profile(), probe_runner=runner)
 
+    request = _request(operation)
     with pytest.raises(ValueError, match="does not match request"):
-        client.datasets.get(_request(operation), guard)
+        client.datasets.get(request, guard)
 
     assert runner.calls == 0
     assert transport.requests == []
@@ -258,8 +267,9 @@ def test_sync_client_allowed_caller_guard_does_not_bypass_denied_effective_capab
     runner = _ProbeRunner(ProbeResponseClass.UNAVAILABLE)
     client = SyncCatalogClient(transport, _profile(), probe_runner=runner)
 
+    request = _request(operation)
     with pytest.raises(UnsupportedCapabilityError):
-        client.datasets.get(_request(operation), guard)
+        client.datasets.get(request, guard)
 
     assert runner.calls == 1
     assert transport.requests == []
@@ -326,13 +336,19 @@ def test_undeclared_mutation_policy_defaults_retry_safety_by_http_method() -> No
     get_request = _request()
 
     post_transport = _FailingTransport()
+    profile = _profile()
+    client = SyncCatalogClient(post_transport, profile)
+    guard = _guard(post_method_operation)
     with pytest.raises(TransportFailure):
-        SyncCatalogClient(post_transport, _profile()).datasets.get(post_request, _guard(post_method_operation))
+        client.datasets.get(post_request, guard)
     assert len(post_transport.requests) == 1
 
     get_transport = _FailingTransport()
+    profile_2 = _profile()
+    client_2 = SyncCatalogClient(get_transport, profile_2, retry_sleep=lambda _: None)
+    guard_2 = _guard()
     with pytest.raises(TransportFailure):
-        SyncCatalogClient(get_transport, _profile(), retry_sleep=lambda _: None).datasets.get(get_request, _guard())
+        client_2.datasets.get(get_request, guard_2)
     assert len(get_transport.requests) == 3
 
 
@@ -365,8 +381,10 @@ def test_sync_client_close_marks_closed_without_closing_borrowed_transport() -> 
     client.close()
 
     assert transport.close_count == 0
+    request = _request()
+    guard = _guard()
     with pytest.raises(RuntimeError, match="closed"):
-        client.datasets.get(_request(), _guard())
+        client.datasets.get(request, guard)
 
 
 def test_sync_client_context_exit_keeps_borrowed_transport_open() -> None:

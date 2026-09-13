@@ -142,8 +142,10 @@ def test_first_resolve_probes_once_and_caches_the_effective_state() -> None:
 def test_nan_ttl_is_rejected() -> None:
     operation = _operation()
 
+    profile = _profile(operation)
+    numeric_value = float("nan")
     with pytest.raises(ValueError, match="finite non-negative"):
-        EffectiveCapabilityCache(_profile(operation), ttl_seconds=float("nan"))
+        EffectiveCapabilityCache(profile, ttl_seconds=numeric_value)
 
 
 def test_ttl_expiry_reprobes_using_an_injected_clock() -> None:
@@ -308,8 +310,11 @@ def test_probe_evidence_with_an_unsanitized_url_is_rejected_as_a_typed_error() -
         def probe(self, operation_id: OperationId) -> ProbeEvidence:
             return _unsanitized_evidence(operation)
 
+    profile = _profile(operation)
+    runner = _UnsafeRunner()
+    effective_capability_cache = EffectiveCapabilityCache(profile, runner)
     with pytest.raises(CatalogValidationError) as raised:
-        EffectiveCapabilityCache(_profile(operation), _UnsafeRunner()).resolve(operation.id)
+        effective_capability_cache.resolve(operation.id)
 
     assert raised.value.operation == str(operation.id)
     assert raised.value.capability_state == "invalid-probe-evidence"
@@ -326,8 +331,9 @@ def test_async_invalid_probe_evidence_is_rejected_as_a_typed_error() -> None:
 
         cache = EffectiveCapabilityCache(_profile(operation), async_probe_runner=_UnsafeAsyncRunner())
 
+        coroutine = cache.resolve_async(operation.id)
         with pytest.raises(CatalogValidationError) as raised:
-            await asyncio.wait_for(cache.resolve_async(operation.id), timeout=5.0)
+            await asyncio.wait_for(coroutine, timeout=5.0)
 
         assert raised.value.capability_state == "invalid-probe-evidence"
 
@@ -457,10 +463,14 @@ def test_sync_client_maps_auth_response_and_rejects_second_dispatch(
     transport = _SyncTransport([RuntimeResponse(status_code, {}, b"")])
     client = SyncCatalogClient(transport, _profile(operation), probe_runner=runner)
 
+    request = _request(operation.id)
+    guard = _guard(operation.id)
     with pytest.raises(expected_error) as first:
-        client.get(_request(operation.id), _guard(operation.id))
+        client.get(request, guard)
+    request_2 = _request(operation.id)
+    guard_2 = _guard(operation.id)
     with pytest.raises(expected_error) as second:
-        client.get(_request(operation.id), _guard(operation.id))
+        client.get(request_2, guard_2)
 
     assert first.value.capability_state == response_class.value
     assert second.value.capability_state == response_class.value
@@ -473,10 +483,14 @@ def test_sync_client_retains_post_dispatch_forbidden_state_without_probe_runner(
     transport = _SyncTransport([RuntimeResponse(403, {}, b"")])
     client = SyncCatalogClient(transport, _profile(operation))
 
+    request = _request(operation.id)
+    guard = _guard(operation.id)
     with pytest.raises(ForbiddenError):
-        client.get(_request(operation.id), _guard(operation.id))
+        client.get(request, guard)
+    request_2 = _request(operation.id)
+    guard_2 = _guard(operation.id)
     with pytest.raises(ForbiddenError):
-        client.get(_request(operation.id), _guard(operation.id))
+        client.get(request_2, guard_2)
 
     assert len(transport.requests) == 1
 

@@ -86,6 +86,38 @@ class _ItemResult:
     budget_error: BudgetExhaustedError | None = None
 
 
+@dataclass(slots=True)
+class _BulkProgress:
+    completed: dict[int, BulkItemReceipt]
+    pending: list[int]
+    stop_reason: str | None
+    budget_error: BudgetExhaustedError | None
+    item_budget_error: BudgetExhaustedError | None = None
+    dispatches: int = 0
+    next_emit: int = 0
+    last_persisted_count: int = -1
+
+    def ordered_receipts(self) -> list[BulkItemReceipt]:
+        receipts = []
+        while self.next_emit in self.completed:
+            receipts.append(self.completed[self.next_emit])
+            self.next_emit += 1
+        return receipts
+
+
+def _bulk_progress(
+    plan: BulkPlan,
+    checkpoint: BulkCheckpoint | None,
+    monitor: DeadlineMonitor | None,
+    cancel_source: object | None,
+    policy_requested: bool,
+) -> _BulkProgress:
+    completed = {item.index: item for item in checkpoint.item_receipts} if checkpoint else {}
+    pending = [index for index in range(len(plan.items)) if index not in completed]
+    stop_reason, budget_error = _stop_state(monitor, plan, cancel_source, policy_requested, check_budget=bool(pending))
+    return _BulkProgress(completed, pending, stop_reason, budget_error)
+
+
 def _parallelism(policy: BulkExecutionPolicy, platform_max_parallelism: int) -> int:
     if type(platform_max_parallelism) is not int or not 1 <= platform_max_parallelism <= 32:
         raise ValueError("Platform bulk parallelism must be between one and 32.")
@@ -280,113 +312,124 @@ class BulkExecutor:
         self._clock = clock
         self._cancel_event = cancel_event if cancel_event is not None else Event()
 
-    def stream(self, plan: BulkPlan) -> Iterator[BulkItemReceipt | BulkSummary]:
-        """Yield ordered receipts followed by a terminal aggregate."""
-        _validate_plan(plan, self._checkpoint)
-        completed = {item.index: item for item in self._checkpoint.item_receipts} if self._checkpoint else {}
-        pending = [index for index in range(len(plan.items)) if index not in completed]
-        started_at = self._clock()
-        monitor = DeadlineMonitor(self._whole_run_budget, clock=self._clock) if self._whole_run_budget else None
-        stop_reason, budget_error = _stop_state(
-            monitor,
-            plan,
-            self._cancel_event,
-            self._policy.cancellation_requested,
-            check_budget=bool(pending),
-        )
-        item_budget_error: BudgetExhaustedError | None = None
-        dispatches = 0
-        next_emit = 0
-        last_persisted_count = -1
-        in_flight: dict[Future[_ItemResult], int] = {}
+    def _dispatch_available(
+        self,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        in_flight: dict[Future[_ItemResult], int],
+        workers: ThreadPoolExecutor,
+        monitor: DeadlineMonitor | None,
+    ) -> None:
+        while progress.pending and len(in_flight) < self._parallelism and progress.stop_reason is None:
+            progress.stop_reason, progress.budget_error = _stop_state(
+                monitor,
+                plan,
+                self._cancel_event,
+                self._policy.cancellation_requested,
+                check_budget=True,
+            )
+            if progress.stop_reason is not None:
+                return
+            index = progress.pending.pop(0)
+            in_flight[workers.submit(self._execute_sync_item, plan, plan.items[index])] = index
+            progress.dispatches += 1
 
-        while next_emit in completed:
-            yield completed[next_emit]
-            next_emit += 1
+    def _record_sync_result(
+        self,
+        future: Future[_ItemResult],
+        index: int,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        monitor: DeadlineMonitor | None,
+    ) -> None:
+        try:
+            result = future.result()
+        except Exception:
+            result = _ItemResult(_failure_receipt(plan, plan.items[index]))
+        progress.completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
+        if result.budget_error is not None and progress.item_budget_error is None:
+            progress.item_budget_error = result.budget_error
+        if progress.stop_reason is None:
+            progress.stop_reason, progress.budget_error = _stop_state(
+                monitor,
+                plan,
+                self._cancel_event,
+                self._policy.cancellation_requested,
+                check_budget=bool(progress.pending),
+            )
+        self._persist(plan, progress.completed, cancellation_requested=progress.stop_reason == "cancelled")
+        progress.last_persisted_count = len(progress.completed)
 
-        with ThreadPoolExecutor(max_workers=self._parallelism) as workers:
+    def _drain_sync(
+        self,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        in_flight: dict[Future[_ItemResult], int],
+    ) -> None:
+        wait(in_flight)
+        for future, index in tuple(in_flight.items()):
+            in_flight.pop(future)
             try:
-                while pending or in_flight:
-                    while pending and len(in_flight) < self._parallelism and stop_reason is None:
-                        stop_reason, budget_error = _stop_state(
-                            monitor,
-                            plan,
-                            self._cancel_event,
-                            self._policy.cancellation_requested,
-                            check_budget=True,
-                        )
-                        if stop_reason is not None:
-                            break
-                        index = pending.pop(0)
-                        in_flight[workers.submit(self._execute_sync_item, plan, plan.items[index])] = index
-                        dispatches += 1
-                    if not in_flight:
-                        break
-                    done, _ = wait(in_flight, return_when="FIRST_COMPLETED")
-                    for future in done:
-                        index = in_flight.pop(future)
-                        try:
-                            result = future.result()
-                        except Exception:
-                            result = _ItemResult(_failure_receipt(plan, plan.items[index]))
-                        completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
-                        if result.budget_error is not None and item_budget_error is None:
-                            item_budget_error = result.budget_error
-                        if stop_reason is None:
-                            stop_reason, budget_error = _stop_state(
-                                monitor,
-                                plan,
-                                self._cancel_event,
-                                self._policy.cancellation_requested,
-                                check_budget=bool(pending),
-                            )
-                        self._persist(
-                            plan,
-                            completed,
-                            cancellation_requested=stop_reason == "cancelled",
-                        )
-                        last_persisted_count = len(completed)
-                        while next_emit in completed:
-                            yield completed[next_emit]
-                            next_emit += 1
-            except GeneratorExit:
-                wait(in_flight)
-                for future in tuple(in_flight):
-                    index = in_flight.pop(future)
-                    try:
-                        result = future.result()
-                    except Exception:
-                        result = _ItemResult(_failure_receipt(plan, plan.items[index]))
-                    completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
-                    if result.budget_error is not None and item_budget_error is None:
-                        item_budget_error = result.budget_error
-                self._persist(plan, completed, cancellation_requested=True)
-                raise
+                result = future.result()
+            except Exception:
+                result = _ItemResult(_failure_receipt(plan, plan.items[index]))
+            progress.completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
+            if result.budget_error is not None and progress.item_budget_error is None:
+                progress.item_budget_error = result.budget_error
+        self._persist(plan, progress.completed, cancellation_requested=True)
 
-        if stop_reason is None:
-            stop_reason, budget_error = _stop_state(
+    def _finish_progress(self, plan: BulkPlan, progress: _BulkProgress, monitor: DeadlineMonitor | None) -> None:
+        if progress.stop_reason is None:
+            progress.stop_reason, progress.budget_error = _stop_state(
                 monitor,
                 plan,
                 self._cancel_event,
                 self._policy.cancellation_requested,
                 check_budget=False,
             )
-        if stop_reason is not None and last_persisted_count != len(completed):
+        if progress.stop_reason is not None and progress.last_persisted_count != len(progress.completed):
             self._persist(
                 plan,
-                completed,
-                cancellation_requested=stop_reason == "cancelled",
+                progress.completed,
+                cancellation_requested=progress.stop_reason == "cancelled",
             )
-        while next_emit in completed:
-            yield completed[next_emit]
-            next_emit += 1
+
+    def stream(self, plan: BulkPlan) -> Iterator[BulkItemReceipt | BulkSummary]:
+        """Yield ordered receipts followed by a terminal aggregate."""
+        _validate_plan(plan, self._checkpoint)
+        started_at = self._clock()
+        monitor = DeadlineMonitor(self._whole_run_budget, clock=self._clock) if self._whole_run_budget else None
+        progress = _bulk_progress(
+            plan, self._checkpoint, monitor, self._cancel_event, self._policy.cancellation_requested
+        )
+        in_flight: dict[Future[_ItemResult], int] = {}
+
+        yield from progress.ordered_receipts()
+
+        with ThreadPoolExecutor(max_workers=self._parallelism) as workers:
+            try:
+                while progress.pending or in_flight:
+                    self._dispatch_available(plan, progress, in_flight, workers, monitor)
+                    if not in_flight:
+                        break
+                    done, _ = wait(in_flight, return_when="FIRST_COMPLETED")
+                    for future in done:
+                        index = in_flight.pop(future)
+                        self._record_sync_result(future, index, plan, progress, monitor)
+                        yield from progress.ordered_receipts()
+            except GeneratorExit:
+                self._drain_sync(plan, progress, in_flight)
+                raise
+
+        self._finish_progress(plan, progress, monitor)
+        yield from progress.ordered_receipts()
         yield _summary(
-            completed.values(),
+            progress.completed.values(),
             len(plan.items),
-            dispatches=dispatches,
-            stop_reason=stop_reason,
-            budget_error=budget_error,
-            item_budget_error=item_budget_error,
+            dispatches=progress.dispatches,
+            stop_reason=progress.stop_reason,
+            budget_error=progress.budget_error,
+            item_budget_error=progress.item_budget_error,
             monitor=monitor,
             started_at=started_at,
             clock=self._clock,
@@ -459,108 +502,129 @@ class AsyncBulkExecutor:
         self._clock = clock
         self._cancel_event = cancel_event if cancel_event is not None else asyncio.Event()
 
-    async def stream(self, plan: BulkPlan) -> AsyncIterator[BulkItemReceipt | BulkSummary]:
-        """Yield ordered asynchronous receipts followed by a terminal aggregate."""
-        _validate_plan(plan, self._checkpoint)
-        completed = {item.index: item for item in self._checkpoint.item_receipts} if self._checkpoint else {}
-        pending = [index for index in range(len(plan.items)) if index not in completed]
-        started_at = self._clock()
-        monitor = DeadlineMonitor(self._whole_run_budget, clock=self._clock) if self._whole_run_budget else None
-        stop_reason, budget_error = _stop_state(
-            monitor,
+    def _dispatch_available(
+        self,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        in_flight: dict[asyncio.Future[_ItemResult], int],
+        monitor: DeadlineMonitor | None,
+    ) -> None:
+        while progress.pending and len(in_flight) < self._parallelism and progress.stop_reason is None:
+            progress.stop_reason, progress.budget_error = _stop_state(
+                monitor,
+                plan,
+                self._cancel_event,
+                self._policy.cancellation_requested,
+                check_budget=True,
+            )
+            if progress.stop_reason is not None:
+                return
+            index = progress.pending.pop(0)
+            in_flight[asyncio.ensure_future(self._execute_async_item(plan, plan.items[index]))] = index
+            progress.dispatches += 1
+
+    async def _record_result(
+        self,
+        task: asyncio.Future[_ItemResult],
+        index: int,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        monitor: DeadlineMonitor | None,
+    ) -> None:
+        result = self._task_result(task, plan, plan.items[index])
+        progress.completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
+        if result.budget_error is not None and progress.item_budget_error is None:
+            progress.item_budget_error = result.budget_error
+        if progress.stop_reason is None:
+            progress.stop_reason, progress.budget_error = _stop_state(
+                monitor,
+                plan,
+                self._cancel_event,
+                self._policy.cancellation_requested,
+                check_budget=bool(progress.pending),
+            )
+        await self._persist(
             plan,
-            self._cancel_event,
-            self._policy.cancellation_requested,
-            check_budget=bool(pending),
+            progress.completed,
+            cancellation_requested=progress.stop_reason == "cancelled",
         )
-        item_budget_error: BudgetExhaustedError | None = None
-        dispatches = 0
-        next_emit = 0
-        last_persisted_count = -1
-        in_flight: dict[asyncio.Future[_ItemResult], int] = {}
+        progress.last_persisted_count = len(progress.completed)
 
-        while next_emit in completed:
-            yield completed[next_emit]
-            next_emit += 1
-
-        try:
-            while pending or in_flight:
-                while pending and len(in_flight) < self._parallelism and stop_reason is None:
-                    stop_reason, budget_error = _stop_state(
-                        monitor,
-                        plan,
-                        self._cancel_event,
-                        self._policy.cancellation_requested,
-                        check_budget=True,
-                    )
-                    if stop_reason is not None:
-                        break
-                    index = pending.pop(0)
-                    task = asyncio.ensure_future(self._execute_async_item(plan, plan.items[index]))
-                    in_flight[task] = index
-                    dispatches += 1
-                if not in_flight:
-                    break
-                done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = in_flight.pop(task)
-                    result = self._task_result(task, plan, plan.items[index])
-                    completed[index] = BulkItemReceipt(index=index, receipt=result.receipt)
-                    if result.budget_error is not None and item_budget_error is None:
-                        item_budget_error = result.budget_error
-                    if stop_reason is None:
-                        stop_reason, budget_error = _stop_state(
-                            monitor,
-                            plan,
-                            self._cancel_event,
-                            self._policy.cancellation_requested,
-                            check_budget=bool(pending),
-                        )
-                    await self._persist(
-                        plan,
-                        completed,
-                        cancellation_requested=stop_reason == "cancelled",
-                    )
-                    last_persisted_count = len(completed)
-                    while next_emit in completed:
-                        yield completed[next_emit]
-                        next_emit += 1
-        except asyncio.CancelledError:
-            stop_reason = "cancelled"
-            item_budget_error = await self._drain_in_flight(plan, in_flight, completed, item_budget_error)
-            last_persisted_count = len(completed)
-            await self._persist_final_checkpoint(plan, completed)
-        except GeneratorExit:
-            stop_reason = "cancelled"
-            item_budget_error = await self._drain_in_flight(plan, in_flight, completed, item_budget_error)
-            last_persisted_count = len(completed)
-            await self._persist_final_checkpoint(plan, completed)
-            raise
-
-        if stop_reason is None:
-            stop_reason, budget_error = _stop_state(
+    async def _finish_progress(self, plan: BulkPlan, progress: _BulkProgress, monitor: DeadlineMonitor | None) -> None:
+        if progress.stop_reason is None:
+            progress.stop_reason, progress.budget_error = _stop_state(
                 monitor,
                 plan,
                 self._cancel_event,
                 self._policy.cancellation_requested,
                 check_budget=False,
             )
-        if stop_reason is not None and last_persisted_count != len(completed):
+        if progress.stop_reason is not None and progress.last_persisted_count != len(progress.completed):
             await self._persist(
                 plan,
-                completed,
-                cancellation_requested=stop_reason == "cancelled",
+                progress.completed,
+                cancellation_requested=progress.stop_reason == "cancelled",
             )
-        while next_emit in completed:
-            yield completed[next_emit]
-            next_emit += 1
+
+    async def _cancel_stream(
+        self,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        in_flight: dict[asyncio.Future[_ItemResult], int],
+    ) -> None:
+        current_task = asyncio.current_task()
+        while current_task is not None and current_task.cancelling():
+            current_task.uncancel()
+        cleanup = asyncio.create_task(
+            self._finalize_cancelled_stream(plan, in_flight, progress.completed, progress.item_budget_error)
+        )
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            await asyncio.shield(cleanup)
+            raise
+
+    async def stream(self, plan: BulkPlan) -> AsyncIterator[BulkItemReceipt | BulkSummary]:
+        """Yield ordered asynchronous receipts followed by a terminal aggregate."""
+        _validate_plan(plan, self._checkpoint)
+        started_at = self._clock()
+        monitor = DeadlineMonitor(self._whole_run_budget, clock=self._clock) if self._whole_run_budget else None
+        progress = _bulk_progress(
+            plan, self._checkpoint, monitor, self._cancel_event, self._policy.cancellation_requested
+        )
+        in_flight: dict[asyncio.Future[_ItemResult], int] = {}
+
+        for receipt in progress.ordered_receipts():
+            yield receipt
+
+        try:
+            while progress.pending or in_flight:
+                self._dispatch_available(plan, progress, in_flight, monitor)
+                if not in_flight:
+                    break
+                done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    index = in_flight.pop(task)
+                    await self._record_result(task, index, plan, progress, monitor)
+                    for receipt in progress.ordered_receipts():
+                        yield receipt
+        except asyncio.CancelledError:
+            await self._cancel_stream(plan, progress, in_flight)
+            raise
+        except GeneratorExit:
+            await self._finalize_cancelled_stream(plan, in_flight, progress.completed, progress.item_budget_error)
+            raise
+
+        await self._finish_progress(plan, progress, monitor)
+        for receipt in progress.ordered_receipts():
+            yield receipt
         yield _summary(
-            completed.values(),
+            progress.completed.values(),
             len(plan.items),
-            dispatches=dispatches,
-            stop_reason=stop_reason,
-            budget_error=budget_error,
-            item_budget_error=item_budget_error,
+            dispatches=progress.dispatches,
+            stop_reason=progress.stop_reason,
+            budget_error=progress.budget_error,
+            item_budget_error=progress.item_budget_error,
             monitor=monitor,
             started_at=started_at,
             clock=self._clock,
@@ -581,8 +645,6 @@ class AsyncBulkExecutor:
             receipt = await self._execute_item(item)
         except BudgetExhaustedError as exc:
             return _ItemResult(_failure_receipt(plan, item, budget_exhausted=True), exc)
-        except asyncio.CancelledError:
-            return _ItemResult(_failure_receipt(plan, item))
         except Exception:
             return _ItemResult(_failure_receipt(plan, item))
         if not isinstance(receipt, MutationReceipt):
@@ -610,26 +672,35 @@ class AsyncBulkExecutor:
         in_flight.clear()
         return item_budget_error
 
+    async def _finalize_cancelled_stream(
+        self,
+        plan: BulkPlan,
+        in_flight: dict[asyncio.Future[_ItemResult], int],
+        completed: dict[int, BulkItemReceipt],
+        item_budget_error: BudgetExhaustedError | None,
+    ) -> None:
+        await self._drain_in_flight(plan, in_flight, completed, item_budget_error)
+        await self._persist_final_checkpoint(plan, completed)
+
     @staticmethod
     async def _settled_task(task: asyncio.Future[_ItemResult], plan: BulkPlan, item: CatalogId) -> _ItemResult:
-        """Collect one task outcome, cancelling it only when collection itself is interrupted."""
+        """Collect one task outcome while keeping a child cancellation local to that item."""
+        settled = asyncio.gather(task, return_exceptions=True)
         try:
-            return await asyncio.shield(task)
+            await asyncio.shield(settled)
         except asyncio.CancelledError:
-            if not task.done():
-                task.cancel()
-            try:
-                await asyncio.shield(asyncio.gather(task, return_exceptions=True))
-            except asyncio.CancelledError:
-                pass
-            return AsyncBulkExecutor._task_result(task, plan, item)
+            await asyncio.shield(settled)
+            raise
+        return AsyncBulkExecutor._task_result(task, plan, item)
 
     async def _persist_final_checkpoint(self, plan: BulkPlan, completed: dict[int, BulkItemReceipt]) -> None:
         """Persist the terminal cancellation checkpoint exactly once, surviving repeated cancellation."""
+        checkpoint = asyncio.create_task(self._persist(plan, completed, cancellation_requested=True))
         try:
-            await asyncio.shield(self._persist(plan, completed, cancellation_requested=True))
+            await asyncio.shield(checkpoint)
         except asyncio.CancelledError:
-            pass
+            await asyncio.shield(checkpoint)
+            raise
 
     @staticmethod
     def _task_result(task: asyncio.Future[_ItemResult], plan: BulkPlan, item: CatalogId) -> _ItemResult:

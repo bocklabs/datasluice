@@ -58,8 +58,8 @@ SENSITIVE_QUERY_KEYS = frozenset(
 
 _QUERY_KEYWORDS = "|".join(re.escape(part) for part in sorted(SENSITIVE_QUERY_KEYS, key=len, reverse=True))
 CREDENTIAL_QUERY_RE = re.compile(rf"(?i)((?:[?&;]|\b)[^=&;\s]*(?:{_QUERY_KEYWORDS})[^=&;\s]*)=[^&;\s]+")
-AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
-USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^@/\s]*):([^@\s]*)@")
+AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+[a-z0-9._~+/=-]{8,}")
+USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^:@/\s]*):([^@\s]*)@")
 _SCAN_MARGIN = 64
 
 
