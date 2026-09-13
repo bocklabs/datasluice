@@ -105,7 +105,8 @@ def test_sync_tracer_performs_one_anonymous_probe_then_one_dataset_read() -> Non
     record = envelope.items[0]
     assert isinstance(record, NativeRecord)
     assert record.id.value == "abc"
-    assert envelope.page is not None and envelope.page.total_items == 1
+    assert envelope.page is not None
+    assert envelope.page.total_items == 1
 
 
 def test_version_mismatch_blocks_dataset_dispatch_with_typed_remedy() -> None:

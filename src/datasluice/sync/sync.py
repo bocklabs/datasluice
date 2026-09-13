@@ -7,6 +7,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import DataSluiceError
@@ -56,6 +57,245 @@ def _resource_transaction(state_store: Any, key: str, *, is_atomic: bool) -> Any
     return nullcontext()
 
 
+@dataclass(slots=True)
+class _SyncContext:
+    prior: Any
+    prior_version: bytes | None
+    checkpoint: Any | None
+    stable_source_version: str | None
+    prior_artifact: Artifact | LegacyArtifactRecord | None
+    destination_was_healthy: bool
+    watermark: str | None
+    checkpointed_kind: bool
+    outcome: SyncOutcome | None = None
+
+
+def _resume_outcome(
+    resource: Any, prior: Any, key: str, destination_uri: str, *, resume: bool
+) -> tuple[Artifact | LegacyArtifactRecord | None, SyncOutcome | None]:
+    from datasluice.domain import Artifact
+    from datasluice.sync.materialize import destination_health
+
+    completed = _completed_artifact_record(prior, resource, destination_uri) if prior is not None else None
+    if (
+        resume
+        and isinstance(completed, Artifact)
+        and destination_health(resource, completed, destination_uri=destination_uri)
+    ):
+        return completed, SyncOutcome(resource, action="resumed", record=completed, state_key=key)
+    return completed, None
+
+
+def _load_sync_context(
+    resource: Any, state_store: Any, key: str, destination_uri: str, *, is_atomic: bool, resume: bool
+) -> _SyncContext:
+    from datasluice.sync.materialize import destination_health
+
+    if is_atomic:
+        prior, prior_version = state_store.get_with_version(key)
+    else:
+        prior = state_store.get(key)
+        prior_version = None
+    checkpoint = _decode_checkpoint(prior) if prior is not None else None
+    completed, outcome = _resume_outcome(resource, prior, key, destination_uri, resume=resume and checkpoint is None)
+    if outcome is not None:
+        return _SyncContext(prior, prior_version, None, None, completed, True, prior.cursor.get(key), False, outcome)
+    kind = resource.access.kind if resource.access is not None else "http_download"
+    checkpointed_kind = (resource.format or "").upper() == "PARQUET" and kind in {"local_file", "object_storage"}
+    stable_source_version = _compute_source_version(resource) if checkpointed_kind else None
+    if checkpoint is not None and _checkpoint_is_stale(checkpoint, stable_source_version, destination_uri):
+        logger.warning("Checkpoint for resource %r is stale; discarding it and restarting", resource.id)
+        checkpoint = None
+        prior = None
+        prior_version = None
+    watermark = prior.cursor.get(key) if prior is not None else None
+    prior_artifact = _completed_artifact_record(prior, resource, destination_uri)
+    healthy = prior_artifact is not None and destination_health(
+        resource, prior_artifact, destination_uri=destination_uri
+    )
+    return _SyncContext(
+        prior, prior_version, checkpoint, stable_source_version, prior_artifact, healthy, watermark, checkpointed_kind
+    )
+
+
+def _checkpoint_is_stale(checkpoint: Any, source_version: str | None, destination_uri: str) -> bool:
+    source_changed = (
+        source_version is not None
+        and checkpoint.source_version is not None
+        and source_version != checkpoint.source_version
+    )
+    destination_changed = (
+        checkpoint.destination_identity is not None
+        and checkpoint.destination_identity != canonical_destination_identity(destination_uri)
+    )
+    return source_changed or destination_changed
+
+
+def _conditional_reader(
+    resource: Any,
+    reader: Any,
+    transport: Any | None,
+    destination_uri: str,
+    key: str,
+    context: _SyncContext,
+) -> tuple[Any, str | None, SyncOutcome | None]:
+    from datasluice.domain import Artifact
+    from datasluice.sync.materialize import destination_health
+
+    kind = resource.access.kind if resource.access is not None else "http_download"
+    url = getattr(resource.access, "url", None) or resource.url
+    if kind != "http_download" or url is None or transport is None or not isinstance(reader, ResponseAwareReader):
+        return reader, None, None
+    if context.watermark is not None and _looks_like_sha256(context.watermark):
+        return reader, None, None
+    etag, last_modified = _conditional_validators(context.watermark)
+    headers = {
+        name: value
+        for name, value in {"If-None-Match": etag, "If-Modified-Since": last_modified}.items()
+        if value is not None
+    }
+    response = transport.send(RuntimeRequest(method="GET", url=url, headers=headers))
+    if response.status_code == 304:
+        completed = _completed_artifact_record(context.prior, resource, destination_uri)
+        if isinstance(completed, Artifact) and destination_health(resource, completed, destination_uri=destination_uri):
+            return reader, None, SyncOutcome(resource, action="skipped-unchanged", record=completed, state_key=key)
+        return reader, None, None
+    if not 200 <= response.status_code < 300:
+        raise DataSluiceError(f"Conditional fetch for resource {resource.id!r} returned HTTP {response.status_code}")
+    response_stream = _BufferedResponseStream(response.body)
+    try:
+        handed_stream = reader.open_response(resource, response_stream, headers=response.headers)
+    except BaseException as exc:
+        response_stream.__exit__(type(exc), exc, exc.__traceback__)
+        raise
+    return _SingleStreamReader(handed_stream), _preferred_watermark(response.headers), None
+
+
+def _persist_batch_state(
+    cursor: Any,
+    *,
+    state_store: Any,
+    state_key: str,
+    prior_version_box: list[bytes | None],
+    source_version: str | None,
+    destination_uri: str,
+    is_atomic: bool,
+) -> None:
+    state = _in_progress_state(cursor, source_version, destination_uri)
+    if is_atomic:
+        prior_version_box[0] = state_store.conditional_put(state_key, state, prior_version_box[0])
+    else:
+        state_store.put(state_key, state)
+
+
+def _materialize_resource(
+    resource: Any,
+    reader: Any,
+    state_store: Any,
+    destination_uri: str,
+    key: str,
+    context: _SyncContext,
+    *,
+    resume: bool,
+    is_atomic: bool,
+) -> tuple[Artifact, str, bool, list[bytes | None]]:
+    from datasluice.data.batch_stream import BatchCursor, ParquetRowGroupPosition
+    from datasluice.ports import CheckpointableResourceReader
+    from datasluice.sync.materialize import cleanup_checkpointed, materialize, materialize_checkpointed
+
+    prior_version_box = [context.prior_version]
+    use_checkpointed = context.checkpointed_kind and (
+        context.checkpoint is not None or context.prior_artifact is None or not context.destination_was_healthy
+    )
+    if not use_checkpointed:
+        return (
+            materialize(resource, reader=reader, destination_uri=destination_uri, stored_checksum=context.watermark),
+            "materialized",
+            False,
+            prior_version_box,
+        )
+    action = "materialized"
+    if resume and context.checkpoint is not None:
+        if not isinstance(reader, CheckpointableResourceReader):
+            raise DataSluiceError(
+                f"continuation reader for resource {resource.id!r} cannot resume row group "
+                f"{context.checkpoint.row_group_index}; reader lacks open_from_cursor"
+            )
+        cursor = BatchCursor(
+            context.checkpoint.next_batch_index, ParquetRowGroupPosition(context.checkpoint.row_group_index)
+        )
+        stream = reader.open_from_cursor(resource, cursor)
+        start_batch_index = context.checkpoint.next_batch_index
+        action = "resumed"
+    else:
+        stream = reader.open(resource)
+        start_batch_index = 0
+    record = materialize_checkpointed(
+        resource,
+        stream=stream,
+        destination_uri=destination_uri,
+        start_batch_index=start_batch_index,
+        on_batch_persisted=partial(
+            _persist_batch_state,
+            state_store=state_store,
+            state_key=key,
+            prior_version_box=prior_version_box,
+            source_version=context.stable_source_version,
+            destination_uri=destination_uri,
+            is_atomic=is_atomic,
+        ),
+    )
+    post_source_version = _compute_source_version(resource)
+    if (
+        post_source_version is not None
+        and context.stable_source_version is not None
+        and post_source_version != context.stable_source_version
+    ):
+        cleanup_checkpointed(resource, destination_uri=destination_uri)
+        raise DataSluiceError(
+            f"Source for resource {resource.id!r} changed during sync; "
+            "aborting to avoid publishing a mixed-version artifact. Retry the sync."
+        )
+    return record, action, True, prior_version_box
+
+
+def _finish_resource_sync(
+    resource: Any,
+    record: Artifact,
+    action: str,
+    use_checkpointed: bool,
+    fresh_watermark: str | None,
+    state_store: Any,
+    destination_uri: str,
+    key: str,
+    context: _SyncContext,
+    prior_version_box: list[bytes | None],
+    *,
+    is_atomic: bool,
+) -> SyncOutcome:
+    from datasluice.domain import Artifact
+    from datasluice.sync.materialize import cleanup_checkpointed
+
+    checksum = record.content_digest.value
+    if (
+        fresh_watermark is None
+        and context.watermark is not None
+        and checksum == context.watermark
+        and context.destination_was_healthy
+        and not use_checkpointed
+        and isinstance(context.prior_artifact, Artifact)
+    ):
+        return SyncOutcome(resource, action="skipped-unchanged", record=context.prior_artifact, state_key=key)
+    completed_state = _completed_sync_state(key, fresh_watermark or checksum, record)
+    if is_atomic:
+        state_store.conditional_put(key, completed_state, prior_version_box[0])
+    else:
+        state_store.put(key, completed_state)
+    if use_checkpointed:
+        cleanup_checkpointed(resource, destination_uri=destination_uri)
+    return SyncOutcome(resource, action=action, record=record, state_key=key)
+
+
 def sync_resources(
     resources: Iterable[Any],
     *,
@@ -78,14 +318,6 @@ def sync_resources(
         deliberately; ``ResponseAwareReader`` implementations consume the
         buffered response directly and pay no second download.
     """
-    from datasluice.domain import Artifact
-    from datasluice.sync.materialize import (
-        cleanup_checkpointed,
-        destination_health,
-        materialize,
-        materialize_checkpointed,
-    )
-
     resource_list = list(resources)
     validate_unique_identities(resource_list)
 
@@ -101,213 +333,43 @@ def sync_resources(
         if kind in ("query", "stream"):
             yield SyncOutcome(resource, action="skipped-unsupported")
             continue
-
         key = canonical_identity(resource)
         with _resource_transaction(state_store, key, is_atomic=is_atomic):
-            if is_atomic:
-                prior, prior_version = state_store.get_with_version(key)
-            else:
-                prior = state_store.get(key)
-                prior_version = None
-            checkpoint = _decode_checkpoint(prior) if prior is not None else None
-            if resume and prior is not None and checkpoint is None:
-                completed_record = _completed_artifact_record(prior, resource, destination_uri)
-                if isinstance(completed_record, Artifact) and destination_health(
-                    resource, completed_record, destination_uri=destination_uri
-                ):
-                    yield SyncOutcome(resource, action="resumed", record=completed_record, state_key=key)
-                    continue
-
-            checkpointed_kind_pre = (resource.format or "").upper() == "PARQUET" and kind in (
-                "local_file",
-                "object_storage",
+            context = _load_sync_context(
+                resource, state_store, key, destination_uri, is_atomic=is_atomic, resume=resume
             )
-            stable_source_version = _compute_source_version(resource) if checkpointed_kind_pre else None
-            if checkpoint is not None:
-                if (
-                    stable_source_version is not None
-                    and checkpoint.source_version is not None
-                    and stable_source_version != checkpoint.source_version
-                ):
-                    logger.warning(
-                        "Source for resource %r changed since checkpoint; discarding checkpoint and restarting",
-                        resource.id,
-                    )
-                    checkpoint = None
-                    prior = None
-                    prior_version = None
-                elif (
-                    checkpoint.destination_identity is not None
-                    and checkpoint.destination_identity != canonical_destination_identity(destination_uri)
-                ):
-                    logger.warning(
-                        "Destination for resource %r changed since checkpoint; discarding checkpoint and restarting",
-                        resource.id,
-                    )
-                    checkpoint = None
-                    prior = None
-                    prior_version = None
-            watermark = prior.cursor.get(key) if prior is not None else None
-            prior_artifact = _completed_artifact_record(prior, resource, destination_uri)
-            destination_was_healthy = prior_artifact is not None and destination_health(
-                resource, prior_artifact, destination_uri=destination_uri
-            )
-            materialize_reader = reader
-            fresh_watermark: str | None = None
-            access = resource.access
-            url = getattr(access, "url", None) or resource.url
-
-            if kind == "http_download" and url is not None:
-                should_fetch_conditionally = watermark is None or not _looks_like_sha256(watermark)
-                if transport is not None and should_fetch_conditionally and isinstance(reader, ResponseAwareReader):
-                    etag, last_modified = _conditional_validators(watermark)
-                    headers = {
-                        key: value
-                        for key, value in {
-                            "If-None-Match": etag,
-                            "If-Modified-Since": last_modified,
-                        }.items()
-                        if value is not None
-                    }
-                    result = transport.send(
-                        RuntimeRequest(
-                            method="GET",
-                            url=url,
-                            headers=headers,
-                        )
-                    )
-                    if result.status_code == 304:
-                        completed_record = _completed_artifact_record(prior, resource, destination_uri)
-                        if isinstance(completed_record, Artifact) and destination_health(
-                            resource, completed_record, destination_uri=destination_uri
-                        ):
-                            yield SyncOutcome(
-                                resource,
-                                action="skipped-unchanged",
-                                record=completed_record,
-                                state_key=key,
-                            )
-                            continue
-                    elif 200 <= result.status_code < 300:
-                        response_stream = _BufferedResponseStream(result.body)
-                        try:
-                            handed_stream = reader.open_response(
-                                resource,
-                                response_stream,
-                                headers=result.headers,
-                            )
-                        except BaseException as exc:
-                            response_stream.__exit__(type(exc), exc, exc.__traceback__)
-                            raise
-                        materialize_reader = _SingleStreamReader(handed_stream)
-                        fresh_watermark = _preferred_watermark(result.headers)
-                    elif result.status_code != 304:
-                        raise DataSluiceError(
-                            f"Conditional fetch for resource {resource.id!r} returned HTTP {result.status_code}"
-                        )
-
-            # Capture the prior CAS version atomically with the state read above so
-            # every state transition chains through the conditional-write path
-            # . The box is mutated by the checkpoint callback: each
-            # batch checkpoint stores the version returned by its conditional_put,
-            # and the completed write chains from the last checkpoint's returned
-            # version. Never re-read the version after a write — that opens a
-            # TOCTOU gap.
-            prior_version_box: list[bytes | None] = [prior_version]
-
-            action = "materialized"
-            checkpointed_kind = checkpointed_kind_pre
-            use_checkpointed = checkpointed_kind and (
-                checkpoint is not None or prior_artifact is None or not destination_was_healthy
-            )
-            if use_checkpointed:
-                source_version = stable_source_version
-                if resume and checkpoint is not None:
-                    from datasluice.data.batch_stream import BatchCursor, ParquetRowGroupPosition
-                    from datasluice.ports import CheckpointableResourceReader
-
-                    if not isinstance(reader, CheckpointableResourceReader):
-                        raise DataSluiceError(
-                            f"continuation reader for resource {resource.id!r} cannot resume row group "
-                            f"{checkpoint.row_group_index}; reader lacks open_from_cursor"
-                        )
-                    cursor = BatchCursor(
-                        checkpoint.next_batch_index,
-                        ParquetRowGroupPosition(checkpoint.row_group_index),
-                    )
-                    stream = reader.open_from_cursor(resource, cursor)
-                    if isinstance(materialize_reader, _SingleStreamReader):
-                        materialize_reader.close()
-                    start_batch_index = checkpoint.next_batch_index
-                    action = "resumed"
-                else:
-                    stream = materialize_reader.open(resource)
-                    start_batch_index = 0
-
-                def persist_batch(
-                    cursor: Any,
-                    state_key: str = key,
-                    _prior_version_box: list[bytes | None] = prior_version_box,
-                    _source_version: str | None = source_version,
-                ) -> None:
-                    state = _in_progress_state(cursor, _source_version, destination_uri)
-                    if is_atomic:
-                        _prior_version_box[0] = state_store.conditional_put(state_key, state, _prior_version_box[0])
-                    else:
-                        state_store.put(state_key, state)
-
-                record = materialize_checkpointed(
-                    resource,
-                    stream=stream,
-                    destination_uri=destination_uri,
-                    start_batch_index=start_batch_index,
-                    on_batch_persisted=persist_batch,
-                )
-                # Verify the source did not change during the read. A
-                # change mid-read means the published artifact mixes pre- and
-                # post-change content while the in-progress state records claim
-                # a single source_version. Discard staging and abort so the
-                # next pass treats the in-progress checkpoint as stale
-                # (stable_source_version no longer matches the live source) and
-                # restarts from batch zero.
-                post_source_version = _compute_source_version(resource)
-                if (
-                    post_source_version is not None
-                    and stable_source_version is not None
-                    and post_source_version != stable_source_version
-                ):
-                    cleanup_checkpointed(resource, destination_uri=destination_uri)
-                    raise DataSluiceError(
-                        f"Source for resource {resource.id!r} changed during sync; "
-                        "aborting to avoid publishing a mixed-version artifact. Retry the sync."
-                    )
-            else:
-                record = materialize(
-                    resource,
-                    reader=materialize_reader,
-                    destination_uri=destination_uri,
-                    stored_checksum=watermark,
-                )
-            checksum = record.content_digest.value
-            if (
-                fresh_watermark is None
-                and watermark is not None
-                and checksum == watermark
-                and destination_was_healthy
-                and not use_checkpointed
-                and isinstance(prior_artifact, Artifact)
-            ):
-                yield SyncOutcome(resource, action="skipped-unchanged", record=prior_artifact, state_key=key)
+            if context.outcome is not None:
+                yield context.outcome
                 continue
-
-            completed_state = _completed_sync_state(key, fresh_watermark or checksum, record)
-            if is_atomic:
-                state_store.conditional_put(key, completed_state, prior_version_box[0])
-            else:
-                state_store.put(key, completed_state)
-            if use_checkpointed:
-                cleanup_checkpointed(resource, destination_uri=destination_uri)
-            yield SyncOutcome(resource, action=action, record=record, state_key=key)
+            materialize_reader, fresh_watermark, outcome = _conditional_reader(
+                resource, reader, transport, destination_uri, key, context
+            )
+            if outcome is not None:
+                yield outcome
+                continue
+            record, action, use_checkpointed, prior_version_box = _materialize_resource(
+                resource,
+                materialize_reader,
+                state_store,
+                destination_uri,
+                key,
+                context,
+                resume=resume,
+                is_atomic=is_atomic,
+            )
+            yield _finish_resource_sync(
+                resource,
+                record,
+                action,
+                use_checkpointed,
+                fresh_watermark,
+                state_store,
+                destination_uri,
+                key,
+                context,
+                prior_version_box,
+                is_atomic=is_atomic,
+            )
 
 
 def _completed_sync_state(
@@ -565,7 +627,7 @@ class _BufferedResponseStream:
 def _conditional_validators(watermark: str | None) -> tuple[str | None, str | None]:
     if watermark is None:
         return None, None
-    if watermark.startswith('"') or watermark.startswith("W/"):
+    if watermark.startswith(('"', "W/")):
         return watermark, None
     return None, watermark
 
@@ -604,7 +666,7 @@ def _compute_source_version(resource: Any) -> str | None:
                 for chunk in iter(lambda: source.read(65536), b""):
                     digest.update(chunk)
             return digest.hexdigest()
-        except (FileNotFoundError, OSError):
+        except OSError:
             return None
     if access.kind == "object_storage":
         from datasluice.io.filesystem import open_filesystem
@@ -617,7 +679,7 @@ def _compute_source_version(resource: Any) -> str | None:
                 for chunk in iter(lambda: source.read(65536), b""):
                     digest.update(chunk)
             return digest.hexdigest()
-        except (FileNotFoundError, OSError):
+        except OSError:
             return None
     return None
 

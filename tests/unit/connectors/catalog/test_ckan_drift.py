@@ -421,13 +421,14 @@ def test_default_client_factory_is_the_published_sync_factory_attaching_rate_pol
 
 
 def test_drift_check_refuses_non_whitelisted_actions() -> None:
+    expected_keys = frozenset({"count"})
     with pytest.raises(ValueError, match="whitelisted typed read"):
         DriftCheck(
             action="package_search",
             parameters={"q": ""},
             ordering="canonicalized",
             rationale="unregistered action must be refused",
-            expected_keys=frozenset({"count"}),
+            expected_keys=expected_keys,
         )
 
 

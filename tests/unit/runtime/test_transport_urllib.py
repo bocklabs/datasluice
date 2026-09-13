@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
 from collections.abc import Mapping
 from http.client import IncompleteRead
 from typing import Any, cast
@@ -14,7 +15,7 @@ from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest, TransportFailure
-from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
+from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport, _tls_context
 from tests.helpers.catalog_transport import AsyncLoopbackTransport, SyncLoopbackTransport
 from tests.helpers.http_server import MockResponse, start_test_server
 
@@ -64,6 +65,10 @@ class _LoopingRedirectOpener:
 
 def test_urllib_transport_uses_verified_tls_by_default() -> None:
     assert UrllibCatalogTransport()._tls_policy.verify
+    context = _tls_context(TLSPolicy())
+    assert context.check_hostname
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
 
 
 def test_urllib_uses_read_budget_and_closes_completed_responses() -> None:
@@ -164,14 +169,15 @@ def test_urllib_wraps_incomplete_response_reads_and_closes_response() -> None:
     transport = UrllibCatalogTransport()
     cast(Any, transport)._opener = _RecordingOpener([response])
 
+    request = RuntimeRequest("GET", "https://example.test/data")
     with pytest.raises(TransportFailure, match="mid-response"):
-        transport.send(RuntimeRequest("GET", "https://example.test/data"))
+        transport.send(request)
 
     assert response.closed
 
 
 def test_tls_policy_rejects_unscoped_disablement() -> None:
-    with pytest.raises(ValueError, match="explicit narrow override"):
+    with pytest.raises(ValueError, match="cannot be disabled"):
         TLSPolicy(verify=False)
 
 
@@ -238,8 +244,9 @@ def test_urllib_forwarded_url_keeps_query_intact_while_failure_surface_redacts()
     transport = UrllibCatalogTransport()
     cast(Any, transport)._opener = opener
 
+    request = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"})
     with pytest.raises(TransportFailure, match="file:///etc/passwd") as excinfo:
-        transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"}))
+        transport.send(request)
 
     assert len(opener.requests) == 1
     assert "redirect-secret" not in str(excinfo.value)
@@ -311,8 +318,9 @@ def test_urllib_exceeding_max_redirects_raises_transport_failure() -> None:
     transport = UrllibCatalogTransport(max_redirects=3)
     cast(Any, transport)._opener = opener
 
+    request = RuntimeRequest("GET", "https://example.test/start")
     with pytest.raises(TransportFailure, match="redirect limit"):
-        transport.send(RuntimeRequest("GET", "https://example.test/start"))
+        transport.send(request)
 
     assert opener.count == 4
 

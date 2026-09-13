@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from datasluice.data.batch_stream import BatchStream
 
-_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_TABLE_NAME_RE = re.compile(r"^[A-Za-z_]\w*$", re.ASCII)
 
 
 def _validate_table_name(table_name: str) -> str:

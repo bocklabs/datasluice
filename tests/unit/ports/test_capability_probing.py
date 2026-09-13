@@ -254,8 +254,9 @@ def test_denied_states_raise_typed_errors_before_executor_dispatch(
     request = CatalogOperationRequest(operation_id=operation.id)
     guard = CatalogOperationGuard(operation_id=operation.id, profile=effective)
 
+    sync_managed_executor = SyncManagedExecutor(context)
     with pytest.raises(UnsupportedCapabilityError) as excinfo:
-        SyncManagedExecutor(context).execute(request, guard)
+        sync_managed_executor.execute(request, guard)
 
     error = excinfo.value
     assert error.operation == "ckan/datasets.get_dataset"

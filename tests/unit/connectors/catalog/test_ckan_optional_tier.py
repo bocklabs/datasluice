@@ -21,6 +21,7 @@ from datasluice.connectors.catalog.ckan.services.relationships_activity import (
     SyncRelationshipsActivityService,
 )
 from datasluice.connectors.catalog.ckan.services.views import AsyncViewsService, SyncViewsService
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
@@ -149,10 +150,12 @@ def _client(transport: SyncCaptureTransport, runner: SeededProbeRunner | None = 
     return SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
+        CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN,
+            probe_policy="auto",
+            probe_runner=runner if runner is not None else SeededProbeRunner(),
+        ),
         owns_transport=False,
-        probe_policy="auto",
-        probe_runner=runner if runner is not None else SeededProbeRunner(),
     )
 
 
@@ -160,10 +163,12 @@ def _async_client(transport: AsyncCaptureTransport, runner: AsyncSeededProbeRunn
     return AsyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
+        CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN,
+            probe_policy="auto",
+            async_probe_runner=runner if runner is not None else AsyncSeededProbeRunner(),
+        ),
         owns_transport=False,
-        probe_policy="auto",
-        probe_runner=runner if runner is not None else AsyncSeededProbeRunner(),
     )
 
 
@@ -333,8 +338,9 @@ def test_async_views_mirror_the_dual_state_semantics_per_family() -> None:
     blocked_transport = AsyncCaptureTransport(body=_success_body([VIEW_RESULT]))
     blocked_client = _async_client(blocked_transport, AsyncSeededProbeRunner(unsupported=frozenset({VIEWS_ID})))
 
+    resource_view_list = blocked_client.views.resource_view_list(id="res-1")
     with pytest.raises(UnsupportedCapabilityError):
-        asyncio.run(blocked_client.views.resource_view_list(id="res-1"))
+        asyncio.run(resource_view_list)
     assert blocked_transport.requests == []
 
     allowed_transport = AsyncCaptureTransport(body=_success_body([VIEW_RESULT]))

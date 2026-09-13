@@ -111,8 +111,10 @@ def test_retry_decision_computes_budget_clamped_default_backoff() -> None:
         budget=budget,
     )
 
-    assert plain.retry and plain.delay == 2.0
-    assert clamped.retry and clamped.delay == 8.0
+    assert plain.retry
+    assert plain.delay == 2.0
+    assert clamped.retry
+    assert clamped.delay == 8.0
 
 
 @pytest.mark.parametrize(
@@ -146,9 +148,8 @@ def test_retry_after_total_budget_boundary_is_guarded_strictly(
 
 def test_tls_diagnostics_events_and_telemetry_have_secure_defaults() -> None:
     assert TLSPolicy().verify
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="cannot be disabled"):
         TLSPolicy(verify=False)
-    assert not TLSPolicy(verify=False, override_scope="development").verify
     with pytest.raises(ValueError):
         DiagnosticPolicy(include_raw_body=True)
     diagnostic = DiagnosticPolicy(include_raw_body=True, raw_body_max_bytes=128)

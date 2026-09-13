@@ -58,12 +58,11 @@ def test_unavailable_case_is_rejected_before_either_fake_dispatches() -> None:
     sync_client = SyncReferenceConnector(capability="unavailable")
     async_client = AsyncReferenceConnector(capability="unavailable")
 
+    catalog_contract_case = CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset")
+    typed_value = cast(SyncCatalogClient, sync_client)
+    typed_value_2 = cast(AsyncCatalogClient, async_client)
     with pytest.raises(UnsupportedCatalogOperationError) as exc_info:
-        run_catalog_contract(
-            CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),
-            sync_client=cast(SyncCatalogClient, sync_client),
-            async_client=cast(AsyncCatalogClient, async_client),
-        )
+        run_catalog_contract(catalog_contract_case, sync_client=typed_value, async_client=typed_value_2)
 
     error = exc_info.value
     assert error.operation_id == "datasets.get"

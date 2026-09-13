@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from types import TracebackType
 from urllib.parse import urlsplit, urlunsplit
@@ -23,6 +24,8 @@ from datasluice.errors.catalog import (
     UnauthenticatedError,
     UnsupportedCapabilityError,
 )
+
+_DATASETS_GET_OPERATION = "datasets.get"
 
 _FIXTURE_DATASETS = {"fixture-dataset": {"id": "fixture-dataset", "title": "Fixture dataset"}}
 
@@ -61,7 +64,7 @@ class SyncReferenceConnector:
                 if any(str(case.operation_id) == operation_id for case in self._fixture_set.cases)
                 else "unavailable"
             )
-        if operation_id != "datasets.get":
+        if operation_id != _DATASETS_GET_OPERATION:
             return "unavailable"
         return self._capability
 
@@ -124,7 +127,7 @@ class SyncReferenceConnector:
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Return one deterministic fixture dataset."""
         guard.require_allowed()
-        self.dispatches.append("datasets.get")
+        self.dispatches.append(_DATASETS_GET_OPERATION)
         payload = self._datasets[str(operation.payload["id"])]
         return ResultEnvelope(
             items=(
@@ -316,7 +319,7 @@ class AsyncReferenceConnector:
         """Return the deterministic capability classification."""
         if self._fixture_set is not None:
             return self._sync.capability(operation_id)
-        if operation_id != "datasets.get":
+        if operation_id != _DATASETS_GET_OPERATION:
             return "unavailable"
         return self._capability
 
@@ -334,8 +337,9 @@ class AsyncReferenceConnector:
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[DatasetRecord]:
         """Return one deterministic fixture dataset without sync delegation."""
+        await asyncio.sleep(0)
         guard.require_allowed()
-        self.dispatches.append("datasets.get")
+        self.dispatches.append(_DATASETS_GET_OPERATION)
         payload = self._datasets[str(operation.payload["id"])]
         return ResultEnvelope(
             items=(
@@ -348,6 +352,7 @@ class AsyncReferenceConnector:
 
     async def execute_case(self, case: ReferenceCase) -> ResultEnvelope[NativeRecord]:
         """Execute a declared fixture case without delegating asynchronous I/O."""
+        await asyncio.sleep(0)
         self._sync._require_declared_case(case)
         self._sync._reject_case(case)
         self.dispatches.append(str(case.operation_id))
@@ -358,6 +363,7 @@ class AsyncReferenceConnector:
 
     async def aclose(self) -> None:
         """Close the asynchronous reference client exactly once."""
+        await asyncio.sleep(0)
         self.closed = True
 
     async def __aenter__(self) -> AsyncReferenceConnector:

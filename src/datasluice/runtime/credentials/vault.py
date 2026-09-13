@@ -79,8 +79,8 @@ class VaultCredentialProvider:
             credential = credential_from_fields(platform, _vault_fields(response))
         except ImportError:
             raise
-        except Exception as exc:
-            raise _resolution_error("HashiCorp Vault", platform, exc) from None
+        except Exception:
+            raise _resolution_error("HashiCorp Vault", platform) from None
         return {CredentialSource.SECRET_MANAGER: credential}
 
 

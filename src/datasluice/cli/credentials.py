@@ -71,7 +71,7 @@ def validate(
         if not isinstance(fields, Mapping):
             raise ValueError("Credential input must be a JSON object.")
         credential = credential_from_fields(CatalogPlatform(platform), fields)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         raise typer.BadParameter("Credential input is invalid; secret values were not rendered.") from exc
     result = {"platform": platform, "valid": True, "credential": _credential_output(credential)}
     if output == "json":

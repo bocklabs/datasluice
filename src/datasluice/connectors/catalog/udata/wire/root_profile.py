@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
 import re
 from codecs import getincrementaldecoder
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
-from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit
+from typing import Any, Never
+from urllib.parse import SplitResult, parse_qsl, quote, urlencode, urljoin, urlsplit
 
 from datasluice.domain.catalog.udata import (
     ROOT_OPERATION,
@@ -25,6 +26,11 @@ from datasluice.domain.catalog.udata import (
 )
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
+
+_RDF_XML_MEDIA_TYPE = "application/rdf+xml"
+_TURTLE_MEDIA_TYPE = "application/x-turtle"
+_JSON_LD_MEDIA_TYPE = "application/ld+json"
+_INVALID_UDATA_SITE_UTF8 = "The uData site document is not valid UTF-8."
 
 ROOT_OPERATIONS = {
     "get_site": ROOT_OPERATION,
@@ -55,25 +61,25 @@ ROOT_OPERATIONS = {
 
 _SITE_PATH = "/api/1/site/"
 _FORMAT_MEDIA_TYPES = {
-    "xml": "application/rdf+xml",
-    "rdf": "application/rdf+xml",
-    "owl": "application/rdf+xml",
+    "xml": _RDF_XML_MEDIA_TYPE,
+    "rdf": _RDF_XML_MEDIA_TYPE,
+    "owl": _RDF_XML_MEDIA_TYPE,
     "n3": "text/n3",
-    "ttl": "application/x-turtle",
-    "turtle": "application/x-turtle",
+    "ttl": _TURTLE_MEDIA_TYPE,
+    "turtle": _TURTLE_MEDIA_TYPE,
     "nt": "application/n-triples",
-    "json": "application/ld+json",
-    "jsonld": "application/ld+json",
+    "json": _JSON_LD_MEDIA_TYPE,
+    "jsonld": _JSON_LD_MEDIA_TYPE,
     "trig": "application/trig",
 }
 _ACCEPTED_MEDIA_TYPES = {
-    "application/rdf+xml",
+    _RDF_XML_MEDIA_TYPE,
     "application/xml",
     "text/n3",
-    "application/x-turtle",
+    _TURTLE_MEDIA_TYPE,
     "text/turtle",
     "application/n-triples",
-    "application/ld+json",
+    _JSON_LD_MEDIA_TYPE,
     "application/json",
     "application/trig",
     "text/xml",
@@ -405,7 +411,7 @@ def parse_document(
         invalid_utf8 = True
     if invalid_utf8:
         raise NativeCatalogError(
-            "The uData site document is not valid UTF-8.",
+            _INVALID_UDATA_SITE_UTF8,
             operation=operation,
             platform="udata",
             status_code=status_code,
@@ -430,6 +436,118 @@ def parse_document(
     )
 
 
+def _digest_stream_chunk(
+    response: RuntimeStreamResponse,
+    chunk: bytes,
+    size_bytes: int,
+    max_bytes: int,
+    operation: str,
+    digest: Any,
+    decoder: Any,
+    sink: Callable[[bytes], None] | None,
+) -> int:
+    next_size = size_bytes + len(chunk)
+    if next_size > max_bytes:
+        raise NativeCatalogError(
+            "The uData site export exceeds its configured byte limit.",
+            operation=operation,
+            platform="udata",
+            status_code=response.status_code,
+        )
+    decoder.decode(chunk)
+    digest.update(chunk)
+    if sink is not None:
+        sink(chunk)
+    return next_size
+
+
+async def _digest_stream_chunk_async(
+    response: AsyncRuntimeStreamResponse,
+    chunk: bytes,
+    size_bytes: int,
+    max_bytes: int,
+    operation: str,
+    digest: Any,
+    decoder: Any,
+    sink: Callable[[bytes], Awaitable[None] | None] | None,
+) -> int:
+    next_size = size_bytes + len(chunk)
+    if next_size > max_bytes:
+        raise NativeCatalogError(
+            "The uData site export exceeds its configured byte limit.",
+            operation=operation,
+            platform="udata",
+            status_code=response.status_code,
+        )
+    decoder.decode(chunk)
+    digest.update(chunk)
+    if sink is not None:
+        result = sink(chunk)
+        if result is not None:
+            await result
+    return next_size
+
+
+def _report_sync_stream_failure(response: RuntimeStreamResponse, error: BaseException) -> BaseException | None:
+    try:
+        response.fail(error)
+    except Exception as report_error:
+        return report_error
+    return None
+
+
+async def _report_async_stream_failure(
+    response: AsyncRuntimeStreamResponse, error: BaseException
+) -> BaseException | None:
+    try:
+        await response.fail(error)
+    except (Exception, asyncio.CancelledError) as report_error:
+        return report_error
+    return None
+
+
+def _finish_sync_stream_failure(
+    response: RuntimeStreamResponse, error: BaseException, report_error: BaseException | None
+) -> Never:
+    try:
+        response.close()
+    except Exception as cleanup_error:
+        raise error from cleanup_error
+    if report_error is not None:
+        raise error from report_error
+    raise error
+
+
+async def _finish_async_stream_failure(
+    response: AsyncRuntimeStreamResponse, error: BaseException, report_error: BaseException | None
+) -> Never:
+    try:
+        await response.aclose()
+    except (Exception, asyncio.CancelledError) as cleanup_error:
+        raise error from cleanup_error
+    if report_error is not None:
+        raise error from report_error
+    raise error
+
+
+def _finish_sync_stream_success(response: RuntimeStreamResponse) -> None:
+    response.close()
+    try:
+        response.complete()
+    except BaseException as error:
+        response.fail(error)
+        raise
+
+
+async def _finish_async_stream_success(response: AsyncRuntimeStreamResponse) -> None:
+    await response.aclose()
+    try:
+        await response.complete()
+    except BaseException as error:
+        await response.fail(error)
+        raise
+
+
 def digest_stream_document(
     response: RuntimeStreamResponse,
     *,
@@ -446,9 +564,7 @@ def digest_stream_document(
     digest = hashlib.sha256()
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
-    complete_ready = False
-    primary_error: BaseException | None = None
-    failure_report_error: BaseException | None = None
+    failure: BaseException | None = None
     try:
         media_type = response_media_type(
             response.headers,
@@ -457,58 +573,21 @@ def digest_stream_document(
             expected_media_type=expected_media_type,
         )
         for chunk in response:
-            next_size = size_bytes + len(chunk)
-            if next_size > max_bytes:
-                raise NativeCatalogError(
-                    "The uData site export exceeds its configured byte limit.",
-                    operation=operation,
-                    platform="udata",
-                    status_code=response.status_code,
-                )
-            decoder.decode(chunk)
-            digest.update(chunk)
-            if sink is not None:
-                sink(chunk)
-            size_bytes = next_size
+            size_bytes = _digest_stream_chunk(response, chunk, size_bytes, max_bytes, operation, digest, decoder, sink)
         decoder.decode(b"", final=True)
-        complete_ready = True
     except UnicodeDecodeError:
-        error = NativeCatalogError(
-            "The uData site document is not valid UTF-8.",
+        failure = NativeCatalogError(
+            _INVALID_UDATA_SITE_UTF8,
             operation=operation,
             platform="udata",
             status_code=response.status_code,
         )
-        primary_error = error
-        try:
-            response.fail(error)
-        except BaseException as report_error:
-            failure_report_error = report_error
-    except BaseException as error:
-        primary_error = error
-        try:
-            response.fail(error)
-        except BaseException as report_error:
-            failure_report_error = report_error
-    cleanup_error: BaseException | None = None
-    try:
-        response.close()
-    except BaseException as error:
-        cleanup_error = error
-    if primary_error is not None:
-        if cleanup_error is not None:
-            raise primary_error from cleanup_error
-        if failure_report_error is not None:
-            raise primary_error from failure_report_error
-        raise primary_error
-    if cleanup_error is not None:
-        raise cleanup_error
-    if complete_ready:
-        try:
-            response.complete()
-        except BaseException as error:
-            response.fail(error)
-            raise
+    except Exception as error:
+        failure = error
+    if failure is not None:
+        report_error = _report_sync_stream_failure(response, failure)
+        _finish_sync_stream_failure(response, failure, report_error)
+    _finish_sync_stream_success(response)
     metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
     return SiteDocument(
         endpoint=endpoint,
@@ -537,9 +616,7 @@ async def digest_stream_document_async(
     digest = hashlib.sha256()
     decoder = getincrementaldecoder("utf-8")()
     size_bytes = 0
-    complete_ready = False
-    primary_error: BaseException | None = None
-    failure_report_error: BaseException | None = None
+    failure: BaseException | None = None
     try:
         media_type = response_media_type(
             response.headers,
@@ -548,60 +625,23 @@ async def digest_stream_document_async(
             expected_media_type=expected_media_type,
         )
         async for chunk in response:
-            next_size = size_bytes + len(chunk)
-            if next_size > max_bytes:
-                raise NativeCatalogError(
-                    "The uData site export exceeds its configured byte limit.",
-                    operation=operation,
-                    platform="udata",
-                    status_code=response.status_code,
-                )
-            decoder.decode(chunk)
-            digest.update(chunk)
-            if sink is not None:
-                result = sink(chunk)
-                if result is not None:
-                    await result
-            size_bytes = next_size
+            size_bytes = await _digest_stream_chunk_async(
+                response, chunk, size_bytes, max_bytes, operation, digest, decoder, sink
+            )
         decoder.decode(b"", final=True)
-        complete_ready = True
     except UnicodeDecodeError:
-        error = NativeCatalogError(
-            "The uData site document is not valid UTF-8.",
+        failure = NativeCatalogError(
+            _INVALID_UDATA_SITE_UTF8,
             operation=operation,
             platform="udata",
             status_code=response.status_code,
         )
-        primary_error = error
-        try:
-            await response.fail(error)
-        except BaseException as report_error:
-            failure_report_error = report_error
-    except BaseException as error:
-        primary_error = error
-        try:
-            await response.fail(error)
-        except BaseException as report_error:
-            failure_report_error = report_error
-    cleanup_error: BaseException | None = None
-    try:
-        await response.aclose()
-    except BaseException as error:
-        cleanup_error = error
-    if primary_error is not None:
-        if cleanup_error is not None:
-            raise primary_error from cleanup_error
-        if failure_report_error is not None:
-            raise primary_error from failure_report_error
-        raise primary_error
-    if cleanup_error is not None:
-        raise cleanup_error
-    if complete_ready:
-        try:
-            await response.complete()
-        except BaseException as error:
-            await response.fail(error)
-            raise
+    except (Exception, asyncio.CancelledError) as error:
+        failure = error
+    if failure is not None:
+        report_error = await _report_async_stream_failure(response, failure)
+        await _finish_async_stream_failure(response, failure, report_error)
+    await _finish_async_stream_success(response)
     metadata = {"media_type": media_type, "size_bytes": size_bytes, "sha256": digest.hexdigest(), "streamed": True}
     return SiteDocument(
         endpoint=endpoint,
@@ -650,7 +690,7 @@ def parse_jsonld_context(
     return parse_document(
         body,
         endpoint=endpoint,
-        expected_media_type="application/ld+json",
+        expected_media_type=_JSON_LD_MEDIA_TYPE,
         response_media_type=response_media_type,
         status_code=status_code,
         data=payload,
@@ -685,6 +725,36 @@ def parse_redirect(
             platform="udata",
             status_code=status_code,
         )
+    target = _validated_redirect_target(location, origin, operation, status_code)
+    if not _redirect_matches_route(target, endpoint, expected_path, expected_path_prefix, expected_query):
+        raise NativeCatalogError(
+            "The uData root redirect target does not match its route contract.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        )
+    if _contains_sensitive_query(target.query):
+        raise NativeCatalogError(
+            "The uData root redirect contains a sensitive query component.",
+            operation=operation,
+            platform="udata",
+            status_code=status_code,
+        )
+    digest = hashlib.sha256(b"").hexdigest()
+    safe_location = target.path + (f"?{target.query}" if target.query else "")
+    metadata = {"status_code": status_code, "location": safe_location}
+    return SiteDocument(
+        endpoint=endpoint,
+        media_type="text/plain",
+        status_code=status_code,
+        size_bytes=0,
+        sha256=digest,
+        metadata=metadata,
+        location=safe_location,
+    )
+
+
+def _validated_redirect_target(location: str, origin: str, operation: str, status_code: int) -> SplitResult:
     try:
         target = urlsplit(urljoin(origin + "/", location))
     except ValueError as error:
@@ -709,52 +779,33 @@ def parse_redirect(
             platform="udata",
             status_code=status_code,
         )
+    return target
+
+
+def _redirect_matches_route(
+    target: SplitResult,
+    endpoint: str,
+    expected_path: str | None,
+    expected_path_prefix: str | None,
+    expected_query: str | None,
+) -> bool:
     route = urlsplit(endpoint)
     required_path = route.path if expected_path is None else expected_path
     required_query = route.query if expected_query is None else expected_query
-    if target.path != required_path and (
-        expected_path_prefix is None or not target.path.startswith(expected_path_prefix)
-    ):
-        raise NativeCatalogError(
-            "The uData root redirect target does not match its route contract.",
-            operation=operation,
-            platform="udata",
-            status_code=status_code,
-        )
-    target_query = _query_multimap(target.query)
-    required_query_map = _query_multimap(required_query)
-    default_catalog_query = {"page": ("1",), "page_size": ("100",)}
-    query_matches = target_query == required_query_map
+    path_matches = target.path == required_path or (
+        expected_path_prefix is not None and target.path.startswith(expected_path_prefix)
+    )
     if route.path == f"{_SITE_PATH}catalog" and not required_query:
-        query_matches = target_query == default_catalog_query
-    if not query_matches:
-        raise NativeCatalogError(
-            "The uData root redirect query does not match its route contract.",
-            operation=operation,
-            platform="udata",
-            status_code=status_code,
-        )
-    if any(
+        query_matches = _query_multimap(target.query) == {"page": ("1",), "page_size": ("100",)}
+    else:
+        query_matches = _query_multimap(target.query) == _query_multimap(required_query)
+    return path_matches and query_matches
+
+
+def _contains_sensitive_query(query: str) -> bool:
+    return any(
         any(part in key.lower() for part in _SENSITIVE_QUERY_PARTS)
-        for key, _ in parse_qsl(target.query, keep_blank_values=True)
-    ):
-        raise NativeCatalogError(
-            "The uData root redirect contains a sensitive query component.",
-            operation=operation,
-            platform="udata",
-            status_code=status_code,
-        )
-    digest = hashlib.sha256(b"").hexdigest()
-    safe_location = target.path + (f"?{target.query}" if target.query else "")
-    metadata = {"status_code": status_code, "location": safe_location}
-    return SiteDocument(
-        endpoint=endpoint,
-        media_type="text/plain",
-        status_code=status_code,
-        size_bytes=0,
-        sha256=digest,
-        metadata=metadata,
-        location=safe_location,
+        for key, _ in parse_qsl(query, keep_blank_values=True)
     )
 
 

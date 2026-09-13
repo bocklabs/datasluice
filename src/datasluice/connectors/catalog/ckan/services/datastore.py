@@ -42,7 +42,7 @@ def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
     return {key: value for key, value in params.items() if value is not None}
 
 
-def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
+def _mutation_target(params: Mapping[str, object]) -> CatalogId:
     key = "resource_id" if "resource_id" in params else "name"
     return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params[key]))
 
@@ -241,7 +241,7 @@ class SyncDatastoreService(_SyncNativeService):
         guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
         envelope = cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
         receipt = build_mutation_receipt(
-            owning_id, _mutation_target(entry.name, params), effective, "succeeded", {"action": entry.name}
+            owning_id, _mutation_target(params), effective, "succeeded", {"action": entry.name}
         )
         return CKANMutationResult(result=envelope, receipt=receipt)
 
@@ -442,6 +442,6 @@ class AsyncDatastoreService(_AsyncNativeService):
         guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
         envelope = cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
         receipt = build_mutation_receipt(
-            owning_id, _mutation_target(entry.name, params), effective, "succeeded", {"action": entry.name}
+            owning_id, _mutation_target(params), effective, "succeeded", {"action": entry.name}
         )
         return CKANMutationResult(result=envelope, receipt=receipt)

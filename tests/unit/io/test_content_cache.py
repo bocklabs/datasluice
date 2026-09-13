@@ -78,7 +78,7 @@ def test_key_is_sha256_hexdigest(tmp_path: Path) -> None:
 
 def test_key_is_deterministic(tmp_path: Path) -> None:
     cache = ContentCache(str(tmp_path / "cache"))
-    assert cache._sha("k1") == cache._sha("k1")
+    assert cache._sha("k1") == hashlib.sha256(b"k1").hexdigest()
     assert cache._sha("k1") != cache._sha("k2")
 
 

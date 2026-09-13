@@ -17,8 +17,9 @@ from datasluice.exceptions import DataSluiceError
 if TYPE_CHECKING:
     from datasluice.application import ResourceLocator
 
+_PROVENANCE_CREATED_AT_PATH = "provenance.created_at"
+
 _SHA256_RE = re.compile(r"[0-9a-f]{64}$")
-_EXTENSION_NAMESPACE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]*[.][A-Za-z0-9][A-Za-z0-9.-]*$")
 _DIGEST_KEYS = frozenset({"algorithm", "value"})
 _PROVENANCE_KEYS = frozenset(
     {"source_locator", "resource_identity", "created_at", "materialization_mode", "transforms"}
@@ -106,7 +107,16 @@ def _freeze_extensions(value: object) -> Mapping[str, object]:
     for namespace, extension in value.items():
         if not isinstance(namespace, str):
             raise _contract_error("extensions")
-        if _EXTENSION_NAMESPACE_RE.fullmatch(namespace) is None:
+        if (
+            not namespace
+            or not namespace.isascii()
+            or not namespace[0].isalnum()
+            or not all(character.isalnum() or character in ".-" for character in namespace)
+            or not any(
+                character == "." and following.isalnum()
+                for character, following in zip(namespace, namespace[1:], strict=False)
+            )
+        ):
             raise _contract_error("extensions")
         frozen[namespace] = _freeze_json(extension, f"extensions.{namespace}")
     return MappingProxyType(frozen)
@@ -154,7 +164,7 @@ class ArtifactProvenance:
         if not hasattr(self.source_locator, "to_dict") or not _is_sha256(self.resource_identity):
             raise _contract_error("provenance")
         if not isinstance(self.created_at, datetime) or self.created_at.tzinfo is None:
-            raise _contract_error("provenance.created_at")
+            raise _contract_error(_PROVENANCE_CREATED_AT_PATH)
         if self.materialization_mode not in {"parquet", "raw"}:
             raise _contract_error("provenance.materialization_mode")
         if not isinstance(self.transforms, tuple) or not all(isinstance(value, str) for value in self.transforms):
@@ -193,9 +203,9 @@ class ArtifactProvenance:
         try:
             parsed_created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         except ValueError as exc:
-            raise _contract_error("provenance.created_at") from exc
+            raise _contract_error(_PROVENANCE_CREATED_AT_PATH) from exc
         if parsed_created_at.tzinfo is None:
-            raise _contract_error("provenance.created_at")
+            raise _contract_error(_PROVENANCE_CREATED_AT_PATH)
         from datasluice.application import resource_locator_from_dict
 
         return cls(

@@ -12,6 +12,8 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import DatasetRecord, NativeRecord, PageInfo, PlatformMetadata, ResultEnvelope
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
+_UDATA_V1_PAGE_ENVELOPE_ACTION = "Verify the deployment serves the stock uData v1 page envelope."
+
 PLATFORM = CatalogPlatform.UDATA
 
 NATIVE_PAGE_FIELDS = ("data", "page", "page_size", "previous_page", "next_page", "total")
@@ -107,7 +109,7 @@ def _int_field(payload: Mapping[str, object], field_name: str, *, operation: str
             f"The uData page field {field_name!r} must be an integer of at least {minimum} or null.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
+            safe_action=_UDATA_V1_PAGE_ENVELOPE_ACTION,
         )
     return value
 
@@ -119,7 +121,7 @@ def _link_field(payload: Mapping[str, object], field_name: str, *, operation: st
             f"The uData page field {field_name!r} must be a non-empty URL or null.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
+            safe_action=_UDATA_V1_PAGE_ENVELOPE_ACTION,
         )
     return value
 
@@ -133,7 +135,7 @@ def _string_field(payload: Mapping[str, object], field_name: str, *, operation: 
             f"The uData page field {field_name!r} must be a string URL or null.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
+            safe_action=_UDATA_V1_PAGE_ENVELOPE_ACTION,
         )
     return value
 
@@ -159,14 +161,14 @@ def parse_native_page(payload: object, *, operation: str = _DATASETS_OPERATION_I
             "The uData page response omitted the data list.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
+            safe_action=_UDATA_V1_PAGE_ENVELOPE_ACTION,
         )
     if not isinstance(items_raw, list) or not all(isinstance(item, Mapping) for item in items_raw):
         raise CatalogValidationError(
             "The uData page data field must be a list of JSON objects.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the deployment serves the stock uData v1 page envelope.",
+            safe_action=_UDATA_V1_PAGE_ENVELOPE_ACTION,
         )
     return NativePage(
         items=tuple(dict(item) for item in items_raw),
@@ -213,7 +215,12 @@ def normalized_dataset(record: NativeRecord) -> DatasetRecord:
         )
     title = record.payload.get("title")
     slug = record.payload.get("slug")
-    name = title if isinstance(title, str) and title else (slug if isinstance(slug, str) and slug else None)
+    if isinstance(title, str) and title:
+        name = title
+    elif isinstance(slug, str) and slug:
+        name = slug
+    else:
+        name = None
     if not name:
         raise CatalogValidationError(
             "The uData dataset summary requires a title or slug for normalized identity.",

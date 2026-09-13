@@ -122,6 +122,6 @@ class Downloader:
             try:
                 path = self.download(resource, dest)
                 results.append(path)
-            except DownloadError as exc:
-                logger.error("Failed to download %s: %s", resource.id, exc)
+            except DownloadError:
+                logger.exception("Failed to download %s", resource.id)
         return results

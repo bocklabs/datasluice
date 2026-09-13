@@ -87,6 +87,31 @@ def redirect_method_and_body(
     return method, body, files
 
 
+def _validate_request_payload(body: bytes | None, files: tuple[UploadPart, ...] | list[UploadPart]) -> None:
+    if body is not None and not isinstance(body, bytes):
+        raise ValueError("Runtime request bodies must be bytes when supplied.")
+    if not isinstance(files, (tuple, list)):
+        raise ValueError("Runtime request multipart parts must be a tuple or list of UploadPart instances.")
+    if not all(isinstance(part, UploadPart) for part in files):
+        raise ValueError("Runtime request multipart parts must be UploadPart instances.")
+    if body is not None and files:
+        raise ValueError("Runtime requests cannot carry a byte body and multipart parts together.")
+
+
+def _validate_response_limit(max_response_bytes: int | None) -> None:
+    if max_response_bytes is not None and (type(max_response_bytes) is not int or max_response_bytes < 1):
+        raise ValueError("Runtime request response limits must be positive integers when supplied.")
+
+
+def _freeze_request_headers(headers: Mapping[str, str]) -> Mapping[str, str]:
+    if headers is None or not isinstance(headers, Mapping):
+        raise ValueError("Runtime request headers must be a mapping of string names to string values.")
+    values = dict(headers)
+    if not all(isinstance(key, str) and key and isinstance(value, str) for key, value in values.items()):
+        raise ValueError("Runtime request headers must contain non-empty string names and string values.")
+    return MappingProxyType(values)
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeRequest:
     """Immutable HTTP request supplied by a catalog client.
@@ -112,26 +137,11 @@ class RuntimeRequest:
             raise ValueError("Runtime request methods must be non-empty strings.")
         if not isinstance(self.url, str) or not self.url:
             raise ValueError("Runtime request URLs must be non-empty strings.")
-        if self.body is not None and not isinstance(self.body, bytes):
-            raise ValueError("Runtime request bodies must be bytes when supplied.")
-        if not isinstance(self.files, (tuple, list)):
-            raise ValueError("Runtime request multipart parts must be a tuple or list of UploadPart instances.")
-        if not all(isinstance(part, UploadPart) for part in self.files):
-            raise ValueError("Runtime request multipart parts must be UploadPart instances.")
-        if self.body is not None and self.files:
-            raise ValueError("Runtime requests cannot carry a byte body and multipart parts together.")
+        _validate_request_payload(self.body, self.files)
         if not isinstance(self.redirect_policy, RedirectPolicy):
             raise ValueError("Runtime request redirect policies must use RedirectPolicy.")
-        if self.max_response_bytes is not None and (
-            type(self.max_response_bytes) is not int or self.max_response_bytes < 1
-        ):
-            raise ValueError("Runtime request response limits must be positive integers when supplied.")
-        if self.headers is None or not isinstance(self.headers, Mapping):
-            raise ValueError("Runtime request headers must be a mapping of string names to string values.")
-        headers = dict(self.headers)
-        if not all(isinstance(key, str) and key and isinstance(value, str) for key, value in headers.items()):
-            raise ValueError("Runtime request headers must contain non-empty string names and string values.")
-        object.__setattr__(self, "headers", MappingProxyType(headers))
+        _validate_response_limit(self.max_response_bytes)
+        object.__setattr__(self, "headers", _freeze_request_headers(self.headers))
         object.__setattr__(self, "files", tuple(self.files))
 
     def __repr__(self) -> str:

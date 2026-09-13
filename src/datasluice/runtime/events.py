@@ -13,6 +13,8 @@ from datasluice.domain.catalog.models import _freeze_json, _object_dict, _thaw_j
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.redaction import redact_event_metadata
 
+_INVALID_RUNTIME_EVENT_ENVELOPE = "Invalid schema-v1 runtime event envelope."
+
 _LOGGER = logging.getLogger(__name__)
 
 _MAX_BOUNDED_RETRY_COUNT = 16
@@ -72,9 +74,9 @@ class EventEnvelope:
         try:
             data = _object_dict(value, "runtime_event")
             if set(data) != _EVENT_KEYS or data["schema_version"] != 1 or type(data["schema_version"]) is not int:
-                raise ValueError("Invalid schema-v1 runtime event envelope.")
+                raise ValueError(_INVALID_RUNTIME_EVENT_ENVELOPE)
             if data["kind"] != "runtime_event":
-                raise ValueError("Invalid schema-v1 runtime event envelope.")
+                raise ValueError(_INVALID_RUNTIME_EVENT_ENVELOPE)
             return cls(
                 operation_id=_required_text(data["operation_id"], "operation_id"),
                 platform=_required_text(data["platform"], "platform"),
@@ -83,7 +85,7 @@ class EventEnvelope:
                 metadata=_object_dict(data["metadata"], "runtime_event.metadata"),
             )
         except DataSluiceError as exc:
-            raise ValueError("Invalid schema-v1 runtime event envelope.") from exc
+            raise ValueError(_INVALID_RUNTIME_EVENT_ENVELOPE) from exc
 
 
 class EventSink(Protocol):
@@ -202,8 +204,7 @@ class OtelBridge:
         span_type = event.metadata.get("span_type", "request")
         name = f"catalog.{span_type}" if isinstance(span_type, str) else "catalog.request"
         with self._tracer.start_as_current_span(name, attributes=self._span_attributes(event)):
-            pass
-        self._record_metrics(event)
+            self._record_metrics(event)
 
     def _span_attributes(self, event: EventEnvelope) -> dict[str, str | int | float | bool]:
         attributes: dict[str, str | int | float | bool] = {

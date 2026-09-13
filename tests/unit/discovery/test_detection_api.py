@@ -16,29 +16,37 @@ import pytest
 def test_detect_portal_type_removed_from_detector() -> None:
     """``detect_portal_type`` is gone from ``datasluice.discovery.detector``."""
 
+    get_attribute = attrgetter("detect_portal_type")
+    module = importlib.import_module("datasluice.discovery.detector")
     with pytest.raises(AttributeError):
-        _ = attrgetter("detect_portal_type")(importlib.import_module("datasluice.discovery.detector"))
+        _ = get_attribute(module)
 
 
 def test_detect_portal_removed_from_detector() -> None:
     """``detect_portal`` alias is gone from ``datasluice.discovery.detector``."""
 
+    get_attribute = attrgetter("detect_portal")
+    module = importlib.import_module("datasluice.discovery.detector")
     with pytest.raises(AttributeError):
-        _ = attrgetter("detect_portal")(importlib.import_module("datasluice.discovery.detector"))
+        _ = get_attribute(module)
 
 
 def test_detect_portal_type_not_reexported_from_discovery() -> None:
     """``datasluice.discovery`` no longer re-exports ``detect_portal_type`` (lockstep)."""
 
+    get_attribute = attrgetter("detect_portal_type")
+    module = importlib.import_module("datasluice.discovery")
     with pytest.raises(AttributeError):
-        _ = attrgetter("detect_portal_type")(importlib.import_module("datasluice.discovery"))
+        _ = get_attribute(module)
 
 
 def test_detect_portal_not_reexported_from_discovery() -> None:
     """``datasluice.discovery`` no longer re-exports ``detect_portal`` (lockstep)."""
 
+    get_attribute = attrgetter("detect_portal")
+    module = importlib.import_module("datasluice.discovery")
     with pytest.raises(AttributeError):
-        _ = attrgetter("detect_portal")(importlib.import_module("datasluice.discovery"))
+        _ = get_attribute(module)
 
 
 def test_detect_is_reexported_from_discovery() -> None:

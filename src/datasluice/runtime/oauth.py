@@ -37,6 +37,10 @@ from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse
 
+_OAUTH_REFRESH_OPERATION = "oauth.refresh"
+_OAUTH_TOKEN_OPERATION = "oauth.token"
+_OAUTH_ENDPOINT_RETRY_ACTION = "Confirm the OAuth endpoint response and retry."
+
 PKCE_CHALLENGE_METHOD = "S256"
 PKCE_VERIFIER_BYTES = 48
 DEFAULT_REFRESH_SKEW_SECONDS = 30
@@ -110,14 +114,14 @@ def _token_error(response: RuntimeResponse) -> CatalogError:
     if response.status_code == 401:
         return UnauthenticatedError(
             detail,
-            operation="oauth.token",
+            operation=_OAUTH_TOKEN_OPERATION,
             platform="runtime",
             capability_state="unauthorized",
             safe_action="Confirm the OAuth client credentials and retry.",
         )
     return CatalogValidationError(
         detail,
-        operation="oauth.token",
+        operation=_OAUTH_TOKEN_OPERATION,
         platform="runtime",
         safe_action="Confirm the OAuth client configuration and retry.",
     )
@@ -131,32 +135,32 @@ def _credential(response: RuntimeResponse) -> OAuthCredential:
     except (TypeError, ValueError) as exc:
         raise CatalogValidationError(
             "OAuth token endpoint returned an invalid JSON response.",
-            operation="oauth.token",
+            operation=_OAUTH_TOKEN_OPERATION,
             platform="runtime",
-            safe_action="Confirm the OAuth endpoint response and retry.",
+            safe_action=_OAUTH_ENDPOINT_RETRY_ACTION,
         ) from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("access_token"), str) or not payload["access_token"]:
         raise CatalogValidationError(
             "OAuth token endpoint response did not contain an access token.",
-            operation="oauth.token",
+            operation=_OAUTH_TOKEN_OPERATION,
             platform="runtime",
-            safe_action="Confirm the OAuth endpoint response and retry.",
+            safe_action=_OAUTH_ENDPOINT_RETRY_ACTION,
         )
     expires_in = payload.get("expires_in")
     if expires_in is not None and (type(expires_in) not in (int, float) or expires_in < 0):
         raise CatalogValidationError(
             "OAuth token endpoint returned an invalid expiry.",
-            operation="oauth.token",
+            operation=_OAUTH_TOKEN_OPERATION,
             platform="runtime",
-            safe_action="Confirm the OAuth endpoint response and retry.",
+            safe_action=_OAUTH_ENDPOINT_RETRY_ACTION,
         )
     refresh_token = payload.get("refresh_token")
     if refresh_token is not None and (not isinstance(refresh_token, str) or not refresh_token):
         raise CatalogValidationError(
             "OAuth token endpoint returned an invalid refresh token.",
-            operation="oauth.token",
+            operation=_OAUTH_TOKEN_OPERATION,
             platform="runtime",
-            safe_action="Confirm the OAuth endpoint response and retry.",
+            safe_action=_OAUTH_ENDPOINT_RETRY_ACTION,
         )
     return OAuthCredential(
         access_token=SecretValue(payload["access_token"]),
@@ -349,7 +353,9 @@ class RefreshingCredentialProvider:
         )
 
     def _emit(self, outcome: str, **metadata: object) -> None:
-        self._emitter.record(operation_id="oauth.refresh", platform="runtime", outcome=outcome, metadata=metadata)
+        self._emitter.record(
+            operation_id=_OAUTH_REFRESH_OPERATION, platform="runtime", outcome=outcome, metadata=metadata
+        )
 
     def _updated_credential(self, response: RuntimeResponse) -> OAuthCredential:
         updated = _credential(response)
@@ -366,7 +372,7 @@ class RefreshingCredentialProvider:
             self._emit("breaker_open")
             raise CatalogUnavailableError(
                 "The OAuth token endpoint circuit is open.",
-                operation="oauth.refresh",
+                operation=_OAUTH_REFRESH_OPERATION,
                 platform="runtime",
                 capability_state="unavailable",
                 safe_action="Wait for the circuit cool-down before refreshing credentials.",
@@ -374,7 +380,7 @@ class RefreshingCredentialProvider:
         deadline = DeadlineMonitor(self._budget, clock=self._monotonic_clock)
         before = self._breakers.inspect(key)
         try:
-            deadline.assert_dispatchable("oauth.refresh", "runtime")
+            deadline.assert_dispatchable(_OAUTH_REFRESH_OPERATION, "runtime")
             response = RetryLoop(
                 budget=self._budget,
                 idempotency=IdempotencyPolicy(safe=True),
@@ -420,7 +426,7 @@ class RefreshingCredentialProvider:
             self._emit("breaker_open")
             raise CatalogUnavailableError(
                 "The OAuth token endpoint circuit is open.",
-                operation="oauth.refresh",
+                operation=_OAUTH_REFRESH_OPERATION,
                 platform="runtime",
                 capability_state="unavailable",
                 safe_action="Wait for the circuit cool-down before refreshing credentials.",
@@ -428,7 +434,7 @@ class RefreshingCredentialProvider:
         deadline = DeadlineMonitor(self._budget, clock=self._monotonic_clock)
         before = self._breakers.inspect(key)
         try:
-            deadline.assert_dispatchable("oauth.refresh", "runtime")
+            deadline.assert_dispatchable(_OAUTH_REFRESH_OPERATION, "runtime")
             response = await RetryLoop(
                 budget=self._budget,
                 idempotency=IdempotencyPolicy(safe=True),

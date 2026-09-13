@@ -1,16 +1,7 @@
-"""Both-mode CKAN dataset projections: umbrella dispatch plus the exhaustive typed action surface.
-
-Every typed method declares its owning v2 OperationId from the checked-in manifest,
-passes documented CKAN 2.11 parameters verbatim (D-04 faithful paging, no translation),
-and keeps officially deprecated parameter names unrepresentable (D-01). Mutating
-methods accept an optional ``MutationPolicy`` and return a ``CKANMutationResult``
-carrying the decoded result plus a redacted receipt through the shared spine gate.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NotRequired, TypedDict, Unpack, cast
 
 from datasluice.connectors.catalog.ckan.clients import (
     _AsyncDatasetService,
@@ -37,6 +28,34 @@ type FieldSpecList = list[Mapping[str, object]]
 type DatasetNameList = list[str]
 type ResourceOrder = list[Mapping[str, object]]
 
+
+class _PackageFields(TypedDict, total=False):
+    title: NotRequired[str | None]
+    notes: NotRequired[str | None]
+    url: NotRequired[str | None]
+    version: NotRequired[str | None]
+    license_id: NotRequired[str | None]
+    owner_org: NotRequired[str | None]
+    private: NotRequired[bool | None]
+    author: NotRequired[str | None]
+    author_email: NotRequired[str | None]
+    maintainer: NotRequired[str | None]
+    maintainer_email: NotRequired[str | None]
+    tags: NotRequired[FieldSpecList | None]
+    extras: NotRequired[FieldSpecList | None]
+    groups: NotRequired[FieldSpecList | None]
+    resources: NotRequired[FieldSpecList | None]
+
+
+class _PackageCreateFields(_PackageFields):
+    name: str
+
+
+class _PackageUpdateFields(_PackageFields):
+    id: str
+    name: NotRequired[str | None]
+
+
 _DEPRECATED_PARAMETERS: Mapping[str, frozenset[str]] = {
     "current_package_list_with_resources": frozenset({"page"}),
 }
@@ -61,20 +80,34 @@ _UPDATE_FIELDS = (
     "groups",
     "resources",
 )
+_PACKAGE_CREATE_FIELDS = frozenset(_UPDATE_FIELDS)
+_PACKAGE_UPDATE_FIELDS = _PACKAGE_CREATE_FIELDS | {"id"}
 
 
 def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
     return {key: value for key, value in params.items() if value is not None}
 
 
+def _package_mutation_params(
+    fields: Mapping[str, object | None], *, target: str, action: str, allowed: frozenset[str]
+) -> dict[str, object]:
+    unexpected = fields.keys() - allowed
+    if unexpected:
+        raise TypeError(f"{action}() got an unexpected keyword argument {min(unexpected)!r}")
+    params = _drop_unset({key: value for key, value in fields.items() if key != target})
+    if target == "name" or fields[target] is not None:
+        params[target] = fields[target]
+    return params
+
+
 def _reject_deprecated(action: str, payload: Mapping[str, object]) -> None:
     banned = _DEPRECATED_PARAMETERS.get(action)
     if not banned:
         return
-    clash = sorted(banned.intersection(payload))
+    clash = banned.intersection(payload)
     if clash:
         raise CatalogValidationError(
-            f"The parameter(s) {clash} are officially deprecated for {action} and are not accepted.",
+            f"The parameter(s) {sorted(clash)} are officially deprecated for {action} and are not accepted.",
             operation=f"{PLATFORM.value}/{action}",
             platform=PLATFORM.value,
             safe_action="Use the canonical CKAN 2.11 pagination parameters; offset replaces page.",
@@ -165,101 +198,33 @@ class SyncDatasetsService(_SyncDatasetService):
     def package_create(
         self,
         *,
-        name: str,
-        title: str | None = None,
-        notes: str | None = None,
-        url: str | None = None,
-        version: str | None = None,
-        license_id: str | None = None,
-        owner_org: str | None = None,
-        private: bool | None = None,
-        author: str | None = None,
-        author_email: str | None = None,
-        maintainer: str | None = None,
-        maintainer_email: str | None = None,
-        tags: FieldSpecList | None = None,
-        extras: FieldSpecList | None = None,
-        groups: FieldSpecList | None = None,
-        resources: FieldSpecList | None = None,
         policy: MutationPolicy | None = None,
+        **fields: Unpack[_PackageCreateFields],
     ) -> CKANMutationResult:
         """Create a dataset from documented keyword fields."""
-        params: dict[str, object] = {"name": name}
-        params.update(
-            _drop_unset(
-                {
-                    "title": title,
-                    "notes": notes,
-                    "url": url,
-                    "version": version,
-                    "license_id": license_id,
-                    "owner_org": owner_org,
-                    "private": private,
-                    "author": author,
-                    "author_email": author_email,
-                    "maintainer": maintainer,
-                    "maintainer_email": maintainer_email,
-                    "tags": tags,
-                    "extras": extras,
-                    "groups": groups,
-                    "resources": resources,
-                }
-            )
+        params = _package_mutation_params(
+            fields, target="name", action="package_create", allowed=_PACKAGE_CREATE_FIELDS
         )
         return self._invoke_mutation("package_create", params, policy)
 
     def package_update(
         self,
         *,
-        id: str,
-        name: str | None = None,
-        title: str | None = None,
-        notes: str | None = None,
-        url: str | None = None,
-        version: str | None = None,
-        license_id: str | None = None,
-        owner_org: str | None = None,
-        private: bool | None = None,
-        author: str | None = None,
-        author_email: str | None = None,
-        maintainer: str | None = None,
-        maintainer_email: str | None = None,
-        tags: FieldSpecList | None = None,
-        extras: FieldSpecList | None = None,
-        groups: FieldSpecList | None = None,
-        resources: FieldSpecList | None = None,
         policy: MutationPolicy | None = None,
+        **fields: Unpack[_PackageUpdateFields],
     ) -> CKANMutationResult:
         """Update a dataset from documented keyword fields."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unused_update_fields(locals()))
+        params = _package_mutation_params(fields, target="id", action="package_update", allowed=_PACKAGE_UPDATE_FIELDS)
         return self._invoke_mutation("package_update", params, policy)
 
     def package_patch(
         self,
         *,
-        id: str,
-        name: str | None = None,
-        title: str | None = None,
-        notes: str | None = None,
-        url: str | None = None,
-        version: str | None = None,
-        license_id: str | None = None,
-        owner_org: str | None = None,
-        private: bool | None = None,
-        author: str | None = None,
-        author_email: str | None = None,
-        maintainer: str | None = None,
-        maintainer_email: str | None = None,
-        tags: FieldSpecList | None = None,
-        extras: FieldSpecList | None = None,
-        groups: FieldSpecList | None = None,
-        resources: FieldSpecList | None = None,
         policy: MutationPolicy | None = None,
+        **fields: Unpack[_PackageUpdateFields],
     ) -> CKANMutationResult:
         """Patch selected dataset fields without replacing the package."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unused_update_fields(locals()))
+        params = _package_mutation_params(fields, target="id", action="package_patch", allowed=_PACKAGE_UPDATE_FIELDS)
         return self._invoke_mutation("package_patch", params, policy)
 
     def package_revise(
@@ -461,101 +426,33 @@ class AsyncDatasetsService(_AsyncDatasetService):
     async def package_create(
         self,
         *,
-        name: str,
-        title: str | None = None,
-        notes: str | None = None,
-        url: str | None = None,
-        version: str | None = None,
-        license_id: str | None = None,
-        owner_org: str | None = None,
-        private: bool | None = None,
-        author: str | None = None,
-        author_email: str | None = None,
-        maintainer: str | None = None,
-        maintainer_email: str | None = None,
-        tags: FieldSpecList | None = None,
-        extras: FieldSpecList | None = None,
-        groups: FieldSpecList | None = None,
-        resources: FieldSpecList | None = None,
         policy: MutationPolicy | None = None,
+        **fields: Unpack[_PackageCreateFields],
     ) -> CKANMutationResult:
         """Create a dataset from documented keyword fields."""
-        params: dict[str, object] = {"name": name}
-        params.update(
-            _drop_unset(
-                {
-                    "title": title,
-                    "notes": notes,
-                    "url": url,
-                    "version": version,
-                    "license_id": license_id,
-                    "owner_org": owner_org,
-                    "private": private,
-                    "author": author,
-                    "author_email": author_email,
-                    "maintainer": maintainer,
-                    "maintainer_email": maintainer_email,
-                    "tags": tags,
-                    "extras": extras,
-                    "groups": groups,
-                    "resources": resources,
-                }
-            )
+        params = _package_mutation_params(
+            fields, target="name", action="package_create", allowed=_PACKAGE_CREATE_FIELDS
         )
         return await self._invoke_mutation("package_create", params, policy)
 
     async def package_update(
         self,
         *,
-        id: str,
-        name: str | None = None,
-        title: str | None = None,
-        notes: str | None = None,
-        url: str | None = None,
-        version: str | None = None,
-        license_id: str | None = None,
-        owner_org: str | None = None,
-        private: bool | None = None,
-        author: str | None = None,
-        author_email: str | None = None,
-        maintainer: str | None = None,
-        maintainer_email: str | None = None,
-        tags: FieldSpecList | None = None,
-        extras: FieldSpecList | None = None,
-        groups: FieldSpecList | None = None,
-        resources: FieldSpecList | None = None,
         policy: MutationPolicy | None = None,
+        **fields: Unpack[_PackageUpdateFields],
     ) -> CKANMutationResult:
         """Update a dataset from documented keyword fields."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unused_update_fields(locals()))
+        params = _package_mutation_params(fields, target="id", action="package_update", allowed=_PACKAGE_UPDATE_FIELDS)
         return await self._invoke_mutation("package_update", params, policy)
 
     async def package_patch(
         self,
         *,
-        id: str,
-        name: str | None = None,
-        title: str | None = None,
-        notes: str | None = None,
-        url: str | None = None,
-        version: str | None = None,
-        license_id: str | None = None,
-        owner_org: str | None = None,
-        private: bool | None = None,
-        author: str | None = None,
-        author_email: str | None = None,
-        maintainer: str | None = None,
-        maintainer_email: str | None = None,
-        tags: FieldSpecList | None = None,
-        extras: FieldSpecList | None = None,
-        groups: FieldSpecList | None = None,
-        resources: FieldSpecList | None = None,
         policy: MutationPolicy | None = None,
+        **fields: Unpack[_PackageUpdateFields],
     ) -> CKANMutationResult:
         """Patch selected dataset fields without replacing the package."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unused_update_fields(locals()))
+        params = _package_mutation_params(fields, target="id", action="package_patch", allowed=_PACKAGE_UPDATE_FIELDS)
         return await self._invoke_mutation("package_patch", params, policy)
 
     async def package_revise(
@@ -678,8 +575,3 @@ class AsyncDatasetsService(_AsyncDatasetService):
             owning_id, _mutation_target(entry.name, params), effective, "succeeded", {"action": entry.name}
         )
         return CKANMutationResult(result=envelope, receipt=receipt)
-
-
-def _drop_unused_update_fields(local_vars: Mapping[str, object]) -> dict[str, object]:
-    fields = {key: value for key, value in local_vars.items() if key in _UPDATE_FIELDS}
-    return _drop_unset(fields)

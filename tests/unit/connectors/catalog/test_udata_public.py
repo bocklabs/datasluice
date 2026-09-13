@@ -157,8 +157,9 @@ def test_factory_accepts_canonical_context_and_validates_profile_identity() -> N
         ],
     )
 
+    context = _context(profile=wrong_profile)
     with pytest.raises(ValueError, match="uData"):
-        create_udata_connector(_context(profile=wrong_profile))
+        create_udata_connector(context)
 
 
 def test_factory_requires_both_typed_executor_modes() -> None:

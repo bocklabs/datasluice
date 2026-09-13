@@ -102,8 +102,9 @@ def test_httpx_transport_maps_transport_failure() -> None:
 
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
     try:
+        request_2 = RuntimeRequest("GET", "https://example.test/")
         with pytest.raises(TransportFailure):
-            transport.send(RuntimeRequest("GET", "https://example.test/"))
+            transport.send(request_2)
     finally:
         transport.close()
 
@@ -268,8 +269,9 @@ def test_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
 
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler), max_redirects=3)
     try:
+        request_2 = RuntimeRequest("GET", "https://example.test/start")
         with pytest.raises(TransportFailure, match="redirect limit"):
-            transport.send(RuntimeRequest("GET", "https://example.test/start"))
+            transport.send(request_2)
     finally:
         transport.close()
 
@@ -283,8 +285,9 @@ def test_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() ->
 
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
     try:
+        request_2 = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"})
         with pytest.raises(TransportFailure, match="file:///etc/passwd") as excinfo:
-            transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
+            transport.send(request_2)
     finally:
         transport.close()
 
@@ -309,8 +312,9 @@ def test_httpx_malformed_redirect_location_closes_response_before_failing() -> N
 
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
     try:
+        request_2 = RuntimeRequest("GET", "https://example.test/start")
         with pytest.raises(TransportFailure):
-            transport.send(RuntimeRequest("GET", "https://example.test/start"))
+            transport.send(request_2)
     finally:
         transport.close()
 
@@ -523,8 +527,9 @@ def test_async_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
     async def send() -> None:
         transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler), max_redirects=3)
         try:
+            request = RuntimeRequest("GET", "https://example.test/start")
             with pytest.raises(TransportFailure, match="redirect limit"):
-                await transport.send(RuntimeRequest("GET", "https://example.test/start"))
+                await transport.send(request)
         finally:
             await transport.aclose()
 
@@ -551,8 +556,9 @@ def test_async_httpx_malformed_redirect_location_closes_response_before_failing(
     async def send() -> None:
         transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
         try:
+            request = RuntimeRequest("GET", "https://example.test/start")
             with pytest.raises(TransportFailure):
-                await transport.send(RuntimeRequest("GET", "https://example.test/start"))
+                await transport.send(request)
         finally:
             await transport.aclose()
 
@@ -569,8 +575,9 @@ def test_async_httpx_refuses_non_http_redirect_target_and_redacts_failure_surfac
     async def send() -> object:
         transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
         try:
+            request = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"})
             with pytest.raises(TransportFailure, match="file:///etc/passwd") as excinfo:
-                await transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
+                await transport.send(request)
             return excinfo.value
         finally:
             await transport.aclose()
@@ -638,8 +645,9 @@ def test_httpx_send_enforces_max_response_bytes() -> None:
 
     transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
     try:
+        request_2 = RuntimeRequest("GET", "https://example.test/", max_response_bytes=2)
         with pytest.raises(TransportFailure, match="byte limit"):
-            transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+            transport.send(request_2)
     finally:
         transport.close()
 
@@ -652,8 +660,9 @@ def test_async_httpx_send_enforces_max_response_bytes() -> None:
     async def send() -> None:
         transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
         try:
+            request = RuntimeRequest("GET", "https://example.test/", max_response_bytes=2)
             with pytest.raises(TransportFailure, match="byte limit"):
-                await transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+                await transport.send(request)
         finally:
             await transport.aclose()
 

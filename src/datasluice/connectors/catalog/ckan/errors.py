@@ -38,6 +38,39 @@ _SIZE_LIMIT_MARKERS = (
 _UPLOAD_REMEDY = "Reduce the uploaded file size below the deployment limit and retry the action."
 
 
+def _authorization_error(
+    status_code: int | None,
+    message: str,
+    operation: str,
+    platform: CatalogPlatform | str,
+    metadata: Mapping[str, object],
+) -> CatalogError:
+    forbidden = status_code == 403 or any(part in message for part in _FORBIDDEN_MESSAGE_MARKERS)
+    if forbidden:
+        return ForbiddenError(
+            "The deployment denied this authenticated action.",
+            operation=operation,
+            platform=platform,
+            capability_state="forbidden",
+            safe_action="Use credentials with the required role or request the missing permission.",
+            metadata=metadata,
+        )
+    return UnauthenticatedError(
+        "The deployment rejected the credentials supplied for this action.",
+        operation=operation,
+        platform=platform,
+        capability_state="unauthorized",
+        safe_action="Provide valid credentials and retry the operation.",
+        metadata=metadata,
+    )
+
+
+def _size_limited(details: Mapping[str, object], message: str) -> bool:
+    return any(marker in message for marker in _SIZE_LIMIT_MARKERS) or any(
+        isinstance(key, str) and key.lower() in {"max_size", "size"} for key in details
+    )
+
+
 def map_envelope_error(
     error_dict: Mapping[str, object],
     *,
@@ -70,25 +103,7 @@ def map_envelope_error(
     lowered = message.lower() if isinstance(message, str) else ""
     error: CatalogError
     if envelope_type == _AUTHORIZATION_TYPE:
-        forbidden = status_code == 403 or any(part in lowered for part in _FORBIDDEN_MESSAGE_MARKERS)
-        if forbidden:
-            error = ForbiddenError(
-                "The deployment denied this authenticated action.",
-                operation=operation,
-                platform=platform,
-                capability_state="forbidden",
-                safe_action="Use credentials with the required role or request the missing permission.",
-                metadata=details,
-            )
-        else:
-            error = UnauthenticatedError(
-                "The deployment rejected the credentials supplied for this action.",
-                operation=operation,
-                platform=platform,
-                capability_state="unauthorized",
-                safe_action="Provide valid credentials and retry the operation.",
-                metadata=details,
-            )
+        error = _authorization_error(status_code, lowered, operation, platform, details)
     elif envelope_type == _NOT_FOUND_TYPE:
         error = CatalogNotFoundError(
             "The requested catalog target was not found.",
@@ -98,9 +113,7 @@ def map_envelope_error(
             metadata=details,
         )
     elif envelope_type == _VALIDATION_TYPE:
-        size_limited = any(marker in lowered for marker in _SIZE_LIMIT_MARKERS) or any(
-            isinstance(key, str) and key.lower() in {"max_size", "size"} for key in redacted
-        )
+        size_limited = _size_limited(redacted, lowered)
         error = CatalogValidationError(
             "The deployment reported validation failures for this action.",
             operation=operation,

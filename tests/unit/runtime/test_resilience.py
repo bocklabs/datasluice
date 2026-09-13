@@ -203,10 +203,12 @@ def test_runtime_clients_expose_their_credential_resolvers_read_only() -> None:
     assert sync_client.credentials is resolver
     assert async_client.credentials is resolver
     field = "credentials"
+    resolver_2 = CredentialResolver()
     with pytest.raises(AttributeError):
-        setattr(sync_client, field, CredentialResolver())
+        setattr(sync_client, field, resolver_2)
+    resolver_3 = CredentialResolver()
     with pytest.raises(AttributeError):
-        setattr(async_client, field, CredentialResolver())
+        setattr(async_client, field, resolver_3)
 
 
 def test_capability_cache_exposes_its_probe_runner_read_only() -> None:
@@ -222,8 +224,9 @@ def test_capability_cache_exposes_its_probe_runner_read_only() -> None:
     assert cache.probe_runner is runner
     assert EffectiveCapabilityCache(_profile()).probe_runner is None
     field = "probe_runner"
+    runner_2 = _Runner()
     with pytest.raises(AttributeError):
-        setattr(cache, field, _Runner())
+        setattr(cache, field, runner_2)
 
 
 def test_client_pipeline_exhausts_tiny_total_budget_between_attempts() -> None:
@@ -238,8 +241,10 @@ def test_client_pipeline_exhausts_tiny_total_budget_between_attempts() -> None:
         max_attempts=5,
     )
 
+    request = _request()
+    guard = _guard()
     with pytest.raises(BudgetExhaustedError):
-        client.get(_request(), _guard())
+        client.get(request, guard)
 
 
 def test_client_rejects_open_breaker_until_explicit_reset() -> None:
@@ -253,11 +258,15 @@ def test_client_rejects_open_breaker_until_explicit_reset() -> None:
         retry_sleep=lambda _: None,
     )
 
+    request = _request()
+    guard = _guard()
     with pytest.raises(CatalogUnavailableError):
-        client.get(_request(), _guard())
+        client.get(request, guard)
     assert registry.inspect(_key()).failure_count == 1
+    request_2 = _request()
+    guard_2 = _guard()
     with pytest.raises(CatalogUnavailableError) as raised:
-        client.get(_request(), _guard())
+        client.get(request_2, guard_2)
     assert "cool-down" in raised.value.safe_action
 
     registry.reset(_key())

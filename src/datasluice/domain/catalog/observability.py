@@ -88,20 +88,13 @@ def _redact_value(value: object) -> object:
 
 @dataclass(frozen=True, slots=True)
 class TLSPolicy:
-    """Verify TLS by default and scope insecure exceptions explicitly."""
+    """Require certificate and hostname verification for TLS connections."""
 
     verify: bool = True
-    override_scope: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.verify) is not bool:
-            raise ValueError("TLS verification must be a boolean.")
-        if self.override_scope is not None and self.override_scope not in {"development", "private-pki"}:
-            raise ValueError("TLS override scopes must be development or private-pki.")
-        if not self.verify and self.override_scope is None:
-            raise ValueError("Disabled TLS verification requires an explicit narrow override scope.")
-        if self.verify and self.override_scope is not None:
-            raise ValueError("TLS override scopes are only valid when verification is disabled.")
+        if type(self.verify) is not bool or not self.verify:
+            raise ValueError("TLS certificate and hostname verification cannot be disabled.")
 
 
 @dataclass(frozen=True, slots=True)

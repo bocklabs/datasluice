@@ -9,7 +9,7 @@ from email.message import Message
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException, HTTPMessage
 from typing import IO
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import (
     HTTPDefaultErrorHandler,
@@ -92,12 +92,11 @@ def _redacted_redirect_url(url: str) -> str:
 
 
 def _tls_context(policy: TLSPolicy) -> ssl.SSLContext:
-    """Return a verified context, or an unverified one built from public APIs."""
-    if policy.verify:
-        return ssl.create_default_context()
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
+    """Return a context that validates peer certificates and hostnames."""
+    if not policy.verify:
+        raise ValueError("TLS certificate and hostname verification cannot be disabled.")
+    context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     return context
 
 
@@ -158,73 +157,72 @@ class UrllibCatalogTransport(CatalogTransport):
             )
         current = request
         for _ in range(self._max_redirects + 1):
-            try:
-                response = self._opener.open(
-                    Request(current.url, data=current.body, headers=dict(current.headers), method=current.method),
-                    timeout=min(self._budget.read, self._budget.total),
-                )
-                try:
-                    status = response.status
-                    headers = _header_map(response.headers)
-                    body = _read_response_body(response, current.max_response_bytes)
-                finally:
-                    close = getattr(response, "close", None)
-                    if callable(close):
-                        close()
-            except HTTPError as exc:
-                try:
-                    status, headers, body = (
-                        exc.code,
-                        _header_map(exc.headers),
-                        _read_response_body(exc, current.max_response_bytes),
-                    )
-                finally:
-                    exc.close()
-            except HTTPException as exc:
-                raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
-            except (URLError, OSError) as exc:
-                raise TransportFailure("urllib could not complete the catalog request.") from exc
+            status, headers, body = self._read_current(current)
             if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
-                return RuntimeResponse(
-                    status_code=status,
-                    headers=headers,
-                    body=body,
-                    retry_after=_retry_after(_header(headers, "retry-after")),
-                )
-            location = next((value for key, value in headers.items() if key.lower() == "location"), None)
-            if status not in _REDIRECT_CODES or location is None:
-                return RuntimeResponse(
-                    status_code=status,
-                    headers=headers,
-                    body=body,
-                    retry_after=_retry_after(_header(headers, "retry-after")),
-                )
-            try:
-                next_url = urljoin(current.url, location)
-            except ValueError as exc:
-                raise TransportFailure(
-                    f"urllib received an unusable redirect target {_redacted_redirect_url(location)!r}."
-                ) from exc
-            if urlsplit(next_url).scheme.lower() not in _ALLOWED_SCHEMES:
-                raise TransportFailure(f"Refusing to follow non-HTTP redirect to {_redacted_redirect_url(next_url)!r}.")
-            headers_for_next = dict(current.headers)
-            if not self._retains_credentials(current.url, next_url):
-                headers_for_next = strip_sensitive_redirect_headers(headers_for_next)
-            next_method, next_body, next_files = redirect_method_and_body(
-                current.method, status, current.body, current.files
-            )
-            if next_body is None and not next_files:
-                headers_for_next = drop_body_transfer_headers(headers_for_next)
-            current = RuntimeRequest(
-                method=next_method,
-                url=next_url,
-                headers=headers_for_next,
-                body=next_body,
-                files=next_files,
-                redirect_policy=current.redirect_policy,
-                max_response_bytes=current.max_response_bytes,
-            )
+                return _runtime_response(status, headers, body)
+            next_request = self._redirect_request(current, status, headers)
+            if next_request is None:
+                return _runtime_response(status, headers, body)
+            current = next_request
         raise TransportFailure("Catalog redirect limit exceeded.")
+
+    def _read_current(self, request: RuntimeRequest) -> tuple[int, dict[str, str], bytes]:
+        try:
+            response = self._opener.open(
+                Request(request.url, data=request.body, headers=dict(request.headers), method=request.method),
+                timeout=min(self._budget.read, self._budget.total),
+            )
+            try:
+                return (
+                    response.status,
+                    _header_map(response.headers),
+                    _read_response_body(response, request.max_response_bytes),
+                )
+            finally:
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+        except HTTPError as exc:
+            try:
+                return exc.code, _header_map(exc.headers), _read_response_body(exc, request.max_response_bytes)
+            finally:
+                exc.close()
+        except HTTPException as exc:
+            raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
+        except OSError as exc:
+            raise TransportFailure("urllib could not complete the catalog request.") from exc
+
+    def _redirect_request(
+        self, request: RuntimeRequest, status: int, headers: Mapping[str, str]
+    ) -> RuntimeRequest | None:
+        location = next((value for key, value in headers.items() if key.lower() == "location"), None)
+        if status not in _REDIRECT_CODES or location is None:
+            return None
+        try:
+            next_url = urljoin(request.url, location)
+        except ValueError as exc:
+            raise TransportFailure(
+                f"urllib received an unusable redirect target {_redacted_redirect_url(location)!r}."
+            ) from exc
+        if urlsplit(next_url).scheme.lower() not in _ALLOWED_SCHEMES:
+            raise TransportFailure(f"Refusing to follow non-HTTP redirect to {_redacted_redirect_url(next_url)!r}.")
+        headers_for_next = dict(request.headers)
+        if not self._retains_credentials(request.url, next_url):
+            headers_for_next = strip_sensitive_redirect_headers(headers_for_next)
+        next_method, next_body, next_files = redirect_method_and_body(
+            request.method, status, request.body, request.files
+        )
+        if next_body is None and not next_files:
+            headers_for_next = drop_body_transfer_headers(headers_for_next)
+        return RuntimeRequest(
+            method=next_method,
+            url=next_url,
+            headers=headers_for_next,
+            body=next_body,
+            files=next_files,
+            redirect_policy=request.redirect_policy,
+            max_response_bytes=request.max_response_bytes,
+        )
 
     def close(self) -> None:
         """Mark the transport closed; urllib has no persistent pool."""
@@ -253,7 +251,7 @@ class UrllibCatalogTransport(CatalogTransport):
             headers = _header_map(exc.headers)
         except HTTPException as exc:
             raise TransportFailure("urllib lost the catalog connection before streaming its response.") from exc
-        except (URLError, OSError) as exc:
+        except OSError as exc:
             raise TransportFailure("urllib could not open the catalog response stream.") from exc
 
         def chunks() -> Iterator[bytes]:
@@ -318,3 +316,12 @@ def _read_response_body(response: object, max_bytes: int | None) -> bytes:
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
     return next((value for key, value in headers.items() if key.lower() == name), None)
+
+
+def _runtime_response(status: int, headers: dict[str, str], body: bytes) -> RuntimeResponse:
+    return RuntimeResponse(
+        status_code=status,
+        headers=headers,
+        body=body,
+        retry_after=_retry_after(_header(headers, "retry-after")),
+    )

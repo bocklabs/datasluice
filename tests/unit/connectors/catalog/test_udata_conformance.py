@@ -573,8 +573,9 @@ def test_root_contract_failure_cells_execute_the_declared_sync_async_behavior(fa
 
         def direct_and_factory_sync(client: SyncUDataClient, transport: _FixtureSyncTransport) -> None:
             with client:
+                patch = SitePatchInput(title="unowned")
                 with pytest.raises(CatalogValidationError):
-                    client.root_profile.set_site(SitePatchInput(title="unowned"), permissions=None)
+                    client.root_profile.set_site(patch, permissions=None)
                 assert transport.requests == []
                 assert client.root_profile.get().id == "site"
 
@@ -588,8 +589,9 @@ def test_root_contract_failure_cells_execute_the_declared_sync_async_behavior(fa
 
         async def direct_and_factory_async(client: AsyncUDataClient, transport: _FixtureAsyncTransport) -> None:
             async with client:
+                patch = SitePatchInput(title="unowned")
                 with pytest.raises(CatalogValidationError):
-                    await client.root_profile.set_site(SitePatchInput(title="unowned"), permissions=None)
+                    await client.root_profile.set_site(patch, permissions=None)
                 assert transport.requests == []
                 assert (await client.root_profile.get()).id == "site"
 

@@ -632,15 +632,10 @@ def test_source_change_during_read_aborts_to_avoid_mixed_artifact(tmp_path) -> N
 
     store = InMemoryStateStore()
     with patch.object(sync_module, "_compute_source_version", side_effect=shifting_compute):
+        reader = DataPlaneResourceReader()
+        sync_resources_2 = sync_resources([resource], state_store=store, reader=reader, destination_uri=destination)
         with pytest.raises(DataSluiceError, match="changed during sync"):
-            list(
-                sync_resources(
-                    [resource],
-                    state_store=store,
-                    reader=DataPlaneResourceReader(),
-                    destination_uri=destination,
-                )
-            )
+            list(sync_resources_2)
 
     # The completed state MUST NOT have been written for the mixed artifact.
     state = store.get(canonical_identity(resource))

@@ -14,6 +14,7 @@ from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKAN
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.services.datasets import AsyncDatasetsService, SyncDatasetsService
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import CKANCredential
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
@@ -110,19 +111,14 @@ def _client(
     return SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        credentials=credential,
+        CKANClientSettings(base_url=LOOPBACK_ORIGIN, credential=credential, probe_runner=probe_runner),
         owns_transport=False,
-        probe_runner=probe_runner,
     )
 
 
 def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
     return AsyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
@@ -161,7 +157,8 @@ def test_package_search_preserves_every_server_sent_record_key_losslessly() -> N
 
     envelope = client.datasets.package_search(q="health")
 
-    assert envelope.page is not None and envelope.page.total_items == 2
+    assert envelope.page is not None
+    assert envelope.page.total_items == 2
     assert len(envelope.items) == 2
     assert all(isinstance(item, NativeRecord) for item in envelope.items)
     records = [item for item in envelope.items if isinstance(item, NativeRecord)]
@@ -262,8 +259,9 @@ def test_dataset_purge_refuses_an_unconfirmed_policy_at_zero_transport_io() -> N
     transport = SyncCaptureTransport(body=_success_body(None))
     client = _client(transport)
 
+    policy = MutationPolicy(destructive=True)
     with pytest.raises(CatalogValidationError) as excinfo:
-        client.datasets.dataset_purge(id="pkg-1", policy=MutationPolicy(destructive=True))
+        client.datasets.dataset_purge(id="pkg-1", policy=policy)
 
     assert transport.requests == []
     assert excinfo.value.safe_action

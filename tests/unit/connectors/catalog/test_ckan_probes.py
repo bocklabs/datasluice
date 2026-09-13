@@ -27,6 +27,7 @@ from datasluice.connectors.catalog.ckan.probes import (
     maybe_emit_line_advisory,
     version_line_state,
 )
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.discovery.detector import detect
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import EvidenceProvenance, ProbeEvidence, ProbeResponseClass
@@ -449,8 +450,7 @@ def test_advise_never_blocks_a_normal_client_read_on_foreign_line() -> None:
     client = SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=ORIGIN,
-        probe_runner=runner,
+        CKANClientSettings(base_url=ORIGIN, probe_runner=runner),
         owns_transport=False,
     )
 
@@ -488,8 +488,9 @@ def test_detector_fails_fast_when_the_engine_lacks_a_runner() -> None:
     """A runner-less engine raises the documented wiring error before any probing."""
     engine = EffectiveCapabilityCache(declared_ckan_profile())
 
+    registry = _Registry(("datasluice/ckan",))
     with pytest.raises(CatalogValidationError, match="no synchronous probe runner"):
-        detect(ORIGIN, {"datasluice/ckan": engine}, _Registry(("datasluice/ckan",)))
+        detect(ORIGIN, {"datasluice/ckan": engine}, registry)
 
 
 def test_transport_failure_mid_sweep_is_contained_as_a_missed_row() -> None:

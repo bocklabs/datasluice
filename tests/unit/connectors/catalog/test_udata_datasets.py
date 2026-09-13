@@ -187,7 +187,8 @@ def test_row39_list_datasets_exact_wire_and_projection() -> None:
     assert len(envelope.items) == 1
     assert isinstance(envelope.items[0], NativeRecord)
     assert envelope.items[0].id.value == "abc"
-    assert envelope.page is not None and envelope.page.total_items == 1
+    assert envelope.page is not None
+    assert envelope.page.total_items == 1
 
 
 def test_row40_create_dataset_posts_exact_body_and_decodes_201() -> None:
@@ -206,7 +207,8 @@ def test_row40_create_dataset_posts_exact_body_and_decodes_201() -> None:
     assert request.headers.get("Content-Type") == "application/json"
     assert request.headers.get("X-API-KEY") == "secret-key"
     record_value = record.record
-    assert record_value is not None and record_value.id.value == "new"
+    assert record_value is not None
+    assert record_value.id.value == "new"
     assert record.receipt.outcome == "succeeded"
     assert record.receipt.audit_metadata["mutation"] == "created"
     assert record.receipt.audit_metadata["status_code"] == 201
@@ -284,7 +286,8 @@ def test_rows45_46_feature_transitions_use_exact_methods() -> None:
             mutation_policy=_mutation_policy("udata/api-v1.unfeature-dataset", "abc", destructive=True),
         )
 
-    assert featured.record is not None and unfeatured.record is not None
+    assert featured.record is not None
+    assert unfeatured.record is not None
     featured_id = featured.record.id
     unfeatured_id = unfeatured.record.id
     assert featured_id.value == unfeatured_id.value == "abc"
@@ -443,12 +446,10 @@ def test_dataset_failures_map_to_typed_errors_without_retry_on_client_errors() -
             client.datasets.get("missing")
         with pytest.raises(CatalogConflictError) as gone:
             client.datasets.get("gone")
+        client_input = DatasetCreateInput(title="T", description="D")
+        mutation_policy = _mutation_policy("udata/api-v1.create-dataset", "T")
         with pytest.raises(CatalogValidationError) as invalid:
-            client.datasets.create(
-                DatasetCreateInput(title="T", description="D"),
-                permissions=_USER_PERMISSIONS,
-                mutation_policy=_mutation_policy("udata/api-v1.create-dataset", "T"),
-            )
+            client.datasets.create(client_input, permissions=_USER_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert gone.value.capability_state == "unavailable"
     invalid_receipt = cast(dict[str, object], invalid.value.metadata["receipt"])
@@ -466,9 +467,9 @@ def test_invalid_inputs_are_rejected_before_any_dispatch() -> None:
     transport, client = _sync_client_with_transport(routes)
     with client:
         with pytest.raises(ValueError):
-            client.datasets.create(DatasetCreateInput(title="", description="D"), permissions=_USER_PERMISSIONS)
+            DatasetCreateInput(title="", description="D")
         with pytest.raises(ValueError):
-            client.datasets.list(DatasetListQuery(sort="-nope"))
+            DatasetListQuery(sort="-nope")
         with pytest.raises(CatalogValidationError):
             client.datasets.get("")
 
@@ -668,19 +669,19 @@ def test_unimplemented_native_operation_returns_typed_error() -> None:
     transport, client = _sync_client_with_transport(routes)
     with client:
         resources_op = next(op for op in declared_udata_profile().operations if "resource" in op.method)
+        request = CatalogOperationRequest(operation_id=resources_op, payload={})
+        guard = CatalogOperationGuard(operation_id=resources_op)
         with pytest.raises(NativeCatalogError, match="tracer slice"):
-            client.datasets_list(
-                CatalogOperationRequest(operation_id=resources_op, payload={}),
-                CatalogOperationGuard(operation_id=resources_op),
-            )
+            client.datasets_list(request, guard)
         assert [r.url for r in transport.requests if "resources" in r.url] == []
 
 
 def test_cr01_mutations_without_credentials_fail_closed_before_dispatch() -> None:
     routes = _site_first({("POST", "http://127.0.0.1:5640/api/1/datasets/"): (201, _dataset_doc("new"))})
     with _sync_client(routes) as client:
+        client_input = DatasetCreateInput(title="T", description="D")
         with pytest.raises(UnauthenticatedError) as excinfo:
-            client.datasets.create(DatasetCreateInput(title="T", description="D"), permissions=_USER_PERMISSIONS)
+            client.datasets.create(client_input, permissions=_USER_PERMISSIONS)
         receipt = _receipt_from(excinfo.value)
         assert receipt.outcome == "rejected"
         assert receipt.target.value.startswith("request:")
@@ -692,11 +693,9 @@ def test_cr01_feature_requires_admin_role_evidence() -> None:
     routes = _site_first({("POST", "http://127.0.0.1:5640/api/1/datasets/abc/featured/"): _dataset_doc()})
     transport, client = _sync_client_with_transport(routes, _USER_KEY_CREDENTIAL)
     with client:
+        permissions = EffectivePermissions.for_credential(_USER_KEY_CREDENTIAL, platform=CatalogPlatform.UDATA)
         with pytest.raises(ForbiddenError) as excinfo:
-            client.datasets.feature(
-                "abc",
-                permissions=EffectivePermissions.for_credential(_USER_KEY_CREDENTIAL, platform=CatalogPlatform.UDATA),
-            )
+            client.datasets.feature("abc", permissions=permissions)
 
     receipt = _receipt_from(excinfo.value)
     assert receipt.outcome == "rejected"
@@ -738,12 +737,9 @@ def test_cr03_destructive_calls_are_never_auto_retried() -> None:
         owns_transport=False,
     )
     with client:
+        mutation_policy = _mutation_policy("udata/api-v1.delete-dataset", "abc", destructive=True)
         with pytest.raises(CatalogUnavailableError) as excinfo:
-            client.datasets.delete(
-                "abc",
-                _USER_PERMISSIONS,
-                mutation_policy=_mutation_policy("udata/api-v1.delete-dataset", "abc", destructive=True),
-            )
+            client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert transport.delete_sends == 1
     assert _receipt_from(excinfo.value).outcome == "failed"
@@ -825,12 +821,9 @@ def test_cr04_capability_evidence_stays_scoped_to_its_route() -> None:
     )
     transport, client = _sync_client_with_transport(routes, _USER_KEY_CREDENTIAL)
     with client:
+        mutation_policy = _mutation_policy("udata/api-v1.feature-dataset", "abc")
         with pytest.raises(ForbiddenError) as excinfo:
-            client.datasets.feature(
-                "abc",
-                permissions=_USER_KEY_ADMIN_PERMISSIONS,
-                mutation_policy=_mutation_policy("udata/api-v1.feature-dataset", "abc"),
-            )
+            client.datasets.feature("abc", permissions=_USER_KEY_ADMIN_PERMISSIONS, mutation_policy=mutation_policy)
         envelope = client.datasets.list()
 
     assert len(envelope.items) == 1
@@ -842,12 +835,10 @@ def test_wr03_read_only_mutation_status_maps_to_deployment_disabled() -> None:
     transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
 
     with client:
+        client_input = DatasetCreateInput(title="T", description="D")
+        mutation_policy = _mutation_policy("udata/api-v1.create-dataset", "T")
         with pytest.raises(CatalogUnavailableError) as raised:
-            client.datasets.create(
-                DatasetCreateInput(title="T", description="D"),
-                permissions=_USER_PERMISSIONS,
-                mutation_policy=_mutation_policy("udata/api-v1.create-dataset", "T"),
-            )
+            client.datasets.create(client_input, permissions=_USER_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert raised.value.capability_state == "deployment-disabled"
     receipt = _receipt_from(raised.value)
@@ -1036,12 +1027,10 @@ def test_cr01_mutation_permission_evidence_must_match_platform_identity() -> Non
     transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
 
     with client:
+        client_input = DatasetCreateInput(title="T", description="D")
+        mutation_policy = _mutation_policy("udata/api-v1.create-dataset", "T")
         with pytest.raises(ForbiddenError) as raised:
-            client.datasets.create(
-                DatasetCreateInput(title="T", description="D"),
-                permissions=wrong_platform,
-                mutation_policy=_mutation_policy("udata/api-v1.create-dataset", "T"),
-            )
+            client.datasets.create(client_input, permissions=wrong_platform, mutation_policy=mutation_policy)
 
     assert _receipt_from(raised.value).outcome == "rejected"
     assert not [request for request in transport.requests if request.method == "POST"]
@@ -1054,13 +1043,10 @@ def test_cr01_unauthenticated_permission_claims_cannot_authorize_mutation() -> N
     transport, client = _sync_client_with_transport(_site_first({}), _USER_CREDENTIAL)
 
     with client:
+        client_input = DatasetUpdateInput(title="New")
+        mutation_policy = _mutation_policy("udata/api-v1.update-dataset", "abc")
         with pytest.raises(ForbiddenError) as raised:
-            client.datasets.update(
-                "abc",
-                DatasetUpdateInput(title="New"),
-                permissions=permissions,
-                mutation_policy=_mutation_policy("udata/api-v1.update-dataset", "abc"),
-            )
+            client.datasets.update("abc", client_input, permissions=permissions, mutation_policy=mutation_policy)
 
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in transport.requests if "/api/" in request.url] == []
@@ -1071,12 +1057,10 @@ def test_cr02_malformed_successful_mutation_is_ambiguous_and_receipt_bearing() -
     transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
 
     with client:
+        client_input = DatasetCreateInput(title="T", description="D")
+        mutation_policy = _mutation_policy("udata/api-v1.create-dataset", "T")
         with pytest.raises(NativeCatalogError) as raised:
-            client.datasets.create(
-                DatasetCreateInput(title="T", description="D"),
-                permissions=_USER_PERMISSIONS,
-                mutation_policy=_mutation_policy("udata/api-v1.create-dataset", "T"),
-            )
+            client.datasets.create(client_input, permissions=_USER_PERMISSIONS, mutation_policy=mutation_policy)
 
     receipt = _receipt_from(raised.value)
     assert receipt.outcome == "ambiguous"
@@ -1103,12 +1087,10 @@ def test_cr02_transport_failure_keeps_an_ambiguous_receipt_on_the_original_error
     )
 
     with client:
+        client_input = DatasetCreateInput(title="T", description="D")
+        mutation_policy = _mutation_policy("udata/api-v1.create-dataset", "T")
         with pytest.raises(TransportFailure) as raised:
-            client.datasets.create(
-                DatasetCreateInput(title="T", description="D"),
-                permissions=_USER_PERMISSIONS,
-                mutation_policy=_mutation_policy("udata/api-v1.create-dataset", "T"),
-            )
+            client.datasets.create(client_input, permissions=_USER_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert _receipt_from(raised.value).outcome == "ambiguous"
 
@@ -1117,8 +1099,9 @@ def test_cr02_policy_rejection_has_a_shared_receipt_without_site_probe() -> None
     transport, client = _sync_client_with_transport(_site_first({}), _USER_CREDENTIAL)
 
     with client:
+        client_input = DatasetUpdateInput(title="New")
         with pytest.raises(ForbiddenError) as raised:
-            client.datasets.update("abc", DatasetUpdateInput(title="New"), permissions=_USER_PERMISSIONS)
+            client.datasets.update("abc", client_input, permissions=_USER_PERMISSIONS)
 
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in transport.requests if "/api/" in request.url] == []
@@ -1333,11 +1316,11 @@ def test_wr09_async_mutation_failure_preserves_the_same_ambiguous_receipt() -> N
             owns_transport=False,
         )
         async with client:
+            client_input = DatasetCreateInput(title="T", description="D")
+            mutation_policy = _mutation_policy("udata/api-v1.create-dataset", "T")
             with pytest.raises(NativeCatalogError) as raised:
                 await client.datasets.create(
-                    DatasetCreateInput(title="T", description="D"),
-                    permissions=_USER_PERMISSIONS,
-                    mutation_policy=_mutation_policy("udata/api-v1.create-dataset", "T"),
+                    client_input, permissions=_USER_PERMISSIONS, mutation_policy=mutation_policy
                 )
         receipt = _receipt_from(raised.value)
         assert receipt.outcome == "ambiguous"
@@ -1348,14 +1331,15 @@ def test_wr09_async_mutation_failure_preserves_the_same_ambiguous_receipt() -> N
 
 
 def test_wr10_query_models_reject_non_scalar_filter_values_at_construction() -> None:
+    typed_value = cast(str, 1)
     with pytest.raises(ValueError):
-        DatasetListQuery(sort=cast(str, 1))
+        DatasetListQuery(sort=typed_value)
+    typed_value_2 = cast(Mapping[str, str | bool | tuple[str, ...]], {"tag": 1})
     with pytest.raises(ValueError):
-        DatasetListQuery(filters=cast(Mapping[str, str | bool | tuple[str, ...]], {"tag": 1}))
+        DatasetListQuery(filters=typed_value_2)
+    typed_value_3 = cast(Mapping[str, str | bool | tuple[str, ...]], {"last_update_range": ("last_30_days",)})
     with pytest.raises(ValueError, match="last_update_range"):
-        DatasetSearchQuery(
-            filters=cast(Mapping[str, str | bool | tuple[str, ...]], {"last_update_range": ("last_30_days",)})
-        )
+        DatasetSearchQuery(filters=typed_value_3)
 
 
 def test_wr13_error_metadata_is_deeply_immutable_and_finite() -> None:

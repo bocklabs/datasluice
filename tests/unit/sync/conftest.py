@@ -54,20 +54,20 @@ def write_counting_fs(fs: Any) -> WriteCountingFS:
     return WriteCountingFS(fs)
 
 
-@pytest.fixture()
+@pytest.fixture
 def memory_store() -> FileStateStore:
     """FileStateStore on the in-process fsspec ``memory://`` backend."""
     return FileStateStore("memory://state")
 
 
-@pytest.fixture()
+@pytest.fixture
 def file_store(tmp_path) -> FileStateStore:
     """FileStateStore on a local ``file://{tmp_path}/state`` directory."""
     return FileStateStore(f"file://{tmp_path}/state")
 
 
-@pytest.fixture()
-def csv_server(request):
+@pytest.fixture
+def csv_server():
     """Return a factory for scriptable CSV servers."""
     servers = []
 
@@ -81,16 +81,13 @@ def csv_server(request):
         servers.append(server)
         return server, f"{base_url}{path}"
 
-    def shutdown() -> None:
-        for server in servers:
-            server.shutdown()
-
-    request.addfinalizer(shutdown)
-    return factory
+    yield factory
+    for server in servers:
+        server.shutdown()
 
 
-@pytest.fixture()
-def csv_server_multi(request):
+@pytest.fixture
+def csv_server_multi():
     """Return a factory for multi-resource CSV servers."""
     servers = []
 
@@ -103,15 +100,12 @@ def csv_server_multi(request):
         servers.append(server)
         return server, base_url
 
-    def shutdown() -> None:
-        for server in servers:
-            server.shutdown()
-
-    request.addfinalizer(shutdown)
-    return factory
+    yield factory
+    for server in servers:
+        server.shutdown()
 
 
-@pytest.fixture()
+@pytest.fixture
 def make_resource():
     """Return a factory for synthetic HTTP resources."""
 
@@ -127,7 +121,7 @@ def make_resource():
     return factory
 
 
-@pytest.fixture()
+@pytest.fixture
 def inmemory_state() -> InMemoryStateStore:
     """Return a fresh in-memory state store."""
     return InMemoryStateStore()

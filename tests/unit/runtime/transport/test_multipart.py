@@ -70,7 +70,8 @@ def test_reprs_render_field_names_and_lengths_but_never_part_bytes() -> None:
 
     assert "super-secret-upload-bytes" not in part_rendered
     assert str(len(secret)) in part_rendered
-    assert "upload" in part_rendered and "data.csv" in part_rendered
+    assert "upload" in part_rendered
+    assert "data.csv" in part_rendered
     assert "super-secret-upload-bytes" not in request_rendered
     assert len(request_rendered) < 200
 
@@ -204,8 +205,9 @@ def test_async_httpx_redirect_preserves_files(status: int) -> None:
 def test_urllib_rejects_multipart_with_actionable_message_naming_the_extra() -> None:
     transport = UrllibCatalogTransport()
     try:
+        request = RuntimeRequest("POST", "https://example.test/upload", files=_PARTS)
         with pytest.raises(TransportFailure, match=r"datasluice\[http\]") as excinfo:
-            transport.send(RuntimeRequest("POST", "https://example.test/upload", files=_PARTS))
+            transport.send(request)
     finally:
         transport.close()
 

@@ -14,6 +14,7 @@ from datasluice.connectors.catalog.ckan.services.relationships_activity import (
     AsyncRelationshipsActivityService,
     SyncRelationshipsActivityService,
 )
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
 from datasluice.errors.catalog import UnauthenticatedError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
@@ -109,19 +110,13 @@ class AsyncCaptureTransport:
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
     return SyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
 def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
     return AsyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 

@@ -30,8 +30,9 @@ def test_cas_loser_raises(tmp_path: Path) -> None:
     winner = SyncState(cursor={"resource-1": '"etag-b"'})
     store_b.put(key, winner)
 
+    state = SyncState(cursor={"resource-1": '"etag-a"'})
     with pytest.raises(SyncStateConflictError):
-        store_a.put(key, SyncState(cursor={"resource-1": '"etag-a"'}), expected_prior=expected_prior)
+        store_a.put(key, state, expected_prior=expected_prior)
 
     assert store_a.get(key) == winner
 
@@ -63,12 +64,9 @@ def test_cas_matrix_n10(tmp_path: Path) -> None:
         assert expected_prior is None
         store_b.put(key, winner)
 
+        state = SyncState(cursor={"resource-1": f'"loser-{iteration}"'})
         with pytest.raises(SyncStateConflictError):
-            store_a.put(
-                key,
-                SyncState(cursor={"resource-1": f'"loser-{iteration}"'}),
-                expected_prior=expected_prior,
-            )
+            store_a.put(key, state, expected_prior=expected_prior)
 
         assert store_a.get(key) == winner
 
@@ -134,8 +132,9 @@ def test_conditional_put_with_stale_prior_raises_conflict(tmp_path: Path) -> Non
     interloper = SyncState(cursor={"resource-1": '"interloper"'})
     store.conditional_put(key, interloper, stale_prior)
 
+    state = SyncState(cursor={"resource-1": '"loser"'})
     with pytest.raises(SyncStateConflictError):
-        store.conditional_put(key, SyncState(cursor={"resource-1": '"loser"'}), stale_prior)
+        store.conditional_put(key, state, stale_prior)
 
     # Prior state is the interloper's, unchanged by the losing write.
     assert store.get(key) == interloper

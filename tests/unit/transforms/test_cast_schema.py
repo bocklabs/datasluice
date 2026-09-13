@@ -40,8 +40,14 @@ def test_cast_truncating_raises() -> None:
 
     src_schema = pa.schema([("v", pa.int64())])
     batch = pa.RecordBatch.from_arrays([pa.array([99999999999], type=pa.int64())], schema=src_schema)
+    int_type = pa.int32()
+    schema = pa.schema([("v", int_type)])
+    cast_schema = CastSchema(schema)
+    batches = iter([batch])
+    context = _ctx(src_schema)
+    apply = cast_schema.apply(batches, context)
     with pytest.raises(TransformError):
-        list(CastSchema(pa.schema([("v", pa.int32())])).apply(iter([batch]), _ctx(src_schema)))
+        list(apply)
 
 
 def test_cast_safe_identity() -> None:

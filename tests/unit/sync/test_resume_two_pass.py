@@ -42,16 +42,16 @@ def test_crash_then_resume_skips_completed_resource(
     crashing_store = FaultInjectingStateStore(first_store, raise_on_put=2)
     first_transport = HttpxCatalogTransport()
 
+    reader = DataPlaneResourceReader(transport=first_transport)
+    sync_resources_2 = sync_resources(
+        resources,
+        state_store=crashing_store,
+        reader=reader,
+        destination_uri=f"file://{tmp_path}/dest",
+        transport=first_transport,
+    )
     with pytest.raises(RuntimeError, match="injected crash"):
-        list(
-            sync_resources(
-                resources,
-                state_store=crashing_store,
-                reader=DataPlaneResourceReader(transport=first_transport),
-                destination_uri=f"file://{tmp_path}/dest",
-                transport=first_transport,
-            )
-        )
+        list(sync_resources_2)
 
     assert first_store.get(identities["r1"]) is not None
     assert first_store.get(identities["r2"]) is None

@@ -10,8 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import random
 import re
+import secrets
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,6 +26,16 @@ from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
     from datasluice.domain import SyncState
+
+_INVALID_DURABLE_SYNC_STATE_CURSOR = "Invalid durable SyncState at state.cursor"
+_INVALID_DURABLE_SYNC_STATE_LAST_SYNCED_AT = "Invalid durable SyncState at state.last_synced_at"
+_INVALID_DURABLE_SYNC_STATE_CHECKPOINT = "Invalid durable SyncState at state.extra.datasluice_checkpoint"
+_INVALID_DURABLE_SYNC_STATE_CHECKPOINT_POSITION = (
+    "Invalid durable SyncState at state.extra.datasluice_checkpoint.position"
+)
+_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT = (
+    "Invalid durable SyncState at state.extra.datasluice_completed_artifact"
+)
 
 logger = get_logger("sync.state_store")
 
@@ -390,7 +400,7 @@ class FileStateStore:
     def _publish(self, key: str, payload: bytes) -> None:
         """Write ``payload`` to the key's path via temp-file + atomic rename."""
         path = self._state_path(key)
-        tmp_path = f"{self._base}/.{self._sha256_bytes(payload)}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
+        tmp_path = f"{self._base}/.{self._sha256_bytes(payload)}.tmp.{os.getpid()}.{secrets.token_hex(8)}"
         try:
             self._fs.pipe_file(tmp_path, payload)
             self._fs.mv(tmp_path, path)
@@ -468,14 +478,14 @@ def _validate_state_for_write(key: str, state: SyncState) -> None:
 
 def _validate_cursor(key: str, cursor: Any) -> None:
     if type(cursor) is not dict:
-        raise StateStoreError("Invalid durable SyncState at state.cursor")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CURSOR)
     if not cursor:
         return
     if len(cursor) != 1:
-        raise StateStoreError("Invalid durable SyncState at state.cursor")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CURSOR)
     cursor_key, watermark = next(iter(cursor.items()))
     if cursor_key != key or not isinstance(watermark, str) or not _is_completed_watermark(watermark):
-        raise StateStoreError("Invalid durable SyncState at state.cursor")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CURSOR)
 
 
 _SECRET_SUBSTRINGS = (
@@ -527,13 +537,13 @@ def _validate_last_synced_at(value: Any) -> None:
     if value is None:
         return
     if not isinstance(value, str) or not value or len(value) > _MAX_TIMESTAMP_LENGTH:
-        raise StateStoreError("Invalid durable SyncState at state.last_synced_at")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_LAST_SYNCED_AT)
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise StateStoreError("Invalid durable SyncState at state.last_synced_at") from exc
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_LAST_SYNCED_AT) from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise StateStoreError("Invalid durable SyncState at state.last_synced_at")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_LAST_SYNCED_AT)
 
 
 def _validate_extra(extra: Any) -> None:
@@ -548,7 +558,7 @@ def _validate_extra(extra: Any) -> None:
         raise StateStoreError("Invalid durable SyncState at state.extra")
     checkpoint = extra["datasluice_checkpoint"]
     if not isinstance(checkpoint, dict):
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
     version = checkpoint.get("version")
     if version == 2:
         _validate_checkpoint_v2(checkpoint)
@@ -562,10 +572,10 @@ def _validate_extra(extra: Any) -> None:
 
 def _validate_checkpoint_v2(checkpoint: dict[str, Any]) -> None:
     if set(checkpoint) != {"version", "status", "next_batch_index", "position", "source_version"}:
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
     position = checkpoint["position"]
     if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.position")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT_POSITION)
     next_batch_index = checkpoint["next_batch_index"]
     row_group_index = position["row_group_index"]
     source_version = checkpoint["source_version"]
@@ -578,7 +588,7 @@ def _validate_checkpoint_v2(checkpoint: dict[str, Any]) -> None:
         or checkpoint["status"] != "in_progress"
         or not _is_source_version(source_version)
     ):
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
 
 
 def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
@@ -590,10 +600,10 @@ def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
         "source_version",
         "destination_identity",
     }:
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
     position = checkpoint["position"]
     if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.position")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT_POSITION)
     next_batch_index = checkpoint["next_batch_index"]
     row_group_index = position["row_group_index"]
     if (
@@ -606,19 +616,19 @@ def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
         or not _is_source_version(checkpoint["source_version"])
         or not _is_sha256(checkpoint["destination_identity"])
     ):
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
 
 
 def _validate_completed_artifact(artifact: Any) -> None:
     if not isinstance(artifact, dict):
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT)
     if set(artifact) not in (_COMPLETED_ARTIFACT_KEYS, _LEGACY_COMPLETED_ARTIFACT_KEYS):
         try:
             from datasluice.domain import Artifact
 
             Artifact.from_dict(artifact)
         except Exception as exc:
-            raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact") from exc
+            raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT) from exc
         return
     destination_size = artifact["destination_size"]
     destination_checksum = artifact["destination_checksum"]
@@ -635,7 +645,7 @@ def _validate_completed_artifact(artifact: Any) -> None:
         or not isinstance(destination_checksum, str)
         or not _is_source_version(destination_checksum)
     ):
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_completed_artifact")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT)
 
 
 def _is_safe_destination_uri(value: Any) -> bool:
@@ -668,10 +678,10 @@ def _is_sha256(value: Any) -> bool:
 
 def _validate_checkpoint_v1(checkpoint: dict[str, Any]) -> None:
     if set(checkpoint) != _CHECKPOINT_KEYS:
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
     position = checkpoint["position"]
     if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.position")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT_POSITION)
     next_batch_index = checkpoint["next_batch_index"]
     row_group_index = position["row_group_index"]
     if (
@@ -683,7 +693,7 @@ def _validate_checkpoint_v1(checkpoint: dict[str, Any]) -> None:
         or position["kind"] != "parquet_row_group"
         or checkpoint["status"] != "in_progress"
     ):
-        raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint")
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
 
 
 class InMemoryStateStore:

@@ -9,6 +9,9 @@ from datasluice.domain.catalog.ids import CatalogId
 from datasluice.domain.catalog.models import _contract_error, _freeze_json, _object_dict, _thaw_json
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 
+_MUTATION_RECEIPT_AUDIT_METADATA_PATH = "mutation_receipt.audit_metadata"
+_MUTATION_RECEIPT_ATOMICITY_PATH = "mutation_receipt.atomicity"
+
 _ATOMICITIES = frozenset({"atomic", "independent"})
 _OUTCOMES = frozenset({"succeeded", "rejected", "failed", "cancelled", "ambiguous", "skipped"})
 _SENSITIVE_KEY_PARTS = (
@@ -67,10 +70,10 @@ def _validate_redacted_metadata(value: object, path: str) -> object:
 
 def _freeze_audit_metadata(value: object) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
-        raise _contract_error("mutation_receipt.audit_metadata")
-    frozen = _validate_redacted_metadata(value, "mutation_receipt.audit_metadata")
+        raise _contract_error(_MUTATION_RECEIPT_AUDIT_METADATA_PATH)
+    frozen = _validate_redacted_metadata(value, _MUTATION_RECEIPT_AUDIT_METADATA_PATH)
     if not isinstance(frozen, Mapping):
-        raise _contract_error("mutation_receipt.audit_metadata")
+        raise _contract_error(_MUTATION_RECEIPT_AUDIT_METADATA_PATH)
     return frozen
 
 
@@ -96,9 +99,9 @@ class MutationReceipt:
         _optional_text(self.version_token, "mutation_receipt.version_token")
         _optional_text(self.request_id, "mutation_receipt.request_id")
         if self.atomicity not in _ATOMICITIES or self.operation_atomicity not in _ATOMICITIES:
-            raise _contract_error("mutation_receipt.atomicity")
+            raise _contract_error(_MUTATION_RECEIPT_ATOMICITY_PATH)
         if self.atomicity == "atomic" and self.operation_atomicity != "atomic":
-            raise _contract_error("mutation_receipt.atomicity")
+            raise _contract_error(_MUTATION_RECEIPT_ATOMICITY_PATH)
         object.__setattr__(self, "audit_metadata", _freeze_audit_metadata(self.audit_metadata))
 
     def to_dict(self) -> dict[str, object]:
@@ -141,9 +144,9 @@ class MutationReceipt:
             target=CatalogId.from_dict(data["target"]),
             version_token=_optional_text(data["version_token"], "mutation_receipt.version_token"),
             request_id=_optional_text(data["request_id"], "mutation_receipt.request_id"),
-            atomicity=_required_text(data["atomicity"], "mutation_receipt.atomicity"),
+            atomicity=_required_text(data["atomicity"], _MUTATION_RECEIPT_ATOMICITY_PATH),
             operation_atomicity=_required_text(data["operation_atomicity"], "mutation_receipt.operation_atomicity"),
-            audit_metadata=_object_dict(data["audit_metadata"], "mutation_receipt.audit_metadata"),
+            audit_metadata=_object_dict(data["audit_metadata"], _MUTATION_RECEIPT_AUDIT_METADATA_PATH),
         )
 
 

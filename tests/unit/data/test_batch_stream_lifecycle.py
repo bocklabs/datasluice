@@ -59,8 +59,9 @@ def test_source_closed_on_construction_failure(monkeypatch) -> None:
     reader = DataPlaneResourceReader()
     monkeypatch.setattr(access_module, "get_reader", lambda _format: _FailingFormatReader())
 
+    resource = _local_csv_resource()
     with pytest.raises(RuntimeError, match="prefetch"):
-        reader._build_batch_stream(_local_csv_resource(), source, 10)
+        reader._build_batch_stream(resource, source, 10)
 
     assert source.close_calls == 1
 
@@ -77,8 +78,9 @@ def test_batch_size_zero_rejected_before_source_acquisition(monkeypatch) -> None
 
     from datasluice.exceptions import DataSluiceError
 
+    resource = _local_csv_resource()
     with pytest.raises(DataSluiceError, match="batch_size"):
-        reader.open(_local_csv_resource(), batch_size=0)
+        reader.open(resource, batch_size=0)
 
     assert acquisitions == []
 
@@ -95,8 +97,9 @@ def test_batch_size_negative_rejected_before_source_acquisition(monkeypatch) -> 
 
     from datasluice.exceptions import DataSluiceError
 
+    resource = _local_csv_resource()
     with pytest.raises(DataSluiceError, match="batch_size"):
-        reader.open(_local_csv_resource(), batch_size=-1)
+        reader.open(resource, batch_size=-1)
 
     assert acquisitions == []
 

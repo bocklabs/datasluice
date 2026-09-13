@@ -38,8 +38,8 @@ class KeychainCredentialProvider:
             password = (self._get_password or _keyring_password_getter())("datasluice", username)
         except ImportError:
             raise
-        except Exception as exc:
-            raise _resolution_error("the OS keychain", platform, exc) from None
+        except Exception:
+            raise _resolution_error("the OS keychain", platform) from None
         if not password:
             return {}
         return {CredentialSource.KEYCHAIN: credential_from_secret(platform, password)}

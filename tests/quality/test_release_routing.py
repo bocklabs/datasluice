@@ -387,7 +387,8 @@ def test_initial_release_versions_and_tags() -> None:
     ]
     core = _release_proposal(config, manifest, commits, ".")
     provider = _release_proposal(config, manifest, commits, PROVIDER_PATH)
-    assert core is not None and provider is not None
+    assert core is not None
+    assert provider is not None
     assert core == ("1.0.0", "datasluice-v1.0.0")
     assert provider == ("0.1.0", "apache-airflow-providers-datasluice-v0.1.0")
     merged = _post_merge_manifest(config, manifest, {".": core, PROVIDER_PATH: provider})
@@ -451,7 +452,8 @@ def test_provider_only_and_joint_dependencies() -> None:
     assert "publish-core" in providers["needs"]
     assert "release-please" in providers["needs"]
     core_if = str(core.get("if", ""))
-    assert "core--release_created" in core_if and "'true'" in core_if
+    assert "core--release_created" in core_if
+    assert "'true'" in core_if
     providers_if = str(providers.get("if", ""))
     assert "always()" in providers_if
     assert "provider-releases" in providers_if

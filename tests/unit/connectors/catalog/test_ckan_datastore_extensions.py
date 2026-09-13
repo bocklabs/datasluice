@@ -23,6 +23,7 @@ from datasluice.connectors.catalog.ckan.probes import (
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.services.datastore import AsyncDatastoreService, SyncDatastoreService
 from datasluice.connectors.catalog.ckan.services.extensions import AsyncExtensionsService, SyncExtensionsService
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
@@ -146,10 +147,12 @@ def _client(transport: SyncCaptureTransport, runner: SeededProbeRunner | None = 
     return SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
+        CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN,
+            probe_policy="auto",
+            probe_runner=runner if runner is not None else SeededProbeRunner(),
+        ),
         owns_transport=False,
-        probe_policy="auto",
-        probe_runner=runner if runner is not None else SeededProbeRunner(),
     )
 
 
@@ -157,10 +160,12 @@ def _async_client(transport: AsyncCaptureTransport, runner: AsyncSeededProbeRunn
     return AsyncCKANClient(
         transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
+        CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN,
+            probe_policy="auto",
+            async_probe_runner=runner if runner is not None else AsyncSeededProbeRunner(),
+        ),
         owns_transport=False,
-        probe_policy="auto",
-        probe_runner=runner if runner is not None else AsyncSeededProbeRunner(),
     )
 
 
@@ -382,8 +387,9 @@ def test_async_sqlsearch_blocks_and_datastore_dispatches_from_their_own_evidence
     blocked_transport = AsyncCaptureTransport(body=_success_body({"records": []}))
     blocked_client = _async_client(blocked_transport, AsyncSeededProbeRunner(deployment_disabled=frozenset({SQL_ID})))
 
+    datastore_search_sql = blocked_client.datastore.datastore_search_sql(sql='SELECT * FROM "res-1"')
     with pytest.raises(UnsupportedCapabilityError):
-        asyncio.run(blocked_client.datastore.datastore_search_sql(sql='SELECT * FROM "res-1"'))
+        asyncio.run(datastore_search_sql)
     assert blocked_transport.requests == []
 
     allowed_transport = AsyncCaptureTransport(body=_success_body({"records": [{"id": "1"}], "count": 1}))
@@ -394,14 +400,16 @@ def test_async_sqlsearch_blocks_and_datastore_dispatches_from_their_own_evidence
 
     destructive_transport = AsyncCaptureTransport(body=_success_body({}))
     destructive_client = _async_client(destructive_transport)
+    datastore_delete = destructive_client.datastore.datastore_delete(resource_id="res-1")
     with pytest.raises(CatalogValidationError):
-        asyncio.run(destructive_client.datastore.datastore_delete(resource_id="res-1"))
+        asyncio.run(datastore_delete)
     assert destructive_transport.requests == []
 
     forbidden_transport = AsyncCaptureTransport(
         body=_failure_body({"__type": "Authorization Error", "message": "not authorized"})
     )
     forbidden_client = _async_client(forbidden_transport)
+    config_option_update = forbidden_client.extensions.config_option_update(values={"ckan.site_title": "Changed"})
     with pytest.raises(ForbiddenError):
-        asyncio.run(forbidden_client.extensions.config_option_update(values={"ckan.site_title": "Changed"}))
+        asyncio.run(config_option_update)
     assert len(forbidden_transport.requests) == 1

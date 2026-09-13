@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -67,30 +66,21 @@ class DataSluiceSession:
         sinks: tuple[EventSink, ...] = (),
         budget: TimeBudget | None = None,
         breakers: BreakerRegistry | None = None,
-        breaker_failure_threshold: int = DEFAULT_BREAKER_FAILURE_THRESHOLD,
-        breaker_cooldown: float = DEFAULT_BREAKER_COOLDOWN_SECONDS,
         tls_policy: TLSPolicy | None = None,
         plugins: PluginManager | None = None,
         storage: StoragePort | None = None,
         cache: CachePort | None = None,
-        cache_dir: str | None = None,
-        cache_ttl: int = 3600,
         state_store: StateStore | None = None,
     ) -> None:
         if emitter is not None and sinks:
             logger.debug("sinks= is ignored; an injected emitter owns event fan-out")
-        if breakers is not None and (
-            breaker_failure_threshold != DEFAULT_BREAKER_FAILURE_THRESHOLD
-            or breaker_cooldown != DEFAULT_BREAKER_COOLDOWN_SECONDS
-        ):
-            logger.debug("breaker scalars are ignored; an injected BreakerRegistry owns circuit state")
         if transport is not None and (tls_policy is not None or budget is not None):
             logger.debug("tls_policy=/budget= do not configure an injected transport")
         self.credentials = credentials or CredentialResolver()
         self.budget = budget or _default_budget()
         self.breakers = breakers or BreakerRegistry(
-            failure_threshold=breaker_failure_threshold,
-            cooldown=breaker_cooldown,
+            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
+            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
         )
         self.emitter = emitter or EventEmitter(sinks=sinks)
         self.tls_policy = tls_policy or TLSPolicy()
@@ -101,12 +91,7 @@ class DataSluiceSession:
         self._transport = transport or create_default_sync_transport(tls_policy=self.tls_policy, budget=self.budget)
         self._async_transport = async_transport
         self.storage = storage
-        if cache is not None:
-            self._cache = cache
-        elif cache_dir is not None:
-            self._cache = self._build_default_cache(cache_dir, cache_ttl)
-        else:
-            self._cache = None
+        self._cache = cache
         if state_store is None:
             from datasluice.sync.state_store import InMemoryStateStore
 
@@ -115,20 +100,6 @@ class DataSluiceSession:
             self.state_store = state_store
         self.plugins = plugins or PluginManager()
         logger.debug("DataSluiceSession initialized with injected runtime composition")
-
-    @staticmethod
-    def _build_default_cache(cache_dir: str, cache_ttl: int) -> CachePort | None:
-        """Lazily construct the optional content cache, degrading to no cache on failure."""
-        try:
-            cache_module = importlib.import_module("datasluice.io.content_cache")
-        except ImportError:
-            logger.debug("ContentCache is unavailable; cache_dir is unused")
-            return None
-        try:
-            return cache_module.ContentCache(cache_dir, ttl=cache_ttl)
-        except Exception:
-            logger.warning("ContentCache initialization failed; continuing without a content cache", exc_info=True)
-            return None
 
     def sync_client(self, profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile) -> SyncCatalogClient:
         """Create one synchronous catalog client over this session's pipeline.

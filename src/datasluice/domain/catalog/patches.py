@@ -9,6 +9,8 @@ from typing import Final
 
 from datasluice.domain.catalog.models import _contract_error, _freeze_json, _object_dict, _thaw_json
 
+_PATCH_REQUEST_FIELDS_PATH = "patch_request.fields"
+
 
 class UnsetType:
     """The singleton marker for an omitted patch field."""
@@ -98,18 +100,18 @@ class PatchRequest:
             raise _contract_error("patch_request")
         serialized_fields = data["fields"]
         if not isinstance(serialized_fields, list):
-            raise _contract_error("patch_request.fields")
+            raise _contract_error(_PATCH_REQUEST_FIELDS_PATH)
         fields: dict[str, object] = {}
         for index, serialized_field in enumerate(serialized_fields):
             field_data = _object_dict(serialized_field, f"patch_request.fields.{index}")
             name = field_data.get("name")
             state = field_data.get("state")
             if not isinstance(name, str) or not name or not isinstance(state, str) or name in fields:
-                raise _contract_error("patch_request.fields")
+                raise _contract_error(_PATCH_REQUEST_FIELDS_PATH)
             if state == "unset" and set(field_data) == {"name", "state"}:
                 fields[name] = UNSET
             elif state == "value" and set(field_data) == {"name", "state", "value"}:
                 fields[name] = field_data["value"]
             else:
-                raise _contract_error("patch_request.fields")
+                raise _contract_error(_PATCH_REQUEST_FIELDS_PATH)
         return cls(fields=fields)

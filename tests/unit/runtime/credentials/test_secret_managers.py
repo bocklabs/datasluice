@@ -4,22 +4,23 @@ from __future__ import annotations
 
 import sys
 from types import SimpleNamespace
-from typing import cast
+from typing import Unpack, cast
 
 import pytest
 
 from datasluice.domain.catalog.auth import CKANCredential, CredentialSource, SecretValue, SocrataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.runtime.credentials import CredentialResolutionError
-from datasluice.runtime.credentials.aws import AwsSecretsManagerProvider
+from datasluice.runtime.credentials.aws import AwsSecretsManagerProvider, _GetSecretValueRequest
 from datasluice.runtime.credentials.vault import VaultClientFactory, VaultCredentialProvider
 
 
 def test_missing_boto3_names_the_aws_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "boto3", None)
 
+    aws_secrets_manager_provider = AwsSecretsManagerProvider("datasluice/ckan")
     with pytest.raises(ImportError, match=r"datasluice\[secrets-aws\]"):
-        AwsSecretsManagerProvider("datasluice/ckan").discover(CatalogPlatform.CKAN, {})
+        aws_secrets_manager_provider.discover(CatalogPlatform.CKAN, {})
 
 
 def test_aws_json_secret_discovers_secret_value() -> None:
@@ -43,8 +44,9 @@ def test_aws_json_secret_discovers_secret_value() -> None:
 def test_missing_hvac_names_the_vault_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "hvac", None)
 
+    vault_provider = _vault_provider()
     with pytest.raises(ImportError, match=r"datasluice\[secrets-vault\]"):
-        _vault_provider().discover(CatalogPlatform.CKAN, {})
+        vault_provider.discover(CatalogPlatform.CKAN, {})
 
 
 def test_aws_numeric_scalar_secret_falls_back_to_plain_text() -> None:
@@ -82,27 +84,30 @@ def test_aws_json_string_scalar_secret_is_unwrapped() -> None:
 
 def test_aws_secret_binary_only_responses_are_rejected() -> None:
     class _BinaryOnlyClient:
-        def get_secret_value(self, *, SecretId: str) -> dict[str, bytes]:
+        def get_secret_value(self, **kwargs: Unpack[_GetSecretValueRequest]) -> dict[str, bytes]:
             return {"SecretBinary": b"aws-secret"}
 
+    aws_secrets_manager_provider = AwsSecretsManagerProvider(
+        "datasluice/ckan", client_factory=lambda region: _BinaryOnlyClient()
+    )
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*"):
-        AwsSecretsManagerProvider("datasluice/ckan", client_factory=lambda region: _BinaryOnlyClient()).discover(
-            CatalogPlatform.CKAN, {}
-        )
+        aws_secrets_manager_provider.discover(CatalogPlatform.CKAN, {})
 
 
 def test_aws_json_secrets_missing_required_fields_are_rejected() -> None:
+    aws_secrets_manager_provider = AwsSecretsManagerProvider(
+        "datasluice/ckan", client_factory=lambda region: _AwsClient('{"username": "someone"}', [])
+    )
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*"):
-        AwsSecretsManagerProvider(
-            "datasluice/ckan", client_factory=lambda region: _AwsClient('{"username": "someone"}', [])
-        ).discover(CatalogPlatform.CKAN, {})
+        aws_secrets_manager_provider.discover(CatalogPlatform.CKAN, {})
 
 
 def test_vault_kv_v1_envelopes_are_rejected() -> None:
     client_factory = cast(VaultClientFactory, lambda url, token: _VaultClient({"data": {"app_token": "vault-token"}}))
 
+    vault_provider = _vault_provider(client_factory=client_factory)
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*"):
-        _vault_provider(client_factory=client_factory).discover(CatalogPlatform.CKAN, {})
+        vault_provider.discover(CatalogPlatform.CKAN, {})
 
 
 def test_vault_double_nested_secret_discovers_secret_values() -> None:
@@ -178,8 +183,8 @@ class _AwsClient:
         self._secret = secret
         self._calls = calls
 
-    def get_secret_value(self, *, SecretId: str) -> dict[str, str]:
-        self._calls.append(("get_secret_value", SecretId))
+    def get_secret_value(self, **kwargs: Unpack[_GetSecretValueRequest]) -> dict[str, str]:
+        self._calls.append(("get_secret_value", kwargs["SecretId"]))
         return {"SecretString": self._secret}
 
 
@@ -196,7 +201,7 @@ class _VaultClient:
 
 
 class _FailingAwsClient:
-    def get_secret_value(self, *, SecretId: str) -> dict[str, str]:
+    def get_secret_value(self, **kwargs: Unpack[_GetSecretValueRequest]) -> dict[str, str]:
         raise RuntimeError("aws-secret")
 
 

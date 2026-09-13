@@ -6,13 +6,14 @@ Azure and HTTP backends share one wrapper. All paths are URI strings.
 """
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from datasluice.exceptions import DownloadError
 from datasluice.logging import get_logger
 
 logger = get_logger("io.fsspec")
 
-_ABSOLUTE_URI_PREFIXES = ("s3://", "gs://", "az://", "abfs://", "file://", "http://", "https://", "memory://")
+_ABSOLUTE_URI_PREFIXES = ("s3://", "gs://", "az://", "abfs://", "file://", "https://", "memory://")
 
 
 class FsspecStorage:
@@ -70,6 +71,8 @@ class FsspecStorage:
         ``file://``/local backends (cloud object keys are flat, so ``..`` is a
         no-op there but rejected uniformly for safety).
         """
+        if urlsplit(path).scheme.lower() == "http":
+            raise DownloadError("Unencrypted HTTP storage paths are not supported.")
         if path.startswith(_ABSOLUTE_URI_PREFIXES):
             return path
         if _has_parent_segments(path):

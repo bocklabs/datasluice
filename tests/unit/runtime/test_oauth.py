@@ -120,15 +120,21 @@ def test_client_credentials_async_uses_async_transport() -> None:
 def test_malformed_token_responses_are_rejected(body: bytes, message: str) -> None:
     transport = _SyncTransport(RuntimeResponse(200, {}, body))
 
+    flow = _flow()
+    secret = SecretValue("client-secret")
+    flow_2 = ClientCredentialsFlow(flow, secret, transport)
     with pytest.raises(CatalogValidationError, match=message):
-        ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
+        flow_2.fetch()
 
 
 def test_refresh_provider_requires_a_refresh_capable_credential() -> None:
     credential = OAuthCredential(SecretValue("access-token"), None, None)
 
+    flow = _flow()
+    token_response = _token_response()
+    sync_transport = _SyncTransport(token_response)
     with pytest.raises(ValueError, match="refresh-capable"):
-        RefreshingCredentialProvider(_flow(), credential, _SyncTransport(_token_response()))
+        RefreshingCredentialProvider(flow, credential, sync_transport)
 
 
 def test_authorization_code_uses_rfc7636_s256_only() -> None:
@@ -195,8 +201,11 @@ def test_token_errors_surface_status_and_rfc6749_error_code_without_body_values(
         RuntimeResponse(400, {}, json.dumps({"error": "invalid_grant", "error_description": "client-secret"}).encode())
     )
 
+    flow = _flow()
+    secret = SecretValue("client-secret")
+    flow_2 = ClientCredentialsFlow(flow, secret, transport)
     with pytest.raises(CatalogValidationError) as exc_info:
-        ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
+        flow_2.fetch()
 
     message = str(exc_info.value)
     assert "400" in message
@@ -207,8 +216,11 @@ def test_token_errors_surface_status_and_rfc6749_error_code_without_body_values(
 def test_unauthorized_token_responses_map_to_unauthenticated_error() -> None:
     transport = _SyncTransport(RuntimeResponse(401, {}, b'{"error": "invalid_client"}'))
 
+    flow = _flow()
+    secret = SecretValue("client-secret")
+    flow_2 = ClientCredentialsFlow(flow, secret, transport)
     with pytest.raises(UnauthenticatedError) as exc_info:
-        ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
+        flow_2.fetch()
 
     message = str(exc_info.value)
     assert "401" in message
@@ -218,8 +230,11 @@ def test_unauthorized_token_responses_map_to_unauthenticated_error() -> None:
 def test_unknown_error_codes_are_not_echoed_into_messages() -> None:
     transport = _SyncTransport(RuntimeResponse(400, {}, b'{"error": "attacker-controlled-code"}'))
 
+    flow = _flow()
+    secret = SecretValue("client-secret")
+    flow_2 = ClientCredentialsFlow(flow, secret, transport)
     with pytest.raises(CatalogValidationError) as exc_info:
-        ClientCredentialsFlow(_flow(), SecretValue("client-secret"), transport).fetch()
+        flow_2.fetch()
 
     message = str(exc_info.value)
     assert "400" in message
@@ -322,8 +337,9 @@ def test_refresh_dispatch_rejects_the_wrong_transport_mode() -> None:
 
     with pytest.raises(TypeError, match="synchronous runtime transport"):
         sync_provider.resolve()
+    coroutine = async_provider.resolve_async()
     with pytest.raises(TypeError, match="asynchronous runtime transport"):
-        asyncio.run(async_provider.resolve_async())
+        asyncio.run(coroutine)
 
 
 def test_failed_refresh_emits_a_redacted_event() -> None:

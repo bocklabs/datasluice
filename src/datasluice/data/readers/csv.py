@@ -69,13 +69,7 @@ def _rechunk_reader(reader: Any, batch_size: int, pa: Any) -> Iterator[Any]:
     if type(batch_size) is not int or batch_size <= 0:
         raise FormatError("CSV batch_size must be a positive integer")
     pending: Any = None
-    while True:
-        try:
-            batch = reader.read_next_batch()
-        except StopIteration:
-            break
-        if batch is None:
-            break
+    for batch in reader:
         if batch.num_rows == 0:
             continue
         current = pa.Table.from_batches([batch])

@@ -1,12 +1,3 @@
-"""BatchStream — context-managed Arrow RecordBatch stream.
-
-A concrete wrapper around ``pa.RecordBatchReader`` or a bare
-``Iterator[RecordBatch]``. Exposes ``.schema`` and ``.iter_batches()`` with
-context-manager discipline (idempotent close, ``StreamClosedError`` on
-use-after-close). Composition over inheritance: ``pa.RecordBatchReader`` is a
-C++ extension type — we wrap it, never subclass it (RESEARCH Anti-Patterns).
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -172,14 +163,14 @@ class BatchStream:
         if hasattr(self._source, "close"):
             try:
                 self._source.close()
-            except BaseException as exc:
+            except Exception as exc:
                 first_exc = exc
         for closeable in self._closeables:
             if not hasattr(closeable, "close"):
                 continue
             try:
                 closeable.close()
-            except BaseException as exc:
+            except Exception as exc:
                 if first_exc is None:
                     first_exc = exc
         if first_exc is not None:

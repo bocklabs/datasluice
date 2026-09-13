@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -12,7 +11,9 @@ from typing import ClassVar
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.exceptions import DataSluiceError
 
-_EXTENSION_NAMESPACE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]*[.][A-Za-z0-9][A-Za-z0-9.-]*$")
+_VALUE_RECORD_VALUE_PATH = "value_record.value"
+_MAPPING_RECORD_PAYLOAD_PATH = "mapping_record.payload"
+_NATIVE_RECORD_PAYLOAD_PATH = "native_record.payload"
 
 
 def _contract_error(path: str) -> DataSluiceError:
@@ -62,7 +63,16 @@ def _freeze_extensions(value: object) -> Mapping[str, object]:
         raise _contract_error("extensions")
     frozen: dict[str, object] = {}
     for namespace, extension in value.items():
-        if not isinstance(namespace, str) or _EXTENSION_NAMESPACE_RE.fullmatch(namespace) is None:
+        if not isinstance(namespace, str) or (
+            not namespace
+            or not namespace.isascii()
+            or not namespace[0].isalnum()
+            or not all(character.isalnum() or character in ".-" for character in namespace)
+            or not any(
+                character == "." and following.isalnum()
+                for character, following in zip(namespace, namespace[1:], strict=False)
+            )
+        ):
             raise _contract_error("extensions")
         frozen[namespace] = _freeze_json(extension, f"extensions.{namespace}")
     return MappingProxyType(frozen)
@@ -302,9 +312,9 @@ class NativeRecord:
             self.resource_kind,
         ):
             raise _contract_error("native_record.id")
-        payload = _freeze_json(self.payload, "native_record.payload")
+        payload = _freeze_json(self.payload, _NATIVE_RECORD_PAYLOAD_PATH)
         if not isinstance(payload, Mapping):
-            raise _contract_error("native_record.payload")
+            raise _contract_error(_NATIVE_RECORD_PAYLOAD_PATH)
         object.__setattr__(self, "payload", payload)
         object.__setattr__(self, "extensions", _freeze_extensions(self.extensions))
 
@@ -337,7 +347,7 @@ class NativeRecord:
             platform=CatalogPlatform(platform),
             resource_kind=ResourceKind(resource_kind),
             id=CatalogId.from_dict(data["id"]),
-            payload=_object_dict(data["payload"], "native_record.payload"),
+            payload=_object_dict(data["payload"], _NATIVE_RECORD_PAYLOAD_PATH),
             extensions=_object_dict(data["extensions"], "native_record.extensions"),
         )
 
@@ -356,8 +366,8 @@ class ValueRecord:
         if type(self.value) is float:
             if math.isfinite(self.value):
                 return
-            raise _contract_error("value_record.value")
-        raise _contract_error("value_record.value")
+            raise _contract_error(_VALUE_RECORD_VALUE_PATH)
+        raise _contract_error(_VALUE_RECORD_VALUE_PATH)
 
     def to_dict(self) -> dict[str, object]:
         """Return a fresh JSON-safe value record envelope."""
@@ -369,7 +379,7 @@ class ValueRecord:
         data = _strict_envelope(value, "value_record", "value_record", frozenset({"schema_version", "kind", "value"}))
         record_value = data["value"]
         if record_value is not None and not isinstance(record_value, (str, bool, int, float)):
-            raise _contract_error("value_record.value")
+            raise _contract_error(_VALUE_RECORD_VALUE_PATH)
         return cls(value=record_value)
 
 
@@ -382,9 +392,9 @@ class MappingRecord:
     payload: Mapping[str, object]
 
     def __post_init__(self) -> None:
-        frozen = _freeze_json(self.payload, "mapping_record.payload")
+        frozen = _freeze_json(self.payload, _MAPPING_RECORD_PAYLOAD_PATH)
         if not isinstance(frozen, Mapping):
-            raise _contract_error("mapping_record.payload")
+            raise _contract_error(_MAPPING_RECORD_PAYLOAD_PATH)
         object.__setattr__(self, "payload", frozen)
 
     def to_dict(self) -> dict[str, object]:
@@ -397,7 +407,7 @@ class MappingRecord:
         data = _strict_envelope(
             value, "mapping_record", "mapping_record", frozenset({"schema_version", "kind", "payload"})
         )
-        return cls(payload=_object_dict(data["payload"], "mapping_record.payload"))
+        return cls(payload=_object_dict(data["payload"], _MAPPING_RECORD_PAYLOAD_PATH))
 
 
 @dataclass(frozen=True)

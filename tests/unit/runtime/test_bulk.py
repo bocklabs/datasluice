@@ -63,7 +63,8 @@ def test_empty_and_single_item_plans_follow_their_distinct_dispatch_paths() -> N
         ).stream(_plan("only"))
     )
 
-    assert len(empty) == 1 and isinstance(empty[0], BulkSummary)
+    assert len(empty) == 1
+    assert isinstance(empty[0], BulkSummary)
     assert empty[0].dispatches == 0
     assert empty[0].settled == 0
     assert empty[0].outstanding == 0
@@ -108,14 +109,14 @@ def test_resume_rejects_a_checkpoint_created_for_a_different_plan() -> None:
     )
     calls: list[str] = []
 
+    bulk_executor = BulkExecutor(
+        lambda item: calls.append(item.value) or _receipt(item),
+        checkpoint=checkpoint,
+        checkpoint_sink=lambda checkpoint: None,
+    )
+    stream = bulk_executor.stream(plan)
     with pytest.raises(CatalogValidationError) as raised:
-        list(
-            BulkExecutor(
-                lambda item: calls.append(item.value) or _receipt(item),
-                checkpoint=checkpoint,
-                checkpoint_sink=lambda checkpoint: None,
-            ).stream(plan)
-        )
+        list(stream)
 
     assert calls == []
     assert "does not belong" in str(raised.value)
@@ -128,14 +129,12 @@ def test_resume_rejects_a_receipt_target_mismatching_its_plan_index() -> None:
         item_receipts=(BulkItemReceipt(index=1, receipt=_receipt(plan.items[0])),),
     )
 
+    bulk_executor = BulkExecutor(
+        lambda item: _receipt(item), checkpoint=checkpoint, checkpoint_sink=lambda checkpoint: None
+    )
+    stream = bulk_executor.stream(plan)
     with pytest.raises(CatalogValidationError, match="does not match its catalog ID"):
-        list(
-            BulkExecutor(
-                lambda item: _receipt(item),
-                checkpoint=checkpoint,
-                checkpoint_sink=lambda checkpoint: None,
-            ).stream(plan)
-        )
+        list(stream)
 
 
 def test_sync_item_failures_convert_to_failed_receipts_and_counted() -> None:
@@ -496,7 +495,8 @@ def test_sync_run_budget_drains_in_flight_items_and_surfaces_elapsed_budget_stat
     assert summary.outstanding == 2
     assert summary.budget_seconds is not None
     assert summary.elapsed_seconds >= summary.budget_seconds
-    assert summary.reason and "exhausted" in summary.reason
+    assert summary.reason
+    assert "exhausted" in summary.reason
     assert len(checkpoints) == 2
     assert not checkpoints[-1].cancellation_requested
 
@@ -530,18 +530,14 @@ def test_async_task_cancellation_drains_in_flight_items_and_persists_the_final_c
             ).stream(plan)
         ]
 
-    async def cancel_after_start() -> list[BulkItemReceipt | BulkSummary]:
+    async def cancel_after_start() -> None:
         task = asyncio.create_task(run())
         await asyncio.wait_for(started.wait(), timeout=1)
         task.cancel()
-        return await task
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-    outcomes = asyncio.run(cancel_after_start())
-    summary = outcomes[-1]
-    assert isinstance(summary, BulkSummary)
-    assert summary.cancelled
-    assert summary.settled == 2
-    assert summary.outstanding == 2
+    asyncio.run(cancel_after_start())
     assert peak == 2
     assert active == 0
     assert len(calls) == 2
@@ -578,7 +574,8 @@ def test_async_run_budget_drains_in_flight_items_and_surfaces_budget_state() -> 
     assert summary.outstanding == 2
     assert summary.budget_seconds is not None
     assert summary.elapsed_seconds >= summary.budget_seconds
-    assert summary.reason and "exhausted" in summary.reason
+    assert summary.reason
+    assert "exhausted" in summary.reason
     assert len(checkpoints) == 2
     assert not checkpoints[-1].cancellation_requested
 

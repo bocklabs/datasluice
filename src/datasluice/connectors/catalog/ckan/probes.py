@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import threading
 from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -30,6 +31,9 @@ from datasluice.runtime.clients import AsyncCatalogTransport
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse
 
+_NOT_AUTHORIZED = "not authorized"
+_AUTHORIZATION_ERROR = "Authorization Error"
+
 DEFAULT_SNAPSHOT_TTL: float = 300.0
 
 PLATFORM = CatalogPlatform.CKAN
@@ -43,7 +47,7 @@ _VERSION_PATTERN = re.compile(r"\s*(\d+)\.(\d+)\.(\d+)")
 _AUTHORIZATION_TYPE = "authorization error"
 _NOT_FOUND_TYPE = "not found error"
 _UNKNOWN_TYPE = "unknown error"
-_FORBIDDEN_MESSAGE_MARKERS = ("unauthorized to", "not authorized")
+_FORBIDDEN_MESSAGE_MARKERS = ("unauthorized to", _NOT_AUTHORIZED)
 
 
 def _operation_id(value: str) -> OperationId:
@@ -193,17 +197,17 @@ class _Snapshot:
 
 def _failure_marker(exc: Exception) -> dict[str, object]:
     if isinstance(exc, ForbiddenError):
-        return {"__type": "Authorization Error", "message": "not authorized"}
+        return {"__type": _AUTHORIZATION_ERROR, "message": _NOT_AUTHORIZED}
     if isinstance(exc, UnauthenticatedError):
-        return {"__type": "Authorization Error"}
+        return {"__type": _AUTHORIZATION_ERROR}
     return {"__type": "Unknown Error"}
 
 
 def _decode_snapshot(response: RuntimeResponse, *, fetched_at: float) -> _Snapshot:
     if not 200 <= response.status_code < 300:
         marker = {
-            401: {"__type": "Authorization Error"},
-            403: {"__type": "Authorization Error", "message": "not authorized"},
+            401: {"__type": _AUTHORIZATION_ERROR},
+            403: {"__type": _AUTHORIZATION_ERROR, "message": _NOT_AUTHORIZED},
         }.get(response.status_code, {"__type": _UNKNOWN_TYPE})
         return _Snapshot(payload=marker, fetched_at=fetched_at, line_state=LineState.UNVERIFIED, version_present=False)
     try:
@@ -237,7 +241,7 @@ class StatusSnapshotCache:
         ttl_seconds: float = DEFAULT_SNAPSHOT_TTL,
         clock: Callable[[], float] = monotonic,
     ) -> None:
-        if type(ttl_seconds) not in (int, float) or ttl_seconds != ttl_seconds or ttl_seconds < 0:
+        if type(ttl_seconds) not in (int, float) or not math.isfinite(ttl_seconds) or ttl_seconds < 0:
             raise ValueError("Snapshot TTL must be a finite non-negative number.")
         self._origin = normalize_origin(origin)
         self._reader = reader

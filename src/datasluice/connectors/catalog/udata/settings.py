@@ -93,8 +93,17 @@ class UDataClientSettings:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", normalize_origin(self.base_url))
+        self._validate_credentials()
+        self._validate_transport_overrides()
+        self._validate_options()
+        self._validate_probe_options()
+        self._validate_limits()
+
+    def _validate_credentials(self) -> None:
         if self.credential is not None and not isinstance(self.credential, UDataCredential | CredentialResolver):
             raise TypeError("uData client settings require a uData credential or resolver.")
+
+    def _validate_transport_overrides(self) -> None:
         for field_name in ("sync_transport", "async_transport"):
             override = getattr(self, field_name)
             if override is None:
@@ -104,6 +113,8 @@ class UDataClientSettings:
                 raise TypeError(f"uData {field_name} must be a transport instance or a zero-argument factory.")
             if role == "ambiguous":
                 raise TypeError(f"uData {field_name} cannot be both a transport instance and a factory.")
+
+    def _validate_options(self) -> None:
         if self.tls_policy is not None and not isinstance(self.tls_policy, TLSPolicy):
             raise TypeError("uData client TLS policy must use TLSPolicy.")
         if self.budget is not None and not isinstance(self.budget, TimeBudget):
@@ -112,6 +123,8 @@ class UDataClientSettings:
             raise TypeError("uData client breakers must use BreakerRegistry.")
         if type(self.max_attempts) is not int or self.max_attempts < 1:
             raise ValueError("uData client attempts require a positive integer.")
+
+    def _validate_probe_options(self) -> None:
         if self.retry_sleep is not None and not callable(self.retry_sleep):
             raise TypeError("uData sync retry sleep must be callable.")
         if self.async_retry_sleep is not None and not callable(self.async_retry_sleep):
@@ -120,6 +133,8 @@ class UDataClientSettings:
             raise TypeError("uData probe runners must implement ProbeRunner.")
         if self.async_probe_runner is not None and not isinstance(self.async_probe_runner, AsyncProbeRunner):
             raise TypeError("uData async probe runners must implement AsyncProbeRunner.")
+
+    def _validate_limits(self) -> None:
         if (
             type(self.capability_cache_ttl) not in (int, float)
             or not math.isfinite(self.capability_cache_ttl)

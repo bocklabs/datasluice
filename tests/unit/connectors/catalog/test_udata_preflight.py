@@ -17,7 +17,8 @@ def _load_checkout_module(module_name: str, path: Path) -> Any:
     if not path.is_file():
         pytest.skip(f"{path} requires a full repository checkout", allow_module_level=True)
     spec = importlib.util.spec_from_file_location(module_name, path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -231,7 +232,11 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
     assert "127.0.0.1:" in text
     assert "HOME: /tmp" in text
     assert "volumes:" not in text
-    assert "mongo" in text and "redis" in text and "elasticsearch" in text and "minio" in text and "mailpit" in text
+    assert "mongo" in text
+    assert "redis" in text
+    assert "elasticsearch" in text
+    assert "minio" in text
+    assert "mailpit" in text
     assert oracle.PINNED_COMMIT in dockerfile
     assert "ghcr.io/astral-sh/uv:0.12.5@sha256:" in dockerfile
     assert "python:3.13-slim-bookworm@sha256:" in dockerfile

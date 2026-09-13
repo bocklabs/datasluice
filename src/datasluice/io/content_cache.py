@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-import random
+import secrets
 import sqlite3
 import time
 from typing import TYPE_CHECKING, Any
@@ -38,6 +38,8 @@ from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
     import fsspec
+
+_SQL_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
 
 logger = get_logger("io.content_cache")
 
@@ -173,12 +175,12 @@ class ContentCache:
         """Two-phase atomic write."""
         sha = self._sha(key)
         content_path = self._content_path(sha)
-        tmp_path = f"{self.cache_dir}/.{sha}.tmp.{os.getpid()}.{random.randint(0, 1 << 32)}"
+        tmp_path = f"{self.cache_dir}/.{sha}.tmp.{os.getpid()}.{secrets.token_hex(8)}"
         fetched_at = time.time()
 
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(_SQL_BEGIN_IMMEDIATE)
             conn.execute(
                 "INSERT OR REPLACE INTO cache "
                 "(sha256, url, etag, last_modified, fetched_at, content_length, status) "
@@ -195,7 +197,7 @@ class ContentCache:
         except Exception as exc:
             rollback = self._connect()
             try:
-                rollback.execute("BEGIN IMMEDIATE")
+                rollback.execute(_SQL_BEGIN_IMMEDIATE)
                 rollback.execute(
                     "DELETE FROM cache WHERE sha256=? AND status='writing'",
                     (sha,),
@@ -208,7 +210,7 @@ class ContentCache:
 
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(_SQL_BEGIN_IMMEDIATE)
             conn.execute("UPDATE cache SET status='ready' WHERE sha256=?", (sha,))
             conn.execute("COMMIT")
         finally:
@@ -222,7 +224,7 @@ class ContentCache:
         content_path = self._content_path(sha)
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(_SQL_BEGIN_IMMEDIATE)
             conn.execute("DELETE FROM cache WHERE sha256=?", (sha,))
             conn.execute("COMMIT")
         finally:
@@ -265,7 +267,7 @@ class ContentCache:
         try:
             conn = self._connect()
             try:
-                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(_SQL_BEGIN_IMMEDIATE)
                 conn.execute(
                     "DELETE FROM cache WHERE status='writing' AND fetched_at + ? < ?",
                     (STALE_WRITING_THRESHOLD_SECONDS, time.time()),

@@ -51,5 +51,7 @@ def test_settings_module_removed() -> None:
 
 
 def test_load_settings_removed() -> None:
+    get_attribute = attrgetter("load_settings")
+    module = importlib.import_module("datasluice.config")
     with pytest.raises(AttributeError):
-        _ = attrgetter("load_settings")(importlib.import_module("datasluice.config"))
+        _ = get_attribute(module)

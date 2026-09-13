@@ -27,20 +27,24 @@ def _scan_result(opened: Any, *, full: bool) -> dict[str, Any]:
         if remaining == 0:
             break
         selected = batch if remaining is None or batch.num_rows <= remaining else batch.slice(0, remaining)
-        for index, field in enumerate(selected.schema):
-            column = selected.column(index)
-            stats = columns.setdefault(
-                field.name,
-                {"name": field.name, "type": str(field.type), "null_count": 0},
-            )
-            stats["null_count"] += column.null_count
-        if len(sample) < DEFAULT_SAMPLE_ROWS:
-            sample.extend(selected.to_pylist()[: DEFAULT_SAMPLE_ROWS - len(sample)])
+        _update_columns(columns, selected)
+        _append_sample(sample, selected)
         rows += selected.num_rows
         if limit is not None and rows == limit:
             break
 
     return {"rows": rows, "columns": list(columns.values()), "sample": sample, "bounded": not full}
+
+
+def _update_columns(columns: dict[str, dict[str, Any]], batch: Any) -> None:
+    for index, field in enumerate(batch.schema):
+        stats = columns.setdefault(field.name, {"name": field.name, "type": str(field.type), "null_count": 0})
+        stats["null_count"] += batch.column(index).null_count
+
+
+def _append_sample(sample: list[Mapping[str, Any]], batch: Any) -> None:
+    if len(sample) < DEFAULT_SAMPLE_ROWS:
+        sample.extend(batch.to_pylist()[: DEFAULT_SAMPLE_ROWS - len(sample)])
 
 
 def _render_human(result: Mapping[str, Any]) -> None:

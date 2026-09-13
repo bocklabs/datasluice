@@ -49,6 +49,61 @@ def _build_request(client: Any, request: RuntimeRequest) -> Any:
     )
 
 
+def _redirect_request(
+    request: RuntimeRequest, status: int, location: str, credential_scope: CredentialScope | None
+) -> RuntimeRequest:
+    try:
+        next_url = urljoin(request.url, location)
+        _require_plain_http_target(next_url)
+    except ValueError as exc:
+        raise TransportFailure(
+            f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
+        ) from exc
+    headers = dict(request.headers)
+    if not _retains_credentials(credential_scope, request.url, next_url):
+        headers = strip_sensitive_redirect_headers(headers)
+    method, body, files = redirect_method_and_body(request.method, status, request.body, request.files)
+    if body is None and not files:
+        headers = drop_body_transfer_headers(headers)
+    return RuntimeRequest(
+        method=method,
+        url=next_url,
+        headers=headers,
+        body=body,
+        files=files,
+        redirect_policy=request.redirect_policy,
+        max_response_bytes=request.max_response_bytes,
+    )
+
+
+def _runtime_response(response: Any, request: RuntimeRequest) -> RuntimeResponse:
+    try:
+        return RuntimeResponse(
+            response.status_code,
+            dict(response.headers),
+            _read_body(response, request.max_response_bytes),
+            _retry_after(response.headers.get("retry-after")),
+        )
+    finally:
+        response.close()
+
+
+async def _runtime_response_async(response: Any, request: RuntimeRequest, httpx: Any) -> RuntimeResponse:
+    try:
+        try:
+            body = await _read_body_async(response, request.max_response_bytes)
+        except httpx.HTTPError as exc:
+            raise TransportFailure("httpx could not read the catalog response.") from exc
+        return RuntimeResponse(
+            response.status_code,
+            dict(response.headers),
+            body,
+            _retry_after(response.headers.get("retry-after")),
+        )
+    finally:
+        await response.aclose()
+
+
 def _read_body(response: Any, max_bytes: int | None) -> bytes:
     if max_bytes is None:
         return response.content
@@ -113,53 +168,13 @@ class HttpxCatalogTransport:
                 )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
-            if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
-                try:
-                    return RuntimeResponse(
-                        response.status_code,
-                        dict(response.headers),
-                        _read_body(response, current.max_response_bytes),
-                        _retry_after(response.headers.get("retry-after")),
-                    )
-                finally:
-                    response.close()
             location = response.headers.get("location")
-            if not response.is_redirect or location is None:
-                try:
-                    return RuntimeResponse(
-                        response.status_code,
-                        dict(response.headers),
-                        _read_body(response, current.max_response_bytes),
-                        _retry_after(response.headers.get("retry-after")),
-                    )
-                finally:
-                    response.close()
+            if current.redirect_policy is RedirectPolicy.NO_FOLLOW or not response.is_redirect or location is None:
+                return _runtime_response(response, current)
             try:
-                next_url = urljoin(current.url, location)
-                _require_plain_http_target(next_url)
-            except ValueError as exc:
+                current = _redirect_request(current, response.status_code, location, self._credential_scope)
+            finally:
                 response.close()
-                raise TransportFailure(
-                    f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
-                ) from exc
-            response.close()
-            headers = dict(current.headers)
-            if not _retains_credentials(self._credential_scope, current.url, next_url):
-                headers = strip_sensitive_redirect_headers(headers)
-            next_method, next_body, next_files = redirect_method_and_body(
-                current.method, response.status_code, current.body, current.files
-            )
-            if next_body is None and not next_files:
-                headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(
-                next_method,
-                next_url,
-                headers,
-                next_body,
-                next_files,
-                current.redirect_policy,
-                current.max_response_bytes,
-            )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     def close(self) -> None:
@@ -251,57 +266,13 @@ class AsyncHttpxCatalogTransport:
                 )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
-            if current.redirect_policy is RedirectPolicy.NO_FOLLOW:
-                try:
-                    return RuntimeResponse(
-                        response.status_code,
-                        dict(response.headers),
-                        await _read_body_async(response, current.max_response_bytes),
-                        _retry_after(response.headers.get("retry-after")),
-                    )
-                except self._httpx.HTTPError as exc:
-                    raise TransportFailure("httpx could not read the catalog response.") from exc
-                finally:
-                    await response.aclose()
             location = response.headers.get("location")
-            if not response.is_redirect or location is None:
-                try:
-                    return RuntimeResponse(
-                        response.status_code,
-                        dict(response.headers),
-                        await _read_body_async(response, current.max_response_bytes),
-                        _retry_after(response.headers.get("retry-after")),
-                    )
-                except self._httpx.HTTPError as exc:
-                    raise TransportFailure("httpx could not read the catalog response.") from exc
-                finally:
-                    await response.aclose()
+            if current.redirect_policy is RedirectPolicy.NO_FOLLOW or not response.is_redirect or location is None:
+                return await _runtime_response_async(response, current, self._httpx)
             try:
-                next_url = urljoin(current.url, location)
-                _require_plain_http_target(next_url)
-            except ValueError as exc:
+                current = _redirect_request(current, response.status_code, location, self._credential_scope)
+            finally:
                 await response.aclose()
-                raise TransportFailure(
-                    f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
-                ) from exc
-            await response.aclose()
-            headers = dict(current.headers)
-            if not _retains_credentials(self._credential_scope, current.url, next_url):
-                headers = strip_sensitive_redirect_headers(headers)
-            next_method, next_body, next_files = redirect_method_and_body(
-                current.method, response.status_code, current.body, current.files
-            )
-            if next_body is None and not next_files:
-                headers = drop_body_transfer_headers(headers)
-            current = RuntimeRequest(
-                next_method,
-                next_url,
-                headers,
-                next_body,
-                next_files,
-                current.redirect_policy,
-                current.max_response_bytes,
-            )
         raise TransportFailure("Catalog redirect limit exceeded.")
 
     async def aclose(self) -> None:

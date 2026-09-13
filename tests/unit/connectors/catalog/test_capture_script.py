@@ -24,7 +24,8 @@ from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 MODULE_PATH = Path(__file__).resolve().parents[4] / "scripts" / "capture_stack_evidence.py"
 _spec = importlib.util.spec_from_file_location("capture_stack_evidence", MODULE_PATH)
-assert _spec is not None and _spec.loader is not None
+assert _spec is not None
+assert _spec.loader is not None
 capture = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(capture)
 
@@ -98,8 +99,9 @@ def test_parser_exposes_exactly_the_four_documented_flags() -> None:
 @pytest.mark.parametrize("flag", ["--token", "--api-token", "--ckan-token"])
 def test_parser_refuses_token_style_flags(flag: str) -> None:
     """No token can cross the command line: token-style flags fail to parse."""
+    parser = capture.build_parser()
     with pytest.raises(SystemExit):
-        capture.build_parser().parse_args(
+        parser.parse_args(
             [flag, "secret-value", "--origin", LOOPBACK_ORIGIN, "--credentials-file", "c", "--out-dir", "o"]
         )
 
@@ -305,8 +307,10 @@ def test_bulk_execute_item_maps_typed_create_and_delete_to_receipts() -> None:
 
 def test_bulk_execute_item_rejects_unknown_modes() -> None:
     """Modes outside create/delete are refused before any client call."""
+    transport = ScriptedTransport()
+    client = _driver_client(transport)
     with pytest.raises(ValueError):
-        capture.bulk_execute_item(_driver_client(ScriptedTransport()), lambda: None, mode="purge")
+        capture.bulk_execute_item(client, lambda: None, mode="purge")
 
 
 def test_bulk_run_capture_streams_ordered_receipts_through_the_executor(tmp_path: Path) -> None:

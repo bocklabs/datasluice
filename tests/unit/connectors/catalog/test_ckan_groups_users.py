@@ -14,6 +14,7 @@ from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KIND
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, CKANTokenResult
 from datasluice.connectors.catalog.ckan.services.groups import AsyncGroupsService, SyncGroupsService
 from datasluice.connectors.catalog.ckan.services.users import AsyncUsersService, SyncUsersService
+from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import CKANCredential
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
@@ -119,19 +120,13 @@ class AsyncCaptureTransport:
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
     return SyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
 def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
     return AsyncCKANClient(
-        transport,
-        declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        owns_transport=False,
+        transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
 
 
@@ -256,8 +251,9 @@ def test_unconfirmed_group_purge_refuses_at_zero_transport_io() -> None:
     transport = SyncCaptureTransport(body=_success_body(None))
     client = _client(transport)
 
+    policy = MutationPolicy(destructive=True)
     with pytest.raises(CatalogValidationError) as excinfo:
-        client.groups.group_purge(id="grp-1", policy=MutationPolicy(destructive=True))
+        client.groups.group_purge(id="grp-1", policy=policy)
 
     assert transport.requests == []
     assert "destructive" in str(excinfo.value)
@@ -363,8 +359,7 @@ def test_api_token_trio_captures_documented_routes_and_stays_secret_safe() -> No
     client = SyncCKANClient(
         create_transport,
         declared_ckan_profile(),
-        origin=LOOPBACK_ORIGIN,
-        credentials=credential,
+        CKANClientSettings(base_url=LOOPBACK_ORIGIN, credential=credential),
         owns_transport=False,
     )
 

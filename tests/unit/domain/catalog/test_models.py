@@ -136,9 +136,10 @@ def test_catalog_id_rejects_malformed_versions_kinds_and_values(value: object) -
     ],
 )
 def test_records_reject_invalid_extensions_and_json_values(value: object) -> None:
+    record_id = CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather")
     with pytest.raises(DataSluiceError):
         DatasetRecord(
-            id=CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
+            id=record_id,
             name="Weather",
             extensions=value,  # ty: ignore[invalid-argument-type]: runtime validation assertion
         )

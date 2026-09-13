@@ -51,8 +51,9 @@ def test_effective_permissions_distinguish_missing_and_insufficient_access() -> 
         roles=frozenset({"user"}),
     )
 
+    effective_permissions = EffectivePermissions(platform=CatalogPlatform.CKAN)
     with pytest.raises(UnauthenticatedError):
-        EffectivePermissions(platform=CatalogPlatform.CKAN).require("datasets.update", scopes={"dataset:write"})
+        effective_permissions.require("datasets.update", scopes={"dataset:write"})
     with pytest.raises(ForbiddenError):
         permissions.require("datasets.update", scopes={"dataset:write"}, roles={"admin"})
     permissions.require("datasets.get", scopes={"dataset:read"}, roles={"user"})

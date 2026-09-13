@@ -186,9 +186,10 @@ def test_probe_evidence_constructs_with_historical_five_arguments_and_defaults_p
 
 
 def test_probe_evidence_rejects_unknown_provenance_values() -> None:
+    operation_id = OperationId(platform="ckan", service="action-api-v3", method="status")
     with pytest.raises(ValueError):
         ProbeEvidence(
-            operation_id=OperationId(platform="ckan", service="action-api-v3", method="status"),
+            operation_id=operation_id,
             deployment_url="https://demo.ckan.org/api/3/action/status_show",
             credential_classification=CredentialClassification.ANONYMOUS,
             role_classification=RoleClassification.ANONYMOUS,
