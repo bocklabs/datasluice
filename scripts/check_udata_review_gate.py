@@ -14,16 +14,28 @@ from pathlib import Path
 from typing import Any
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
-SENSITIVE = re.compile(r"(?:authorization\s*:|bearer\s+|api[_-]?key\s*[:=]|https?://[^\s/]+:[^\s@]+@)", re.IGNORECASE)
+SENSITIVE = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (r"authorization\s*:", r"bearer\s+", r"api[_-]?key\s*[:=]", r"https?://[^\s/:]+:[^\s/@]+@")
+)
 REDACTION_VIOLATION = re.compile(
     r"\b(?:raw[_ -]?(?:request|response)|credential(?:s)?|token(?:s)?)\s*[:=]", re.IGNORECASE
 )
 URL = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 RESOLVED = frozenset({"fixed", "invalid", "not_actionable"})
+_SOURCE_REVIEW = "source-review.md"
+_CURRENT_THREAD = "current-thread.json"
+_REVIEW_RECEIPT = "review-receipt.json"
+_TIMESTAMP_ERROR = "receipt timestamp must be a UTC ISO-8601 value"
+_REVIEWER_ERROR = "reviewer must differ from every implementation author"
 
 
 class ReviewGateError(ValueError):
     """Raised when review provenance is incomplete, unsafe, or stale."""
+
+
+def _contains_sensitive(content: str) -> bool:
+    return any(pattern.search(content) for pattern in SENSITIVE)
 
 
 def digest_file(path: Path) -> str:
@@ -40,7 +52,7 @@ def _safe_artifact(path: Path) -> None:
     if not path.is_file():
         raise ReviewGateError(f"review artifact is missing: {path.name}")
     content = path.read_text(encoding="utf-8")
-    if SENSITIVE.search(content) or REDACTION_VIOLATION.search(content):
+    if _contains_sensitive(content) or REDACTION_VIOLATION.search(content):
         raise ReviewGateError(f"review artifact contains sensitive content: {path.name}")
     for match in URL.finditer(content):
         parsed = match.group().rstrip(".,;:)]}")
@@ -92,13 +104,45 @@ def _validate_threads(path: Path, reviewed_sha: str) -> None:
 def _validate_timestamp(value: object) -> None:
     """Require a parseable UTC timestamp in the immutable receipt."""
     if not isinstance(value, str) or not value.endswith("Z"):
-        raise ReviewGateError("receipt timestamp must be a UTC ISO-8601 value")
+        raise ReviewGateError(_TIMESTAMP_ERROR)
     try:
         timestamp = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
     except ValueError as error:
-        raise ReviewGateError("receipt timestamp must be a UTC ISO-8601 value") from error
+        raise ReviewGateError(_TIMESTAMP_ERROR) from error
     if timestamp.tzinfo != UTC:
-        raise ReviewGateError("receipt timestamp must be a UTC ISO-8601 value")
+        raise ReviewGateError(_TIMESTAMP_ERROR)
+
+
+def _validate_capture_metadata(
+    reviews_root: Path,
+    family: str,
+    reviewed_sha: str,
+    base_sha: str,
+    reviewer_id: str,
+    author_ids: tuple[str, ...],
+    parent_receipt: str | None,
+    post_fix: bool,
+) -> None:
+    _validate_sha(reviewed_sha, "reviewed_sha")
+    _validate_sha(base_sha, "base_sha")
+    if not family or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", family) or family in {".", ".."}:
+        raise ReviewGateError("family, reviewer, and implementation authors are required")
+    if not reviewer_id or not author_ids:
+        raise ReviewGateError("family, reviewer, and implementation authors are required")
+    if reviewer_id in author_ids:
+        raise ReviewGateError(_REVIEWER_ERROR)
+    if any(not author_id for author_id in author_ids):
+        raise ReviewGateError("implementation author IDs must be non-empty opaque values")
+    if post_fix and parent_receipt is None:
+        raise ReviewGateError("post-fix review requires a parent receipt")
+    if not post_fix and parent_receipt is not None:
+        raise ReviewGateError("initial review cannot claim post-fix parent receipt provenance")
+    if parent_receipt is not None and not re.fullmatch(r"[0-9a-f]{64}", parent_receipt):
+        raise ReviewGateError("parent receipt must be a SHA-256 digest")
+    if parent_receipt is not None and not any(
+        parent_receipt == digest_file(path) for path in reviews_root.glob(f"*/*/{_REVIEW_RECEIPT}")
+    ):
+        raise ReviewGateError("post-fix parent receipt does not match any recorded receipt")
 
 
 def capture_review(
@@ -116,38 +160,17 @@ def capture_review(
     post_fix: bool,
 ) -> Path:
     """Copy redacted reviewer artifacts into a write-once SHA directory."""
-    _validate_sha(reviewed_sha, "reviewed_sha")
-    _validate_sha(base_sha, "base_sha")
-    if (
-        not family
-        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", family)
-        or family in {".", ".."}
-        or not reviewer_id
-        or not author_ids
-    ):
-        raise ReviewGateError("family, reviewer, and implementation authors are required")
-    if reviewer_id in author_ids:
-        raise ReviewGateError("reviewer must differ from every implementation author")
-    if any(not author_id for author_id in author_ids):
-        raise ReviewGateError("implementation author IDs must be non-empty opaque values")
-    if post_fix and parent_receipt is None:
-        raise ReviewGateError("post-fix review requires a parent receipt")
-    if not post_fix and parent_receipt is not None:
-        raise ReviewGateError("initial review cannot claim post-fix parent receipt provenance")
-    if parent_receipt is not None and not re.fullmatch(r"[0-9a-f]{64}", parent_receipt):
-        raise ReviewGateError("parent receipt must be a SHA-256 digest")
-    if parent_receipt is not None and not any(
-        parent_receipt == digest_file(path) for path in reviews_root.glob("*/*/review-receipt.json")
-    ):
-        raise ReviewGateError("post-fix parent receipt does not match any recorded receipt")
+    _validate_capture_metadata(
+        reviews_root, family, reviewed_sha, base_sha, reviewer_id, author_ids, parent_receipt, post_fix
+    )
     _safe_artifact(source_review)
     _validate_threads(current_threads, reviewed_sha)
     directory = reviews_root / family / reviewed_sha
     if directory.exists():
         raise ReviewGateError(f"review directory already exists for SHA {reviewed_sha}")
     directory.mkdir(parents=True)
-    copied_source = directory / "source-review.md"
-    copied_threads = directory / "current-thread.json"
+    copied_source = directory / _SOURCE_REVIEW
+    copied_threads = directory / _CURRENT_THREAD
     shutil.copyfile(source_review, copied_source)
     shutil.copyfile(current_threads, copied_threads)
     timestamp = created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -165,48 +188,22 @@ def capture_review(
         "post_fix": post_fix,
     }
     receipt_text = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
-    if SENSITIVE.search(receipt_text) or REDACTION_VIOLATION.search(receipt_text):
+    if _contains_sensitive(receipt_text) or REDACTION_VIOLATION.search(receipt_text):
         raise ReviewGateError("review receipt contains sensitive metadata")
-    (directory / "review-receipt.json").write_text(receipt_text, encoding="utf-8")
+    (directory / _REVIEW_RECEIPT).write_text(receipt_text, encoding="utf-8")
     return directory
 
 
-def verify_review(reviews_root: Path, family: str, reviewed_sha: str) -> dict[str, str]:
-    """Verify a complete immutable review receipt for the current reviewed SHA."""
-    _validate_sha(reviewed_sha, "reviewed_sha")
-    directory = reviews_root / family / reviewed_sha
-    for name in ("source-review.md", "current-thread.json", "review-receipt.json"):
-        if not (directory / name).is_file():
-            raise ReviewGateError(f"review artifact is missing: {name}")
-    source = directory / "source-review.md"
-    threads = directory / "current-thread.json"
-    _safe_artifact(source)
-    _validate_threads(threads, reviewed_sha)
-    try:
-        receipt: Any = json.loads((directory / "review-receipt.json").read_text(encoding="utf-8"))
-    except ValueError as error:
-        raise ReviewGateError("receipt is not valid JSON") from error
-    if not isinstance(receipt, dict) or receipt.get("schema_version") != 1:
-        raise ReviewGateError("receipt schema is invalid")
-    if receipt.get("reviewed_sha") != reviewed_sha:
-        raise ReviewGateError("receipt reviewed SHA does not match directory")
-    _validate_sha(str(receipt.get("base_sha", "")), "base_sha")
+def _validate_review_identity(receipt: dict[str, Any]) -> None:
     reviewer = receipt.get("reviewer_id")
     authors = receipt.get("author_ids")
-    if (
-        not isinstance(reviewer, str)
-        or not reviewer
-        or not isinstance(authors, list)
-        or not authors
-        or any(not isinstance(author, str) or not author for author in authors)
-        or reviewer in authors
-    ):
-        raise ReviewGateError("reviewer must differ from every implementation author")
-    if receipt.get("source_review_sha256") != digest_file(source) or receipt.get(
-        "current_thread_sha256"
-    ) != digest_file(threads):
-        raise ReviewGateError("review artifact digest does not match receipt")
-    _validate_timestamp(receipt.get("created_at"))
+    if not isinstance(reviewer, str) or not reviewer or not isinstance(authors, list) or not authors:
+        raise ReviewGateError(_REVIEWER_ERROR)
+    if any(not isinstance(author, str) or not author for author in authors) or reviewer in authors:
+        raise ReviewGateError(_REVIEWER_ERROR)
+
+
+def _validate_parent(reviews_root: Path, receipt: dict[str, Any]) -> None:
     post_fix = receipt.get("post_fix")
     parent = receipt.get("parent_receipt")
     if not isinstance(post_fix, bool):
@@ -215,10 +212,39 @@ def verify_review(reviews_root: Path, family: str, reviewed_sha: str) -> dict[st
         raise ReviewGateError("post-fix review requires a parent receipt")
     if not post_fix and parent is not None:
         raise ReviewGateError("initial review cannot claim post-fix parent receipt provenance")
-    if post_fix and not any(parent == digest_file(path) for path in reviews_root.glob("*/*/review-receipt.json")):
+    if post_fix and not any(parent == digest_file(path) for path in reviews_root.glob(f"*/*/{_REVIEW_RECEIPT}")):
         raise ReviewGateError("post-fix parent receipt does not match any recorded receipt")
+
+
+def verify_review(reviews_root: Path, family: str, reviewed_sha: str) -> dict[str, str]:
+    """Verify a complete immutable review receipt for the current reviewed SHA."""
+    _validate_sha(reviewed_sha, "reviewed_sha")
+    directory = reviews_root / family / reviewed_sha
+    for name in (_SOURCE_REVIEW, _CURRENT_THREAD, _REVIEW_RECEIPT):
+        if not (directory / name).is_file():
+            raise ReviewGateError(f"review artifact is missing: {name}")
+    source = directory / _SOURCE_REVIEW
+    threads = directory / _CURRENT_THREAD
+    _safe_artifact(source)
+    _validate_threads(threads, reviewed_sha)
+    try:
+        receipt: Any = json.loads((directory / _REVIEW_RECEIPT).read_text(encoding="utf-8"))
+    except ValueError as error:
+        raise ReviewGateError("receipt is not valid JSON") from error
+    if not isinstance(receipt, dict) or receipt.get("schema_version") != 1:
+        raise ReviewGateError("receipt schema is invalid")
+    if receipt.get("reviewed_sha") != reviewed_sha:
+        raise ReviewGateError("receipt reviewed SHA does not match directory")
+    _validate_sha(str(receipt.get("base_sha", "")), "base_sha")
+    _validate_review_identity(receipt)
+    if receipt.get("source_review_sha256") != digest_file(source) or receipt.get(
+        "current_thread_sha256"
+    ) != digest_file(threads):
+        raise ReviewGateError("review artifact digest does not match receipt")
+    _validate_timestamp(receipt.get("created_at"))
+    _validate_parent(reviews_root, receipt)
     receipt_text = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
-    if SENSITIVE.search(receipt_text) or REDACTION_VIOLATION.search(receipt_text):
+    if _contains_sensitive(receipt_text) or REDACTION_VIOLATION.search(receipt_text):
         raise ReviewGateError("review receipt contains sensitive metadata")
     return {"status": "passed", "reviewed_sha": reviewed_sha}
 
@@ -267,8 +293,8 @@ def main() -> int:
             post_fix=args.post_fix,
         )
         print(directory)
-        return 0
-    print(json.dumps(verify_current_review(args.reviews_root, args.family, args.repo_root), sort_keys=True))
+    else:
+        print(json.dumps(verify_current_review(args.reviews_root, args.family, args.repo_root), sort_keys=True))
     return 0
 
 

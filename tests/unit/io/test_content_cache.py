@@ -21,6 +21,7 @@ import hashlib
 import sqlite3
 import time
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
@@ -74,6 +75,29 @@ def test_key_is_sha256_hexdigest(tmp_path: Path) -> None:
     sha = cache._sha(key)
     assert sha == hashlib.sha256(b"https://example.com/data.csv").hexdigest()
     assert len(sha) == 64
+
+
+def test_concurrent_writers_configure_busy_timeout_before_database_access(tmp_path: Path) -> None:
+    """Connections install busy handling before their first database operation."""
+    cache = ContentCache(str(tmp_path / "cache"))
+    connect = sqlite3.connect
+
+    def connect_without_wait(
+        database: str,
+        timeout: float = 5,
+        isolation_level: Literal["DEFERRED", "EXCLUSIVE", "IMMEDIATE"] | None = "DEFERRED",
+    ) -> sqlite3.Connection:
+        return connect(database, timeout=0, isolation_level=isolation_level)
+
+    with (
+        patch.object(sqlite3, "connect", side_effect=connect_without_wait),
+        concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor,
+    ):
+        futures = [
+            executor.submit(cache.put, f"{writer}-{item}", b"data") for writer in range(10) for item in range(20)
+        ]
+
+    assert [future.exception() for future in futures] == [None] * len(futures)
 
 
 def test_key_is_deterministic(tmp_path: Path) -> None:

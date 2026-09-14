@@ -15,6 +15,7 @@ from typing import Any
 PINNED_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_INIT_FILE = "__init__.py"
 
 
 class PreflightError(ValueError):
@@ -52,8 +53,8 @@ def _module_path(source_root: Path, module: str) -> Path:
     path = source_root.joinpath(*module.split("."))
     if path.with_suffix(".py").is_file():
         return path.with_suffix(".py")
-    if (path / "__init__.py").is_file():
-        return path / "__init__.py"
+    if (path / _INIT_FILE).is_file():
+        return path / _INIT_FILE
     raise ReconciliationError(f"registered API module is missing from source checkout: {module}")
 
 
@@ -70,36 +71,53 @@ def _relative_base(module: str, level: int, *, is_package: bool) -> str:
     return ".".join(parts[: max(len(parts) - drop, 1)])
 
 
+def _imported_modules(node: ast.Import | ast.ImportFrom, module: str, *, is_package: bool) -> set[str]:
+    if isinstance(node, ast.Import):
+        return {alias.name for alias in node.names if alias.name.startswith("udata.")}
+    if node.level:
+        base = _relative_base(module, node.level, is_package=is_package)
+        absolute = f"{base}.{node.module}" if node.module else base
+    elif node.module and node.module.startswith("udata"):
+        absolute = node.module
+    else:
+        return set()
+    imports = {f"{absolute}.{alias.name}" for alias in node.names}
+    if node.module:
+        imports.add(absolute)
+    return imports
+
+
 def _module_imports(tree: ast.AST, module: str, *, is_package: bool) -> set[str]:
     """Return every udata module imported anywhere inside a parsed module."""
-    imports: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imports.update(alias.name for alias in node.names if alias.name.startswith("udata."))
-        elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                base = _relative_base(module, node.level, is_package=is_package)
-                if node.module:
-                    imports.add(f"{base}.{node.module}")
-                    for alias in node.names:
-                        imports.add(f"{base}.{node.module}.{alias.name}")
-                else:
-                    for alias in node.names:
-                        imports.add(f"{base}.{alias.name}")
-            elif node.module and node.module.startswith("udata"):
-                imports.add(node.module)
-                for alias in node.names:
-                    imports.add(f"{node.module}.{alias.name}")
+    imports = {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for name in _imported_modules(node, module, is_package=is_package)
+    }
     return {name for name in imports if len(name.split(".")) > 1}
+
+
+def _parse_module(path: Path, label: str) -> ast.Module:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError) as error:
+        raise ReconciliationError(f"unable to parse {label}") from error
+
+
+def _stock_module_path(source_root: Path, module: str) -> tuple[Path, bool] | None:
+    path = source_root.joinpath(*module.split("."))
+    module_path = path.with_suffix(".py")
+    if module_path.is_file():
+        return module_path, False
+    package_path = path / _INIT_FILE
+    return (package_path, True) if package_path.is_file() else None
 
 
 def _stock_modules(source_root: Path) -> list[str]:
     """Discover the transitive import closure started by uData's API initializer."""
-    initializer = source_root / "udata" / "api" / "__init__.py"
-    try:
-        tree = ast.parse(initializer.read_text(encoding="utf-8"), filename=str(initializer))
-    except (OSError, SyntaxError) as error:
-        raise ReconciliationError("unable to parse uData API initializer") from error
+    initializer = source_root / "udata" / "api" / _INIT_FILE
+    tree = _parse_module(initializer, "uData API initializer")
     queue = sorted(_module_imports(tree, "udata.api", is_package=True))
     closure: set[str] = set()
     while queue:
@@ -110,18 +128,13 @@ def _stock_modules(source_root: Path) -> list[str]:
         for candidate in candidates:
             if candidate in closure:
                 continue
-            path = source_root.joinpath(*candidate.split("."))
-            module_path = path.with_suffix(".py")
-            package_path = path / "__init__.py"
-            if not module_path.is_file() and not package_path.is_file():
+            resolved = _stock_module_path(source_root, candidate)
+            if resolved is None:
                 continue
             closure.add(candidate)
-            parse_path = module_path if module_path.is_file() else package_path
-            try:
-                candidate_tree = ast.parse(parse_path.read_text(encoding="utf-8"), filename=str(parse_path))
-            except (OSError, SyntaxError) as error:
-                raise ReconciliationError(f"unable to parse stock module {candidate}") from error
-            queue.extend(sorted(_module_imports(candidate_tree, candidate, is_package=not module_path.is_file())))
+            parse_path, is_package = resolved
+            candidate_tree = _parse_module(parse_path, f"stock module {candidate}")
+            queue.extend(sorted(_module_imports(candidate_tree, candidate, is_package=is_package)))
     return sorted(closure)
 
 
@@ -229,7 +242,7 @@ def _inherited_http_methods(
                 base_class,
                 class_registry,
                 stack | {key},
-                is_package=base_path.name == "__init__.py",
+                is_package=base_path.name == _INIT_FILE,
             )
         )
     return methods
@@ -327,7 +340,7 @@ def _module_routes(
             routes.extend(_decorated_routes(node, prefixes=prefixes, module=module, inherited=None))
         elif isinstance(node, ast.ClassDef):
             inherited = _inherited_http_methods(
-                source_root, module, tree, node, class_registry, frozenset(), is_package=path.name == "__init__.py"
+                source_root, module, tree, node, class_registry, frozenset(), is_package=path.name == _INIT_FILE
             )
             routes.extend(_decorated_routes(node, prefixes=prefixes, module=module, inherited=inherited))
     return routes
