@@ -24,6 +24,10 @@ on:
       pypi_environment:
         required: true
         type: string
+      publish:
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs: *publish-inputs
 
@@ -110,6 +114,7 @@ jobs:
 
   publish-testpypi:
     needs: build
+    if: inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -131,6 +136,7 @@ jobs:
 
   smoke:
     needs: [build, publish-testpypi]
+    if: inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -162,6 +168,7 @@ jobs:
 
   publish-pypi:
     needs: [build, publish-testpypi, smoke]
+    if: inputs.publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
