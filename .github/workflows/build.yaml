@@ -1,0 +1,103 @@
+name: Build package
+
+on:
+  workflow_call:
+    inputs:
+      component:
+        required: true
+        type: string
+      package_path:
+        required: true
+        type: string
+      package_name:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      testpypi_environment:
+        required: true
+        type: string
+      pypi_environment:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Guard publish inputs
+        env:
+          COMPONENT: ${{ inputs.component }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          PACKAGE_PATH: ${{ inputs.package_path }}
+          TESTPYPI_ENVIRONMENT: ${{ inputs.testpypi_environment }}
+          PYPI_ENVIRONMENT: ${{ inputs.pypi_environment }}
+        run: |
+          python3 - "$COMPONENT" "$PACKAGE_NAME" "$PACKAGE_PATH" "$TESTPYPI_ENVIRONMENT" "$PYPI_ENVIRONMENT" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          component, package_name, package_path, testpypi, pypi = sys.argv[1:6]
+          allowed = {("core", "datasluice", ".", "test-pypi", "pypi")}
+          trusted = subprocess.run(
+              ["git", "show", "origin/main:providers/registry.json"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          allowed |= {
+              (p["slug"], p["package_name"], p["path"], p["testpypi_env"], p["pypi_env"])
+              for p in json.loads(trusted)["providers"]
+          }
+          if (component, package_name, package_path, testpypi, pypi) not in allowed:
+              sys.exit(f"Unexpected component/package/path/environments: {component}/{package_name}/{package_path}/{testpypi}/{pypi}")
+          PY
+      - name: Verify ref is the release tag
+        env:
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          tag="refs/tags/${PACKAGE_NAME}-v${VERSION}"
+          expected="$(git rev-parse "${tag}^{commit}" 2>/dev/null)" || {
+            echo "Release tag ${tag} not found" >&2
+            exit 1
+          }
+          test "${expected}" = "$(git rev-parse HEAD)" || {
+            echo "HEAD does not match ${tag}" >&2
+            exit 1
+          }
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          enable-cache: false
+      - name: Build distribution
+        env:
+          PACKAGE_PATH: ${{ inputs.package_path }}
+        run: uv build --no-sources --out-dir dist "$PACKAGE_PATH"
+      - run: uvx twine check dist/*
+      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dist-${{ inputs.component }}-${{ inputs.version }}
+          path: dist/

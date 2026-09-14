@@ -38,7 +38,7 @@ repos:
 
       - id: pytest
         name: tests (pytest)
-        entry: uv run --frozen pytest -q
+        entry: uv run --frozen --all-extras pytest -q
         language: system
         types: [python]
         pass_filenames: false
