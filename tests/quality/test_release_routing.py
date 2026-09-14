@@ -84,15 +84,17 @@ def _publish_interface_ready() -> bool:
         return False
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     on = publish.get("on")
-    if not isinstance(on, dict) or set(on) != {"workflow_call"}:
+    if not isinstance(on, dict) or "workflow_call" not in on:
         return False
     inputs = on["workflow_call"].get("inputs") or {}
-    if set(inputs) != set(REQUIRED_PUBLISH_INPUTS):
+    if set(inputs) != {*REQUIRED_PUBLISH_INPUTS, "publish"}:
         return False
-    return all(
+    required_ready = all(
         isinstance(inputs[name], dict) and inputs[name].get("required") is True and inputs[name].get("type") == "string"
         for name in REQUIRED_PUBLISH_INPUTS
     )
+    publish = inputs.get("publish") or {}
+    return required_ready and publish.get("required") is False and publish.get("type") == "boolean"
 
 
 def _convention_smoke_ready() -> bool:
@@ -160,7 +162,9 @@ def _routing_ready() -> bool:
         return False
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow.get("jobs") or {}
-    if not isinstance(jobs.get("publish-core"), dict) or not isinstance(jobs.get("publish-providers"), dict):
+    if not isinstance(jobs.get("publish-core-build"), dict) or not isinstance(
+        jobs.get("publish-providers-build"), dict
+    ):
         return False
     release_job = jobs.get("release-please")
     if not isinstance(release_job, dict):
@@ -244,7 +248,7 @@ def _eval_providers_condition(
         "needs.release-please.outputs.provider-releases",
         "'[]'" if provider_releases_empty else '\'[{"slug":"x"}]\'',
     )
-    expr = expr.replace("needs.publish-core.result", repr(core_result))
+    expr = expr.replace("needs.publish-core-build.result", repr(core_result))
     expr = expr.replace("&&", " and ").replace("||", " or ")
     return bool(eval("(" + expr + ")", {"__builtins__": {}}, {}))
 
@@ -273,18 +277,40 @@ def test_reusable_publish_interface() -> None:
     """publish.yml is a workflow_call with exactly the typed required inputs and no release-event trigger."""
     _require(_publish_interface_ready(), "publish.yml is not yet a typed reusable workflow")
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
-    assert set(publish["on"]) == {"workflow_call"}
+    assert "workflow_call" in publish["on"]
     inputs = publish["on"]["workflow_call"]["inputs"]
-    assert set(inputs) == set(REQUIRED_PUBLISH_INPUTS)
+    assert set(inputs) == {*REQUIRED_PUBLISH_INPUTS, "publish"}
     for name in REQUIRED_PUBLISH_INPUTS:
         spec = inputs[name]
         assert spec["required"] is True, f"input {name} must be required"
         assert spec["type"] == "string", f"input {name} must be a string"
+    assert inputs["publish"] == {"required": False, "type": "boolean", "default": True}
     for job in ("build", "publish-testpypi", "smoke", "publish-pypi"):
         assert job in publish["jobs"], f"publish.yml is missing the {job} job"
     raw = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "github.event.release" not in raw
     assert "release: published" not in raw
+
+
+def test_trusted_publishing_runs_in_top_level_workflow() -> None:
+    """OIDC publishing jobs live in the top-level workflow, not the reusable build workflow."""
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    jobs = workflow["jobs"]
+    for job_name in (
+        "publish-core-testpypi",
+        "publish-core-pypi",
+        "publish-providers-testpypi",
+        "publish-providers-pypi",
+    ):
+        job = jobs[job_name]
+        assert job["runs-on"] == "ubuntu-latest"
+        assert any("gh-action-pypi-publish" in step.get("uses", "") for step in job["steps"])
+        assert "environment" in job
+        assert "uses" not in job
+    for job_name in ("publish-core-build", "publish-providers-build"):
+        job = jobs[job_name]
+        assert job["uses"] == "$/.github/workflows/publish.yaml"
+        assert job["with"]["publish"] is False
 
 
 def test_exact_artifact_reused() -> None:
@@ -431,10 +457,10 @@ def test_release_outputs_route_without_release_event() -> None:
     collect_steps = [s for s in release_job["steps"] if s.get("id") == "collect"]
     assert len(collect_steps) == 1
 
-    core = jobs["publish-core"]
-    providers = jobs["publish-providers"]
-    assert core["uses"] == "./.github/workflows/publish.yaml"
-    assert providers["uses"] == "./.github/workflows/publish.yaml"
+    core = jobs["publish-core-build"]
+    providers = jobs["publish-providers-build"]
+    assert core["uses"] == "$/.github/workflows/publish.yaml"
+    assert providers["uses"] == "$/.github/workflows/publish.yaml"
     assert "core--release_created" in str(core.get("if", ""))
     assert "'true'" in str(core.get("if", ""))
 
@@ -447,9 +473,9 @@ def test_provider_only_and_joint_dependencies() -> None:
     )
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]
-    core = jobs["publish-core"]
-    providers = jobs["publish-providers"]
-    assert "publish-core" in providers["needs"]
+    core = jobs["publish-core-build"]
+    providers = jobs["publish-providers-build"]
+    assert "publish-core-build" in providers["needs"]
     assert "release-please" in providers["needs"]
     core_if = str(core.get("if", ""))
     assert "core--release_created" in core_if
@@ -458,7 +484,7 @@ def test_provider_only_and_joint_dependencies() -> None:
     assert "always()" in providers_if
     assert "provider-releases" in providers_if
     assert "core--release_created" in providers_if
-    assert "publish-core.result" in providers_if
+    assert "publish-core-build.result" in providers_if
 
     def runs(*, core_created: bool, provider_releases_empty: bool, core_result: str) -> bool:
         return _eval_providers_condition(
@@ -483,12 +509,12 @@ def test_distinct_production_environments() -> None:
     )
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]
-    core_with = jobs["publish-core"]["with"]
+    core_with = jobs["publish-core-build"]["with"]
     assert core_with["testpypi_environment"] == "test-pypi"
     assert core_with["pypi_environment"] == "pypi"
     assert core_with["testpypi_environment"] != core_with["pypi_environment"]
 
-    providers_with = jobs["publish-providers"]["with"]
+    providers_with = jobs["publish-providers-build"]["with"]
     assert providers_with["testpypi_environment"] == "${{ matrix.provider.testpypi_env }}"
     assert providers_with["pypi_environment"] == "${{ matrix.provider.pypi_env }}"
 
@@ -640,7 +666,7 @@ def test_matrix_expands_from_collect_output() -> None:
     """publish-providers uses fromJson(provider-releases) as its matrix with seven inputs from matrix.provider.*."""
     _require(_routing_ready(), "matrix routing not yet implemented")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
-    providers_job = workflow["jobs"]["publish-providers"]
+    providers_job = workflow["jobs"]["publish-providers-build"]
 
     strategy = providers_job.get("strategy") or {}
     matrix = strategy.get("matrix") or {}
@@ -668,10 +694,10 @@ def test_core_not_in_matrix() -> None:
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]
 
-    core = jobs["publish-core"]
+    core = jobs["publish-core-build"]
     assert "strategy" not in core
 
-    providers = jobs["publish-providers"]
+    providers = jobs["publish-providers-build"]
     assert "strategy" in providers
     providers_with = providers.get("with") or {}
     assert providers_with.get("component") != "core"

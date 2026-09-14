@@ -71,7 +71,7 @@ jobs:
           print("provider-releases=" + json.dumps(releases, separators=(",", ":")))
           PY
 
-  publish-core:
+  publish-core-build:
     needs: release-please
     if: needs.release-please.outputs.core--release_created == 'true'
     uses: $/.github/workflows/publish.yaml
@@ -88,12 +88,80 @@ jobs:
       ref: ${{ needs.release-please.outputs.core--tag_name }}
       testpypi_environment: test-pypi
       pypi_environment: pypi
+      publish: false
 
-  publish-providers:
-    needs: [release-please, publish-core]
+  publish-core-testpypi:
+    needs: [release-please, publish-core-build]
+    if: needs.publish-core-build.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: test-pypi
+      url: https://test.pypi.org/p/datasluice
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dist-core-${{ needs.release-please.outputs.core--version }}
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-core-smoke:
+    needs: [release-please, publish-core-build, publish-core-testpypi]
+    if: needs.publish-core-testpypi.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SMOKE_VENV: /tmp/smoke-core
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ needs.release-please.outputs.core--tag_name }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          enable-cache: false
+      - name: Smoke-test installed package
+        env:
+          PACKAGE_VERSION: ${{ needs.release-please.outputs.core--version }}
+        run: |
+          uv venv --python 3.12 "$SMOKE_VENV"
+          uv pip install --python "$SMOKE_VENV/bin/python" --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "datasluice==$PACKAGE_VERSION"
+      - run: |
+          "$SMOKE_VENV/bin/python" -c "import datasluice"
+          "$SMOKE_VENV/bin/datasluice" --help
+
+  publish-core-pypi:
+    needs: [release-please, publish-core-build, publish-core-testpypi, publish-core-smoke]
+    if: needs.publish-core-smoke.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/datasluice
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dist-core-${{ needs.release-please.outputs.core--version }}
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          skip-existing: true
+
+  publish-providers-build:
+    needs: [release-please, publish-core-build]
     if: >-
       always() && needs.release-please.outputs.provider-releases != '[]' &&
-      (needs.release-please.outputs.core--release_created != 'true' || needs.publish-core.result == 'success')
+      (needs.release-please.outputs.core--release_created != 'true' || needs.publish-core-build.result == 'success')
     strategy:
       fail-fast: false
       matrix:
@@ -112,3 +180,90 @@ jobs:
       ref: ${{ matrix.provider.tag_name }}
       testpypi_environment: ${{ matrix.provider.testpypi_env }}
       pypi_environment: ${{ matrix.provider.pypi_env }}
+      publish: false
+
+  publish-providers-testpypi:
+    needs: [release-please, publish-providers-build]
+    if: >-
+      always() && needs.publish-providers-build.result == 'success' &&
+      needs.release-please.outputs.provider-releases != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ matrix.provider.testpypi_env }}
+      url: https://test.pypi.org/p/${{ matrix.provider.package_name }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dist-${{ matrix.provider.slug }}-${{ matrix.provider.version }}
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-providers-smoke:
+    needs: [release-please, publish-providers-build, publish-providers-testpypi]
+    if: >-
+      always() && needs.publish-providers-testpypi.result == 'success' &&
+      needs.release-please.outputs.provider-releases != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SMOKE_VENV: /tmp/smoke-${{ matrix.provider.slug }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ matrix.provider.tag_name }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          enable-cache: false
+      - name: Smoke-test installed package
+        env:
+          PACKAGE_NAME: ${{ matrix.provider.package_name }}
+          PACKAGE_VERSION: ${{ matrix.provider.version }}
+        run: |
+          uv venv --python 3.12 "$SMOKE_VENV"
+          uv pip install --python "$SMOKE_VENV/bin/python" --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "$PACKAGE_NAME==$PACKAGE_VERSION"
+      - name: Run provider smoke test
+        working-directory: ${{ matrix.provider.path }}
+        run: '"$SMOKE_VENV/bin/python" tests/smoke.py'
+
+  publish-providers-pypi:
+    needs: [release-please, publish-providers-build, publish-providers-testpypi, publish-providers-smoke]
+    if: >-
+      always() && needs.publish-providers-smoke.result == 'success' &&
+      needs.release-please.outputs.provider-releases != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ matrix.provider.pypi_env }}
+      url: https://pypi.org/p/${{ matrix.provider.package_name }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dist-${{ matrix.provider.slug }}-${{ matrix.provider.version }}
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          skip-existing: true
