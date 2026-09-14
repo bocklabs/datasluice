@@ -79,9 +79,8 @@ class ContentCache:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a fresh autocommit connection with WAL + busy_timeout set."""
+        """Open a fresh autocommit connection with a busy timeout."""
         conn = sqlite3.connect(self._db_path, timeout=30, isolation_level=None)
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
@@ -90,7 +89,6 @@ class ContentCache:
         conn = self._connect()
         try:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS cache ("
                 "sha256 TEXT PRIMARY KEY, "

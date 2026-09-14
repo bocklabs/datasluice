@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Self, cast
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEntry, ActionInventory
 from datasluice.connectors.catalog.ckan.mapping import parse_action_envelope, shape_result_envelope
 from datasluice.connectors.catalog.ckan.rate_limits import resolve_rate_policy
-from datasluice.connectors.catalog.ckan.results import require_mutation_tier
+from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings, normalize_origin
 from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -43,7 +43,7 @@ from datasluice.domain.catalog.operations import (
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile, EffectiveCapabilityProfile, ProbeResponseClass
 from datasluice.domain.catalog.resilience import TimeBudget
-from datasluice.domain.catalog.safety import IdempotencyPolicy
+from datasluice.domain.catalog.safety import IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
     CatalogUnavailableError,
@@ -72,6 +72,7 @@ from datasluice.runtime.constants import (
 from datasluice.runtime.defaults import create_default_async_transport, create_default_sync_transport
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.extras import require_extra
+from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import (
     CatalogTransport,
@@ -107,6 +108,7 @@ PLATFORM = CatalogPlatform.CKAN
 _ACTION_PATH = "/api/3/action/"
 _PROFILE_RESOURCE = "ckan-2.11.json"
 _STATUS_RESPONSE_CLASSES = {401: ProbeResponseClass.UNAUTHORIZED, 403: ProbeResponseClass.FORBIDDEN}
+_NATIVE_GROUP_SAFE_ACTION = "Call the action through its owning native group projection."
 
 _NORMALIZED_BACKING: Mapping[tuple[str, str], str] = MappingProxyType(
     {
@@ -154,6 +156,97 @@ def _operation_id_from(value: str) -> OperationId:
     if not dot:
         return OperationId(platform=platform, service="native", method=tail)
     return OperationId(platform=platform, service=service, method=method)
+
+
+type _MutationTarget = Callable[[str, Mapping[str, object]], CatalogId]
+
+
+def _typed_action_request(
+    client: SyncCKANClient | AsyncCKANClient, group: str, action: str, params: dict[str, object]
+) -> tuple[ActionEntry, CatalogOperationRequest, CatalogOperationGuard]:
+    entry = client._inventory.lookup(action)
+    if entry.group != group:
+        raise CatalogValidationError(
+            f"The action {action!r} does not belong to the {group!r} group.",
+            operation=entry.owning_operation_id,
+            platform=PLATFORM.value,
+            safe_action=_NATIVE_GROUP_SAFE_ACTION,
+        )
+    operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=params)
+    return entry, operation, CatalogOperationGuard(operation_id=operation.operation_id, profile=client._profile)
+
+
+def _sync_typed_read(
+    client: SyncCKANClient, group: str, action: str, params: dict[str, object]
+) -> ResultEnvelope[CKANResultItem]:
+    entry, operation, guard = _typed_action_request(client, group, action, params)
+    return cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
+
+
+async def _async_typed_read(
+    client: AsyncCKANClient, group: str, action: str, params: dict[str, object]
+) -> ResultEnvelope[CKANResultItem]:
+    entry, operation, guard = _typed_action_request(client, group, action, params)
+    return cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
+
+
+def _typed_mutation_request(
+    client: SyncCKANClient | AsyncCKANClient,
+    group: str,
+    action: str,
+    params: dict[str, object],
+    policy: MutationPolicy | None,
+) -> tuple[ActionEntry, MutationPolicy, CatalogOperationRequest, CatalogOperationGuard]:
+    entry, operation, _ = _typed_action_request(client, group, action, params)
+    effective = require_mutation_tier(entry.mutation_class, operation.operation_id, policy)
+    assert effective is not None
+    operation = CatalogOperationRequest(operation_id=operation.operation_id, payload=params, mutation_policy=effective)
+    return (
+        entry,
+        effective,
+        operation,
+        CatalogOperationGuard(operation_id=operation.operation_id, profile=client._profile),
+    )
+
+
+def _typed_mutation_result(
+    entry: ActionEntry,
+    params: dict[str, object],
+    policy: MutationPolicy,
+    result: ResultEnvelope[CKANResultItem],
+    target: _MutationTarget,
+) -> CKANMutationResult:
+    operation_id = _operation_id_from(entry.owning_operation_id)
+    receipt = build_mutation_receipt(
+        operation_id, target(entry.name, params), policy, "succeeded", {"action": entry.name}
+    )
+    return CKANMutationResult(result=result, receipt=receipt)
+
+
+def _sync_typed_mutation(
+    client: SyncCKANClient,
+    group: str,
+    action: str,
+    params: dict[str, object],
+    policy: MutationPolicy | None,
+    target: _MutationTarget,
+) -> CKANMutationResult:
+    entry, effective, operation, guard = _typed_mutation_request(client, group, action, params, policy)
+    result = cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
+    return _typed_mutation_result(entry, params, effective, result, target)
+
+
+async def _async_typed_mutation(
+    client: AsyncCKANClient,
+    group: str,
+    action: str,
+    params: dict[str, object],
+    policy: MutationPolicy | None,
+    target: _MutationTarget,
+) -> CKANMutationResult:
+    entry, effective, operation, guard = _typed_mutation_request(client, group, action, params, policy)
+    result = cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
+    return _typed_mutation_result(entry, params, effective, result, target)
 
 
 @lru_cache(maxsize=1)
@@ -1206,7 +1299,7 @@ class _SyncDiscoveryService(_SyncNativeService):
                 f"The action {action!r} does not belong to the {self._group!r} group.",
                 operation=entry.owning_operation_id,
                 platform=PLATFORM.value,
-                safe_action="Call the action through its owning native group projection.",
+                safe_action=_NATIVE_GROUP_SAFE_ACTION,
             )
         operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=payload)
         guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=self._client._profile)
@@ -1326,7 +1419,7 @@ class _AsyncDiscoveryService(_AsyncNativeService):
                 f"The action {action!r} does not belong to the {self._group!r} group.",
                 operation=entry.owning_operation_id,
                 platform=PLATFORM.value,
-                safe_action="Call the action through its owning native group projection.",
+                safe_action=_NATIVE_GROUP_SAFE_ACTION,
             )
         operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=payload)
         guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=self._client._profile)

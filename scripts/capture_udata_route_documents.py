@@ -55,6 +55,32 @@ def _canonical(path: str) -> str:
     return re.sub(r"<[^</:]+:([^/>]+)>", r"<\1>", path)
 
 
+def _swagger_routes(
+    spec: Mapping[str, Any], api_version: str, spec_path: str, excluded_namespaces: Mapping[str, str] | None
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    base_path = spec.get("basePath")
+    if not isinstance(base_path, str) or not base_path.startswith("/api/"):
+        raise ValueError(f"unexpected Swagger basePath for {spec_path}")
+    routes: list[dict[str, str]] = []
+    excluded: list[dict[str, str]] = []
+    for path, operations in sorted(spec.get("paths", {}).items()):
+        full_path = base_path + path
+        if (exclusion := _exclusion(full_path, excluded_namespaces=excluded_namespaces)) is not None:
+            excluded.append(exclusion)
+            continue
+        for method, operation in sorted(operations.items()):
+            if method.lower() in {"get", "post", "put", "patch", "delete"}:
+                routes.append(
+                    {
+                        "api_version": api_version,
+                        "method": method.upper(),
+                        "path": _canonical(full_path),
+                        "signature": f"swagger:{operation.get('operationId', '')}",
+                    }
+                )
+    return routes, excluded
+
+
 def capture_swagger(origin: str, output: Path, excluded_namespaces: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Fetch both generated Swagger specs and emit a compact route document."""
     import urllib.request
@@ -65,24 +91,9 @@ def capture_swagger(origin: str, output: Path, excluded_namespaces: Mapping[str,
     for spec_path, api_version in SWAGGER_SPECS:
         with urllib.request.urlopen(safe_origin + spec_path, timeout=30) as response:
             spec = json.loads(response.read().decode("utf-8"))
-        base_path = spec.get("basePath")
-        if not isinstance(base_path, str) or not base_path.startswith("/api/"):
-            raise ValueError(f"unexpected Swagger basePath for {spec_path}")
-        for path, operations in sorted(spec.get("paths", {}).items()):
-            full_path = base_path + path
-            if (exclusion := _exclusion(full_path, excluded_namespaces=excluded_namespaces)) is not None:
-                excluded.append(exclusion)
-                continue
-            for method, operation in sorted(operations.items()):
-                if method.lower() in {"get", "post", "put", "patch", "delete"}:
-                    routes.append(
-                        {
-                            "api_version": api_version,
-                            "method": method.upper(),
-                            "path": _canonical(full_path),
-                            "signature": f"swagger:{operation.get('operationId', '')}",
-                        }
-                    )
+        spec_routes, spec_excluded = _swagger_routes(spec, api_version, spec_path, excluded_namespaces)
+        routes.extend(spec_routes)
+        excluded.extend(spec_excluded)
     document = {
         "schema_version": 1,
         "capture": "swagger",
@@ -93,6 +104,41 @@ def capture_swagger(origin: str, output: Path, excluded_namespaces: Mapping[str,
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return document
+
+
+def _api_version(path: str) -> str | None:
+    if path.startswith("/api/1"):
+        return "v1"
+    if path.startswith("/api/2"):
+        return "v2"
+    if path.startswith("/oauth"):
+        return "oauth"
+    return None
+
+
+def _url_map_entry(
+    record: Mapping[str, object], excluded_namespaces: Mapping[str, str] | None
+) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    path = record.get("path")
+    method = record.get("method")
+    endpoint = record.get("endpoint")
+    if not isinstance(path, str) or not isinstance(method, str):
+        raise ValueError("URL-map records need path and method strings")
+    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+        return None, None
+    api_version = _api_version(path)
+    if api_version is None:
+        return None, None
+    if (
+        exclusion := _exclusion(path, str(endpoint) if endpoint is not None else None, excluded_namespaces)
+    ) is not None:
+        return None, exclusion
+    return {
+        "api_version": api_version,
+        "method": method,
+        "path": _canonical(path),
+        "signature": f"url_map:{endpoint or ''}",
+    }, None
 
 
 def capture_url_map(
@@ -106,36 +152,17 @@ def capture_url_map(
     excluded: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
     for record in raw_routes:
-        path = record.get("path")
-        method = record.get("method")
-        endpoint = record.get("endpoint")
-        if not isinstance(path, str) or not isinstance(method, str):
-            raise ValueError("URL-map records need path and method strings")
-        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
-            continue
-        if path.startswith("/api/1"):
-            api_version = "v1"
-        elif path.startswith("/api/2"):
-            api_version = "v2"
-        elif path.startswith("/oauth"):
-            api_version = "oauth"
-        else:
-            continue
-        if (exclusion := _exclusion(path, endpoint, excluded_namespaces=excluded_namespaces)) is not None:
+        route, exclusion = _url_map_entry(record, excluded_namespaces)
+        if exclusion is not None:
             excluded.append(exclusion)
             continue
-        key = (method, _canonical(path), api_version)
+        if route is None:
+            continue
+        key = (route["method"], route["path"], route["api_version"])
         if key in seen:
             continue
         seen.add(key)
-        routes.append(
-            {
-                "api_version": api_version,
-                "method": method,
-                "path": _canonical(path),
-                "signature": f"url_map:{endpoint or ''}",
-            }
-        )
+        routes.append(route)
     document = {
         "schema_version": 1,
         "capture": "url_map",

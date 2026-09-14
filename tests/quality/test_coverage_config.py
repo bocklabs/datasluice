@@ -19,6 +19,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ROOT_PYPROJECT = REPO_ROOT / "pyproject.toml"
 PROVIDER_PYPROJECT = REPO_ROOT / "providers" / "apache-airflow" / "pyproject.toml"
+SONAR_CONFIG = REPO_ROOT / "sonar-project.properties"
+SONAR_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "sonarqube.yaml"
 
 _TDD_RED = os.environ.get("DATASLUICE_TDD_RED") == "1"
 
@@ -103,6 +105,14 @@ def test_core_and_provider_use_distinct_data_files() -> None:
     provider = _coverage_run(_read_toml(PROVIDER_PYPROJECT))
     assert core.get("data_file") != provider.get("data_file")
     assert core.get("data_file") not in (None, "")
+
+
+def test_sonarqube_imports_generated_core_coverage() -> None:
+    """The Sonar workflow generates and imports the core Cobertura report."""
+    assert "sonar.python.coverage.reportPaths=coverage.xml" in SONAR_CONFIG.read_text()
+    workflow = SONAR_WORKFLOW.read_text()
+    assert "coverage xml --data-file=.coverage.core" in workflow
+    assert "coverage run --source=src/datasluice --branch -m pytest tests" in workflow
 
 
 def _write_boundary_module(directory: Path, header: int, true_branch: int, false_branch: int) -> None:

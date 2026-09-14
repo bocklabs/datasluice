@@ -65,11 +65,11 @@ def test_get_provider_info_returns_locked_identity() -> None:
     info = _provider_info()
     assert _metadata_value(info, "package-name", "get-provider-info") == _PROVIDER_PACKAGE
     name = _metadata_value(info, "name", "get-provider-info")
-    assert isinstance(name, str) and name, f"get-provider-info 'name' must be non-empty text, got {name!r}"
+    assert isinstance(name, str), f"get-provider-info 'name' must be text, got {name!r}"
+    assert name, "get-provider-info 'name' must be non-empty"
     description = _metadata_value(info, "description", "get-provider-info")
-    assert isinstance(description, str) and description, (
-        f"get-provider-info 'description' must be non-empty text, got {description!r}"
-    )
+    assert isinstance(description, str), f"get-provider-info 'description' must be text, got {description!r}"
+    assert description, "get-provider-info 'description' must be non-empty"
     assert _metadata_value(info, "versions", "get-provider-info") == [_PROVIDER_VERSION]
 
 
@@ -109,7 +109,8 @@ def test_metadata_declares_runtime_hook_operator_but_no_connection_registration(
 def test_descriptions_make_no_execution_claims() -> None:
     """No provider description claims removed discovery, streaming, or materialization execution."""
     for source, description in _descriptions().items():
-        assert isinstance(description, str) and description, f"{source} description must be non-empty text"
+        assert isinstance(description, str), f"{source} description must be text"
+        assert description, f"{source} description must be non-empty"
         lowered = description.lower()
         for word in _EXECUTION_CLAIM_WORDS:
             assert word not in lowered, f"{source} description claims {word!r}"

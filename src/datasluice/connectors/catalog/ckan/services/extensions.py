@@ -13,23 +13,22 @@ server-side option name or value is translated or dropped.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
+    _async_typed_mutation,
+    _async_typed_read,
     _AsyncNativeService,
-    _operation_id_from,
+    _sync_typed_mutation,
+    _sync_typed_read,
     _SyncNativeService,
 )
-from datasluice.connectors.catalog.ckan.inventory import ActionEntry
 from datasluice.connectors.catalog.ckan.mapping import JOB, PLATFORM, TASK
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
+from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.contracts.catalog.native.ckan import CKANResultItem
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import ResultEnvelope
 from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError
-from datasluice.runtime.mutation import build_mutation_receipt
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
@@ -122,39 +121,13 @@ class SyncExtensionsService(_SyncNativeService):
         """Update config options from one verbatim key-value mapping (D-09)."""
         return self._invoke_mutation("config_option_update", dict(values), policy)
 
-    def _typed_entry(self, action: str) -> ActionEntry:
-        entry = self._client._inventory.lookup(action)
-        if entry.group != _GROUP:
-            raise CatalogValidationError(
-                f"The action {action!r} does not belong to the {_GROUP!r} group.",
-                operation=entry.owning_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Call the action through its owning native group projection.",
-            )
-        return entry
-
     def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
-        entry = self._typed_entry(action)
-        client: SyncCKANClient = self._client
-        operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=params)
-        guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=client._profile)
-        return cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
+        return _sync_typed_read(self._client, _GROUP, action, params)
 
     def _invoke_mutation(
         self, action: str, params: dict[str, object], policy: MutationPolicy | None
     ) -> CKANMutationResult:
-        entry = self._typed_entry(action)
-        client: SyncCKANClient = self._client
-        owning_id = _operation_id_from(entry.owning_operation_id)
-        effective = require_mutation_tier(entry.mutation_class, owning_id, policy)
-        assert effective is not None
-        operation = CatalogOperationRequest(operation_id=owning_id, payload=params, mutation_policy=effective)
-        guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
-        envelope = cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
-        receipt = build_mutation_receipt(
-            owning_id, _mutation_target(entry.name, params), effective, "succeeded", {"action": entry.name}
-        )
-        return CKANMutationResult(result=envelope, receipt=receipt)
+        return _sync_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)
 
 
 class AsyncExtensionsService(_AsyncNativeService):
@@ -229,36 +202,10 @@ class AsyncExtensionsService(_AsyncNativeService):
         """Update config options from one verbatim key-value mapping (D-09)."""
         return await self._invoke_mutation("config_option_update", dict(values), policy)
 
-    def _typed_entry(self, action: str) -> ActionEntry:
-        entry = self._client._inventory.lookup(action)
-        if entry.group != _GROUP:
-            raise CatalogValidationError(
-                f"The action {action!r} does not belong to the {_GROUP!r} group.",
-                operation=entry.owning_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Call the action through its owning native group projection.",
-            )
-        return entry
-
     async def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
-        entry = self._typed_entry(action)
-        client: AsyncCKANClient = self._client
-        operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=params)
-        guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=client._profile)
-        return cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
+        return await _async_typed_read(self._client, _GROUP, action, params)
 
     async def _invoke_mutation(
         self, action: str, params: dict[str, object], policy: MutationPolicy | None
     ) -> CKANMutationResult:
-        entry = self._typed_entry(action)
-        client: AsyncCKANClient = self._client
-        owning_id = _operation_id_from(entry.owning_operation_id)
-        effective = require_mutation_tier(entry.mutation_class, owning_id, policy)
-        assert effective is not None
-        operation = CatalogOperationRequest(operation_id=owning_id, payload=params, mutation_policy=effective)
-        guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
-        envelope = cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
-        receipt = build_mutation_receipt(
-            owning_id, _mutation_target(entry.name, params), effective, "succeeded", {"action": entry.name}
-        )
-        return CKANMutationResult(result=envelope, receipt=receipt)
+        return await _async_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)

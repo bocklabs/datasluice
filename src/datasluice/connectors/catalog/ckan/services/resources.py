@@ -15,11 +15,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, cast
 
 from datasluice.connectors.catalog.ckan.clients import (
+    _async_typed_read,
     _AsyncResourceService,
-    _operation_id_from,
+    _sync_typed_read,
     _SyncResourceService,
+    _typed_action_request,
 )
-from datasluice.connectors.catalog.ckan.inventory import ActionEntry
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
 from datasluice.contracts.catalog.native.ckan import CKANResultItem
@@ -193,23 +194,8 @@ class SyncResourcesService(_SyncResourceService):
         """Delete one resource on the standard tier."""
         return self._invoke_mutation("resource_delete", {"id": id}, policy, None)
 
-    def _typed_entry(self, action: str) -> ActionEntry:
-        entry = self._client._inventory.lookup(action)
-        if entry.group != _RESOURCE_GROUP:
-            raise CatalogValidationError(
-                f"The action {action!r} does not belong to the {_RESOURCE_GROUP!r} group.",
-                operation=entry.owning_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Call the action through its owning native group projection.",
-            )
-        return entry
-
     def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
-        entry = self._typed_entry(action)
-        client: SyncCKANClient = self._client
-        operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=params)
-        guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=client._profile)
-        return cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
+        return _sync_typed_read(self._client, _RESOURCE_GROUP, action, params)
 
     def _invoke_mutation(
         self,
@@ -218,9 +204,9 @@ class SyncResourcesService(_SyncResourceService):
         policy: MutationPolicy | None,
         upload: str | os.PathLike[str] | BinaryIO | None,
     ) -> CKANMutationResult:
-        entry = self._typed_entry(action)
         client: SyncCKANClient = self._client
-        owning_id = _operation_id_from(entry.owning_operation_id)
+        entry, request, _ = _typed_action_request(client, _RESOURCE_GROUP, action, params)
+        owning_id = request.operation_id
         effective = require_mutation_tier(entry.mutation_class, owning_id, policy)
         assert effective is not None
         files = _resolve_files(params, upload, client._max_upload_bytes)
@@ -307,23 +293,8 @@ class AsyncResourcesService(_AsyncResourceService):
         """Delete one resource on the standard tier."""
         return await self._invoke_mutation("resource_delete", {"id": id}, policy, None)
 
-    def _typed_entry(self, action: str) -> ActionEntry:
-        entry = self._client._inventory.lookup(action)
-        if entry.group != _RESOURCE_GROUP:
-            raise CatalogValidationError(
-                f"The action {action!r} does not belong to the {_RESOURCE_GROUP!r} group.",
-                operation=entry.owning_operation_id,
-                platform=PLATFORM.value,
-                safe_action="Call the action through its owning native group projection.",
-            )
-        return entry
-
     async def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
-        entry = self._typed_entry(action)
-        client: AsyncCKANClient = self._client
-        operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=params)
-        guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=client._profile)
-        return cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
+        return await _async_typed_read(self._client, _RESOURCE_GROUP, action, params)
 
     async def _invoke_mutation(
         self,
@@ -332,9 +303,9 @@ class AsyncResourcesService(_AsyncResourceService):
         policy: MutationPolicy | None,
         upload: str | os.PathLike[str] | BinaryIO | None,
     ) -> CKANMutationResult:
-        entry = self._typed_entry(action)
         client: AsyncCKANClient = self._client
-        owning_id = _operation_id_from(entry.owning_operation_id)
+        entry, request, _ = _typed_action_request(client, _RESOURCE_GROUP, action, params)
+        owning_id = request.operation_id
         effective = require_mutation_tier(entry.mutation_class, owning_id, policy)
         assert effective is not None
         files = _resolve_files(params, upload, client._max_upload_bytes)
