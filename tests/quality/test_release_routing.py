@@ -25,6 +25,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yaml"
+BUILD_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build.yaml"
 RELEASE_PLEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-please.yaml"
 RELEASE_CONFIG = REPO_ROOT / "release-please-config.json"
 RELEASE_MANIFEST = REPO_ROOT / ".release-please-manifest.json"
@@ -87,14 +88,12 @@ def _publish_interface_ready() -> bool:
     if not isinstance(on, dict) or "workflow_call" not in on:
         return False
     inputs = on["workflow_call"].get("inputs") or {}
-    if set(inputs) != {*REQUIRED_PUBLISH_INPUTS, "publish"}:
+    if set(inputs) != set(REQUIRED_PUBLISH_INPUTS):
         return False
-    required_ready = all(
+    return all(
         isinstance(inputs[name], dict) and inputs[name].get("required") is True and inputs[name].get("type") == "string"
         for name in REQUIRED_PUBLISH_INPUTS
     )
-    publish = inputs.get("publish") or {}
-    return required_ready and publish.get("required") is False and publish.get("type") == "boolean"
 
 
 def _convention_smoke_ready() -> bool:
@@ -279,12 +278,11 @@ def test_reusable_publish_interface() -> None:
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     assert "workflow_call" in publish["on"]
     inputs = publish["on"]["workflow_call"]["inputs"]
-    assert set(inputs) == {*REQUIRED_PUBLISH_INPUTS, "publish"}
+    assert set(inputs) == set(REQUIRED_PUBLISH_INPUTS)
     for name in REQUIRED_PUBLISH_INPUTS:
         spec = inputs[name]
         assert spec["required"] is True, f"input {name} must be required"
         assert spec["type"] == "string", f"input {name} must be a string"
-    assert inputs["publish"] == {"required": False, "type": "boolean", "default": True}
     for job in ("build", "publish-testpypi", "smoke", "publish-pypi"):
         assert job in publish["jobs"], f"publish.yml is missing the {job} job"
     raw = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
@@ -309,8 +307,15 @@ def test_trusted_publishing_runs_in_top_level_workflow() -> None:
         assert "uses" not in job
     for job_name in ("publish-core-build", "publish-providers-build"):
         job = jobs[job_name]
-        assert job["uses"] == "$/.github/workflows/publish.yaml"
-        assert job["with"]["publish"] is False
+        assert job["uses"] == "$/.github/workflows/build.yaml"
+
+
+def test_publish_workflow_delegates_build_without_duplicate_publish_jobs() -> None:
+    """The reusable publish workflow has one build child and no conditional duplicate jobs."""
+    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
+    build = _load_gh_yaml(BUILD_WORKFLOW)
+    assert publish["jobs"]["build"]["uses"] == "$/.github/workflows/build.yaml"
+    assert set(build["jobs"]) == {"build"}
 
 
 def test_exact_artifact_reused() -> None:
@@ -318,7 +323,8 @@ def test_exact_artifact_reused() -> None:
     _require(_publish_interface_ready(), "publish.yml is not yet a typed reusable workflow")
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     jobs = publish["jobs"]
-    build_steps = jobs["build"]["steps"]
+    build = _load_gh_yaml(BUILD_WORKFLOW)
+    build_steps = build["jobs"]["build"]["steps"]
     checkout = next(s for s in build_steps if "checkout" in s.get("uses", ""))
     assert checkout["with"]["ref"] == "${{ inputs.ref }}", "build must check out the exact Release Please ref"
     commands = " ".join(str(s.get("run", "")) for s in build_steps)
@@ -459,8 +465,8 @@ def test_release_outputs_route_without_release_event() -> None:
 
     core = jobs["publish-core-build"]
     providers = jobs["publish-providers-build"]
-    assert core["uses"] == "$/.github/workflows/publish.yaml"
-    assert providers["uses"] == "$/.github/workflows/publish.yaml"
+    assert core["uses"] == "$/.github/workflows/build.yaml"
+    assert providers["uses"] == "$/.github/workflows/build.yaml"
     assert "core--release_created" in str(core.get("if", ""))
     assert "'true'" in str(core.get("if", ""))
 

@@ -74,7 +74,7 @@ jobs:
   publish-core-build:
     needs: release-please
     if: needs.release-please.outputs.core--release_created == 'true'
-    uses: $/.github/workflows/publish.yaml
+    uses: $/.github/workflows/build.yaml
     permissions:
       actions: read
       contents: read
@@ -88,7 +88,6 @@ jobs:
       ref: ${{ needs.release-please.outputs.core--tag_name }}
       testpypi_environment: test-pypi
       pypi_environment: pypi
-      publish: false
 
   publish-core-testpypi:
     needs: [release-please, publish-core-build]
@@ -166,7 +165,7 @@ jobs:
       fail-fast: false
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
-    uses: $/.github/workflows/publish.yaml
+    uses: $/.github/workflows/build.yaml
     permissions:
       actions: read
       contents: read
@@ -180,7 +179,6 @@ jobs:
       ref: ${{ matrix.provider.tag_name }}
       testpypi_environment: ${{ matrix.provider.testpypi_env }}
       pypi_environment: ${{ matrix.provider.pypi_env }}
-      publish: false
 
   publish-providers-testpypi:
     needs: [release-please, publish-providers-build]
