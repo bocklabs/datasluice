@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/bocklabs/datasluice/compare/apache-airflow-providers-datasluice-v0.2.0...apache-airflow-providers-datasluice-v0.2.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* CKAN service methods to utilize typed read and mutation functions ([#79](https://github.com/bocklabs/datasluice/issues/79)) ([e0988db](https://github.com/bocklabs/datasluice/commit/e0988db71388a8f8722192a629153d8ddef8e4dc))
+
 ## [0.2.0](https://github.com/bocklabs/datasluice/compare/apache-airflow-providers-datasluice-v0.1.3...apache-airflow-providers-datasluice-v0.2.0) (2026-08-24)
 
 
