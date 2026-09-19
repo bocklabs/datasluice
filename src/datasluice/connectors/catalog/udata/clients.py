@@ -98,6 +98,7 @@ from datasluice.runtime.transport.base import (
     RuntimeResponse,
     RuntimeStreamResponse,
     TransportFailure,
+    UploadPart,
 )
 from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
@@ -107,6 +108,12 @@ if TYPE_CHECKING:
     )
     from datasluice.connectors.catalog.udata.services.datasets import (
         SyncDatasetsService as _SyncDatasetsService,
+    )
+    from datasluice.connectors.catalog.udata.services.resources import (
+        AsyncResourcesService as _AsyncResourcesService,
+    )
+    from datasluice.connectors.catalog.udata.services.resources import (
+        SyncResourcesService as _SyncResourcesService,
     )
     from datasluice.connectors.catalog.udata.services.root_profile import (
         AsyncRootProfileService as _AsyncRootProfileService,
@@ -3012,6 +3019,11 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the complete typed root-profile service."""
         return SyncRootProfileService(self)
 
+    @property
+    def resources(self) -> _SyncResourcesService:
+        """Expose the complete typed resource service."""
+        return SyncResourcesService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -3069,6 +3081,7 @@ class SyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
+        files: tuple[UploadPart, ...] = (),
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
@@ -3079,12 +3092,13 @@ class SyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
-        body = self._json_body(json_body, owning_id)
+        body = None if files else self._json_body(json_body, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
             headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
             body=body,
+            files=files,
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
@@ -3417,6 +3431,11 @@ class AsyncUDataClient(_UDataClientCore):
         """Expose the complete typed root-profile service."""
         return AsyncRootProfileService(self)
 
+    @property
+    def resources(self) -> _AsyncResourcesService:
+        """Expose the complete typed resource service."""
+        return AsyncResourcesService(self)
+
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[UDataResultItem]:
@@ -3565,6 +3584,7 @@ class AsyncUDataClient(_UDataClientCore):
         allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
+        files: tuple[UploadPart, ...] = (),
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
@@ -3577,12 +3597,13 @@ class AsyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
-        body = self._json_body(json_body, owning_id)
+        body = None if files else self._json_body(json_body, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
             headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
             body=body,
+            files=files,
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
@@ -3887,12 +3908,27 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
 
 def _load_services():
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.udata.services.resources import AsyncResourcesService, SyncResourcesService
     from datasluice.connectors.catalog.udata.services.root_profile import (
         AsyncRootProfileService,
         SyncRootProfileService,
     )
 
-    return AsyncDatasetsService, SyncDatasetsService, AsyncRootProfileService, SyncRootProfileService
+    return (
+        AsyncDatasetsService,
+        SyncDatasetsService,
+        AsyncRootProfileService,
+        SyncRootProfileService,
+        AsyncResourcesService,
+        SyncResourcesService,
+    )
 
 
-AsyncDatasetsService, SyncDatasetsService, AsyncRootProfileService, SyncRootProfileService = _load_services()
+(
+    AsyncDatasetsService,
+    SyncDatasetsService,
+    AsyncRootProfileService,
+    SyncRootProfileService,
+    AsyncResourcesService,
+    SyncResourcesService,
+) = _load_services()

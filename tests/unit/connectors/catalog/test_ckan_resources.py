@@ -105,7 +105,11 @@ def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
 
 
 def _upload_parts(request: RuntimeRequest) -> dict[str, tuple[bytes, str | None]]:
-    return {part.field_name: (part.data, part.file_name) for part in request.files}
+    parts: dict[str, tuple[bytes, str | None]] = {}
+    for part in request.files:
+        assert isinstance(part.data, bytes)
+        parts[part.field_name] = part.data, part.file_name
+    return parts
 
 
 def test_upload_buffers_path_and_handle_sources_to_identical_wire_bytes(tmp_path: Path) -> None:
