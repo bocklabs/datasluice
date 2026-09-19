@@ -501,6 +501,34 @@ def test_stream_document_cleanup_failure_preserves_primary_error() -> None:
     assert str(excinfo.value.__cause__) == "cleanup"
 
 
+def test_stream_document_interrupt_closes_and_settles_failure() -> None:
+    closed: list[bool] = []
+    failures: list[BaseException] = []
+
+    def interrupt(_: bytes) -> None:
+        raise KeyboardInterrupt
+
+    response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=iter((b"valid\n",)),
+        close_callback=lambda: closed.append(True),
+        failure_callback=failures.append,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as excinfo:
+        wire.digest_stream_document(
+            response,
+            endpoint=_SITE_URL,
+            expected_media_type="text/csv",
+            max_bytes=8,
+            sink=interrupt,
+        )
+
+    assert closed == [True]
+    assert failures == [excinfo.value]
+
+
 def test_async_stream_document_cleanup_failure_preserves_primary_error() -> None:
     async def chunks() -> AsyncIterator[bytes]:
         yield b"valid\n"
@@ -1873,3 +1901,21 @@ def test_root_profile_models_are_typed_and_immutable() -> None:
     assert isinstance(profile.to_dict(), dict)
     assert isinstance(SitePatchInput(title="x"), SitePatchInput)
     assert NativeRecord is not SiteProfile
+
+
+def test_root_profile_model_reprs_hide_configuration_values() -> None:
+    marker = "sensitive-site-configuration"
+    profile = SiteProfile.from_payload({**_site_body(), "configs": {"marker": marker}})
+    patch = SitePatchInput(configs={"marker": marker}, settings={"marker": marker})
+    result = SiteMutationResult(
+        MutationReceipt(
+            operation=wire.SET_SITE_OPERATION,
+            outcome="succeeded",
+            target=profile.catalog_id,
+        ),
+        profile,
+    )
+
+    assert marker not in repr(profile)
+    assert marker not in repr(patch)
+    assert marker not in repr(result)
