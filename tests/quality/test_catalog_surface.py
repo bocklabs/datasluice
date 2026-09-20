@@ -397,6 +397,9 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "AsyncUDataServices",
             "resources",
         ),
+        "udata/api-v1.resource-reads": ("SyncUDataServices", "AsyncUDataServices", "resources"),
+        "udata/api-v1.resource-mutations": ("SyncUDataServices", "AsyncUDataServices", "resources"),
+        "udata/api-v1.resource-destructive-mutations": ("SyncUDataServices", "AsyncUDataServices", "resources"),
         "udata/api-v1.organizations-and-memberships": (
             "SyncUDataServices",
             "AsyncUDataServices",
@@ -530,6 +533,9 @@ def _row_to_operation_id(row: str) -> str:
 LOCKED_DATASET_ROUTE_OPERATIONS = frozenset(
     {
         "udata/api-v1.set_site",
+        "udata/api-v1.resource-reads",
+        "udata/api-v1.resource-mutations",
+        "udata/api-v1.resource-destructive-mutations",
         "udata/api-v1.list-datasets",
         "udata/api-v1.create-dataset",
         "udata/api-v1.recent-datasets-atom",
@@ -550,7 +556,12 @@ LOCKED_DATASET_ROUTE_OPERATIONS = frozenset(
     }
 )
 
-LOCKED_EXTRA_OPERATION_IDS = LOCKED_DATASET_ROUTE_OPERATIONS & {"udata/api-v1.set_site"}
+LOCKED_EXTRA_OPERATION_IDS = LOCKED_DATASET_ROUTE_OPERATIONS & {
+    "udata/api-v1.set_site",
+    "udata/api-v1.resource-reads",
+    "udata/api-v1.resource-mutations",
+    "udata/api-v1.resource-destructive-mutations",
+}
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
     "udata": LOCKED_DATASET_ROUTE_OPERATIONS,

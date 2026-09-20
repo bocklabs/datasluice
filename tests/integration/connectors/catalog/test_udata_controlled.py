@@ -352,7 +352,8 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                 ResourceUploadInput(BytesIO(b"abc"), "community-new.csv", 3),
                 permissions,
                 resource_policy(
-                    dataset_id, operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new"
+                    dataset_id,
+                    operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new",
                 ),
             )
             assert uploaded_community.record is not None
@@ -401,7 +402,7 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                     resource_policy(
                         community_id,
                         destructive=True,
-                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-replace",
                     ),
                 ).record
                 is not None

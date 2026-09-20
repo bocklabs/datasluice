@@ -14,14 +14,16 @@ from datasluice.domain.catalog.models import NativeRecord, PageInfo, PlatformMet
 from datasluice.errors.catalog import CatalogValidationError
 
 RESOURCE_OPERATION = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete"
-RESOURCE_READ_OPERATION = "udata/api-v1.get-dataset"
-RESOURCE_MUTATION_CAPABILITY = "udata/api-v1.create-dataset"
-RESOURCE_DELETE_CAPABILITY = "udata/api-v1.delete-dataset"
+RESOURCE_READ_OPERATION = "udata/api-v1.resource-reads"
+RESOURCE_MUTATION_CAPABILITY = "udata/api-v1.resource-mutations"
+RESOURCE_DELETE_CAPABILITY = "udata/api-v1.resource-destructive-mutations"
 
 CREATE_OPERATION = f"{RESOURCE_OPERATION}-create"
 REORDER_OPERATION = f"{RESOURCE_OPERATION}-reorder"
 UPLOAD_NEW_OPERATION = f"{RESOURCE_OPERATION}-upload-new"
 UPLOAD_REPLACE_OPERATION = f"{RESOURCE_OPERATION}-upload-replace"
+UPLOAD_COMMUNITY_NEW_OPERATION = f"{RESOURCE_OPERATION}-upload-community-new"
+UPLOAD_COMMUNITY_REPLACE_OPERATION = f"{RESOURCE_OPERATION}-upload-community-replace"
 RESOURCE_UPDATE_OPERATION = f"{RESOURCE_OPERATION}-update"
 RESOURCE_DELETE_OPERATION = f"{RESOURCE_OPERATION}-delete"
 COMMUNITY_CREATE_OPERATION = f"{RESOURCE_OPERATION}-community-create"

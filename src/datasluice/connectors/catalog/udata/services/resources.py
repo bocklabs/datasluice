@@ -48,12 +48,13 @@ def _receipt(
     resource_kind: ResourceKind = ResourceKind.RESOURCE,
     operation: str = wire.RESOURCE_OPERATION,
 ) -> MutationReceipt:
+    safe_target = target or "invalid-target"
     return build_mutation_receipt(
         _operation_id(operation),
-        CatalogId(platform=CatalogPlatform.UDATA, resource_kind=resource_kind, value=target),
+        CatalogId(platform=CatalogPlatform.UDATA, resource_kind=resource_kind, value=safe_target),
         policy or MutationPolicy(concurrency=ConcurrencyPolicy(overwrite=True)),
         outcome,
-        {"mutation": mutation, "status_code": status},
+        {"mutation": mutation, "status_code": status, "target_valid": bool(target)},
     )
 
 
@@ -270,9 +271,17 @@ class SyncResourcesService:
         resource_id: str | None = None,
         community: bool = False,
     ) -> Result:
-        target = resource_id or dataset_id
+        target = resource_id if resource_id is not None else dataset_id
         resource_kind = ResourceKind.RESOURCE if resource_id is not None else ResourceKind.DATASET
-        operation = wire.UPLOAD_REPLACE_OPERATION if resource_id is not None else wire.UPLOAD_NEW_OPERATION
+        operation = (
+            wire.UPLOAD_COMMUNITY_REPLACE_OPERATION
+            if community and resource_id is not None
+            else wire.UPLOAD_REPLACE_OPERATION
+            if resource_id is not None
+            else wire.UPLOAD_COMMUNITY_NEW_OPERATION
+            if community
+            else wire.UPLOAD_NEW_OPERATION
+        )
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
@@ -332,7 +341,7 @@ class SyncResourcesService:
                 "uploaded",
                 True,
                 lambda: self._upload(method, path, headers, client_input, permissions, mutation_policy),
-                operation=wire.UPLOAD_REPLACE_OPERATION,
+                operation=wire.UPLOAD_COMMUNITY_REPLACE_OPERATION,
             )
             return result
         except BaseException as error:
@@ -646,9 +655,17 @@ class AsyncResourcesService:
         resource_id: str | None = None,
         community: bool = False,
     ) -> Result:
-        target = resource_id or dataset_id
+        target = resource_id if resource_id is not None else dataset_id
         resource_kind = ResourceKind.RESOURCE if resource_id is not None else ResourceKind.DATASET
-        operation = wire.UPLOAD_REPLACE_OPERATION if resource_id is not None else wire.UPLOAD_NEW_OPERATION
+        operation = (
+            wire.UPLOAD_COMMUNITY_REPLACE_OPERATION
+            if community and resource_id is not None
+            else wire.UPLOAD_REPLACE_OPERATION
+            if resource_id is not None
+            else wire.UPLOAD_COMMUNITY_NEW_OPERATION
+            if community
+            else wire.UPLOAD_NEW_OPERATION
+        )
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
@@ -785,7 +802,7 @@ class AsyncResourcesService:
                 "uploaded",
                 True,
                 lambda: self._upload(method, path, headers, client_input, permissions, mutation_policy),
-                operation=wire.UPLOAD_REPLACE_OPERATION,
+                operation=wire.UPLOAD_COMMUNITY_REPLACE_OPERATION,
             )
             return result
         except BaseException as error:

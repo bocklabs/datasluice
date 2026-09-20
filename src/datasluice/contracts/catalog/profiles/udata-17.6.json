@@ -5,7 +5,7 @@
   "platform_api_version": "uData API v1",
   "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
   "source_accessed_at": "2026-08-27",
-  "fixture_fingerprint": "8ab487621575456a4811d0338efa1ec32d7223fb6562fe8245fa778d183a4476",
+  "fixture_fingerprint": "85f0f3850d1809475589f53a5e032f6129a1c02a0ea73c4506df3b8c513f1933",
   "operations": [
     {
       "id": "udata/api-v1.authentication-and-oauth-flows",
@@ -30,6 +30,27 @@
     },
     {
       "id": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "delete",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.resource-reads",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.resource-mutations",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.resource-destructive-mutations",
       "capability": "authenticated",
       "authentication": "authenticated",
       "mutation": "delete",
