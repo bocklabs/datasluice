@@ -49,7 +49,11 @@
     },
     {
       "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
-      "outcome": "authenticated-success"
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-admin"
+      }
     },
     {
       "operation": "udata/api-v1.organizations-and-memberships",

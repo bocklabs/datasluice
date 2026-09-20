@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
+from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.resources import (
     ResourceCreateInput,
     ResourceMutationResult,
     ResourceUpdateInput,
     ResourceUploadInput,
 )
+from datasluice.connectors.catalog.udata.wire import datasets as dataset_wire
 from datasluice.connectors.catalog.udata.wire import resources as wire
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, MutationPolicy
 from datasluice.errors.catalog import attach_catalog_metadata
@@ -52,11 +54,19 @@ def _attach(error: BaseException, receipt: MutationReceipt) -> None:
         error.__dict__["mutation_receipt"] = receipt
 
 
-def _records(payload: object) -> tuple[object, ...]:
-    items = payload.get("data") if isinstance(payload, Mapping) else payload
-    if not isinstance(items, list):
-        raise ValueError("The uData resource collection response must contain a data list.")
-    return tuple(wire.parse_resource(item) for item in items)
+def _mutation_result(receipt: MutationReceipt, payload: object, mutation: str) -> Result:
+    if mutation == "reordered":
+        if not isinstance(payload, list):
+            raise ValueError("The uData resource reorder response must be a list.")
+        return ResourceMutationResult(receipt=receipt, records=tuple(wire.parse_resource(item) for item in payload))
+    if mutation == "extras_updated" or (mutation == "extras_deleted" and payload is not None):
+        return ResourceMutationResult(
+            receipt=receipt,
+            extras=dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION),
+        )
+    if mutation == "deleted" or mutation == "extras_deleted":
+        return ResourceMutationResult(receipt=receipt)
+    return ResourceMutationResult(receipt=receipt, record=wire.parse_resource(payload))
 
 
 def _resource_mutation(
@@ -70,12 +80,16 @@ def _resource_mutation(
     try:
         _enforce_mutation_policy(wire.RESOURCE_OPERATION, target, policy, destructive=destructive)
         status, payload, response = dispatch()
-        record = wire.parse_resource(payload) if isinstance(payload, Mapping) and "id" in payload else None
-    except Exception as error:
-        receipt = _receipt(policy, target, _mutation_outcome(error, response), _error_status(error, response), mutation)
+        return _mutation_result(_receipt(policy, target, "succeeded", status, mutation), payload, mutation)
+    except BaseException as error:
+        outcome = (
+            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
+        )
+        if mutation == "uploaded" and isinstance(error, (OSError, ValueError)):
+            outcome = "ambiguous"
+        receipt = _receipt(policy, target, outcome, _error_status(error, response), mutation)
         _attach(error, receipt)
         raise
-    return ResourceMutationResult(receipt=_receipt(policy, target, "succeeded", status, mutation), record=record)
 
 
 async def _async_resource_mutation(
@@ -89,12 +103,16 @@ async def _async_resource_mutation(
     try:
         _enforce_mutation_policy(wire.RESOURCE_OPERATION, target, policy, destructive=destructive)
         status, payload, response = await dispatch()
-        record = wire.parse_resource(payload) if isinstance(payload, Mapping) and "id" in payload else None
-    except (Exception, asyncio.CancelledError) as error:
-        receipt = _receipt(policy, target, _mutation_outcome(error, response), _error_status(error, response), mutation)
+        return _mutation_result(_receipt(policy, target, "succeeded", status, mutation), payload, mutation)
+    except BaseException as error:
+        outcome = (
+            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
+        )
+        if mutation == "uploaded" and isinstance(error, (OSError, ValueError)):
+            outcome = "ambiguous"
+        receipt = _receipt(policy, target, outcome, _error_status(error, response), mutation)
         _attach(error, receipt)
         raise
-    return ResourceMutationResult(receipt=_receipt(policy, target, "succeeded", status, mutation), record=record)
 
 
 class SyncResourcesService:
@@ -103,15 +121,16 @@ class SyncResourcesService:
     def __init__(self, client: SyncUDataClient) -> None:
         self._client = client
 
-    def redirect(self, resource_id: str) -> Mapping[str, str]:
+    def redirect(self, resource_id: str) -> str:
+        method, path, _, _ = wire.redirect_resource_request(resource_id)
         _, headers, _ = self._client._dataset_call(
-            method="GET",
-            path=f"/api/1/datasets/r/{wire._id(resource_id, 'resource id')}",
+            method=method,
+            path=path,
             owning_operation=wire.RESOURCE_OPERATION,
             raw_text=True,
             redirect_mode=True,
         )
-        return headers if isinstance(headers, Mapping) else {}
+        return wire.redirect_location(headers)
 
     def create(
         self,
@@ -195,7 +214,7 @@ class SyncResourcesService:
         finally:
             client_input.close()
 
-    def get(self, dataset_id: str, resource_id: str) -> object:
+    def get(self, dataset_id: str, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", dataset_id, resource_id)
         _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=wire.RESOURCE_OPERATION)
         return wire.parse_resource(payload)
@@ -233,10 +252,10 @@ class SyncResourcesService:
             lambda: self._call(method, path, None, permissions, mutation_policy),
         )
 
-    def list_community(self, params: Mapping[str, str | int] | None = None) -> tuple[object, ...]:
+    def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope:
         method, path, _, _ = wire.list_community_resources_request(params)
         _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=wire.RESOURCE_OPERATION)
-        return _records(payload)
+        return wire.parse_resource_page(payload)
 
     def create_community(
         self,
@@ -256,7 +275,7 @@ class SyncResourcesService:
             lambda: self._call(method, path, body, permissions, mutation_policy),
         )
 
-    def get_community(self, resource_id: str) -> object:
+    def get_community(self, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", "", resource_id, community=True)
         _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=wire.RESOURCE_OPERATION)
         return wire.parse_resource(payload)
@@ -275,38 +294,38 @@ class SyncResourcesService:
     def delete_community(self, resource_id: str, permissions: Permissions, mutation_policy: Policy = None) -> Result:
         return self._community_mutation("DELETE", resource_id, None, permissions, mutation_policy, True, "deleted")
 
-    def resource_types(self) -> object:
+    def resource_types(self) -> tuple[Mapping[str, str], ...]:
         method, path, _, _ = wire.resource_types_request()
         _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=wire.RESOURCE_OPERATION)
-        return payload
+        return wire.parse_resource_types(payload)
 
-    def list_v2(self, dataset_id: str) -> tuple[object, ...]:
+    def list_v2(self, dataset_id: str) -> UDataPageEnvelope:
         method, path, _, _ = wire.v2_resource_request(dataset_id)
         _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=wire.RESOURCE_OPERATION)
-        return _records(payload)
+        return wire.parse_resource_page(payload)
 
-    def get_v2(self, resource_id: str) -> object:
+    def get_v2(self, resource_id: str) -> NativeRecord:
+        method, path, _, _ = wire.v2_resource_request("", resource_id)
         _, payload, _ = self._client._dataset_call(
-            method="GET",
-            path=f"/api/2/datasets/resources/{wire._id(resource_id, 'resource id')}/",
+            method=method,
+            path=path,
             owning_operation=wire.RESOURCE_OPERATION,
         )
         return wire.parse_resource(payload.get("resource") if isinstance(payload, Mapping) else payload)
 
-    def get_dataset_v2(self, dataset_id: str) -> object:
+    def get_dataset_v2(self, dataset_id: str) -> NativeRecord:
+        method, path, _, _ = wire.v2_dataset_request(dataset_id)
         _, payload, _ = self._client._dataset_call(
-            method="GET",
-            path=f"/api/2/datasets/{wire._id(dataset_id, 'dataset id')}/",
+            method=method,
+            path=path,
             owning_operation=wire.RESOURCE_OPERATION,
         )
-        return payload
+        return wire.parse_v2_dataset(payload)
 
     def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]:
         method, path, _, _ = wire.v2_extras_request("GET", dataset_id, resource_id)
         _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=wire.RESOURCE_OPERATION)
-        if not isinstance(payload, Mapping):
-            raise ValueError("The uData resource extras response must be an object.")
-        return payload
+        return dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION)
 
     def update_extras_v2(
         self,
@@ -397,6 +416,17 @@ class AsyncResourcesService:
     def __init__(self, client: AsyncUDataClient) -> None:
         self._client = client
 
+    async def redirect(self, resource_id: str) -> str:
+        method, path, _, _ = wire.redirect_resource_request(resource_id)
+        _, headers, _ = await self._client._dataset_call_async(
+            method=method,
+            path=path,
+            owning_operation=wire.RESOURCE_OPERATION,
+            raw_text=True,
+            redirect_mode=True,
+        )
+        return wire.redirect_location(headers)
+
     async def create(
         self,
         dataset_id: str,
@@ -409,6 +439,22 @@ class AsyncResourcesService:
             dataset_id,
             mutation_policy,
             "created",
+            False,
+            lambda: self._call(method, path, body, permissions, mutation_policy),
+        )
+
+    async def reorder(
+        self,
+        dataset_id: str,
+        values: tuple[ResourceUpdateInput, ...],
+        permissions: Permissions,
+        mutation_policy: Policy = None,
+    ) -> Result:
+        method, path, _, body = wire.update_resources_request(dataset_id, values)
+        return await _async_resource_mutation(
+            dataset_id,
+            mutation_policy,
+            "reordered",
             False,
             lambda: self._call(method, path, body, permissions, mutation_policy),
         )
@@ -434,7 +480,7 @@ class AsyncResourcesService:
         finally:
             client_input.close()
 
-    async def get(self, dataset_id: str, resource_id: str) -> object:
+    async def get(self, dataset_id: str, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", dataset_id, resource_id)
         _, payload, _ = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=wire.RESOURCE_OPERATION
@@ -474,38 +520,39 @@ class AsyncResourcesService:
             lambda: self._call(method, path, body, permissions, mutation_policy),
         )
 
-    async def list_community(self, params: Mapping[str, str | int] | None = None) -> tuple[object, ...]:
+    async def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope:
         method, path, _, _ = wire.list_community_resources_request(params)
         _, payload, _ = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=wire.RESOURCE_OPERATION
         )
-        return _records(payload)
+        return wire.parse_resource_page(payload)
 
-    async def get_community(self, resource_id: str) -> object:
+    async def get_community(self, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", "", resource_id, community=True)
         _, payload, _ = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=wire.RESOURCE_OPERATION
         )
         return wire.parse_resource(payload)
 
-    async def resource_types(self) -> object:
+    async def resource_types(self) -> tuple[Mapping[str, str], ...]:
         method, path, _, _ = wire.resource_types_request()
         _, payload, _ = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=wire.RESOURCE_OPERATION
         )
-        return payload
+        return wire.parse_resource_types(payload)
 
-    async def list_v2(self, dataset_id: str) -> tuple[object, ...]:
+    async def list_v2(self, dataset_id: str) -> UDataPageEnvelope:
         method, path, _, _ = wire.v2_resource_request(dataset_id)
         _, payload, _ = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=wire.RESOURCE_OPERATION
         )
-        return _records(payload)
+        return wire.parse_resource_page(payload)
 
-    async def get_v2(self, resource_id: str) -> object:
+    async def get_v2(self, resource_id: str) -> NativeRecord:
+        method, path, _, _ = wire.v2_resource_request("", resource_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method="GET",
-            path=f"/api/2/datasets/resources/{wire._id(resource_id, 'resource id')}/",
+            method=method,
+            path=path,
             owning_operation=wire.RESOURCE_OPERATION,
         )
         return wire.parse_resource(payload.get("resource") if isinstance(payload, Mapping) else payload)
@@ -589,22 +636,21 @@ class AsyncResourcesService:
             lambda: self._call(method, path, None, permissions, mutation_policy),
         )
 
-    async def get_dataset_v2(self, dataset_id: str) -> object:
+    async def get_dataset_v2(self, dataset_id: str) -> NativeRecord:
+        method, path, _, _ = wire.v2_dataset_request(dataset_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method="GET",
-            path=f"/api/2/datasets/{wire._id(dataset_id, 'dataset id')}/",
+            method=method,
+            path=path,
             owning_operation=wire.RESOURCE_OPERATION,
         )
-        return payload
+        return wire.parse_v2_dataset(payload)
 
     async def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]:
         method, path, _, _ = wire.v2_extras_request("GET", dataset_id, resource_id)
         _, payload, _ = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=wire.RESOURCE_OPERATION
         )
-        if not isinstance(payload, Mapping):
-            raise ValueError("The uData resource extras response must be an object.")
-        return payload
+        return dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION)
 
     async def update_extras_v2(
         self,

@@ -9,5 +9,12 @@
     "response_class": "success",
     "sanitized": true
   },
-  "mutation_evidence": "controlled-environment-only"
+  "mutation_evidence": "controlled-environment-only",
+  "controlled_resource_evidence": {
+    "captured_at": "2026-09-20",
+    "local_only": true,
+    "test_id": "test_controlled_resource_family_mutation_and_read_chain",
+    "response_shape": "record-id-only",
+    "sanitized": true
+  }
 }

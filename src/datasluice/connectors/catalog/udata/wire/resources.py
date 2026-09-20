@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import cast
 from urllib.parse import quote, urlencode
 
+from datasluice.connectors.catalog.udata.mapping import NativePageMetadata, UDataPageEnvelope, parse_native_page
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUpdateInput
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, _freeze_json
+from datasluice.domain.catalog.models import NativeRecord, PageInfo, PlatformMetadata, _freeze_json
 from datasluice.errors.catalog import CatalogValidationError
 
 RESOURCE_OPERATION = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete"
@@ -27,6 +29,33 @@ def _id(value: object, name: str) -> str:
 
 def _request(method: str, path: str, body: object | None = None) -> tuple[str, str, dict[str, str], object | None]:
     return method, path, {}, body
+
+
+def redirect_resource_request(resource_id: str) -> tuple[str, str, dict[str, str], object | None]:
+    return _request("GET", f"/api/1/datasets/r/{_id(resource_id, 'resource id')}")
+
+
+def redirect_location(headers: object) -> str:
+    location = (
+        next(
+            (
+                value
+                for key, value in headers.items()
+                if isinstance(key, str) and key.lower() == "location" and isinstance(value, str)
+            ),
+            None,
+        )
+        if isinstance(headers, Mapping)
+        else None
+    )
+    if not location:
+        raise CatalogValidationError(
+            "The uData resource redirect omits its Location header.",
+            operation=RESOURCE_OPERATION,
+            platform="udata",
+            safe_action="Verify the response against the pinned uData resource route.",
+        )
+    return location
 
 
 def create_resource_request(
@@ -55,14 +84,14 @@ def upload_resource_request(
         path = f"/api/1/datasets/{dataset}/upload/"
     else:
         path = f"/api/1/datasets/{dataset}/resources/{_id(resource_id, 'resource id')}/upload/"
-    return "POST", path, {"Content-Type": "multipart/form-data"}
+    return "POST", path, {}
 
 
 def reupload_community_request(resource_id: str) -> tuple[str, str, dict[str, str]]:
     return (
         "POST",
         f"/api/1/datasets/community_resources/{_id(resource_id, 'community resource id')}/upload/",
-        {"Content-Type": "multipart/form-data"},
+        {},
     )
 
 
@@ -102,6 +131,10 @@ def resource_types_request() -> tuple[str, str, dict[str, str], object | None]:
     return _request("GET", "/api/1/datasets/resource_types/")
 
 
+def v2_dataset_request(dataset_id: str) -> tuple[str, str, dict[str, str], object | None]:
+    return _request("GET", f"/api/2/datasets/{_id(dataset_id, 'dataset id')}/")
+
+
 def v2_resource_request(
     dataset_id: str, resource_id: str | None = None, *, extras: str | None = None
 ) -> tuple[str, str, dict[str, str], object | None]:
@@ -130,3 +163,72 @@ def parse_resource(payload: object) -> NativeRecord:
         id=CatalogId(platform=CatalogPlatform.UDATA, resource_kind=ResourceKind.RESOURCE, value=identifier),
         payload=cast(Mapping[str, object], _freeze_json(dict(payload), "udata.resource")),
     )
+
+
+def parse_v2_dataset(payload: object) -> NativeRecord:
+    if not isinstance(payload, Mapping) or any(
+        not isinstance(payload.get(field), str) or not payload[field] for field in ("id", "title", "slug")
+    ):
+        raise CatalogValidationError(
+            "The uData v2 dataset response requires id, title, and slug.",
+            operation=RESOURCE_OPERATION,
+            platform="udata",
+            safe_action="Verify the response against the pinned uData v2 dataset schema.",
+        )
+    identifier = cast(str, payload["id"])
+    return NativeRecord(
+        platform=CatalogPlatform.UDATA,
+        resource_kind=ResourceKind.DATASET,
+        id=CatalogId(platform=CatalogPlatform.UDATA, resource_kind=ResourceKind.DATASET, value=identifier),
+        payload=cast(Mapping[str, object], _freeze_json(dict(payload), "udata.v2.dataset")),
+    )
+
+
+def parse_resource_page(payload: object) -> UDataPageEnvelope:
+    page = parse_native_page(payload, operation=RESOURCE_OPERATION)
+    native_page = NativePageMetadata(
+        present_fields=page.present_fields,
+        page=page.page,
+        page_size=page.page_size,
+        previous_page=page.previous_page,
+        next_page=page.next_page,
+        total=page.total,
+    )
+    page_info = (
+        PageInfo(
+            cursor=str(page.page),
+            next_cursor=str(page.page + 1) if page.next_page is not None else None,
+            total_items=page.total,
+        )
+        if page.page is not None
+        else None
+    )
+    return UDataPageEnvelope(
+        items=tuple(parse_resource(item) for item in page.items),
+        page=page_info,
+        platform=PlatformMetadata(platform=CatalogPlatform.UDATA, extensions={"udata.page": native_page.to_dict()}),
+        native_page=native_page,
+    )
+
+
+def parse_resource_types(payload: object) -> tuple[Mapping[str, str], ...]:
+    if not isinstance(payload, list):
+        raise CatalogValidationError(
+            "The uData resource types response must be a list.",
+            operation=RESOURCE_OPERATION,
+            platform="udata",
+            safe_action="Verify the response against the pinned uData resource schema.",
+        )
+    rows: list[Mapping[str, str]] = []
+    for item in payload:
+        if not isinstance(item, Mapping) or not all(
+            isinstance(item.get(key), str) and item[key] for key in ("id", "label")
+        ):
+            raise CatalogValidationError(
+                "The uData resource type must include a non-empty id and label.",
+                operation=RESOURCE_OPERATION,
+                platform="udata",
+                safe_action="Verify the response against the pinned uData resource schema.",
+            )
+        rows.append(MappingProxyType({"id": item["id"], "label": item["label"]}))
+    return tuple(rows)

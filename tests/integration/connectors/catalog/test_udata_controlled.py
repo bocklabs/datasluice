@@ -202,6 +202,186 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
     assert cleanup_outcome.audit_metadata["status_code"] == 204
 
 
+def test_controlled_resource_family_mutation_and_read_chain() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled resources require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    from io import BytesIO
+
+    from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput, DatasetDeleteOptions
+    from datasluice.connectors.catalog.udata.models.resources import (
+        ResourceCreateInput,
+        ResourceUpdateInput,
+        ResourceUploadInput,
+    )
+    from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
+    from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    operation = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete"
+
+    def resource_policy(target: str, *, destructive: bool = False) -> MutationPolicy:
+        return MutationPolicy(
+            destructive=destructive,
+            confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        )
+
+    dataset_id: str | None = None
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        try:
+            created_dataset = client.datasets.create(
+                DatasetCreateInput(title="Controlled resource evidence", description="d"),
+                permissions,
+                MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.create-dataset", target="Controlled resource evidence"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            assert created_dataset.record is not None
+            dataset_id = created_dataset.record.id.value
+            created = client.resources.create(
+                dataset_id,
+                ResourceCreateInput(title="Remote", url="https://example.com/data.csv"),
+                permissions,
+                resource_policy(dataset_id),
+            )
+            assert created.record is not None
+            resource_id = created.record.id.value
+            direct = build_opener(_DirectNoRedirect()).open(
+                Request(f"{ORIGIN}/api/1/datasets/{dataset_id}/resources/{resource_id}/"), timeout=10
+            )
+            with direct:
+                direct_record = json.loads(direct.read(8193))
+            typed = client.resources.get(dataset_id, resource_id)
+            assert direct_record["id"] == typed.id.value == resource_id
+            assert client.resources.redirect(resource_id) == "https://example.com/data.csv"
+            assert client.resources.get_dataset_v2(dataset_id).id.value == dataset_id
+            assert client.resources.list_v2(dataset_id).items[0].id.value == resource_id
+            assert client.resources.get_v2(resource_id).id.value == resource_id
+            assert client.resources.resource_types()
+            assert (
+                client.resources.update(
+                    dataset_id,
+                    resource_id,
+                    ResourceUpdateInput({"title": "Updated"}),
+                    permissions,
+                    resource_policy(resource_id),
+                ).record
+                is not None
+            )
+            assert (
+                client.resources.reorder(
+                    dataset_id, (ResourceUpdateInput({"id": resource_id}),), permissions, resource_policy(dataset_id)
+                )
+                .records[0]
+                .id.value
+                == resource_id
+            )
+            assert client.resources.update_extras_v2(
+                dataset_id, resource_id, {"evidence": "value"}, permissions, resource_policy(resource_id)
+            ).extras == {"evidence": "value"}
+            assert client.resources.get_extras_v2(dataset_id, resource_id)["evidence"] == "value"
+            assert (
+                client.resources.delete_extras_v2(
+                    dataset_id, resource_id, ("evidence",), permissions, resource_policy(resource_id, destructive=True)
+                ).receipt.outcome
+                == "succeeded"
+            )
+            assert client.resources.get_extras_v2(dataset_id, resource_id) == {}
+            uploaded = client.resources.upload(
+                dataset_id,
+                ResourceUploadInput(BytesIO(b"abc"), "evidence.csv", 3),
+                permissions,
+                resource_policy(dataset_id),
+            )
+            assert uploaded.record is not None
+            assert (
+                client.resources.upload(
+                    dataset_id,
+                    ResourceUploadInput(BytesIO(b"def"), "evidence-updated.csv", 3),
+                    permissions,
+                    resource_policy(uploaded.record.id.value),
+                    resource_id=uploaded.record.id.value,
+                ).record
+                is not None
+            )
+            uploaded_community = client.resources.upload_community(
+                dataset_id,
+                ResourceUploadInput(BytesIO(b"abc"), "community-new.csv", 3),
+                permissions,
+                resource_policy(dataset_id),
+            )
+            assert uploaded_community.record is not None
+            assert (
+                client.resources.delete_community(
+                    uploaded_community.record.id.value,
+                    permissions,
+                    resource_policy(uploaded_community.record.id.value, destructive=True),
+                ).receipt.outcome
+                == "succeeded"
+            )
+            community = client.resources.create_community(
+                dataset_id,
+                ResourceCreateInput(title="Community", url="https://example.com/community.csv"),
+                permissions,
+                resource_policy(dataset_id),
+            )
+            assert community.record is not None
+            community_id = community.record.id.value
+            assert client.resources.get_community(community_id).id.value == community_id
+            assert client.resources.list_community({"dataset": dataset_id}).items
+            assert (
+                client.resources.update_community(
+                    community_id,
+                    ResourceUpdateInput({"title": "Community updated"}),
+                    permissions,
+                    resource_policy(community_id),
+                ).record
+                is not None
+            )
+            assert (
+                client.resources.reupload_community(
+                    community_id,
+                    ResourceUploadInput(BytesIO(b"abc"), "community-reupload.csv", 3),
+                    permissions,
+                    resource_policy(community_id),
+                ).record
+                is not None
+            )
+            assert (
+                client.resources.delete_community(
+                    community_id, permissions, resource_policy(community_id, destructive=True)
+                ).receipt.outcome
+                == "succeeded"
+            )
+            assert (
+                client.resources.delete(
+                    dataset_id, resource_id, permissions, resource_policy(resource_id, destructive=True)
+                ).receipt.outcome
+                == "succeeded"
+            )
+        finally:
+            if dataset_id is not None:
+                client.datasets.delete(
+                    dataset_id,
+                    permissions,
+                    DatasetDeleteOptions(),
+                    MutationPolicy(
+                        confirmation=ConfirmationPolicy(
+                            confirmed=True, operation="udata/api-v1.delete-dataset", target=dataset_id
+                        ),
+                        concurrency=ConcurrencyPolicy(overwrite=True),
+                        destructive=True,
+                    ),
+                )
+
+
 def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -> None:
     token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
     if not token:

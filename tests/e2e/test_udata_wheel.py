@@ -24,7 +24,14 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
 
     for module in ("settings.py", "clients.py", "probes.py", "mapping.py", "live.py", "factory.py", "connector.py"):
         assert (package / module).is_file(), module
-    for module in ("models/root_profile.py", "wire/root_profile.py", "services/root_profile.py"):
+    for module in (
+        "models/root_profile.py",
+        "wire/root_profile.py",
+        "services/root_profile.py",
+        "models/resources.py",
+        "wire/resources.py",
+        "services/resources.py",
+    ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
     assert (fixtures / "root_profile.json").is_file()
@@ -45,6 +52,7 @@ import datasluice
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
+from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -148,14 +156,28 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )
-        return page.items[0].id.value, root_profile.id, root_export.size_bytes, created
-async_result, async_root_id, async_export_size, created = asyncio.run(run_async())
+        resource_created = await active.resources.create(
+            "abc",
+            ResourceCreateInput(title="Wheel resource", url="https://example.test/data.csv"),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True,
+                    operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
+                    target="abc",
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        return page.items[0].id.value, root_profile.id, root_export.size_bytes, created, resource_created
+async_result, async_root_id, async_export_size, created, resource_created = asyncio.run(run_async())
 assert async_result == "abc"
 assert async_root_id == "s"
 assert async_export_size == len(b"id\\nwheel\\n")
 assert created.record.id.value == "wheel-created"
 assert created.receipt.outcome == "succeeded"
 assert created.receipt.audit_metadata["status_code"] == 201
+assert resource_created.record.id.value == "wheel-created"
 recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
@@ -170,6 +192,7 @@ assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/datasets.csv",
     "http://127.0.0.1:5640/api/1/datasets/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
 ]
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

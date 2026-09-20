@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import BinaryIO
 
+from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.runtime.transport.base import UploadPart
 
@@ -72,10 +73,10 @@ class ResourceCreateInput:
     """Typed remote-resource create body."""
 
     title: str
-    url: str
+    url: str = field(repr=False)
     filetype: str = "remote"
     type: str = "other"
-    fields: Mapping[str, object] | None = None
+    fields: Mapping[str, object] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         _text(self.title, "title")
@@ -102,7 +103,7 @@ class ResourceCreateInput:
 class ResourceUpdateInput:
     """Presence-aware resource update body."""
 
-    fields: Mapping[str, object]
+    fields: Mapping[str, object] = field(repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.fields, Mapping) or not self.fields:
@@ -118,10 +119,11 @@ class ResourceUploadInput:
     """One bounded, single-use upload source."""
 
     source: BinaryIO = field(repr=False)
-    file_name: str
+    file_name: str = field(repr=False)
     max_upload_bytes: int
     content_type: str | None = None
     _stream: _BoundedSource = field(init=False, repr=False, compare=False)
+    _part_used: bool = field(init=False, default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not callable(getattr(self.source, "read", None)) or not callable(getattr(self.source, "close", None)):
@@ -134,6 +136,9 @@ class ResourceUploadInput:
         object.__setattr__(self, "_stream", _BoundedSource(self.source, self.max_upload_bytes))
 
     def part(self) -> UploadPart:
+        if self._part_used or self._stream._closed:
+            raise ValueError("uData upload sources cannot be reused after use or closure.")
+        object.__setattr__(self, "_part_used", True)
         return UploadPart("file", self._stream, self.file_name, self.content_type)
 
     def close(self) -> None:
@@ -145,4 +150,27 @@ class ResourceMutationResult:
     """Resource mutation output retaining only a record and redacted receipt."""
 
     receipt: MutationReceipt
-    record: object | None = None
+    record: NativeRecord | None = field(default=None, repr=False)
+    records: tuple[NativeRecord, ...] = field(default=(), repr=False)
+    extras: Mapping[str, object] | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.receipt, MutationReceipt)
+            or (self.record is not None and not isinstance(self.record, NativeRecord))
+            or not isinstance(self.records, tuple)
+            or not all(isinstance(item, NativeRecord) for item in self.records)
+        ):
+            raise ValueError("uData resource mutation results require a receipt and native records.")
+        if self.extras is not None:
+            if not isinstance(self.extras, Mapping):
+                raise ValueError("uData resource mutation extras must be a mapping.")
+            object.__setattr__(self, "extras", _freeze(self.extras))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "receipt": self.receipt.to_dict(),
+            "record": self.record.to_dict() if self.record is not None else None,
+            "records": [item.to_dict() for item in self.records],
+            "extras": _thaw(self.extras) if self.extras is not None else None,
+        }

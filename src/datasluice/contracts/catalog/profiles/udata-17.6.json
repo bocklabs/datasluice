@@ -5,7 +5,7 @@
   "platform_api_version": "uData API v1",
   "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
   "source_accessed_at": "2026-08-27",
-  "fixture_fingerprint": "caeecfd1e9c8ef1d2ac72ab0c19685c066ef396fd5ab7845e0d16df7ba742124",
+  "fixture_fingerprint": "8ab487621575456a4811d0338efa1ec32d7223fb6562fe8245fa778d183a4476",
   "operations": [
     {
       "id": "udata/api-v1.authentication-and-oauth-flows",
