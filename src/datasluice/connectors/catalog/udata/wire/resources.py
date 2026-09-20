@@ -14,10 +14,30 @@ from datasluice.domain.catalog.models import NativeRecord, PageInfo, PlatformMet
 from datasluice.errors.catalog import CatalogValidationError
 
 RESOURCE_OPERATION = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete"
+RESOURCE_READ_OPERATION = "udata/api-v1.get-dataset"
+RESOURCE_MUTATION_CAPABILITY = "udata/api-v1.create-dataset"
+RESOURCE_DELETE_CAPABILITY = "udata/api-v1.delete-dataset"
+
+CREATE_OPERATION = f"{RESOURCE_OPERATION}-create"
+REORDER_OPERATION = f"{RESOURCE_OPERATION}-reorder"
+UPLOAD_NEW_OPERATION = f"{RESOURCE_OPERATION}-upload-new"
+UPLOAD_REPLACE_OPERATION = f"{RESOURCE_OPERATION}-upload-replace"
+RESOURCE_UPDATE_OPERATION = f"{RESOURCE_OPERATION}-update"
+RESOURCE_DELETE_OPERATION = f"{RESOURCE_OPERATION}-delete"
+COMMUNITY_CREATE_OPERATION = f"{RESOURCE_OPERATION}-community-create"
+COMMUNITY_UPDATE_OPERATION = f"{RESOURCE_OPERATION}-community-update"
+COMMUNITY_DELETE_OPERATION = f"{RESOURCE_OPERATION}-community-delete"
+EXTRAS_UPDATE_OPERATION = f"{RESOURCE_OPERATION}-extras-update"
+EXTRAS_DELETE_OPERATION = f"{RESOURCE_OPERATION}-extras-delete"
 
 
 def _id(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value or any(character in value for character in "/?#"):
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or any(character in value for character in "/?#")
+    ):
         raise CatalogValidationError(
             f"uData resource {name} must be one non-empty path segment.",
             operation=RESOURCE_OPERATION,

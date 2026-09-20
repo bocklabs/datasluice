@@ -47,12 +47,13 @@ def test_wheel_import_proves_the_tracer_path_from_installed_content(built_wheel:
     unpacked = _unpacked_wheel_source(built_wheel, tmp_path)
     script = """
 import json, sys
+from io import BytesIO
 sys.path.insert(0, sys.argv[1])
 import datasluice
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
-from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput
+from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -118,7 +119,10 @@ class AsyncTransport(Transport):
         return AsyncRuntimeStreamResponse(response.status_code, response.headers, chunks(), lambda: None)
 
 transport = Transport()
-client = create_sync_client(UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport))
+sync_credential = UDataCredential(api_key="sync-wheel-key")
+client = create_sync_client(
+    UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport, credential=sync_credential)
+)
 assert client.site_version().version == "17.6.0"
 root_profile = client.root_profile.get()
 assert root_profile.id == "s"
@@ -130,6 +134,34 @@ envelope = client.datasets_list(
 )
 service_page = client.datasets.list()
 assert service_page.items[0].id.value == "abc"
+sync_permissions = EffectivePermissions.for_credential(sync_credential, platform=CatalogPlatform.UDATA)
+sync_resource = client.resources.create(
+    "abc",
+    ResourceCreateInput(title="Sync wheel resource", url="https://example.test/sync.csv"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True,
+            operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create",
+            target="abc",
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+sync_upload = client.resources.upload(
+    "abc",
+    ResourceUploadInput(BytesIO(b"abc"), "sync.csv", 3),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True,
+            operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new",
+            target="abc",
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert sync_resource.record is not None and sync_upload.record is not None
 client.close()
 
 import asyncio
@@ -163,7 +195,7 @@ async def run_async():
             MutationPolicy(
                 confirmation=ConfirmationPolicy(
                     confirmed=True,
-                    operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
+                    operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create",
                     target="abc",
                 ),
                 concurrency=ConcurrencyPolicy(overwrite=True),
@@ -185,6 +217,8 @@ assert recorded == [
     "http://127.0.0.1:5640/api/1/site/datasets.csv",
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/upload/",
 ], recorded
 assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/site/",

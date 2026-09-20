@@ -2835,7 +2835,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                 operation=str(owning_id),
                 platform=PLATFORM.value,
                 status_code=response.status_code,
-                metadata={"ambiguous": json_body is not None and method != "GET"},
+                metadata={"ambiguous": method != "GET"},
             )
         return response.status_code, payload, response
 
@@ -3099,7 +3099,7 @@ class SyncUDataClient(_UDataClientCore):
             headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
             body=body,
             files=files,
-            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
+            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
@@ -3604,7 +3604,7 @@ class AsyncUDataClient(_UDataClientCore):
             headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
             body=body,
             files=files,
-            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
+            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)

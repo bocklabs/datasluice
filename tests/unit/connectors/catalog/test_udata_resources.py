@@ -16,8 +16,9 @@ from datasluice.connectors.catalog.udata.models.resources import (
 )
 from datasluice.connectors.catalog.udata.services.resources import AsyncResourcesService, SyncResourcesService
 from datasluice.connectors.catalog.udata.wire import resources as wire
+from datasluice.contracts.catalog.native.udata import AsyncUDataResourcesService, SyncUDataResourcesService
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
-from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
@@ -75,10 +76,10 @@ def _routes(routes: dict[tuple[str, str], object]) -> dict[tuple[str, str], obje
     }
 
 
-def _policy(target: str, *, destructive: bool = False) -> MutationPolicy:
+def _policy(target: str, *, destructive: bool = False, operation: str = wire.RESOURCE_OPERATION) -> MutationPolicy:
     return MutationPolicy(
         destructive=destructive,
-        confirmation=ConfirmationPolicy(confirmed=True, operation=wire.RESOURCE_OPERATION, target=target),
+        confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
         concurrency=ConcurrencyPolicy(overwrite=True),
     )
 
@@ -115,6 +116,27 @@ def test_resource_service_methods_have_sync_async_parity() -> None:
         "delete_extras_v2",
     }
     assert public_methods(SyncResourcesService) == public_methods(AsyncResourcesService) == expected
+
+
+def test_clients_expose_typed_native_resource_protocols() -> None:
+    sync = SyncUDataClient(
+        _Router(_routes({})),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=_CREDENTIAL,
+        owns_transport=False,
+    )
+    async_client = AsyncUDataClient(
+        _AsyncRouter(_routes({})),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=_CREDENTIAL,
+        owns_transport=False,
+    )
+
+    assert isinstance(sync.resources, SyncUDataResourcesService)
+    assert isinstance(async_client.resources, AsyncUDataResourcesService)
+    sync.close()
 
 
 def test_resource_page_and_type_decoders_keep_typed_data_and_pagination() -> None:
@@ -219,6 +241,9 @@ def test_all_22_assigned_resource_routes_have_independent_exact_verbs_and_paths(
         ("DELETE", "/api/2/datasets/dataset/resources/resource/extras/"),
     ]
 
+    with pytest.raises(CatalogValidationError):
+        wire.resource_request("GET", "..", "resource")
+
 
 @pytest.mark.parametrize(
     ("name", "args", "path", "payload"),
@@ -297,7 +322,7 @@ def test_read_routes_dispatch_with_sync_async_parity(
                 "dataset",
                 ResourceCreateInput("Remote", "https://example.test/data.csv"),
                 _PERMISSIONS,
-                _policy("dataset"),
+                _policy("dataset", operation=wire.CREATE_OPERATION),
             ),
             "POST",
             "/api/1/datasets/dataset/resources/",
@@ -306,7 +331,10 @@ def test_read_routes_dispatch_with_sync_async_parity(
         ),
         pytest.param(
             lambda s: s.reorder(
-                "dataset", (ResourceUpdateInput({"id": "resource"}),), _PERMISSIONS, _policy("dataset")
+                "dataset",
+                (ResourceUpdateInput({"id": "resource"}),),
+                _PERMISSIONS,
+                _policy("dataset", operation=wire.REORDER_OPERATION),
             ),
             "PUT",
             "/api/1/datasets/dataset/resources/",
@@ -315,7 +343,10 @@ def test_read_routes_dispatch_with_sync_async_parity(
         ),
         pytest.param(
             lambda s: s.upload(
-                "dataset", ResourceUploadInput(BytesIO(b"x"), "data.csv", 1), _PERMISSIONS, _policy("dataset")
+                "dataset",
+                ResourceUploadInput(BytesIO(b"x"), "data.csv", 1),
+                _PERMISSIONS,
+                _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION),
             ),
             "POST",
             "/api/1/datasets/dataset/upload/",
@@ -324,7 +355,10 @@ def test_read_routes_dispatch_with_sync_async_parity(
         ),
         pytest.param(
             lambda s: s.upload_community(
-                "dataset", ResourceUploadInput(BytesIO(b"x"), "data.csv", 1), _PERMISSIONS, _policy("dataset")
+                "dataset",
+                ResourceUploadInput(BytesIO(b"x"), "data.csv", 1),
+                _PERMISSIONS,
+                _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION),
             ),
             "POST",
             "/api/1/datasets/dataset/upload/community/",
@@ -336,7 +370,7 @@ def test_read_routes_dispatch_with_sync_async_parity(
                 "dataset",
                 ResourceUploadInput(BytesIO(b"x"), "data.csv", 1),
                 _PERMISSIONS,
-                _policy("resource"),
+                _policy("resource", destructive=True, operation=wire.UPLOAD_REPLACE_OPERATION),
                 resource_id="resource",
             ),
             "POST",
@@ -346,7 +380,10 @@ def test_read_routes_dispatch_with_sync_async_parity(
         ),
         pytest.param(
             lambda s: s.reupload_community(
-                "resource", ResourceUploadInput(BytesIO(b"x"), "data.csv", 1), _PERMISSIONS, _policy("resource")
+                "resource",
+                ResourceUploadInput(BytesIO(b"x"), "data.csv", 1),
+                _PERMISSIONS,
+                _policy("resource", destructive=True, operation=wire.UPLOAD_REPLACE_OPERATION),
             ),
             "POST",
             "/api/1/datasets/community_resources/resource/upload/",
@@ -355,7 +392,11 @@ def test_read_routes_dispatch_with_sync_async_parity(
         ),
         pytest.param(
             lambda s: s.update(
-                "dataset", "resource", ResourceUpdateInput({"title": "Updated"}), _PERMISSIONS, _policy("resource")
+                "dataset",
+                "resource",
+                ResourceUpdateInput({"title": "Updated"}),
+                _PERMISSIONS,
+                _policy("resource", operation=wire.RESOURCE_UPDATE_OPERATION),
             ),
             "PUT",
             "/api/1/datasets/dataset/resources/resource/",
@@ -363,7 +404,12 @@ def test_read_routes_dispatch_with_sync_async_parity(
             id="update_resource",
         ),
         pytest.param(
-            lambda s: s.delete("dataset", "resource", _PERMISSIONS, _policy("resource", destructive=True)),
+            lambda s: s.delete(
+                "dataset",
+                "resource",
+                _PERMISSIONS,
+                _policy("resource", destructive=True, operation=wire.RESOURCE_DELETE_OPERATION),
+            ),
             "DELETE",
             "/api/1/datasets/dataset/resources/resource/",
             (204, None),
@@ -374,7 +420,7 @@ def test_read_routes_dispatch_with_sync_async_parity(
                 "dataset",
                 ResourceCreateInput("Remote", "https://example.test/data.csv"),
                 _PERMISSIONS,
-                _policy("dataset"),
+                _policy("dataset", operation=wire.COMMUNITY_CREATE_OPERATION),
             ),
             "POST",
             "/api/1/datasets/community_resources/",
@@ -383,7 +429,10 @@ def test_read_routes_dispatch_with_sync_async_parity(
         ),
         pytest.param(
             lambda s: s.update_community(
-                "resource", ResourceUpdateInput({"title": "Updated"}), _PERMISSIONS, _policy("resource")
+                "resource",
+                ResourceUpdateInput({"title": "Updated"}),
+                _PERMISSIONS,
+                _policy("resource", operation=wire.COMMUNITY_UPDATE_OPERATION),
             ),
             "PUT",
             "/api/1/datasets/community_resources/resource/",
@@ -391,14 +440,24 @@ def test_read_routes_dispatch_with_sync_async_parity(
             id="update_community_resource",
         ),
         pytest.param(
-            lambda s: s.delete_community("resource", _PERMISSIONS, _policy("resource", destructive=True)),
+            lambda s: s.delete_community(
+                "resource",
+                _PERMISSIONS,
+                _policy("resource", destructive=True, operation=wire.COMMUNITY_DELETE_OPERATION),
+            ),
             "DELETE",
             "/api/1/datasets/community_resources/resource/",
             (204, None),
             id="delete_community_resource",
         ),
         pytest.param(
-            lambda s: s.update_extras_v2("dataset", "resource", {"key": "value"}, _PERMISSIONS, _policy("resource")),
+            lambda s: s.update_extras_v2(
+                "dataset",
+                "resource",
+                {"key": "value"},
+                _PERMISSIONS,
+                _policy("resource", operation=wire.EXTRAS_UPDATE_OPERATION),
+            ),
             "PUT",
             "/api/2/datasets/dataset/resources/resource/extras/",
             {"key": "value"},
@@ -406,7 +465,11 @@ def test_read_routes_dispatch_with_sync_async_parity(
         ),
         pytest.param(
             lambda s: s.delete_extras_v2(
-                "dataset", "resource", ("key",), _PERMISSIONS, _policy("resource", destructive=True)
+                "dataset",
+                "resource",
+                ("key",),
+                _PERMISSIONS,
+                _policy("resource", destructive=True, operation=wire.EXTRAS_DELETE_OPERATION),
             ),
             "DELETE",
             "/api/2/datasets/dataset/resources/resource/extras/",
@@ -490,7 +553,7 @@ def test_interrupted_upload_closes_source_and_attaches_cancelled_receipt() -> No
             "dataset",
             ResourceUploadInput(source=source, file_name="data.csv", max_upload_bytes=3),
             _PERMISSIONS,
-            _policy("dataset"),
+            _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION),
         )
 
     assert source.closed
@@ -514,17 +577,19 @@ def test_resource_service_uses_exact_json_and_multipart_routes_with_receipts() -
             "dataset",
             ResourceCreateInput(title="Remote", url="https://example.test/data.csv"),
             _PERMISSIONS,
-            _policy("dataset"),
+            _policy("dataset", operation=wire.CREATE_OPERATION),
         )
         uploaded = client.resources.upload(
             "dataset",
             ResourceUploadInput(source=source, file_name="data.csv", max_upload_bytes=3),
             _PERMISSIONS,
-            _policy("resource"),
+            _policy("resource", destructive=True, operation=wire.UPLOAD_REPLACE_OPERATION),
             resource_id="resource",
         )
 
     assert created.receipt.outcome == uploaded.receipt.outcome == "succeeded"
+    assert created.receipt.target.resource_kind is ResourceKind.DATASET
+    assert uploaded.receipt.target.resource_kind is ResourceKind.RESOURCE
     assert "https://example.test/data.csv" not in repr(created)
     assert json.loads(transport.requests[1].body or b"{}") == {
         "title": "Remote",
@@ -555,13 +620,24 @@ def test_reorder_and_v2_extras_keep_typed_results_and_exact_json_bodies() -> Non
 
     with client:
         reordered = client.resources.reorder(
-            "dataset", (ResourceUpdateInput({"id": "resource"}),), _PERMISSIONS, _policy("dataset")
+            "dataset",
+            (ResourceUpdateInput({"id": "resource"}),),
+            _PERMISSIONS,
+            _policy("dataset", operation=wire.REORDER_OPERATION),
         )
         updated = client.resources.update_extras_v2(
-            "dataset", "resource", {"key": "value"}, _PERMISSIONS, _policy("resource")
+            "dataset",
+            "resource",
+            {"key": "value"},
+            _PERMISSIONS,
+            _policy("resource", operation=wire.EXTRAS_UPDATE_OPERATION),
         )
         deleted = client.resources.delete_extras_v2(
-            "dataset", "resource", ("key",), _PERMISSIONS, _policy("resource", destructive=True)
+            "dataset",
+            "resource",
+            ("key",),
+            _PERMISSIONS,
+            _policy("resource", destructive=True, operation=wire.EXTRAS_DELETE_OPERATION),
         )
 
     assert reordered.records[0].id.value == "resource"
@@ -588,7 +664,7 @@ def test_async_resource_service_matches_sync_create_route() -> None:
                     "dataset",
                     ResourceCreateInput(title="Remote", url="https://example.test/data.csv"),
                     _PERMISSIONS,
-                    _policy("dataset"),
+                    _policy("dataset", operation=wire.CREATE_OPERATION),
                 )
             ).receipt.outcome
 

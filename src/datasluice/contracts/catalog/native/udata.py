@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -12,6 +12,13 @@ from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+    from datasluice.connectors.catalog.udata.models.resources import (
+        ResourceCreateInput,
+        ResourceMutationResult,
+        ResourceUpdateInput,
+        ResourceUploadInput,
+    )
     from datasluice.domain.catalog.udata import (
         SiteCatalogQuery,
         SiteDataserviceCsvQuery,
@@ -145,6 +152,206 @@ class AsyncUDataRootProfileService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataResourcesService(Protocol):
+    """Typed synchronous resource and bounded-upload service."""
+
+    def redirect(self, resource_id: str) -> str: ...
+    def create(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def reorder(
+        self,
+        dataset_id: str,
+        values: tuple[ResourceUpdateInput, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def upload(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        resource_id: str | None = None,
+        community: bool = False,
+    ) -> ResourceMutationResult: ...
+    def upload_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def reupload_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def get(self, dataset_id: str, resource_id: str) -> NativeRecord: ...
+    def update(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def delete(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope: ...
+    def create_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def get_community(self, resource_id: str) -> NativeRecord: ...
+    def update_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def delete_community(
+        self, resource_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ResourceMutationResult: ...
+    def resource_types(self) -> tuple[Mapping[str, str], ...]: ...
+    def get_dataset_v2(self, dataset_id: str) -> NativeRecord: ...
+    def list_v2(self, dataset_id: str) -> UDataPageEnvelope: ...
+    def get_v2(self, resource_id: str) -> NativeRecord: ...
+    def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]: ...
+    def update_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def delete_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataResourcesService(Protocol):
+    """Typed asynchronous resource and bounded-upload service."""
+
+    async def redirect(self, resource_id: str) -> str: ...
+    async def create(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def reorder(
+        self,
+        dataset_id: str,
+        values: tuple[ResourceUpdateInput, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def upload(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        resource_id: str | None = None,
+        community: bool = False,
+    ) -> ResourceMutationResult: ...
+    async def upload_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def reupload_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def get(self, dataset_id: str, resource_id: str) -> NativeRecord: ...
+    async def update(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def delete(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope: ...
+    async def create_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def get_community(self, resource_id: str) -> NativeRecord: ...
+    async def update_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def delete_community(
+        self, resource_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ResourceMutationResult: ...
+    async def resource_types(self) -> tuple[Mapping[str, str], ...]: ...
+    async def get_dataset_v2(self, dataset_id: str) -> NativeRecord: ...
+    async def list_v2(self, dataset_id: str) -> UDataPageEnvelope: ...
+    async def get_v2(self, resource_id: str) -> NativeRecord: ...
+    async def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]: ...
+    async def update_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def delete_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+
+
+@runtime_checkable
 class SyncUDataService(Protocol):
     """Synchronous uData operation group."""
 
@@ -175,7 +382,7 @@ class SyncUDataServices(Protocol):
     def datasets(self) -> SyncUDataService: ...
 
     @property
-    def resources(self) -> SyncUDataService: ...
+    def resources(self) -> SyncUDataResourcesService: ...
 
     @property
     def organizations_memberships(self) -> SyncUDataService: ...
@@ -213,7 +420,7 @@ class AsyncUDataServices(Protocol):
     def datasets(self) -> AsyncUDataService: ...
 
     @property
-    def resources(self) -> AsyncUDataService: ...
+    def resources(self) -> AsyncUDataResourcesService: ...
 
     @property
     def organizations_memberships(self) -> AsyncUDataService: ...

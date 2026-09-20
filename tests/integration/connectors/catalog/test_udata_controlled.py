@@ -221,9 +221,13 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
-    operation = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete"
 
-    def resource_policy(target: str, *, destructive: bool = False) -> MutationPolicy:
+    def resource_policy(
+        target: str,
+        *,
+        destructive: bool = False,
+        operation: str = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
+    ) -> MutationPolicy:
         return MutationPolicy(
             destructive=destructive,
             confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
@@ -249,7 +253,9 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                 dataset_id,
                 ResourceCreateInput(title="Remote", url="https://example.com/data.csv"),
                 permissions,
-                resource_policy(dataset_id),
+                resource_policy(
+                    dataset_id, operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create"
+                ),
             )
             assert created.record is not None
             resource_id = created.record.id.value
@@ -271,25 +277,49 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                     resource_id,
                     ResourceUpdateInput({"title": "Updated"}),
                     permissions,
-                    resource_policy(resource_id),
+                    resource_policy(
+                        resource_id,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update",
+                    ),
                 ).record
                 is not None
             )
             assert (
                 client.resources.reorder(
-                    dataset_id, (ResourceUpdateInput({"id": resource_id}),), permissions, resource_policy(dataset_id)
+                    dataset_id,
+                    (ResourceUpdateInput({"id": resource_id}),),
+                    permissions,
+                    resource_policy(
+                        dataset_id,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder",
+                    ),
                 )
                 .records[0]
                 .id.value
                 == resource_id
             )
             assert client.resources.update_extras_v2(
-                dataset_id, resource_id, {"evidence": "value"}, permissions, resource_policy(resource_id)
+                dataset_id,
+                resource_id,
+                {"evidence": "value"},
+                permissions,
+                resource_policy(
+                    resource_id,
+                    operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update",
+                ),
             ).extras == {"evidence": "value"}
             assert client.resources.get_extras_v2(dataset_id, resource_id)["evidence"] == "value"
             assert (
                 client.resources.delete_extras_v2(
-                    dataset_id, resource_id, ("evidence",), permissions, resource_policy(resource_id, destructive=True)
+                    dataset_id,
+                    resource_id,
+                    ("evidence",),
+                    permissions,
+                    resource_policy(
+                        resource_id,
+                        destructive=True,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-delete",
+                    ),
                 ).receipt.outcome
                 == "succeeded"
             )
@@ -298,7 +328,9 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                 dataset_id,
                 ResourceUploadInput(BytesIO(b"abc"), "evidence.csv", 3),
                 permissions,
-                resource_policy(dataset_id),
+                resource_policy(
+                    dataset_id, operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new"
+                ),
             )
             assert uploaded.record is not None
             assert (
@@ -306,7 +338,11 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                     dataset_id,
                     ResourceUploadInput(BytesIO(b"def"), "evidence-updated.csv", 3),
                     permissions,
-                    resource_policy(uploaded.record.id.value),
+                    resource_policy(
+                        uploaded.record.id.value,
+                        destructive=True,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+                    ),
                     resource_id=uploaded.record.id.value,
                 ).record
                 is not None
@@ -315,14 +351,20 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                 dataset_id,
                 ResourceUploadInput(BytesIO(b"abc"), "community-new.csv", 3),
                 permissions,
-                resource_policy(dataset_id),
+                resource_policy(
+                    dataset_id, operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new"
+                ),
             )
             assert uploaded_community.record is not None
             assert (
                 client.resources.delete_community(
                     uploaded_community.record.id.value,
                     permissions,
-                    resource_policy(uploaded_community.record.id.value, destructive=True),
+                    resource_policy(
+                        uploaded_community.record.id.value,
+                        destructive=True,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+                    ),
                 ).receipt.outcome
                 == "succeeded"
             )
@@ -330,7 +372,10 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                 dataset_id,
                 ResourceCreateInput(title="Community", url="https://example.com/community.csv"),
                 permissions,
-                resource_policy(dataset_id),
+                resource_policy(
+                    dataset_id,
+                    operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create",
+                ),
             )
             assert community.record is not None
             community_id = community.record.id.value
@@ -341,7 +386,10 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                     community_id,
                     ResourceUpdateInput({"title": "Community updated"}),
                     permissions,
-                    resource_policy(community_id),
+                    resource_policy(
+                        community_id,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update",
+                    ),
                 ).record
                 is not None
             )
@@ -350,19 +398,36 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                     community_id,
                     ResourceUploadInput(BytesIO(b"abc"), "community-reupload.csv", 3),
                     permissions,
-                    resource_policy(community_id),
+                    resource_policy(
+                        community_id,
+                        destructive=True,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+                    ),
                 ).record
                 is not None
             )
             assert (
                 client.resources.delete_community(
-                    community_id, permissions, resource_policy(community_id, destructive=True)
+                    community_id,
+                    permissions,
+                    resource_policy(
+                        community_id,
+                        destructive=True,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+                    ),
                 ).receipt.outcome
                 == "succeeded"
             )
             assert (
                 client.resources.delete(
-                    dataset_id, resource_id, permissions, resource_policy(resource_id, destructive=True)
+                    dataset_id,
+                    resource_id,
+                    permissions,
+                    resource_policy(
+                        resource_id,
+                        destructive=True,
+                        operation="udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+                    ),
                 ).receipt.outcome
                 == "succeeded"
             )

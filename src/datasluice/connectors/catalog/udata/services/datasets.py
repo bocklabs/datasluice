@@ -220,6 +220,8 @@ def _mutation_outcome(error: BaseException, response: object | None = None) -> s
     if isinstance(error, TransportFailure):
         return "ambiguous"
     error_status = _error_status(error, response)
+    if 300 <= error_status < 400:
+        return "ambiguous"
     if error_status == 0 and isinstance(error, (UnauthenticatedError, ForbiddenError, CatalogValidationError)):
         return "rejected"
     return "failed"
