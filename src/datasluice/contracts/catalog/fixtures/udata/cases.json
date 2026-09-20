@@ -71,6 +71,28 @@
         "actor_role_class": "authenticated-admin"
       }
     },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-replace", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-list", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-get", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-delete", "outcome": "authenticated-success" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-redirect", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-get", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-types", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-dataset-get", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-list", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-get", "outcome": "core" },
+    { "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-extras-get", "outcome": "core" },
     {
       "operation": "udata/api-v1.organizations-and-memberships",
       "outcome": "authenticated-success"

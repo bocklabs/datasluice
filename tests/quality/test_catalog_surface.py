@@ -530,38 +530,79 @@ def _row_to_operation_id(row: str) -> str:
     return f"{platform}/{name}"
 
 
-LOCKED_DATASET_ROUTE_OPERATIONS = frozenset(
+RESOURCE_ROUTE_OPERATION_IDS = frozenset(
     {
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-replace",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-list",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-delete",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-redirect",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-types",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-dataset-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-list",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-extras-get",
+    }
+)
+
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "resources")
+        for operation_id in RESOURCE_ROUTE_OPERATION_IDS
+    }
+)
+
+LOCKED_DATASET_ROUTE_OPERATIONS = (
+    frozenset(
+        {
+            "udata/api-v1.set_site",
+            "udata/api-v1.resource-reads",
+            "udata/api-v1.resource-mutations",
+            "udata/api-v1.resource-destructive-mutations",
+            "udata/api-v1.list-datasets",
+            "udata/api-v1.create-dataset",
+            "udata/api-v1.recent-datasets-atom",
+            "udata/api-v1.get-dataset",
+            "udata/api-v1.update-dataset",
+            "udata/api-v1.delete-dataset",
+            "udata/api-v1.feature-dataset",
+            "udata/api-v1.unfeature-dataset",
+            "udata/api-v1.rdf-dataset",
+            "udata/api-v1.rdf-dataset-format",
+            "udata/api-v1.suggest-datasets",
+            "udata/api-v2.search-datasets",
+            "udata/api-v2.list-datasets",
+            "udata/api-v2.get-dataset",
+            "udata/api-v2.get-dataset-extras",
+            "udata/api-v2.update-dataset-extras",
+            "udata/api-v2.delete-dataset-extras",
+        }
+    )
+    | RESOURCE_ROUTE_OPERATION_IDS
+)
+
+LOCKED_EXTRA_OPERATION_IDS = (
+    LOCKED_DATASET_ROUTE_OPERATIONS
+    & {
         "udata/api-v1.set_site",
         "udata/api-v1.resource-reads",
         "udata/api-v1.resource-mutations",
         "udata/api-v1.resource-destructive-mutations",
-        "udata/api-v1.list-datasets",
-        "udata/api-v1.create-dataset",
-        "udata/api-v1.recent-datasets-atom",
-        "udata/api-v1.get-dataset",
-        "udata/api-v1.update-dataset",
-        "udata/api-v1.delete-dataset",
-        "udata/api-v1.feature-dataset",
-        "udata/api-v1.unfeature-dataset",
-        "udata/api-v1.rdf-dataset",
-        "udata/api-v1.rdf-dataset-format",
-        "udata/api-v1.suggest-datasets",
-        "udata/api-v2.search-datasets",
-        "udata/api-v2.list-datasets",
-        "udata/api-v2.get-dataset",
-        "udata/api-v2.get-dataset-extras",
-        "udata/api-v2.update-dataset-extras",
-        "udata/api-v2.delete-dataset-extras",
     }
+    | RESOURCE_ROUTE_OPERATION_IDS
 )
-
-LOCKED_EXTRA_OPERATION_IDS = LOCKED_DATASET_ROUTE_OPERATIONS & {
-    "udata/api-v1.set_site",
-    "udata/api-v1.resource-reads",
-    "udata/api-v1.resource-mutations",
-    "udata/api-v1.resource-destructive-mutations",
-}
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
     "udata": LOCKED_DATASET_ROUTE_OPERATIONS,

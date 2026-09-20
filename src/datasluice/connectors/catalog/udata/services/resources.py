@@ -220,7 +220,7 @@ class SyncResourcesService:
         _, headers, _ = self._client._dataset_call(
             method=method,
             path=path,
-            owning_operation=wire.RESOURCE_READ_OPERATION,
+            owning_operation=wire.capability_operation(method, path),
             raw_text=True,
             redirect_mode=True,
         )
@@ -365,7 +365,7 @@ class SyncResourcesService:
     def get(self, dataset_id: str, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", dataset_id, resource_id)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource(payload)
 
@@ -405,7 +405,7 @@ class SyncResourcesService:
     def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope:
         method, path, _, _ = wire.list_community_resources_request(params)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource_page(payload)
 
@@ -432,7 +432,7 @@ class SyncResourcesService:
     def get_community(self, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", "", resource_id, community=True)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource(payload)
 
@@ -453,14 +453,14 @@ class SyncResourcesService:
     def resource_types(self) -> tuple[Mapping[str, str], ...]:
         method, path, _, _ = wire.resource_types_request()
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource_types(payload)
 
     def list_v2(self, dataset_id: str) -> UDataPageEnvelope:
         method, path, _, _ = wire.v2_resource_request(dataset_id)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource_page(payload)
 
@@ -469,7 +469,7 @@ class SyncResourcesService:
         _, payload, _ = self._client._dataset_call(
             method=method,
             path=path,
-            owning_operation=wire.RESOURCE_READ_OPERATION,
+            owning_operation=wire.capability_operation(method, path),
         )
         return wire.parse_resource(payload.get("resource") if isinstance(payload, Mapping) else payload)
 
@@ -478,14 +478,14 @@ class SyncResourcesService:
         _, payload, _ = self._client._dataset_call(
             method=method,
             path=path,
-            owning_operation=wire.RESOURCE_READ_OPERATION,
+            owning_operation=wire.capability_operation(method, path),
         )
         return wire.parse_v2_dataset(payload)
 
     def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]:
         method, path, _, _ = wire.v2_extras_request("GET", dataset_id, resource_id)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION)
 
@@ -526,11 +526,7 @@ class SyncResourcesService:
     def _call(
         self, method: str, path: str, body: object, permissions: Permissions, policy: Policy
     ) -> tuple[int, object, object]:
-        capability_operation = (
-            wire.RESOURCE_DELETE_CAPABILITY
-            if policy is not None and policy.destructive
-            else wire.RESOURCE_MUTATION_CAPABILITY
-        )
+        capability_operation = wire.capability_operation(method, path)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return self._client._dataset_call(
             method=method,
@@ -550,11 +546,7 @@ class SyncResourcesService:
         permissions: Permissions,
         policy: Policy,
     ) -> tuple[int, object, object]:
-        capability_operation = (
-            wire.RESOURCE_DELETE_CAPABILITY
-            if policy is not None and policy.destructive
-            else wire.RESOURCE_MUTATION_CAPABILITY
-        )
+        capability_operation = wire.capability_operation(method, path)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return self._client._dataset_call(
             method=method,
@@ -604,7 +596,7 @@ class AsyncResourcesService:
         _, headers, _ = await self._client._dataset_call_async(
             method=method,
             path=path,
-            owning_operation=wire.RESOURCE_READ_OPERATION,
+            owning_operation=wire.capability_operation(method, path),
             raw_text=True,
             redirect_mode=True,
         )
@@ -702,7 +694,7 @@ class AsyncResourcesService:
     async def get(self, dataset_id: str, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", dataset_id, resource_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource(payload)
 
@@ -742,28 +734,28 @@ class AsyncResourcesService:
     async def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope:
         method, path, _, _ = wire.list_community_resources_request(params)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource_page(payload)
 
     async def get_community(self, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", "", resource_id, community=True)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource(payload)
 
     async def resource_types(self) -> tuple[Mapping[str, str], ...]:
         method, path, _, _ = wire.resource_types_request()
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource_types(payload)
 
     async def list_v2(self, dataset_id: str) -> UDataPageEnvelope:
         method, path, _, _ = wire.v2_resource_request(dataset_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return wire.parse_resource_page(payload)
 
@@ -772,7 +764,7 @@ class AsyncResourcesService:
         _, payload, _ = await self._client._dataset_call_async(
             method=method,
             path=path,
-            owning_operation=wire.RESOURCE_READ_OPERATION,
+            owning_operation=wire.capability_operation(method, path),
         )
         return wire.parse_resource(payload.get("resource") if isinstance(payload, Mapping) else payload)
 
@@ -883,14 +875,14 @@ class AsyncResourcesService:
         _, payload, _ = await self._client._dataset_call_async(
             method=method,
             path=path,
-            owning_operation=wire.RESOURCE_READ_OPERATION,
+            owning_operation=wire.capability_operation(method, path),
         )
         return wire.parse_v2_dataset(payload)
 
     async def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]:
         method, path, _, _ = wire.v2_extras_request("GET", dataset_id, resource_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.RESOURCE_READ_OPERATION
+            method=method, path=path, owning_operation=wire.capability_operation(method, path)
         )
         return dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION)
 
@@ -933,11 +925,7 @@ class AsyncResourcesService:
     async def _call(
         self, method: str, path: str, body: object, permissions: Permissions, policy: Policy
     ) -> tuple[int, object, object]:
-        capability_operation = (
-            wire.RESOURCE_DELETE_CAPABILITY
-            if policy is not None and policy.destructive
-            else wire.RESOURCE_MUTATION_CAPABILITY
-        )
+        capability_operation = wire.capability_operation(method, path)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return await self._client._dataset_call_async(
             method=method,
@@ -957,11 +945,7 @@ class AsyncResourcesService:
         permissions: Permissions,
         policy: Policy,
     ) -> tuple[int, object, object]:
-        capability_operation = (
-            wire.RESOURCE_DELETE_CAPABILITY
-            if policy is not None and policy.destructive
-            else wire.RESOURCE_MUTATION_CAPABILITY
-        )
+        capability_operation = wire.capability_operation(method, path)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return await self._client._dataset_call_async(
             method=method,

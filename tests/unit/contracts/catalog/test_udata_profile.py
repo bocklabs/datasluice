@@ -27,6 +27,30 @@ _EXPECTED_OPERATION_IDS = {
     "udata/api-v1.harvest-moderation-and-admin-operations",
     "udata/deployment-plugin-and-configuration-dependent-routes",
 }
+_RESOURCE_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-replace",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-list",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-get",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-delete",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-redirect",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-get",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-types",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-dataset-get",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-list",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-get",
+    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-extras-get",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -40,7 +64,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
 
     assert isinstance(operations, list)
     operation_ids = [operation["id"] for operation in operations]
-    assert set(operation_ids) == _EXPECTED_OPERATION_IDS | _DATASET_ROUTE_OPERATION_IDS
+    assert set(operation_ids) == _EXPECTED_OPERATION_IDS | _DATASET_ROUTE_OPERATION_IDS | _RESOURCE_ROUTE_OPERATION_IDS
     assert len(operation_ids) == len(set(operation_ids))
 
 
