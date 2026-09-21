@@ -51,6 +51,48 @@ _RESOURCE_ROUTE_OPERATION_IDS = {
     "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-get",
     "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-extras-get",
 }
+_ORGANIZATION_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-organizations",
+    "udata/api-v1.create-organization",
+    "udata/api-v1.get-organization",
+    "udata/api-v1.update-organization",
+    "udata/api-v1.delete-organization",
+    "udata/api-v1.organization-datasets-csv",
+    "udata/api-v1.organization-dataservices-csv",
+    "udata/api-v1.organization-discussions-csv",
+    "udata/api-v1.organization-datasets-resources-csv",
+    "udata/api-v1.rdf-organization",
+    "udata/api-v1.rdf-organization-format",
+    "udata/api-v1.available-organization-badges",
+    "udata/api-v1.add-organization-badge",
+    "udata/api-v1.delete-organization-badge",
+    "udata/api-v1.get-organization-contact-point",
+    "udata/api-v1.suggest-org-contact-points",
+    "udata/api-v1.list-membership-requests",
+    "udata/api-v1.membership-request",
+    "udata/api-v1.accept-membership",
+    "udata/api-v1.refuse-membership",
+    "udata/api-v1.cancel-membership",
+    "udata/api-v1.invite-organization-member",
+    "udata/api-v1.update-organization-member",
+    "udata/api-v1.delete-organization-member",
+    "udata/api-v1.list-organization-assignments",
+    "udata/api-v1.sync-member-assignments",
+    "udata/api-v1.suggest-organizations",
+    "udata/api-v1.organization-logo",
+    "udata/api-v1.resize-organization-logo",
+    "udata/api-v1.list-organization-datasets",
+    "udata/api-v1.list-organization-reuses",
+    "udata/api-v1.list-organization-discussions",
+    "udata/api-v1.org-roles",
+    "udata/api-v2.search-organizations",
+    "udata/api-v2.get-organization-extras",
+    "udata/api-v2.update-organization-extras",
+    "udata/api-v2.delete-organization-extras",
+    "udata/api-v1.list-organization-followers",
+    "udata/api-v1.follow-organization",
+    "udata/api-v1.unfollow-organization",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -64,7 +106,13 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
 
     assert isinstance(operations, list)
     operation_ids = [operation["id"] for operation in operations]
-    assert set(operation_ids) == _EXPECTED_OPERATION_IDS | _DATASET_ROUTE_OPERATION_IDS | _RESOURCE_ROUTE_OPERATION_IDS
+    assert (
+        set(operation_ids)
+        == _EXPECTED_OPERATION_IDS
+        | _DATASET_ROUTE_OPERATION_IDS
+        | _RESOURCE_ROUTE_OPERATION_IDS
+        | _ORGANIZATION_ROUTE_OPERATION_IDS
+    )
     assert len(operation_ids) == len(set(operation_ids))
 
 

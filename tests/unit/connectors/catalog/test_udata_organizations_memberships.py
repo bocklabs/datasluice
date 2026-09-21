@@ -6,18 +6,20 @@ import asyncio
 import json
 
 import pytest
+
+from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
     OrganizationCreateInput,
+    OrganizationInvitationInput,
     OrganizationListQuery,
+    OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.services.organizations_memberships import (
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
 )
-
-from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.wire import organizations as wire
 from datasluice.contracts.catalog.native.udata import (
     AsyncUDataOrganizationsMembershipsService,
@@ -131,6 +133,93 @@ def test_organization_wire_builders_preserve_exact_paths_and_omission() -> None:
     )
     with pytest.raises(CatalogValidationError):
         wire.get_organization_request("../secret")
+
+
+def test_every_organization_route_has_an_exact_wire_shape() -> None:
+    actual = [
+        wire.list_organizations_request()[0:2],
+        wire.create_organization_request(OrganizationCreateInput(name="Evidence", description="Org"))[0:2],
+        wire.get_organization_request("org-1")[0:2],
+        wire.update_organization_request("org-1", OrganizationUpdateInput(acronym="E"))[0:2],
+        wire.delete_organization_request("org-1")[0:2],
+        wire.organization_export_request("org-1", "datasets")[0:2],
+        wire.organization_export_request("org-1", "dataservices")[0:2],
+        wire.organization_export_request("org-1", "discussions")[0:2],
+        wire.organization_export_request("org-1", "datasets-resources")[0:2],
+        wire.rdf_organization_request("org-1")[0:2],
+        wire.rdf_organization_format_request("org-1", "ttl")[0:2],
+        wire.available_organization_badges_request()[0:2],
+        wire.organization_badge_request("org-1", "certified")[0:2],
+        wire.organization_badge_request("org-1", "certified", delete=True)[0:2],
+        wire.organization_contacts_request("org-1")[0:2],
+        wire.organization_contacts_suggest_request("org-1", OrganizationSuggestQuery("ev"))[0:2],
+        wire.membership_requests_request("org-1")[0:2],
+        wire.membership_request_request("org-1", MembershipRequestInput("please"))[0:2],
+        wire.membership_action_request("org-1", "request-1", "accept")[0:2],
+        wire.membership_action_request("org-1", "request-1", "refuse")[0:2],
+        wire.membership_action_request("org-1", "request-1", "cancel")[0:2],
+        wire.invite_member_request("org-1", OrganizationInvitationInput(email="member@example.test"))[0:2],
+        wire.member_request("org-1", "user-1", method="PUT", body={"role": "editor"})[0:2],
+        wire.member_request("org-1", "user-1", method="DELETE")[0:2],
+        wire.assignments_request("org-1")[0:2],
+        wire.member_assignments_request("org-1", "user-1", [])[0:2],
+        wire.suggest_organizations_request(OrganizationSuggestQuery("ev"))[0:2],
+        wire.organization_logo_request("org-1")[0:2],
+        wire.organization_logo_request("org-1", resize=True)[0:2],
+        wire.organization_owned_request("org-1", "datasets")[0:2],
+        wire.organization_owned_request("org-1", "reuses")[0:2],
+        wire.organization_owned_request("org-1", "discussions")[0:2],
+        wire.organization_roles_request()[0:2],
+        wire.search_organizations_request()[0:2],
+        wire.organization_extras_request("org-1", method="GET")[0:2],
+        wire.organization_extras_request("org-1", method="PUT", body={"key": "value"})[0:2],
+        wire.organization_extras_request("org-1", method="DELETE", body=["key"])[0:2],
+        wire.followers_request("org-1", method="GET")[0:2],
+        wire.followers_request("org-1", method="POST")[0:2],
+        wire.followers_request("org-1", method="DELETE")[0:2],
+    ]
+    assert actual == [
+        ("GET", "/api/1/organizations/?page=1&page_size=20"),
+        ("POST", "/api/1/organizations/"),
+        ("GET", "/api/1/organizations/org-1/"),
+        ("PUT", "/api/1/organizations/org-1/"),
+        ("DELETE", "/api/1/organizations/org-1/"),
+        ("GET", "/api/1/organizations/org-1/datasets.csv"),
+        ("GET", "/api/1/organizations/org-1/dataservices.csv"),
+        ("GET", "/api/1/organizations/org-1/discussions.csv"),
+        ("GET", "/api/1/organizations/org-1/datasets-resources.csv"),
+        ("GET", "/api/1/organizations/org-1/catalog"),
+        ("GET", "/api/1/organizations/org-1/catalog.ttl"),
+        ("GET", "/api/1/organizations/badges/"),
+        ("POST", "/api/1/organizations/org-1/badges/"),
+        ("DELETE", "/api/1/organizations/org-1/badges/certified/"),
+        ("GET", "/api/1/organizations/org-1/contacts/?page=1&page_size=20"),
+        ("GET", "/api/1/organizations/org-1/contacts/suggest/?q=ev&size=10"),
+        ("GET", "/api/1/organizations/org-1/membership/"),
+        ("POST", "/api/1/organizations/org-1/membership/"),
+        ("POST", "/api/1/organizations/org-1/membership/request-1/accept/"),
+        ("POST", "/api/1/organizations/org-1/membership/request-1/refuse/"),
+        ("POST", "/api/1/organizations/org-1/membership/request-1/cancel/"),
+        ("POST", "/api/1/organizations/org-1/member/"),
+        ("PUT", "/api/1/organizations/org-1/member/user-1/"),
+        ("DELETE", "/api/1/organizations/org-1/member/user-1/"),
+        ("GET", "/api/1/organizations/org-1/assignments/"),
+        ("PUT", "/api/1/organizations/org-1/member/user-1/assignments/"),
+        ("GET", "/api/1/organizations/suggest/?q=ev&size=10"),
+        ("POST", "/api/1/organizations/org-1/logo/"),
+        ("PUT", "/api/1/organizations/org-1/logo/"),
+        ("GET", "/api/1/organizations/org-1/datasets/?page=1&page_size=20"),
+        ("GET", "/api/1/organizations/org-1/reuses/"),
+        ("GET", "/api/1/organizations/org-1/discussions/"),
+        ("GET", "/api/1/organizations/roles/"),
+        ("GET", "/api/2/organizations/search/?page=1&page_size=20"),
+        ("GET", "/api/2/organizations/org-1/extras/"),
+        ("PUT", "/api/2/organizations/org-1/extras/"),
+        ("DELETE", "/api/2/organizations/org-1/extras/"),
+        ("GET", "/api/1/organizations/org-1/followers/"),
+        ("POST", "/api/1/organizations/org-1/followers/"),
+        ("DELETE", "/api/1/organizations/org-1/followers/"),
+    ]
 
 
 def test_sync_organization_read_and_mutation_decode_with_redacted_receipt() -> None:

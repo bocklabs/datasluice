@@ -109,6 +109,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.datasets import (
         SyncDatasetsService as _SyncDatasetsService,
     )
+    from datasluice.connectors.catalog.udata.services.organizations_memberships import (
+        AsyncOrganizationsMembershipsService as _AsyncOrganizationsMembershipsService,
+    )
+    from datasluice.connectors.catalog.udata.services.organizations_memberships import (
+        SyncOrganizationsMembershipsService as _SyncOrganizationsMembershipsService,
+    )
     from datasluice.connectors.catalog.udata.services.resources import (
         AsyncResourcesService as _AsyncResourcesService,
     )
@@ -3024,6 +3030,11 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the complete typed resource service."""
         return SyncResourcesService(self)
 
+    @property
+    def organizations_memberships(self) -> _SyncOrganizationsMembershipsService:
+        """Expose the complete typed organization and membership service."""
+        return SyncOrganizationsMembershipsService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -3435,6 +3446,11 @@ class AsyncUDataClient(_UDataClientCore):
     def resources(self) -> _AsyncResourcesService:
         """Expose the complete typed resource service."""
         return AsyncResourcesService(self)
+
+    @property
+    def organizations_memberships(self) -> _AsyncOrganizationsMembershipsService:
+        """Expose the complete typed organization and membership service."""
+        return AsyncOrganizationsMembershipsService(self)
 
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
@@ -3908,6 +3924,10 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
 
 def _load_services():
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.udata.services.organizations_memberships import (
+        AsyncOrganizationsMembershipsService,
+        SyncOrganizationsMembershipsService,
+    )
     from datasluice.connectors.catalog.udata.services.resources import AsyncResourcesService, SyncResourcesService
     from datasluice.connectors.catalog.udata.services.root_profile import (
         AsyncRootProfileService,
@@ -3921,6 +3941,8 @@ def _load_services():
         SyncRootProfileService,
         AsyncResourcesService,
         SyncResourcesService,
+        AsyncOrganizationsMembershipsService,
+        SyncOrganizationsMembershipsService,
     )
 
 
@@ -3931,4 +3953,6 @@ def _load_services():
     SyncRootProfileService,
     AsyncResourcesService,
     SyncResourcesService,
+    AsyncOrganizationsMembershipsService,
+    SyncOrganizationsMembershipsService,
 ) = _load_services()

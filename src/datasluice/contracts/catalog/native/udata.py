@@ -352,6 +352,312 @@ class AsyncUDataResourcesService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataOrganizationsMembershipsService(Protocol):
+    """Typed synchronous organization and membership service."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_organizations(self, query: object | None = None) -> object: ...
+    def create_organization(
+        self, client_input: object, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    def get_organization(self, organization_id: str) -> object: ...
+    def update_organization(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    def organization_datasets_csv(self, organization_id: str) -> object: ...
+    def organization_dataservices_csv(self, organization_id: str) -> object: ...
+    def organization_discussions_csv(self, organization_id: str) -> object: ...
+    def organization_datasets_resources_csv(self, organization_id: str) -> object: ...
+    def rdf_organization(self, organization_id: str) -> object: ...
+    def rdf_organization_format(self, organization_id: str, fmt: str) -> object: ...
+    def available_organization_badges(self) -> object: ...
+    def add_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def get_organization_contact_point(self, organization_id: str, query: object | None = None) -> object: ...
+    def suggest_org_contact_points(self, organization_id: str, query: object) -> object: ...
+    def list_membership_requests(
+        self, organization_id: str, permissions: EffectivePermissions, query: object | None = None
+    ) -> object: ...
+    def membership_request(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def accept_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def refuse_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def cancel_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def invite_organization_member(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def update_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def list_organization_assignments(self, organization_id: str, permissions: EffectivePermissions) -> object: ...
+    def sync_member_assignments(
+        self,
+        organization_id: str,
+        user_id: str,
+        assignments: list[Mapping[str, object]],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def suggest_organizations(self, query: object) -> object: ...
+    def organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def resize_organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def list_organization_datasets(self, organization_id: str, query: object | None = None) -> object: ...
+    def list_organization_reuses(self, organization_id: str) -> object: ...
+    def list_organization_discussions(self, organization_id: str) -> object: ...
+    def org_roles(self) -> object: ...
+    def search_organizations(self, query: object | None = None) -> object: ...
+    def get_organization_extras(self, organization_id: str) -> object: ...
+    def update_organization_extras(
+        self,
+        organization_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization_extras(
+        self,
+        organization_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def list_organization_followers(self, organization_id: str) -> object: ...
+    def follow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    def unfollow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+
+
+@runtime_checkable
+class AsyncUDataOrganizationsMembershipsService(Protocol):
+    """Typed asynchronous organization and membership service."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_organizations(self, query: object | None = None) -> object: ...
+    async def create_organization(
+        self, client_input: object, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    async def get_organization(self, organization_id: str) -> object: ...
+    async def update_organization(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    async def organization_datasets_csv(self, organization_id: str) -> object: ...
+    async def organization_dataservices_csv(self, organization_id: str) -> object: ...
+    async def organization_discussions_csv(self, organization_id: str) -> object: ...
+    async def organization_datasets_resources_csv(self, organization_id: str) -> object: ...
+    async def rdf_organization(self, organization_id: str) -> object: ...
+    async def rdf_organization_format(self, organization_id: str, fmt: str) -> object: ...
+    async def available_organization_badges(self) -> object: ...
+    async def add_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def get_organization_contact_point(self, organization_id: str, query: object | None = None) -> object: ...
+    async def suggest_org_contact_points(self, organization_id: str, query: object) -> object: ...
+    async def list_membership_requests(
+        self, organization_id: str, permissions: EffectivePermissions, query: object | None = None
+    ) -> object: ...
+    async def membership_request(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def accept_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def refuse_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def cancel_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def invite_organization_member(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def update_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def list_organization_assignments(
+        self, organization_id: str, permissions: EffectivePermissions
+    ) -> object: ...
+    async def sync_member_assignments(
+        self,
+        organization_id: str,
+        user_id: str,
+        assignments: list[Mapping[str, object]],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def suggest_organizations(self, query: object) -> object: ...
+    async def organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def resize_organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def list_organization_datasets(self, organization_id: str, query: object | None = None) -> object: ...
+    async def list_organization_reuses(self, organization_id: str) -> object: ...
+    async def list_organization_discussions(self, organization_id: str) -> object: ...
+    async def org_roles(self) -> object: ...
+    async def search_organizations(self, query: object | None = None) -> object: ...
+    async def get_organization_extras(self, organization_id: str) -> object: ...
+    async def update_organization_extras(
+        self,
+        organization_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization_extras(
+        self,
+        organization_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def list_organization_followers(self, organization_id: str) -> object: ...
+    async def follow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    async def unfollow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+
+
+@runtime_checkable
 class SyncUDataService(Protocol):
     """Synchronous uData operation group."""
 
@@ -385,7 +691,7 @@ class SyncUDataServices(Protocol):
     def resources(self) -> SyncUDataResourcesService: ...
 
     @property
-    def organizations_memberships(self) -> SyncUDataService: ...
+    def organizations_memberships(self) -> SyncUDataOrganizationsMembershipsService: ...
 
     @property
     def users_tokens(self) -> SyncUDataService: ...
@@ -423,7 +729,7 @@ class AsyncUDataServices(Protocol):
     def resources(self) -> AsyncUDataResourcesService: ...
 
     @property
-    def organizations_memberships(self) -> AsyncUDataService: ...
+    def organizations_memberships(self) -> AsyncUDataOrganizationsMembershipsService: ...
 
     @property
     def users_tokens(self) -> AsyncUDataService: ...

@@ -557,10 +557,61 @@ RESOURCE_ROUTE_OPERATION_IDS = frozenset(
     }
 )
 
+ORGANIZATION_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-organizations",
+        "udata/api-v1.create-organization",
+        "udata/api-v1.get-organization",
+        "udata/api-v1.update-organization",
+        "udata/api-v1.delete-organization",
+        "udata/api-v1.organization-datasets-csv",
+        "udata/api-v1.organization-dataservices-csv",
+        "udata/api-v1.organization-discussions-csv",
+        "udata/api-v1.organization-datasets-resources-csv",
+        "udata/api-v1.rdf-organization",
+        "udata/api-v1.rdf-organization-format",
+        "udata/api-v1.available-organization-badges",
+        "udata/api-v1.add-organization-badge",
+        "udata/api-v1.delete-organization-badge",
+        "udata/api-v1.get-organization-contact-point",
+        "udata/api-v1.suggest-org-contact-points",
+        "udata/api-v1.list-membership-requests",
+        "udata/api-v1.membership-request",
+        "udata/api-v1.accept-membership",
+        "udata/api-v1.refuse-membership",
+        "udata/api-v1.cancel-membership",
+        "udata/api-v1.invite-organization-member",
+        "udata/api-v1.update-organization-member",
+        "udata/api-v1.delete-organization-member",
+        "udata/api-v1.list-organization-assignments",
+        "udata/api-v1.sync-member-assignments",
+        "udata/api-v1.suggest-organizations",
+        "udata/api-v1.organization-logo",
+        "udata/api-v1.resize-organization-logo",
+        "udata/api-v1.list-organization-datasets",
+        "udata/api-v1.list-organization-reuses",
+        "udata/api-v1.list-organization-discussions",
+        "udata/api-v1.org-roles",
+        "udata/api-v2.search-organizations",
+        "udata/api-v2.get-organization-extras",
+        "udata/api-v2.update-organization-extras",
+        "udata/api-v2.delete-organization-extras",
+        "udata/api-v1.list-organization-followers",
+        "udata/api-v1.follow-organization",
+        "udata/api-v1.unfollow-organization",
+    }
+)
+
 NATIVE_OPERATION_MEMBERS["udata"].update(
     {
         operation_id: ("SyncUDataServices", "AsyncUDataServices", "resources")
         for operation_id in RESOURCE_ROUTE_OPERATION_IDS
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "organizations_memberships")
+        for operation_id in ORGANIZATION_ROUTE_OPERATION_IDS
     }
 )
 
@@ -591,6 +642,7 @@ LOCKED_DATASET_ROUTE_OPERATIONS = (
         }
     )
     | RESOURCE_ROUTE_OPERATION_IDS
+    | ORGANIZATION_ROUTE_OPERATION_IDS
 )
 
 LOCKED_EXTRA_OPERATION_IDS = (
@@ -602,6 +654,7 @@ LOCKED_EXTRA_OPERATION_IDS = (
         "udata/api-v1.resource-destructive-mutations",
     }
     | RESOURCE_ROUTE_OPERATION_IDS
+    | ORGANIZATION_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
