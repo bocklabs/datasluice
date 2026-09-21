@@ -14,7 +14,7 @@ from datasluice.connectors.catalog.udata.wire import resources as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import ForbiddenError
+from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 
@@ -145,6 +145,40 @@ def test_invalid_upload_id_closes_source_and_attaches_rejection_receipt() -> Non
 
     assert source.closed
     assert raised.value.__dict__["mutation_receipt"].outcome == "rejected"
+
+
+def test_async_invalid_community_upload_id_keeps_route_receipt_identity() -> None:
+    credential = UDataCredential(api_key="local-test-key")
+    permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)
+    source = BytesIO(b"abc")
+    client = AsyncUDataClient(
+        _CancellingTransport(),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=credential,
+        owns_transport=False,
+    )
+    policy = MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True,
+            operation=wire.UPLOAD_COMMUNITY_REPLACE_OPERATION,
+            target="resource/id",
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+        destructive=True,
+    )
+
+    async def run() -> CatalogValidationError:
+        async with client:
+            with pytest.raises(CatalogValidationError) as raised:
+                await client.resources.reupload_community(
+                    "resource/id", ResourceUploadInput(source, "data.csv", 3), permissions, policy
+                )
+        return raised.value
+
+    error = asyncio.run(run())
+    assert source.closed
+    assert error.__dict__["mutation_receipt"].operation == wire.UPLOAD_COMMUNITY_REPLACE_OPERATION
 
 
 def test_upload_close_failure_preserves_the_primary_rejection_receipt() -> None:

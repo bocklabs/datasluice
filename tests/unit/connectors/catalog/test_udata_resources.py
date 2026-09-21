@@ -20,7 +20,7 @@ from datasluice.contracts.catalog.native.udata import AsyncUDataResourcesService
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError
+from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 
@@ -500,6 +500,49 @@ def test_mutation_routes_dispatch_with_sync_async_parity(call, verb: str, path: 
     assert sync_transport.requests[-1].url == async_transport.requests[-1].url == origin + path
     assert sync_transport.requests[-1].method == async_transport.requests[-1].method == verb
     assert sync_result == async_result
+
+
+def test_upload_capability_uses_declared_route_with_colliding_dataset_id() -> None:
+    origin = "http://127.0.0.1:5640"
+    permissions = EffectivePermissions.for_credential(
+        _CREDENTIAL,
+        platform=CatalogPlatform.UDATA,
+        operation_scopes={wire.UPLOAD_REPLACE_OPERATION: frozenset({"replace"})},
+    )
+    policy = _policy("resource", destructive=True, operation=wire.UPLOAD_REPLACE_OPERATION)
+    sync_transport = _Router(_routes({}))
+    sync_client = SyncUDataClient(
+        sync_transport, declared_udata_profile(), origin=origin, credentials=_CREDENTIAL, owns_transport=False
+    )
+
+    with sync_client, pytest.raises(ForbiddenError) as raised:
+        sync_client.resources.upload(
+            "r", ResourceUploadInput(BytesIO(b"x"), "data.csv", 1), permissions, policy, resource_id="resource"
+        )
+
+    assert raised.value.operation == wire.UPLOAD_REPLACE_OPERATION
+    assert not sync_transport.requests
+
+    async_transport = _AsyncRouter(_routes({}))
+    async_client = AsyncUDataClient(
+        async_transport, declared_udata_profile(), origin=origin, credentials=_CREDENTIAL, owns_transport=False
+    )
+
+    async def run() -> ForbiddenError:
+        async with async_client:
+            with pytest.raises(ForbiddenError) as async_raised:
+                await async_client.resources.upload(
+                    "r",
+                    ResourceUploadInput(BytesIO(b"x"), "data.csv", 1),
+                    permissions,
+                    policy,
+                    resource_id="resource",
+                )
+        return async_raised.value
+
+    async_error = asyncio.run(run())
+    assert async_error.operation == wire.UPLOAD_REPLACE_OPERATION
+    assert not async_transport.requests
 
 
 def test_upload_source_is_bounded_streamed_once_and_closed() -> None:

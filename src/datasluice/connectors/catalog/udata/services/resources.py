@@ -19,7 +19,7 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError, attach_catalog_metadata
+from datasluice.errors.catalog import NativeCatalogError, attach_catalog_metadata
 from datasluice.runtime.mutation import build_mutation_receipt
 
 from .datasets import (
@@ -127,6 +127,16 @@ def _route_operation(mutation: str, resource_kind: ResourceKind, destructive: bo
     return operation
 
 
+def _dispatch_operation(policy: Policy) -> str:
+    if policy is not None and policy.confirmation is not None and isinstance(policy.confirmation.operation, str):
+        return policy.confirmation.operation
+    return (
+        wire.RESOURCE_DELETE_CAPABILITY
+        if policy is not None and policy.destructive
+        else wire.RESOURCE_MUTATION_CAPABILITY
+    )
+
+
 def _resource_mutation(
     target: str,
     policy: Policy,
@@ -232,7 +242,7 @@ class SyncResourcesService:
         _, headers, _ = self._client._dataset_call(
             method=method,
             path=path,
-            owning_operation=wire.capability_operation(method, path),
+            owning_operation=wire.REDIRECT_OPERATION,
             raw_text=True,
             redirect_mode=True,
         )
@@ -303,13 +313,6 @@ class SyncResourcesService:
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
-            if community and resource_id is not None:
-                raise CatalogValidationError(
-                    "Community upload replacement requires reupload_community().",
-                    operation=wire.UPLOAD_COMMUNITY_REPLACE_OPERATION,
-                    platform="udata",
-                    safe_action="Call reupload_community with the existing community-resource ID.",
-                )
             method, path, headers = wire.upload_resource_request(dataset_id, resource_id, community=community)
             result = _resource_mutation(
                 target,
@@ -390,7 +393,7 @@ class SyncResourcesService:
     def get(self, dataset_id: str, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", dataset_id, resource_id)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.RESOURCE_GET_OPERATION
         )
         return wire.parse_resource(payload)
 
@@ -440,7 +443,7 @@ class SyncResourcesService:
     def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope:
         method, path, _, _ = wire.list_community_resources_request(params)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.COMMUNITY_LIST_OPERATION
         )
         return wire.parse_resource_page(payload)
 
@@ -451,9 +454,14 @@ class SyncResourcesService:
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> Result:
-        method, path, _, body = wire.community_collection_request(
-            "POST", client_input.payload() | {"dataset": dataset_id}
-        )
+        try:
+            method, path, _, body = wire.community_collection_request(
+                "POST", client_input.payload() | {"dataset": dataset_id}
+            )
+        except BaseException as error:
+            _reject_route(
+                error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.COMMUNITY_CREATE_OPERATION
+            )
         return _resource_mutation(
             dataset_id,
             mutation_policy,
@@ -467,7 +475,7 @@ class SyncResourcesService:
     def get_community(self, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", "", resource_id, community=True)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.COMMUNITY_GET_OPERATION
         )
         return wire.parse_resource(payload)
 
@@ -488,14 +496,14 @@ class SyncResourcesService:
     def resource_types(self) -> tuple[Mapping[str, str], ...]:
         method, path, _, _ = wire.resource_types_request()
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.RESOURCE_TYPES_OPERATION
         )
         return wire.parse_resource_types(payload)
 
     def list_v2(self, dataset_id: str) -> UDataPageEnvelope:
         method, path, _, _ = wire.v2_resource_request(dataset_id)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.V2_RESOURCE_LIST_OPERATION
         )
         return wire.parse_resource_page(payload)
 
@@ -504,7 +512,7 @@ class SyncResourcesService:
         _, payload, _ = self._client._dataset_call(
             method=method,
             path=path,
-            owning_operation=wire.capability_operation(method, path),
+            owning_operation=wire.V2_RESOURCE_GET_OPERATION,
         )
         return wire.parse_resource(payload.get("resource") if isinstance(payload, Mapping) else payload)
 
@@ -513,14 +521,14 @@ class SyncResourcesService:
         _, payload, _ = self._client._dataset_call(
             method=method,
             path=path,
-            owning_operation=wire.capability_operation(method, path),
+            owning_operation=wire.V2_DATASET_GET_OPERATION,
         )
         return wire.parse_v2_dataset(payload)
 
     def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]:
         method, path, _, _ = wire.v2_extras_request("GET", dataset_id, resource_id)
         _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.V2_EXTRAS_GET_OPERATION
         )
         return dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION)
 
@@ -581,7 +589,7 @@ class SyncResourcesService:
     def _call(
         self, method: str, path: str, body: object, permissions: Permissions, policy: Policy
     ) -> tuple[int, object, object]:
-        capability_operation = wire.capability_operation(method, path)
+        capability_operation = _dispatch_operation(policy)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return self._client._dataset_call(
             method=method,
@@ -601,7 +609,7 @@ class SyncResourcesService:
         permissions: Permissions,
         policy: Policy,
     ) -> tuple[int, object, object]:
-        capability_operation = wire.capability_operation(method, path)
+        capability_operation = _dispatch_operation(policy)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return self._client._dataset_call(
             method=method,
@@ -665,7 +673,7 @@ class AsyncResourcesService:
         _, headers, _ = await self._client._dataset_call_async(
             method=method,
             path=path,
-            owning_operation=wire.capability_operation(method, path),
+            owning_operation=wire.REDIRECT_OPERATION,
             raw_text=True,
             redirect_mode=True,
         )
@@ -736,13 +744,6 @@ class AsyncResourcesService:
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
-            if community and resource_id is not None:
-                raise CatalogValidationError(
-                    "Community upload replacement requires reupload_community().",
-                    operation=wire.UPLOAD_COMMUNITY_REPLACE_OPERATION,
-                    platform="udata",
-                    safe_action="Call reupload_community with the existing community-resource ID.",
-                )
             method, path, headers = wire.upload_resource_request(dataset_id, resource_id, community=community)
             result = await _async_resource_mutation(
                 target,
@@ -776,7 +777,7 @@ class AsyncResourcesService:
     async def get(self, dataset_id: str, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", dataset_id, resource_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.RESOURCE_GET_OPERATION
         )
         return wire.parse_resource(payload)
 
@@ -826,28 +827,28 @@ class AsyncResourcesService:
     async def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope:
         method, path, _, _ = wire.list_community_resources_request(params)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.COMMUNITY_LIST_OPERATION
         )
         return wire.parse_resource_page(payload)
 
     async def get_community(self, resource_id: str) -> NativeRecord:
         method, path, _, _ = wire.resource_request("GET", "", resource_id, community=True)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.COMMUNITY_GET_OPERATION
         )
         return wire.parse_resource(payload)
 
     async def resource_types(self) -> tuple[Mapping[str, str], ...]:
         method, path, _, _ = wire.resource_types_request()
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.RESOURCE_TYPES_OPERATION
         )
         return wire.parse_resource_types(payload)
 
     async def list_v2(self, dataset_id: str) -> UDataPageEnvelope:
         method, path, _, _ = wire.v2_resource_request(dataset_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.V2_RESOURCE_LIST_OPERATION
         )
         return wire.parse_resource_page(payload)
 
@@ -856,7 +857,7 @@ class AsyncResourcesService:
         _, payload, _ = await self._client._dataset_call_async(
             method=method,
             path=path,
-            owning_operation=wire.capability_operation(method, path),
+            owning_operation=wire.V2_RESOURCE_GET_OPERATION,
         )
         return wire.parse_resource(payload.get("resource") if isinstance(payload, Mapping) else payload)
 
@@ -900,7 +901,7 @@ class AsyncResourcesService:
                         "rejected",
                         _error_status(error),
                         "uploaded",
-                        operation=wire.UPLOAD_REPLACE_OPERATION,
+                        operation=wire.UPLOAD_COMMUNITY_REPLACE_OPERATION,
                     ),
                 )
             raise
@@ -914,9 +915,14 @@ class AsyncResourcesService:
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> Result:
-        method, path, _, body = wire.community_collection_request(
-            "POST", client_input.payload() | {"dataset": dataset_id}
-        )
+        try:
+            method, path, _, body = wire.community_collection_request(
+                "POST", client_input.payload() | {"dataset": dataset_id}
+            )
+        except BaseException as error:
+            _reject_route(
+                error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.COMMUNITY_CREATE_OPERATION
+            )
         return await _async_resource_mutation(
             dataset_id,
             mutation_policy,
@@ -977,14 +983,14 @@ class AsyncResourcesService:
         _, payload, _ = await self._client._dataset_call_async(
             method=method,
             path=path,
-            owning_operation=wire.capability_operation(method, path),
+            owning_operation=wire.V2_DATASET_GET_OPERATION,
         )
         return wire.parse_v2_dataset(payload)
 
     async def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]:
         method, path, _, _ = wire.v2_extras_request("GET", dataset_id, resource_id)
         _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=wire.capability_operation(method, path)
+            method=method, path=path, owning_operation=wire.V2_EXTRAS_GET_OPERATION
         )
         return dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION)
 
@@ -1047,7 +1053,7 @@ class AsyncResourcesService:
     async def _call(
         self, method: str, path: str, body: object, permissions: Permissions, policy: Policy
     ) -> tuple[int, object, object]:
-        capability_operation = wire.capability_operation(method, path)
+        capability_operation = _dispatch_operation(policy)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return await self._client._dataset_call_async(
             method=method,
@@ -1067,7 +1073,7 @@ class AsyncResourcesService:
         permissions: Permissions,
         policy: Policy,
     ) -> tuple[int, object, object]:
-        capability_operation = wire.capability_operation(method, path)
+        capability_operation = _dispatch_operation(policy)
         _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return await self._client._dataset_call_async(
             method=method,
