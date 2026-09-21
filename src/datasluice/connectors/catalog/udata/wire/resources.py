@@ -45,39 +45,47 @@ V2_EXTRAS_GET_OPERATION = f"{RESOURCE_OPERATION}-v2-extras-get"
 def capability_operation(method: str, path: str) -> str:
     """Return the declared capability identity for one exact resource route."""
     route = path.split("?", 1)[0]
-    if route.startswith("/api/1/datasets/r/"):
+    segments = route.strip("/").split("/")
+    if segments[:3] != ["api", "1", "datasets"]:
+        if segments[:3] == ["api", "2", "datasets"]:
+            rest_v2 = segments[3:]
+            if len(rest_v2) == 1:
+                return V2_DATASET_GET_OPERATION
+            if len(rest_v2) == 2 and rest_v2[-1] == "resources":
+                return V2_RESOURCE_LIST_OPERATION
+            if len(rest_v2) == 2 and rest_v2[0] == "resources":
+                return V2_RESOURCE_GET_OPERATION
+            if len(rest_v2) == 4 and rest_v2[1] == "resources" and rest_v2[-1] == "extras":
+                return {
+                    "GET": V2_EXTRAS_GET_OPERATION,
+                    "PUT": EXTRAS_UPDATE_OPERATION,
+                    "DELETE": EXTRAS_DELETE_OPERATION,
+                }[method]
+        return RESOURCE_READ_OPERATION
+    rest = segments[3:]
+    if len(rest) == 2 and rest[0] == "r":
         return REDIRECT_OPERATION
-    if route == "/api/1/datasets/resource_types/":
+    if rest == ["resource_types"]:
         return RESOURCE_TYPES_OPERATION
-    if route.startswith("/api/2/datasets/resources/"):
-        return V2_RESOURCE_GET_OPERATION
-    if route.startswith("/api/2/datasets/") and route.endswith("/resources/"):
-        return V2_RESOURCE_LIST_OPERATION
-    if route.startswith("/api/2/datasets/") and "/resources/" in route and route.endswith("/extras/"):
-        return {
-            "GET": V2_EXTRAS_GET_OPERATION,
-            "PUT": EXTRAS_UPDATE_OPERATION,
-            "DELETE": EXTRAS_DELETE_OPERATION,
-        }[method]
-    if route.startswith("/api/2/datasets/"):
-        return V2_DATASET_GET_OPERATION
-    if route == "/api/1/datasets/community_resources/":
+    if rest == ["community_resources"]:
         return COMMUNITY_LIST_OPERATION if method == "GET" else COMMUNITY_CREATE_OPERATION
-    if route.startswith("/api/1/datasets/community_resources/"):
-        if route.endswith("/upload/"):
+    if rest and rest[0] == "community_resources":
+        if len(rest) == 3 and rest[-1] == "upload":
             return UPLOAD_COMMUNITY_REPLACE_OPERATION
         return {
             "GET": COMMUNITY_GET_OPERATION,
             "PUT": COMMUNITY_UPDATE_OPERATION,
             "DELETE": COMMUNITY_DELETE_OPERATION,
         }[method]
-    if route.endswith("/upload/community/"):
+    if len(rest) == 3 and rest[-1] == "upload" and rest[-2] == "community":
         return UPLOAD_COMMUNITY_NEW_OPERATION
-    if route.endswith("/upload/"):
-        return UPLOAD_REPLACE_OPERATION if "/resources/" in route else UPLOAD_NEW_OPERATION
-    if route.endswith("/resources/"):
+    if len(rest) == 2 and rest[-1] == "upload":
+        return UPLOAD_NEW_OPERATION
+    if len(rest) == 4 and rest[-2:] == ["resources", "upload"]:
+        return UPLOAD_REPLACE_OPERATION
+    if len(rest) == 2 and rest[-1] == "resources":
         return CREATE_OPERATION if method == "POST" else REORDER_OPERATION
-    if "/resources/" in route:
+    if len(rest) == 3 and rest[-2] == "resources":
         return {
             "GET": RESOURCE_GET_OPERATION,
             "PUT": RESOURCE_UPDATE_OPERATION,
