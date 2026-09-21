@@ -57,7 +57,7 @@ import datasluice
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
-from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput
+from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
@@ -256,6 +256,24 @@ async def run_async():
             pass
         else:
             raise AssertionError("invalid organization id was dispatched")
+        try:
+            await active.organizations_memberships.update_organization(
+                "invalid/id",
+                OrganizationUpdateInput(description="invalid"),
+                permissions,
+                MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.update-organization", target="invalid/id"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        except CatalogValidationError as error:
+            receipt = error.__dict__["mutation_receipt"]
+            assert receipt.operation == "udata/api-v1.update-organization"
+            assert receipt.outcome == "rejected"
+        else:
+            raise AssertionError("invalid organization mutation was dispatched")
         return (
             page.items[0].id.value,
             root_profile.id,
@@ -283,6 +301,9 @@ assert created.receipt.outcome == "succeeded"
 assert created.receipt.audit_metadata["status_code"] == 201
 assert resource_created.record.id.value == "wheel-created"
 assert organization_created.record.id.value == "wheel-created"
+assert organization_created.receipt.operation == "udata/api-v1.create-organization"
+assert organization_created.receipt.outcome == "succeeded"
+assert organization_created.receipt.audit_metadata["status_code"] == 201
 recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
