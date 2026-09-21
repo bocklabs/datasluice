@@ -65,7 +65,7 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import NativeCatalogError
+from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeResponse, RuntimeStreamResponse
 
 op_id = next(
@@ -151,6 +151,12 @@ envelope = client.datasets_list(
 service_page = client.datasets.list()
 assert service_page.items[0].id.value == "abc"
 organization = client.organizations_memberships.get_organization("abc")
+try:
+    client.organizations_memberships.get_organization("")
+except CatalogValidationError:
+    pass
+else:
+    raise AssertionError("invalid organization id was dispatched")
 assert organization.id.value == "abc"
 sync_permissions = EffectivePermissions.for_credential(sync_credential, platform=CatalogPlatform.UDATA)
 sync_resource = client.resources.create(
@@ -191,6 +197,9 @@ organization_created = client.organizations_memberships.create_organization(
     ),
 )
 assert organization_created.record is not None
+assert organization_created.receipt.operation == "udata/api-v1.create-organization"
+assert organization_created.receipt.outcome == "succeeded"
+assert organization_created.receipt.audit_metadata["status_code"] == 201
 client.close()
 
 import asyncio
@@ -241,6 +250,12 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )
+        try:
+            await active.organizations_memberships.get_organization("")
+        except CatalogValidationError:
+            pass
+        else:
+            raise AssertionError("invalid organization id was dispatched")
         return (
             page.items[0].id.value,
             root_profile.id,

@@ -271,6 +271,12 @@ def test_organization_inputs_reject_invalid_roles_and_ambiguous_invitations() ->
         MembershipRequestInput("please", role="owner")
     with pytest.raises(ValueError):
         OrganizationInvitationInput(user="user-1", email="member@example.test")
+    with pytest.raises(ValueError):
+        OrganizationInvitationInput(email="invalid-email")
+    with pytest.raises(ValueError):
+        OrganizationInvitationInput(email="member@example.test", assignments=({"dataset": "one"},))
+    with pytest.raises(ValueError):
+        OrganizationMemberInput("editor", fields={"role": "admin"})
 
 
 def test_badges_require_admin_evidence_before_dispatch_in_both_modes() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -10,6 +11,7 @@ from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freez
 from datasluice.domain.catalog.receipts import MutationReceipt
 
 _ROLES = frozenset({"admin", "editor", "partial_editor"})
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 def _text(value: object, field_name: str, *, allow_none: bool = False) -> None:
@@ -23,6 +25,11 @@ def _role(value: object, field_name: str, *, allow_none: bool = False) -> None:
     _text(value, field_name, allow_none=allow_none)
     if value is not None and value not in _ROLES:
         raise ValueError(f"uData organization {field_name} must be one of {sorted(_ROLES)}.")
+
+
+def _email(value: str | None) -> None:
+    if value is not None and _EMAIL.fullmatch(value) is None:
+        raise ValueError("uData invitation email must be a valid email address.")
 
 
 def _fields(value: Mapping[str, object] | None, field_name: str) -> Mapping[str, object] | None:
@@ -204,6 +211,8 @@ class MembershipRequestInput:
         _role(self.role, "membership role", allow_none=True)
         if not isinstance(self.assignments, tuple) or not all(isinstance(item, Mapping) for item in self.assignments):
             raise ValueError("uData membership assignments must be a tuple of mappings.")
+        if self.assignments and self.role != "partial_editor":
+            raise ValueError("uData membership assignments require the partial_editor role.")
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {"comment": self.comment}
@@ -229,9 +238,12 @@ class OrganizationInvitationInput:
             raise ValueError("uData invitations require exactly one of user or email.")
         for name, value in (("user", self.user), ("email", self.email), ("comment", self.comment)):
             _text(value, f"invitation {name}", allow_none=True)
+        _email(self.email)
         _role(self.role, "invitation role", allow_none=True)
         if not isinstance(self.assignments, tuple) or not all(isinstance(item, Mapping) for item in self.assignments):
             raise ValueError("uData invitation assignments must be a tuple of mappings.")
+        if self.assignments and self.role != "partial_editor":
+            raise ValueError("uData invitation assignments require the partial_editor role.")
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {
@@ -259,6 +271,8 @@ class OrganizationMemberInput:
     def __post_init__(self) -> None:
         _role(self.role, "member role")
         object.__setattr__(self, "fields", _fields(self.fields, "member fields"))
+        if self.fields is not None and "role" in self.fields:
+            raise ValueError("uData member fields cannot override the typed role.")
 
     def payload(self) -> dict[str, object]:
         return {"role": self.role, **_payload(self.fields or {})}
