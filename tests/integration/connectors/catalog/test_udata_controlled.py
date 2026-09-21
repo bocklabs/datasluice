@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -281,6 +282,28 @@ def test_controlled_organization_family_matches_raw_shapes_and_cleans_up() -> No
                 assert status in {404, 410} or (
                     status == 200 and isinstance(payload, Mapping) and payload.get("deleted")
                 )
+
+
+def test_controlled_async_organization_reads_match_raw_shapes() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled organization evidence requires UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+
+    credential = UDataCredential(api_key=token)
+
+    async def run() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            status, payload, _ = _direct_request(token, "GET", "/api/1/organizations/evidence-organization/")
+            typed = await client.organizations_memberships.get_organization("evidence-organization")
+            assert status == 200 and isinstance(payload, Mapping) and payload["id"] == typed.id.value
+            status, payload, _ = _direct_request(token, "GET", "/api/1/organizations/?page=1&page_size=20")
+            page = await client.organizations_memberships.list_organizations(
+                OrganizationListQuery(page=1, page_size=20)
+            )
+            assert status == 200 and isinstance(payload, Mapping) and page.items
+            assert {item["id"] for item in payload["data"]} >= {item.id.value for item in page.items}
+
+    asyncio.run(run())
 
 
 def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:

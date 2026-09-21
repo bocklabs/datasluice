@@ -206,6 +206,7 @@ async def run_async():
         page = await active.datasets.list()
         root_profile = await active.root_profile.get()
         root_export = await active.root_profile.datasets_csv()
+        organization = await active.organizations_memberships.get_organization("abc")
         permissions = EffectivePermissions.for_credential(async_credential, platform=CatalogPlatform.UDATA)
         created = await active.datasets.create(
             DatasetCreateInput(title="Wheel dataset", description="d"),
@@ -230,15 +231,43 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )
-        return page.items[0].id.value, root_profile.id, root_export.size_bytes, created, resource_created
-async_result, async_root_id, async_export_size, created, resource_created = asyncio.run(run_async())
+        organization_created = await active.organizations_memberships.create_organization(
+            OrganizationCreateInput(name="Async wheel organization", description="d"),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.create-organization", target="Async wheel organization"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        return (
+            page.items[0].id.value,
+            root_profile.id,
+            root_export.size_bytes,
+            organization,
+            created,
+            resource_created,
+            organization_created,
+        )
+(
+    async_result,
+    async_root_id,
+    async_export_size,
+    organization,
+    created,
+    resource_created,
+    organization_created,
+) = asyncio.run(run_async())
 assert async_result == "abc"
 assert async_root_id == "s"
 assert async_export_size == len(b"id\\nwheel\\n")
+assert organization.id.value == "abc"
 assert created.record.id.value == "wheel-created"
 assert created.receipt.outcome == "succeeded"
 assert created.receipt.audit_metadata["status_code"] == 201
 assert resource_created.record.id.value == "wheel-created"
+assert organization_created.record.id.value == "wheel-created"
 recorded = [getattr(r, "url", r) for r in transport.requests]
 assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
@@ -256,8 +285,10 @@ assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/datasets.csv",
+    "http://127.0.0.1:5640/api/1/organizations/abc/",
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
+    "http://127.0.0.1:5640/api/1/organizations/",
 ]
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
