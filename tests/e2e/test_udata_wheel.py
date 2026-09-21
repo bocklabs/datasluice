@@ -31,10 +31,14 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "models/resources.py",
         "wire/resources.py",
         "services/resources.py",
+        "models/organizations.py",
+        "wire/organizations.py",
+        "services/organizations_memberships.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
     assert (fixtures / "root_profile.json").is_file()
+    assert (fixtures / "cases.json").is_file()
     assert not (profiles / "udata-17.3.json").exists()
 
     profile = json.loads((profiles / "udata-17.6.json").read_text(encoding="utf-8"))
@@ -53,6 +57,7 @@ import datasluice
 assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
+from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
@@ -85,9 +90,20 @@ class Transport:
         elif url.endswith(".csv"):
             body = b"id\\nwheel\\n"
             headers = {"Content-Type": "text/csv"}
+        elif "/api/1/organizations/abc/" in url:
+            body = json.dumps({"id": "abc", "name": "Wheel organization", "description": "d"}).encode()
+            headers = {"Content-Type": "application/json"}
         elif request.method == "POST":
-            body = json.dumps({"id": "wheel-created", "title": "Wheel dataset", "slug": "wheel-dataset",
-                               "description": "d", "private": False}).encode()
+            body = json.dumps(
+                {
+                    "id": "wheel-created",
+                    "name": "Wheel organization",
+                    "title": "Wheel dataset",
+                    "slug": "wheel-dataset",
+                    "description": "d",
+                    "private": False,
+                }
+            ).encode()
             headers = {"Content-Type": "application/json"}
         else:
             body = json.dumps({"data": [{"id": "abc", "title": "T"}], "next_page": None, "page": 1,
@@ -134,6 +150,8 @@ envelope = client.datasets_list(
 )
 service_page = client.datasets.list()
 assert service_page.items[0].id.value == "abc"
+organization = client.organizations_memberships.get_organization("abc")
+assert organization.id.value == "abc"
 sync_permissions = EffectivePermissions.for_credential(sync_credential, platform=CatalogPlatform.UDATA)
 sync_resource = client.resources.create(
     "abc",
@@ -162,6 +180,17 @@ sync_upload = client.resources.upload(
     ),
 )
 assert sync_resource.record is not None and sync_upload.record is not None
+organization_created = client.organizations_memberships.create_organization(
+    OrganizationCreateInput(name="Wheel organization", description="d"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.create-organization", target="Wheel organization"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert organization_created.record is not None
 client.close()
 
 import asyncio
@@ -217,8 +246,10 @@ assert recorded == [
     "http://127.0.0.1:5640/api/1/site/datasets.csv",
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/organizations/abc/",
     "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
     "http://127.0.0.1:5640/api/1/datasets/abc/upload/",
+    "http://127.0.0.1:5640/api/1/organizations/",
 ], recorded
 assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/site/",

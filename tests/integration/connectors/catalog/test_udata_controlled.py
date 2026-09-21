@@ -19,10 +19,17 @@ from datasluice.connectors.catalog.udata.clients import (
     declared_udata_profile,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
+from datasluice.connectors.catalog.udata.models.organizations import (
+    OrganizationCreateInput,
+    OrganizationListQuery,
+    OrganizationUpdateInput,
+)
 from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 
 if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://127.0.0.1:5640":
     pytest.skip(
@@ -182,6 +189,98 @@ def test_controlled_stack_proves_dataset_family_reads() -> None:
     assert page.items, "expected seeded datasets on the controlled stack"
     assert isinstance(suggestions, tuple)
     assert v2_page.page is not None
+
+
+def test_controlled_organization_family_matches_raw_shapes_and_cleans_up() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled organization evidence requires UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    organization_id = "evidence-organization"
+    settings = UDataClientSettings(base_url=ORIGIN, credential=credential)
+    with create_sync_client(settings) as client:
+        direct_status, direct_payload, _ = _direct_request(token, "GET", f"/api/1/organizations/{organization_id}/")
+        typed = client.organizations_memberships.get_organization(organization_id)
+        assert direct_status == 200
+        assert isinstance(direct_payload, Mapping)
+        assert direct_payload["id"] == typed.id.value
+        assert direct_payload["name"] == typed.payload["name"]
+
+        direct_status, direct_payload, _ = _direct_request(token, "GET", "/api/1/organizations/?page=1&page_size=20")
+        page = client.organizations_memberships.list_organizations(OrganizationListQuery(page=1, page_size=20))
+        assert direct_status == 200
+        assert isinstance(direct_payload, Mapping)
+        assert isinstance(direct_payload.get("data"), list)
+        assert {item["id"] for item in direct_payload["data"]} >= {item.id.value for item in page.items}
+
+        direct_status, direct_payload, _ = _direct_request(
+            token, "GET", f"/api/1/organizations/{organization_id}/datasets/?page=1&page_size=20"
+        )
+        datasets = client.organizations_memberships.list_organization_datasets(organization_id)
+        assert direct_status == 200
+        assert isinstance(direct_payload, Mapping)
+        assert isinstance(direct_payload.get("data"), list)
+        assert {item["id"] for item in direct_payload["data"]} == {item.id.value for item in datasets.items}
+
+        direct_status, _, _ = _direct_request(token, "GET", "/api/1/organizations/roles/")
+        assert direct_status == 200
+        assert client.organizations_memberships.org_roles()
+        assert client.organizations_memberships.get_organization_extras(organization_id) is not None
+        assert client.organizations_memberships.list_organization_followers(organization_id) is not None
+
+        created_id: str | None = None
+        try:
+            created = client.organizations_memberships.create_organization(
+                OrganizationCreateInput(name="Controlled Organization", description="Task 04-04"),
+                permissions,
+                MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True,
+                        operation="udata/api-v1.create-organization",
+                        target="Controlled Organization",
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            assert created.record is not None
+            created_id = created.record.id.value
+            assert created.receipt.outcome == "succeeded"
+            update = client.organizations_memberships.update_organization(
+                created_id,
+                OrganizationUpdateInput(description="Task 04-04 updated"),
+                permissions,
+                MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.update-organization", target=created_id
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            assert update.receipt.outcome == "succeeded"
+            status, payload, _ = _direct_request(token, "GET", f"/api/1/organizations/{created_id}/")
+            assert status == 200 and isinstance(payload, Mapping) and payload["description"] == "Task 04-04 updated"
+        finally:
+            if created_id is not None:
+                deleted = client.organizations_memberships.delete_organization(
+                    created_id,
+                    permissions,
+                    MutationPolicy(
+                        destructive=True,
+                        confirmation=ConfirmationPolicy(
+                            confirmed=True, operation="udata/api-v1.delete-organization", target=created_id
+                        ),
+                        concurrency=ConcurrencyPolicy(overwrite=True),
+                    ),
+                )
+                assert deleted.receipt.outcome == "succeeded"
+                status, payload, _ = _direct_request(token, "GET", f"/api/1/organizations/{created_id}/")
+                assert status in {404, 410} or (
+                    status == 200 and isinstance(payload, Mapping) and payload.get("deleted")
+                )
 
 
 def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
