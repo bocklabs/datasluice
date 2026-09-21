@@ -64,6 +64,43 @@ class _DirectNoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _direct_request(
+    token: str, method: str, path: str, *, body: object | None = None, content_type: str = "application/json"
+) -> tuple[int, object, dict[str, str]]:
+    data = None if body is None else body if isinstance(body, bytes) else json.dumps(body).encode()
+    headers = {"X-API-KEY": token}
+    if data is not None:
+        headers["Content-Type"] = content_type
+    request = Request(f"{ORIGIN}{path}", data=data, headers=headers, method=method)
+    try:
+        response = build_opener(_DirectNoRedirect()).open(request, timeout=10)
+    except HTTPError as error:
+        response = error
+    with response:
+        payload_bytes = response.read(8193)
+        assert len(payload_bytes) <= 8192
+        media_type = response.headers.get_content_type()
+        payload = json.loads(payload_bytes) if payload_bytes and media_type == "application/json" else None
+        status = response.status
+        assert type(status) is int
+        return status, payload, {key.lower(): value for key, value in response.headers.items()}
+
+
+def _multipart_body(content: bytes, file_name: str) -> tuple[bytes, str]:
+    boundary = "datasluice-evidence-boundary"
+    body = b"\r\n".join(
+        (
+            f"--{boundary}".encode(),
+            f'Content-Disposition: form-data; name="file"; filename="{file_name}"'.encode(),
+            b"",
+            content,
+            f"--{boundary}--".encode(),
+            b"",
+        )
+    )
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
 def _direct_site_patch(
     row: Mapping[str, object], token: str, body: Mapping[str, object]
 ) -> tuple[int, str, dict[str, object]]:
@@ -445,6 +482,378 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
                         concurrency=ConcurrencyPolicy(overwrite=True),
                         destructive=True,
                     ),
+                )
+
+
+def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled resources require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    from io import BytesIO
+
+    from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput, DatasetDeleteOptions
+    from datasluice.connectors.catalog.udata.models.resources import (
+        ResourceCreateInput,
+        ResourceUpdateInput,
+        ResourceUploadInput,
+    )
+    from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
+    from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+
+    def policy(target: str, operation: str, *, destructive: bool = False) -> MutationPolicy:
+        return MutationPolicy(
+            destructive=destructive,
+            confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        )
+
+    dataset_id: str | None = None
+    direct_resource_id: str | None = None
+    typed_resource_id: str | None = None
+    direct_upload_id: str | None = None
+    typed_upload_id: str | None = None
+    direct_community_upload_id: str | None = None
+    typed_community_upload_id: str | None = None
+    direct_community_id: str | None = None
+    typed_community_id: str | None = None
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        try:
+            created_dataset = client.datasets.create(
+                DatasetCreateInput(title="Raw differential evidence", description="d"),
+                permissions,
+                policy("Raw differential evidence", "udata/api-v1.create-dataset"),
+            )
+            assert created_dataset.record is not None
+            dataset_id = created_dataset.record.id.value
+
+            status, raw, _ = _direct_request(
+                token,
+                "POST",
+                f"/api/1/datasets/{dataset_id}/resources/",
+                body=ResourceCreateInput(title="Raw resource", url="https://example.com/raw.csv").payload(),
+            )
+            assert status == 201 and isinstance(raw, Mapping) and isinstance(raw.get("id"), str)
+            direct_resource_id = raw["id"]
+            typed_created = client.resources.create(
+                dataset_id,
+                ResourceCreateInput(title="Typed resource", url="https://example.com/typed.csv"),
+                permissions,
+                policy(dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create"),
+            )
+            assert typed_created.record is not None
+            typed_resource_id = typed_created.record.id.value
+
+            raw_status, raw_get, _ = _direct_request(
+                token, "GET", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/"
+            )
+            typed_get = client.resources.get(dataset_id, direct_resource_id)
+            assert raw_status == 200 and isinstance(raw_get, Mapping) and raw_get["id"] == typed_get.id.value
+
+            update_body = ResourceUpdateInput({"title": "Raw updated"}).payload()
+            raw_status, raw_update, _ = _direct_request(
+                token, "PUT", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/", body=update_body
+            )
+            typed_update = client.resources.update(
+                dataset_id,
+                direct_resource_id,
+                ResourceUpdateInput({"title": "Typed updated"}),
+                permissions,
+                policy(direct_resource_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update"),
+            )
+            assert raw_status == 200 and isinstance(raw_update, Mapping) and typed_update.record is not None
+            assert raw_update["id"] == typed_update.record.id.value == direct_resource_id
+
+            reorder_body = [
+                {"id": direct_resource_id, "order": 0},
+                {"id": typed_resource_id, "order": 1},
+            ]
+            raw_status, raw_reorder, _ = _direct_request(
+                token, "PUT", f"/api/1/datasets/{dataset_id}/resources/", body=reorder_body
+            )
+            typed_reorder = client.resources.reorder(
+                dataset_id,
+                (ResourceUpdateInput(reorder_body[0]), ResourceUpdateInput(reorder_body[1])),
+                permissions,
+                policy(dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder"),
+            )
+            assert raw_status == 200 and isinstance(raw_reorder, list) and typed_reorder.records
+            assert raw_reorder[0]["id"] == typed_reorder.records[0].id.value
+
+            extras_path = f"/api/2/datasets/{dataset_id}/resources/{direct_resource_id}/extras/"
+            raw_status, raw_extras, _ = _direct_request(
+                token, "PUT", extras_path, body={"raw": "value", "typed": "value"}
+            )
+            typed_extras = client.resources.update_extras_v2(
+                dataset_id,
+                direct_resource_id,
+                {"raw": "value", "typed": "value"},
+                permissions,
+                policy(
+                    direct_resource_id,
+                    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update",
+                ),
+            )
+            assert raw_status == 200 and raw_extras == typed_extras.extras == {"raw": "value", "typed": "value"}
+            raw_status, raw_extras, _ = _direct_request(token, "GET", extras_path)
+            typed_extras_read = client.resources.get_extras_v2(dataset_id, direct_resource_id)
+            assert raw_status == 200 and raw_extras == typed_extras_read == {"raw": "value", "typed": "value"}
+            raw_status, raw_deleted_extras, _ = _direct_request(token, "DELETE", extras_path, body=["raw"])
+            typed_deleted_extras = client.resources.delete_extras_v2(
+                dataset_id,
+                direct_resource_id,
+                ("typed",),
+                permissions,
+                policy(
+                    direct_resource_id,
+                    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-delete",
+                    destructive=True,
+                ),
+            )
+            assert (
+                raw_status == 204 and raw_deleted_extras is None and typed_deleted_extras.receipt.outcome == "succeeded"
+            )
+
+            raw_status, raw_dataset, _ = _direct_request(token, "GET", f"/api/2/datasets/{dataset_id}/")
+            typed_dataset = client.resources.get_dataset_v2(dataset_id)
+            assert (
+                raw_status == 200 and isinstance(raw_dataset, Mapping) and raw_dataset["id"] == typed_dataset.id.value
+            )
+            raw_status, raw_resource_page, _ = _direct_request(token, "GET", f"/api/2/datasets/{dataset_id}/resources/")
+            typed_resource_page = client.resources.list_v2(dataset_id)
+            assert raw_status == 200 and isinstance(raw_resource_page, Mapping) and typed_resource_page.items
+            raw_status, raw_resource, _ = _direct_request(
+                token, "GET", f"/api/2/datasets/resources/{direct_resource_id}/"
+            )
+            typed_resource = client.resources.get_v2(direct_resource_id)
+            assert (
+                raw_status == 200
+                and isinstance(raw_resource, Mapping)
+                and typed_resource.id.value == direct_resource_id
+            )
+            raw_status, raw_types, _ = _direct_request(token, "GET", "/api/1/datasets/resource_types/")
+            typed_types = client.resources.resource_types()
+            assert raw_status == 200 and isinstance(raw_types, list) and len(raw_types) == len(typed_types)
+            raw_status, raw_redirect, raw_headers = _direct_request(
+                token, "GET", f"/api/1/datasets/r/{direct_resource_id}"
+            )
+            assert (
+                raw_status == 302
+                and raw_redirect is None
+                and raw_headers.get("location") == client.resources.redirect(direct_resource_id)
+            )
+
+            replacement_body, replacement_type = _multipart_body(b"raw", "raw.csv")
+            raw_status, raw_replaced, _ = _direct_request(
+                token,
+                "POST",
+                f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/upload/",
+                body=replacement_body,
+                content_type=replacement_type,
+            )
+            typed_replaced = client.resources.upload(
+                dataset_id,
+                ResourceUploadInput(BytesIO(b"typed"), "typed.csv", 5),
+                permissions,
+                policy(
+                    direct_resource_id,
+                    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+                    destructive=True,
+                ),
+                resource_id=direct_resource_id,
+            )
+            assert raw_status == 200 and isinstance(raw_replaced, Mapping) and typed_replaced.record is not None
+            assert raw_replaced["id"] == typed_replaced.record.id.value == direct_resource_id
+
+            raw_status, raw_deleted, _ = _direct_request(
+                token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/"
+            )
+            assert raw_status == 204 and raw_deleted is None
+            direct_resource_id = None
+
+            direct_upload_body, direct_upload_type = _multipart_body(b"raw", "raw-new.csv")
+            raw_status, raw_upload, _ = _direct_request(
+                token,
+                "POST",
+                f"/api/1/datasets/{dataset_id}/upload/",
+                body=direct_upload_body,
+                content_type=direct_upload_type,
+            )
+            direct_upload_id = raw_upload["id"] if raw_status == 201 and isinstance(raw_upload, Mapping) else None
+            typed_upload = client.resources.upload(
+                dataset_id,
+                ResourceUploadInput(BytesIO(b"typed"), "typed-new.csv", 5),
+                permissions,
+                policy(dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new"),
+            )
+            assert raw_status == 201 and typed_upload.record is not None and direct_upload_id is not None
+            typed_upload_id = typed_upload.record.id.value
+
+            community_body, community_type = _multipart_body(b"raw", "raw-community.csv")
+            raw_status, raw_community_upload, _ = _direct_request(
+                token,
+                "POST",
+                f"/api/1/datasets/{dataset_id}/upload/community/",
+                body=community_body,
+                content_type=community_type,
+            )
+            direct_community_upload_id = (
+                raw_community_upload["id"] if raw_status == 201 and isinstance(raw_community_upload, Mapping) else None
+            )
+            typed_community_upload = client.resources.upload_community(
+                dataset_id,
+                ResourceUploadInput(BytesIO(b"typed"), "typed-community.csv", 5),
+                permissions,
+                policy(
+                    dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new"
+                ),
+            )
+            assert (
+                raw_status == 201
+                and typed_community_upload.record is not None
+                and direct_community_upload_id is not None
+            )
+            typed_community_upload_id = typed_community_upload.record.id.value
+
+            community_create_body = ResourceCreateInput(
+                title="Raw community", url="https://example.com/raw-community.csv"
+            ).payload() | {"dataset": dataset_id}
+            raw_status, raw_community, _ = _direct_request(
+                token, "POST", "/api/1/datasets/community_resources/", body=community_create_body
+            )
+            direct_community_id = (
+                raw_community["id"] if raw_status == 201 and isinstance(raw_community, Mapping) else None
+            )
+            typed_community = client.resources.create_community(
+                dataset_id,
+                ResourceCreateInput(title="Typed community", url="https://example.com/typed-community.csv"),
+                permissions,
+                policy(
+                    dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create"
+                ),
+            )
+            assert raw_status == 201 and typed_community.record is not None and direct_community_id is not None
+            typed_community_id = typed_community.record.id.value
+
+            raw_status, raw_community_get, _ = _direct_request(
+                token, "GET", f"/api/1/datasets/community_resources/{direct_community_id}/"
+            )
+            typed_community_get = client.resources.get_community(direct_community_id)
+            assert raw_status == 200 and isinstance(raw_community_get, Mapping)
+            assert raw_community_get["id"] == typed_community_get.id.value == direct_community_id
+            raw_status, raw_community_list, _ = _direct_request(
+                token, "GET", f"/api/1/datasets/community_resources/?dataset={dataset_id}"
+            )
+            typed_community_list = client.resources.list_community({"dataset": dataset_id})
+            assert raw_status == 200 and isinstance(raw_community_list, Mapping) and typed_community_list.items
+
+            community_update_body = ResourceUpdateInput({"title": "Raw community updated"}).payload()
+            raw_status, raw_community_update, _ = _direct_request(
+                token,
+                "PUT",
+                f"/api/1/datasets/community_resources/{direct_community_id}/",
+                body=community_update_body,
+            )
+            typed_community_update = client.resources.update_community(
+                direct_community_id,
+                ResourceUpdateInput({"title": "Typed community updated"}),
+                permissions,
+                policy(
+                    direct_community_id,
+                    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update",
+                ),
+            )
+            assert (
+                raw_status == 200
+                and isinstance(raw_community_update, Mapping)
+                and typed_community_update.record is not None
+            )
+
+            community_replace_body, community_replace_type = _multipart_body(b"raw", "raw-community-replace.csv")
+            raw_status, raw_community_replace, _ = _direct_request(
+                token,
+                "POST",
+                f"/api/1/datasets/community_resources/{direct_community_id}/upload/",
+                body=community_replace_body,
+                content_type=community_replace_type,
+            )
+            typed_community_replace = client.resources.reupload_community(
+                direct_community_id,
+                ResourceUploadInput(BytesIO(b"typed"), "typed-community-replace.csv", 5),
+                permissions,
+                policy(
+                    direct_community_id,
+                    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-replace",
+                    destructive=True,
+                ),
+            )
+            assert raw_status == 200 and isinstance(raw_community_replace, Mapping)
+            assert typed_community_replace.record is not None
+
+            raw_status, raw_community_deleted, _ = _direct_request(
+                token, "DELETE", f"/api/1/datasets/community_resources/{direct_community_id}/"
+            )
+            assert raw_status == 204 and raw_community_deleted is None
+            direct_community_id = None
+            typed_deleted_community = client.resources.delete_community(
+                typed_community_id,
+                permissions,
+                policy(
+                    typed_community_id,
+                    "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+                    destructive=True,
+                ),
+            )
+            assert typed_deleted_community.receipt.outcome == "succeeded"
+        finally:
+            if direct_upload_id is not None and dataset_id is not None:
+                _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_upload_id}/")
+            if direct_community_upload_id is not None:
+                _direct_request(token, "DELETE", f"/api/1/datasets/community_resources/{direct_community_upload_id}/")
+            if typed_upload_id is not None and dataset_id is not None:
+                client.resources.delete(
+                    dataset_id,
+                    typed_upload_id,
+                    permissions,
+                    policy(
+                        typed_upload_id,
+                        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+                        destructive=True,
+                    ),
+                )
+            if typed_community_upload_id is not None:
+                client.resources.delete_community(
+                    typed_community_upload_id,
+                    permissions,
+                    policy(
+                        typed_community_upload_id,
+                        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+                        destructive=True,
+                    ),
+                )
+            if direct_resource_id is not None and dataset_id is not None:
+                _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/")
+            if typed_resource_id is not None and dataset_id is not None:
+                client.resources.delete(
+                    dataset_id,
+                    typed_resource_id,
+                    permissions,
+                    policy(
+                        typed_resource_id,
+                        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+                        destructive=True,
+                    ),
+                )
+            if dataset_id is not None:
+                client.datasets.delete(
+                    dataset_id,
+                    permissions,
+                    DatasetDeleteOptions(),
+                    policy(dataset_id, "udata/api-v1.delete-dataset", destructive=True),
                 )
 
 

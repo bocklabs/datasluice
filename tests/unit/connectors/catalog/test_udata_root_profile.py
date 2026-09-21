@@ -72,8 +72,8 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     (
         "udata",
         "udata-evidence-udata",
-        "sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
-        "udata-evidence-udata@sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
+        "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+        "udata-evidence-udata@sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     ),
     (
         "mongo",

@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      provenance: false
+      sbom: false
       args:
         UDATA_COMMIT: 0546582058d84706812a1c37387576efc4e5ad1f
     platform: linux/amd64
