@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from importlib import resources
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -84,6 +84,24 @@ def _direct_request(
         status = response.status
         assert type(status) is int
         return status, payload, {key.lower(): value for key, value in response.headers.items()}
+
+
+def _assert_direct_delete(result: tuple[int, object, dict[str, str]]) -> None:
+    status, payload, _ = result
+    assert status == 204 and payload is None
+
+
+def _assert_typed_delete(result: object) -> None:
+    receipt = getattr(result, "receipt", None)
+    assert receipt is not None and receipt.outcome == "succeeded"
+    assert receipt.audit_metadata["status_code"] == 204
+
+
+def _assert_dataset_absent(result: tuple[int, object, dict[str, str]]) -> None:
+    status, payload, _ = result
+    assert status in {404, 410} or (
+        status == 200 and isinstance(payload, Mapping) and isinstance(payload.get("deleted"), str)
+    )
 
 
 def _multipart_body(content: bytes, file_name: str) -> tuple[bytes, str]:
@@ -521,6 +539,14 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
     typed_community_upload_id: str | None = None
     direct_community_id: str | None = None
     typed_community_id: str | None = None
+    cleanup_errors: list[Exception] = []
+
+    def cleanup(action: Callable[[], object]) -> None:
+        try:
+            action()
+        except Exception as error:
+            cleanup_errors.append(error)
+
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         try:
             created_dataset = client.datasets.create(
@@ -811,50 +837,86 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
             assert typed_deleted_community.receipt.outcome == "succeeded"
         finally:
             if direct_upload_id is not None and dataset_id is not None:
-                _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_upload_id}/")
+                cleanup(
+                    lambda: _assert_direct_delete(
+                        _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_upload_id}/")
+                    )
+                )
             if direct_community_upload_id is not None:
-                _direct_request(token, "DELETE", f"/api/1/datasets/community_resources/{direct_community_upload_id}/")
+                cleanup(
+                    lambda: _assert_direct_delete(
+                        _direct_request(
+                            token,
+                            "DELETE",
+                            f"/api/1/datasets/community_resources/{direct_community_upload_id}/",
+                        )
+                    )
+                )
             if typed_upload_id is not None and dataset_id is not None:
-                client.resources.delete(
-                    dataset_id,
-                    typed_upload_id,
-                    permissions,
-                    policy(
-                        typed_upload_id,
-                        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
-                        destructive=True,
+                cleanup(
+                    lambda: _assert_typed_delete(
+                        client.resources.delete(
+                            dataset_id,
+                            typed_upload_id,
+                            permissions,
+                            policy(
+                                typed_upload_id,
+                                "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+                                destructive=True,
+                            ),
+                        )
                     ),
                 )
             if typed_community_upload_id is not None:
-                client.resources.delete_community(
-                    typed_community_upload_id,
-                    permissions,
-                    policy(
-                        typed_community_upload_id,
-                        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
-                        destructive=True,
+                cleanup(
+                    lambda: _assert_typed_delete(
+                        client.resources.delete_community(
+                            typed_community_upload_id,
+                            permissions,
+                            policy(
+                                typed_community_upload_id,
+                                "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+                                destructive=True,
+                            ),
+                        )
                     ),
                 )
             if direct_resource_id is not None and dataset_id is not None:
-                _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/")
+                cleanup(
+                    lambda: _assert_direct_delete(
+                        _direct_request(
+                            token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/"
+                        )
+                    )
+                )
             if typed_resource_id is not None and dataset_id is not None:
-                client.resources.delete(
-                    dataset_id,
-                    typed_resource_id,
-                    permissions,
-                    policy(
-                        typed_resource_id,
-                        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
-                        destructive=True,
+                cleanup(
+                    lambda: _assert_typed_delete(
+                        client.resources.delete(
+                            dataset_id,
+                            typed_resource_id,
+                            permissions,
+                            policy(
+                                typed_resource_id,
+                                "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+                                destructive=True,
+                            ),
+                        )
                     ),
                 )
             if dataset_id is not None:
-                client.datasets.delete(
-                    dataset_id,
-                    permissions,
-                    DatasetDeleteOptions(),
-                    policy(dataset_id, "udata/api-v1.delete-dataset", destructive=True),
+                cleanup(
+                    lambda: _assert_typed_delete(
+                        client.datasets.delete(
+                            dataset_id,
+                            permissions,
+                            DatasetDeleteOptions(),
+                            policy(dataset_id, "udata/api-v1.delete-dataset", destructive=True),
+                        )
+                    )
                 )
+                cleanup(lambda: _assert_dataset_absent(_direct_request(token, "GET", f"/api/1/datasets/{dataset_id}/")))
+            assert not cleanup_errors, f"{len(cleanup_errors)} controlled cleanup operations failed"
 
 
 def test_controlled_stack_proves_site_patch_is_confirmed_and_receipt_bearing() -> None:
