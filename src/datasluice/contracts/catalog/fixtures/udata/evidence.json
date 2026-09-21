@@ -20,11 +20,15 @@
   "controlled_organization_evidence": {
     "captured_at": "2026-09-21",
     "local_only": true,
-    "test_id": "test_controlled_organization_family_matches_raw_shapes_and_cleans_up",
+    "test_ids": [
+      "test_controlled_organization_family_matches_raw_shapes_and_cleans_up",
+      "test_controlled_async_organization_reads_match_raw_shapes"
+    ],
     "response_shape": "bounded-record-and-status-skeleton",
     "cleanup": "organization-delete-soft-state-verified",
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "reviewed_sha": "6edf6e93d627072a582de6f65dd72c638a92bf12",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
