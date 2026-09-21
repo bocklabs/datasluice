@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from io import BytesIO
 
 import pytest
 
@@ -13,9 +14,12 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationCreateInput,
     OrganizationInvitationInput,
     OrganizationListQuery,
+    OrganizationMemberInput,
+    OrganizationRefusalInput,
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.connectors.catalog.udata.services.organizations_memberships import (
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
@@ -258,7 +262,82 @@ def test_destructive_delete_requires_exact_confirmation_without_dispatch() -> No
     )
     with client, pytest.raises(ForbiddenError):
         client.organizations_memberships.delete_organization("org-1", PERMISSIONS, MutationPolicy(destructive=True))
-    assert transport.requests == []
+
+
+def test_organization_inputs_reject_invalid_roles_and_ambiguous_invitations() -> None:
+    with pytest.raises(ValueError):
+        OrganizationMemberInput("owner")
+    with pytest.raises(ValueError):
+        MembershipRequestInput("please", role="owner")
+    with pytest.raises(ValueError):
+        OrganizationInvitationInput(user="user-1", email="member@example.test")
+
+
+def test_badges_require_admin_evidence_before_dispatch_in_both_modes() -> None:
+    permissions = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset())
+    sync_transport = _Router(_routes({}))
+    sync = SyncUDataClient(sync_transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with sync, pytest.raises(ForbiddenError):
+        sync.organizations_memberships.add_organization_badge(
+            "org-1", "certified", permissions, _policy(wire.ADD_ORGANIZATION_BADGE_OPERATION, "org-1/certified")
+        )
+    assert not sync_transport.requests
+
+    async_transport = _AsyncRouter(_routes({}))
+    async_client = AsyncUDataClient(async_transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+
+    async def run() -> None:
+        async with async_client:
+            with pytest.raises(ForbiddenError):
+                await async_client.organizations_memberships.add_organization_badge(
+                    "org-1",
+                    "certified",
+                    permissions,
+                    _policy(wire.ADD_ORGANIZATION_BADGE_OPERATION, "org-1/certified"),
+                )
+
+    asyncio.run(run())
+    assert not async_transport.requests
+
+
+def test_refusal_route_rejection_keeps_a_composite_receipt_target() -> None:
+    transport = _Router(_routes({}))
+    client = SyncUDataClient(transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with client, pytest.raises(CatalogValidationError) as raised:
+        client.organizations_memberships.refuse_membership(
+            "org/invalid",
+            "request-1",
+            OrganizationRefusalInput("No"),
+            PERMISSIONS,
+            _policy(wire.REFUSE_MEMBERSHIP_OPERATION, "org/invalid/request-1"),
+        )
+    receipt = raised.value.__dict__["mutation_receipt"]
+    assert receipt.outcome == "rejected"
+    assert receipt.target.value == "org/invalid/request-1"
+    assert not transport.requests
+
+
+def test_logo_close_failure_preserves_the_success_receipt() -> None:
+    class CloseFailingSource(BytesIO):
+        failed = False
+
+        def close(self) -> None:
+            if not self.failed:
+                self.failed = True
+                raise OSError("close failed")
+            super().close()
+
+    path = f"{ORIGIN}/api/1/organizations/org-1/logo/"
+    transport = _Router(_routes({("POST", path): {"id": "logo"}}))
+    client = SyncUDataClient(transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with client, pytest.raises(OSError) as raised:
+        client.organizations_memberships.organization_logo(
+            "org-1",
+            ResourceUploadInput(CloseFailingSource(b"logo"), "logo.png", 4),
+            PERMISSIONS,
+            _policy(wire.ORGANIZATION_LOGO_OPERATION, "org-1"),
+        )
+    assert raised.value.__dict__["mutation_receipt"].outcome == "succeeded"
 
 
 def test_async_organization_get_matches_sync_wire() -> None:

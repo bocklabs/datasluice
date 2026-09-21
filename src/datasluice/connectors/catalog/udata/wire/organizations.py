@@ -255,6 +255,13 @@ def invite_member_request(
 def member_request(
     organization_id: str, user_id: str, *, method: str, body: object = None
 ) -> tuple[str, str, dict[str, str], object]:
+    if method not in {"PUT", "DELETE"}:
+        raise CatalogValidationError(
+            "The uData organization member method is not documented.",
+            operation=ORGANIZATIONS_OPERATION,
+            platform=PLATFORM.value,
+            safe_action="Use PUT or DELETE.",
+        )
     operation = UPDATE_ORGANIZATION_MEMBER_OPERATION if method == "PUT" else DELETE_ORGANIZATION_MEMBER_OPERATION
     organization_segment = _segment(organization_id, operation=operation)
     user_segment = _segment(user_id, operation=operation)

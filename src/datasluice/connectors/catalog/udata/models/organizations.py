@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from types import MappingProxyType
 
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
+
+_ROLES = frozenset({"admin", "editor", "partial_editor"})
 
 
 def _text(value: object, field_name: str, *, allow_none: bool = False) -> None:
@@ -16,6 +17,12 @@ def _text(value: object, field_name: str, *, allow_none: bool = False) -> None:
         return
     if not isinstance(value, str) or not value:
         raise ValueError(f"uData organization {field_name} must be a non-empty string.")
+
+
+def _role(value: object, field_name: str, *, allow_none: bool = False) -> None:
+    _text(value, field_name, allow_none=allow_none)
+    if value is not None and value not in _ROLES:
+        raise ValueError(f"uData organization {field_name} must be one of {sorted(_ROLES)}.")
 
 
 def _fields(value: Mapping[str, object] | None, field_name: str) -> Mapping[str, object] | None:
@@ -194,7 +201,7 @@ class MembershipRequestInput:
 
     def __post_init__(self) -> None:
         _text(self.comment, "membership comment")
-        _text(self.role, "membership role", allow_none=True)
+        _role(self.role, "membership role", allow_none=True)
         if not isinstance(self.assignments, tuple) or not all(isinstance(item, Mapping) for item in self.assignments):
             raise ValueError("uData membership assignments must be a tuple of mappings.")
 
@@ -218,10 +225,11 @@ class OrganizationInvitationInput:
     assignments: tuple[Mapping[str, str], ...] = ()
 
     def __post_init__(self) -> None:
-        if self.user is None and self.email is None:
-            raise ValueError("uData invitations require a user or email.")
-        for name, value in (("user", self.user), ("email", self.email), ("role", self.role), ("comment", self.comment)):
+        if (self.user is None) == (self.email is None):
+            raise ValueError("uData invitations require exactly one of user or email.")
+        for name, value in (("user", self.user), ("email", self.email), ("comment", self.comment)):
             _text(value, f"invitation {name}", allow_none=True)
+        _role(self.role, "invitation role", allow_none=True)
         if not isinstance(self.assignments, tuple) or not all(isinstance(item, Mapping) for item in self.assignments):
             raise ValueError("uData invitation assignments must be a tuple of mappings.")
 
@@ -249,7 +257,7 @@ class OrganizationMemberInput:
     fields: Mapping[str, object] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        _text(self.role, "member role")
+        _role(self.role, "member role")
         object.__setattr__(self, "fields", _fields(self.fields, "member fields"))
 
     def payload(self) -> dict[str, object]:
@@ -288,7 +296,10 @@ class OrganizationMutationResult:
         ):
             raise ValueError("uData organization result records require typed records.")
         if self.value is not None:
-            object.__setattr__(self, "value", MappingProxyType(dict(_payload(self.value))))
+            frozen = _freeze_json(_payload(self.value), "udata.organization.result")
+            if not isinstance(frozen, Mapping):
+                raise ValueError("uData organization result values must be a JSON mapping.")
+            object.__setattr__(self, "value", frozen)
 
     def to_dict(self) -> dict[str, object]:
         return {

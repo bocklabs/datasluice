@@ -51,6 +51,12 @@ type Dispatch = Callable[[], tuple[int, object, RuntimeResponse]]
 type AsyncDispatch = Callable[[], Awaitable[tuple[int, object, RuntimeResponse]]]
 
 
+def _request_with_body(
+    request: tuple[str, str, Mapping[str, str], object], body: object
+) -> tuple[str, str, Mapping[str, str], object]:
+    return request[0], request[1], request[2], body
+
+
 def _receipt(
     operation: str,
     target: object,
@@ -75,6 +81,22 @@ def _attach(error: BaseException, receipt: MutationReceipt) -> None:
     attach_catalog_metadata(error, {"receipt": receipt.to_dict()})
     if isinstance(getattr(error, "__dict__", None), dict):
         error.__dict__["mutation_receipt"] = receipt
+
+
+def _close_logo(
+    client_input: OrganizationLogoInput,
+    result: OrganizationMutationResult | None,
+    primary_error: BaseException | None,
+) -> None:
+    try:
+        client_input.close()
+    except BaseException as close_error:
+        receipt = result.receipt if result is not None else getattr(primary_error, "mutation_receipt", None)
+        if isinstance(receipt, MutationReceipt):
+            _attach(close_error, receipt)
+        if primary_error is not None:
+            raise primary_error from close_error
+        raise
 
 
 def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> Never:
@@ -109,7 +131,8 @@ def _mutation(
 ) -> OrganizationMutationResult:
     response: RuntimeResponse | None = None
     try:
-        _enforce_mutation_policy(operation, _safe_target_value(target), policy, destructive=destructive)
+        policy_target = target if isinstance(target, str) else _safe_target_value(target)
+        _enforce_mutation_policy(operation, policy_target, policy, destructive=destructive)
         status, payload, response = dispatch()
         receipt = _receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
         return _mutation_result(receipt, payload)
@@ -133,7 +156,8 @@ async def _async_mutation(
 ) -> OrganizationMutationResult:
     response: RuntimeResponse | None = None
     try:
-        _enforce_mutation_policy(operation, _safe_target_value(target), policy, destructive=destructive)
+        policy_target = target if isinstance(target, str) else _safe_target_value(target)
+        _enforce_mutation_policy(operation, policy_target, policy, destructive=destructive)
         status, payload, response = await dispatch()
         receipt = _receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
         return _mutation_result(receipt, payload)
@@ -151,8 +175,10 @@ def _json_dispatch(
     operation: str,
     permissions: Permissions,
     policy: Policy,
+    *,
+    admin: bool = False,
 ) -> tuple[int, object, RuntimeResponse]:
-    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions, admin=admin)
     method, path, headers, body = request
     return client._dataset_call(
         method=method,
@@ -172,9 +198,11 @@ async def _json_dispatch_async(
     operation: str,
     permissions: Permissions,
     policy: Policy,
+    *,
+    admin: bool = False,
 ) -> tuple[int, object, RuntimeResponse]:
     resolved = await client._resolved_credential_async()
-    _require_mutation_permission(resolved, operation, permissions)
+    _require_mutation_permission(resolved, operation, permissions, admin=admin)
     method, path, headers, body = request
     return await client._dataset_call_async(
         method=method,
@@ -422,7 +450,7 @@ class SyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return _mutation(
             wire.ADD_ORGANIZATION_BADGE_OPERATION,
-            organization_id,
+            f"{organization_id}/{badge_kind}",
             mutation_policy,
             "badge_added",
             lambda: _json_dispatch(
@@ -431,6 +459,7 @@ class SyncOrganizationsMembershipsService:
                 wire.ADD_ORGANIZATION_BADGE_OPERATION,
                 permissions,
                 mutation_policy,
+                admin=True,
             ),
         )
 
@@ -439,7 +468,7 @@ class SyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return _mutation(
             wire.DELETE_ORGANIZATION_BADGE_OPERATION,
-            organization_id,
+            f"{organization_id}/{badge_kind}",
             mutation_policy,
             "badge_deleted",
             lambda: _json_dispatch(
@@ -448,6 +477,7 @@ class SyncOrganizationsMembershipsService:
                 wire.DELETE_ORGANIZATION_BADGE_OPERATION,
                 permissions,
                 mutation_policy,
+                admin=True,
             ),
             destructive=True,
         )
@@ -512,7 +542,7 @@ class SyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return _mutation(
             wire.ACCEPT_MEMBERSHIP_OPERATION,
-            request_id,
+            f"{organization_id}/{request_id}",
             mutation_policy,
             "membership_accepted",
             lambda: _json_dispatch(
@@ -532,15 +562,19 @@ class SyncOrganizationsMembershipsService:
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> OrganizationMutationResult:
-        method, path, headers, _ = wire.membership_action_request(organization_id, request_id, "refuse")
-        request: tuple[str, str, Mapping[str, str], object] = (method, path, headers, client_input.payload())
         return _mutation(
             wire.REFUSE_MEMBERSHIP_OPERATION,
-            request_id,
+            f"{organization_id}/{request_id}",
             mutation_policy,
             "membership_refused",
             lambda: _json_dispatch(
-                self._client, request, wire.REFUSE_MEMBERSHIP_OPERATION, permissions, mutation_policy
+                self._client,
+                _request_with_body(
+                    wire.membership_action_request(organization_id, request_id, "refuse"), client_input.payload()
+                ),
+                wire.REFUSE_MEMBERSHIP_OPERATION,
+                permissions,
+                mutation_policy,
             ),
         )
 
@@ -549,7 +583,7 @@ class SyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return _mutation(
             wire.CANCEL_MEMBERSHIP_OPERATION,
-            request_id,
+            f"{organization_id}/{request_id}",
             mutation_policy,
             "membership_canceled",
             lambda: _json_dispatch(
@@ -592,7 +626,7 @@ class SyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return _mutation(
             wire.UPDATE_ORGANIZATION_MEMBER_OPERATION,
-            user_id,
+            f"{organization_id}/{user_id}",
             mutation_policy,
             "member_updated",
             lambda: _json_dispatch(
@@ -610,7 +644,7 @@ class SyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return _mutation(
             wire.DELETE_ORGANIZATION_MEMBER_OPERATION,
-            user_id,
+            f"{organization_id}/{user_id}",
             mutation_policy,
             "member_deleted",
             lambda: _json_dispatch(
@@ -682,8 +716,10 @@ class SyncOrganizationsMembershipsService:
         resize: bool,
     ) -> OrganizationMutationResult:
         operation = wire.RESIZE_ORGANIZATION_LOGO_OPERATION if resize else wire.ORGANIZATION_LOGO_OPERATION
+        result: OrganizationMutationResult | None = None
+        primary_error: BaseException | None = None
         try:
-            return _mutation(
+            result = _mutation(
                 operation,
                 organization_id,
                 policy,
@@ -691,8 +727,12 @@ class SyncOrganizationsMembershipsService:
                 lambda: self._upload_dispatch(organization_id, client_input, permissions, policy, resize=resize),
                 kind=ResourceKind("organization"),
             )
+            return result
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
-            client_input.close()
+            _close_logo(client_input, result, primary_error)
 
     def organization_logo(
         self,
@@ -999,7 +1039,7 @@ class AsyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return await _async_mutation(
             wire.ADD_ORGANIZATION_BADGE_OPERATION,
-            organization_id,
+            f"{organization_id}/{badge_kind}",
             mutation_policy,
             "badge_added",
             lambda: _json_dispatch_async(
@@ -1008,6 +1048,7 @@ class AsyncOrganizationsMembershipsService:
                 wire.ADD_ORGANIZATION_BADGE_OPERATION,
                 permissions,
                 mutation_policy,
+                admin=True,
             ),
         )
 
@@ -1016,7 +1057,7 @@ class AsyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return await _async_mutation(
             wire.DELETE_ORGANIZATION_BADGE_OPERATION,
-            organization_id,
+            f"{organization_id}/{badge_kind}",
             mutation_policy,
             "badge_deleted",
             lambda: _json_dispatch_async(
@@ -1025,6 +1066,7 @@ class AsyncOrganizationsMembershipsService:
                 wire.DELETE_ORGANIZATION_BADGE_OPERATION,
                 permissions,
                 mutation_policy,
+                admin=True,
             ),
             destructive=True,
         )
@@ -1089,7 +1131,7 @@ class AsyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return await _async_mutation(
             wire.ACCEPT_MEMBERSHIP_OPERATION,
-            request_id,
+            f"{organization_id}/{request_id}",
             mutation_policy,
             "membership_accepted",
             lambda: _json_dispatch_async(
@@ -1109,15 +1151,19 @@ class AsyncOrganizationsMembershipsService:
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> OrganizationMutationResult:
-        method, path, headers, _ = wire.membership_action_request(organization_id, request_id, "refuse")
-        request: tuple[str, str, Mapping[str, str], object] = (method, path, headers, client_input.payload())
         return await _async_mutation(
             wire.REFUSE_MEMBERSHIP_OPERATION,
-            request_id,
+            f"{organization_id}/{request_id}",
             mutation_policy,
             "membership_refused",
             lambda: _json_dispatch_async(
-                self._client, request, wire.REFUSE_MEMBERSHIP_OPERATION, permissions, mutation_policy
+                self._client,
+                _request_with_body(
+                    wire.membership_action_request(organization_id, request_id, "refuse"), client_input.payload()
+                ),
+                wire.REFUSE_MEMBERSHIP_OPERATION,
+                permissions,
+                mutation_policy,
             ),
         )
 
@@ -1126,7 +1172,7 @@ class AsyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return await _async_mutation(
             wire.CANCEL_MEMBERSHIP_OPERATION,
-            request_id,
+            f"{organization_id}/{request_id}",
             mutation_policy,
             "membership_canceled",
             lambda: _json_dispatch_async(
@@ -1169,7 +1215,7 @@ class AsyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return await _async_mutation(
             wire.UPDATE_ORGANIZATION_MEMBER_OPERATION,
-            user_id,
+            f"{organization_id}/{user_id}",
             mutation_policy,
             "member_updated",
             lambda: _json_dispatch_async(
@@ -1187,7 +1233,7 @@ class AsyncOrganizationsMembershipsService:
     ) -> OrganizationMutationResult:
         return await _async_mutation(
             wire.DELETE_ORGANIZATION_MEMBER_OPERATION,
-            user_id,
+            f"{organization_id}/{user_id}",
             mutation_policy,
             "member_deleted",
             lambda: _json_dispatch_async(
@@ -1259,8 +1305,10 @@ class AsyncOrganizationsMembershipsService:
         resize: bool,
     ) -> OrganizationMutationResult:
         operation = wire.RESIZE_ORGANIZATION_LOGO_OPERATION if resize else wire.ORGANIZATION_LOGO_OPERATION
+        result: OrganizationMutationResult | None = None
+        primary_error: BaseException | None = None
         try:
-            return await _async_mutation(
+            result = await _async_mutation(
                 operation,
                 organization_id,
                 policy,
@@ -1268,8 +1316,12 @@ class AsyncOrganizationsMembershipsService:
                 lambda: self._upload_dispatch(organization_id, client_input, permissions, policy, resize=resize),
                 kind=ResourceKind("organization"),
             )
+            return result
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
-            client_input.close()
+            _close_logo(client_input, result, primary_error)
 
     async def organization_logo(
         self,
