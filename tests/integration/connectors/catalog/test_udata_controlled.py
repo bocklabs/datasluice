@@ -23,6 +23,7 @@ from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery
 from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationCreateInput,
     OrganizationListQuery,
+    OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
@@ -304,6 +305,100 @@ def test_controlled_async_organization_reads_match_raw_shapes() -> None:
             assert {item["id"] for item in payload["data"]} >= {item.id.value for item in page.items}
 
     asyncio.run(run())
+
+
+def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled organization evidence requires UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    credential = UDataCredential(api_key=token)
+    organization_id = "evidence-organization"
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        reads = (
+            (
+                f"/api/1/organizations/{organization_id}/datasets.csv",
+                lambda: client.organizations_memberships.organization_datasets_csv(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/dataservices.csv",
+                lambda: client.organizations_memberships.organization_dataservices_csv(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/discussions.csv",
+                lambda: client.organizations_memberships.organization_discussions_csv(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/datasets-resources.csv",
+                lambda: client.organizations_memberships.organization_datasets_resources_csv(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/catalog",
+                lambda: client.organizations_memberships.rdf_organization(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/catalog.ttl",
+                lambda: client.organizations_memberships.rdf_organization_format(organization_id, "ttl"),
+            ),
+            ("/api/1/organizations/badges/", client.organizations_memberships.available_organization_badges),
+            (
+                f"/api/1/organizations/{organization_id}/contacts/?page=1&page_size=20",
+                lambda: client.organizations_memberships.get_organization_contact_point(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/contacts/suggest/?q=ev&size=10",
+                lambda: client.organizations_memberships.suggest_org_contact_points(
+                    organization_id, OrganizationSuggestQuery("ev")
+                ),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/membership/",
+                lambda: client.organizations_memberships.list_membership_requests(
+                    organization_id,
+                    EffectivePermissions.for_credential(
+                        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+                    ),
+                ),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/assignments/",
+                lambda: client.organizations_memberships.list_organization_assignments(
+                    organization_id,
+                    EffectivePermissions.for_credential(
+                        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+                    ),
+                ),
+            ),
+            (
+                "/api/1/organizations/suggest/?q=ev&size=10",
+                lambda: client.organizations_memberships.suggest_organizations(OrganizationSuggestQuery("ev")),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/datasets/?page=1&page_size=20",
+                lambda: client.organizations_memberships.list_organization_datasets(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/reuses/",
+                lambda: client.organizations_memberships.list_organization_reuses(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/discussions/",
+                lambda: client.organizations_memberships.list_organization_discussions(organization_id),
+            ),
+            ("/api/1/organizations/roles/", client.organizations_memberships.org_roles),
+            ("/api/2/organizations/search/?page=1&page_size=20", client.organizations_memberships.search_organizations),
+            (
+                f"/api/2/organizations/{organization_id}/extras/",
+                lambda: client.organizations_memberships.get_organization_extras(organization_id),
+            ),
+            (
+                f"/api/1/organizations/{organization_id}/followers/",
+                lambda: client.organizations_memberships.list_organization_followers(organization_id),
+            ),
+        )
+        for path, typed_call in reads:
+            status, _, _ = _direct_request(token, "GET", path)
+            assert status in {200, 302}
+            typed_call()
 
 
 def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
