@@ -403,7 +403,16 @@ def _mapping_record(payload: Mapping[str, object], *, kind: ResourceKind, operat
 def parse_records(
     payload: object, *, operation: str, kind: ResourceKind = _MEMBERSHIP_KIND
 ) -> tuple[MappingRecord, ...]:
-    values = payload.get("data") if isinstance(payload, Mapping) and isinstance(payload.get("data"), list) else payload
+    if (
+        isinstance(payload, Mapping)
+        and kind == _BADGE_KIND
+        and all(isinstance(key, str) and isinstance(value, str) for key, value in payload.items())
+    ):
+        values: object = [{"id": key, "label": value} for key, value in payload.items()]
+    else:
+        values = (
+            payload.get("data") if isinstance(payload, Mapping) and isinstance(payload.get("data"), list) else payload
+        )
     if not isinstance(values, list) or not all(isinstance(item, Mapping) for item in values):
         raise CatalogValidationError(
             "The uData organization response must be a JSON array of objects.",

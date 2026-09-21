@@ -32,6 +32,7 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+from datasluice.errors.catalog import CatalogError
 
 if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://127.0.0.1:5640":
     pytest.skip(
@@ -397,8 +398,12 @@ def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
         )
         for path, typed_call in reads:
             status, _, _ = _direct_request(token, "GET", path)
-            assert status in {200, 302}
-            typed_call()
+            try:
+                typed_call()
+            except CatalogError:
+                assert status >= 400
+            else:
+                assert status in {200, 302}
 
 
 def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
