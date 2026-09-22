@@ -18,18 +18,72 @@
     "sanitized": true
   },
   "controlled_organization_evidence": {
-    "captured_at": "2026-09-21",
+    "captured_at": "2026-09-22",
     "local_only": true,
     "test_ids": [
       "test_controlled_organization_family_matches_raw_shapes_and_cleans_up",
       "test_controlled_async_organization_reads_match_raw_shapes",
-      "test_controlled_organization_read_matrix_matches_raw_routes"
+      "test_controlled_organization_read_matrix_matches_raw_routes",
+      "test_controlled_organization_mutations_match_raw_routes_in_both_modes"
     ],
+    "route_differential": {
+      "read_modes": ["sync", "async"],
+      "read_operations": [
+        "udata/api-v1.list-organizations",
+        "udata/api-v1.get-organization",
+        "udata/api-v1.organization-datasets-csv",
+        "udata/api-v1.organization-dataservices-csv",
+        "udata/api-v1.organization-discussions-csv",
+        "udata/api-v1.organization-datasets-resources-csv",
+        "udata/api-v1.rdf-organization",
+        "udata/api-v1.rdf-organization-format",
+        "udata/api-v1.available-organization-badges",
+        "udata/api-v1.get-organization-contact-point",
+        "udata/api-v1.suggest-org-contact-points",
+        "udata/api-v1.list-membership-requests",
+        "udata/api-v1.list-organization-assignments",
+        "udata/api-v1.suggest-organizations",
+        "udata/api-v1.list-organization-datasets",
+        "udata/api-v1.list-organization-reuses",
+        "udata/api-v1.list-organization-discussions",
+        "udata/api-v1.org-roles",
+        "udata/api-v2.search-organizations",
+        "udata/api-v2.get-organization-extras",
+        "udata/api-v1.list-organization-followers"
+      ],
+      "mutation_modes": ["sync", "async"],
+      "mutation_operations": [
+        "udata/api-v1.create-organization",
+        "udata/api-v1.update-organization",
+        "udata/api-v1.delete-organization",
+        "udata/api-v1.membership-request",
+        "udata/api-v1.accept-membership",
+        "udata/api-v1.refuse-membership",
+        "udata/api-v1.cancel-membership",
+        "udata/api-v1.invite-organization-member",
+        "udata/api-v1.update-organization-member",
+        "udata/api-v1.delete-organization-member",
+        "udata/api-v1.sync-member-assignments",
+        "udata/api-v1.add-organization-badge",
+        "udata/api-v1.delete-organization-badge",
+        "udata/api-v1.organization-logo",
+        "udata/api-v1.resize-organization-logo",
+        "udata/api-v2.update-organization-extras",
+        "udata/api-v2.delete-organization-extras",
+        "udata/api-v1.follow-organization",
+        "udata/api-v1.unfollow-organization"
+      ],
+      "assertions": [
+        "raw-and-typed-status-match",
+        "mutation-receipt-status-matches-raw",
+        "selected-post-state-and-cleanup-verified"
+      ]
+    },
     "response_shape": "bounded-record-and-status-skeleton",
     "cleanup": "organization-delete-soft-state-verified",
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
-    "reviewed_sha": "7d894ab245434541cee8a39bb5e12c3a5c45d0c6",
+    "reviewed_sha": "9e2d99d01579e540db74311f30d8551a77dee0a3",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
