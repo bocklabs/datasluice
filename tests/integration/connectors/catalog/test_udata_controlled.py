@@ -434,6 +434,12 @@ def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
     reads = (
+        (f"/api/1/organizations/{organization_id}/", "get_organization", (organization_id,)),
+        (
+            "/api/1/organizations/?page=1&page_size=20",
+            "list_organizations",
+            (OrganizationListQuery(page=1, page_size=20),),
+        ),
         (f"/api/1/organizations/{organization_id}/datasets.csv", "organization_datasets_csv", (organization_id,)),
         (
             f"/api/1/organizations/{organization_id}/dataservices.csv",
