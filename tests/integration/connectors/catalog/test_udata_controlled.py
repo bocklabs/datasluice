@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 from collections.abc import Callable, Mapping
 from importlib import resources
+from inspect import isawaitable
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -21,8 +23,13 @@ from datasluice.connectors.catalog.udata.clients import (
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
 from datasluice.connectors.catalog.udata.models.organizations import (
+    MembershipRequestInput,
     OrganizationCreateInput,
+    OrganizationInvitationInput,
     OrganizationListQuery,
+    OrganizationMemberInput,
+    OrganizationMutationResult,
+    OrganizationRefusalInput,
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
@@ -98,12 +105,14 @@ def _direct_request(
 
 def _assert_direct_delete(result: tuple[int, object, dict[str, str]]) -> None:
     status, payload, _ = result
-    assert status == 204 and payload is None
+    assert status == 204
+    assert payload is None
 
 
 def _assert_typed_delete(result: object) -> None:
     receipt = getattr(result, "receipt", None)
-    assert receipt is not None and receipt.outcome == "succeeded"
+    assert receipt is not None
+    assert receipt.outcome == "succeeded"
     assert receipt.audit_metadata["status_code"] == 204
 
 
@@ -265,7 +274,9 @@ def test_controlled_organization_family_matches_raw_shapes_and_cleans_up() -> No
             )
             assert update.receipt.outcome == "succeeded"
             status, payload, _ = _direct_request(token, "GET", f"/api/1/organizations/{created_id}/")
-            assert status == 200 and isinstance(payload, Mapping) and payload["description"] == "Task 04-04 updated"
+            assert status == 200
+            assert isinstance(payload, Mapping)
+            assert payload["description"] == "Task 04-04 updated"
         finally:
             if created_id is not None:
                 deleted = client.organizations_memberships.delete_organization(
@@ -297,12 +308,16 @@ def test_controlled_async_organization_reads_match_raw_shapes() -> None:
         async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
             status, payload, _ = _direct_request(token, "GET", "/api/1/organizations/evidence-organization/")
             typed = await client.organizations_memberships.get_organization("evidence-organization")
-            assert status == 200 and isinstance(payload, Mapping) and payload["id"] == typed.id.value
+            assert status == 200
+            assert isinstance(payload, Mapping)
+            assert payload["id"] == typed.id.value
             status, payload, _ = _direct_request(token, "GET", "/api/1/organizations/?page=1&page_size=20")
             page = await client.organizations_memberships.list_organizations(
                 OrganizationListQuery(page=1, page_size=20)
             )
-            assert status == 200 and isinstance(payload, Mapping) and page.items
+            assert status == 200
+            assert isinstance(payload, Mapping)
+            assert page.items
             assert {item["id"] for item in payload["data"]} >= {item.id.value for item in page.items}
 
     asyncio.run(run())
@@ -314,96 +329,576 @@ def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
         pytest.skip("controlled organization evidence requires UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
     credential = UDataCredential(api_key=token)
     organization_id = "evidence-organization"
+    admin_permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    reads = (
+        (f"/api/1/organizations/{organization_id}/datasets.csv", "organization_datasets_csv", (organization_id,)),
+        (
+            f"/api/1/organizations/{organization_id}/dataservices.csv",
+            "organization_dataservices_csv",
+            (organization_id,),
+        ),
+        (f"/api/1/organizations/{organization_id}/discussions.csv", "organization_discussions_csv", (organization_id,)),
+        (
+            f"/api/1/organizations/{organization_id}/datasets-resources.csv",
+            "organization_datasets_resources_csv",
+            (organization_id,),
+        ),
+        (f"/api/1/organizations/{organization_id}/catalog", "rdf_organization", (organization_id,)),
+        (f"/api/1/organizations/{organization_id}/catalog.ttl", "rdf_organization_format", (organization_id, "ttl")),
+        ("/api/1/organizations/badges/", "available_organization_badges", ()),
+        (
+            f"/api/1/organizations/{organization_id}/contacts/?page=1&page_size=20",
+            "get_organization_contact_point",
+            (organization_id,),
+        ),
+        (
+            f"/api/1/organizations/{organization_id}/contacts/suggest/?q=ev&size=10",
+            "suggest_org_contact_points",
+            (organization_id, OrganizationSuggestQuery("ev")),
+        ),
+        (
+            f"/api/1/organizations/{organization_id}/membership/",
+            "list_membership_requests",
+            (organization_id, admin_permissions),
+        ),
+        (
+            f"/api/1/organizations/{organization_id}/assignments/",
+            "list_organization_assignments",
+            (organization_id, admin_permissions),
+        ),
+        ("/api/1/organizations/suggest/?q=ev&size=10", "suggest_organizations", (OrganizationSuggestQuery("ev"),)),
+        (
+            f"/api/1/organizations/{organization_id}/datasets/?page=1&page_size=20",
+            "list_organization_datasets",
+            (organization_id,),
+        ),
+        (f"/api/1/organizations/{organization_id}/reuses/", "list_organization_reuses", (organization_id,)),
+        (f"/api/1/organizations/{organization_id}/discussions/", "list_organization_discussions", (organization_id,)),
+        ("/api/1/organizations/roles/", "org_roles", ()),
+        ("/api/2/organizations/search/?page=1&page_size=20", "search_organizations", ()),
+        (f"/api/2/organizations/{organization_id}/extras/", "get_organization_extras", (organization_id,)),
+        (f"/api/1/organizations/{organization_id}/followers/", "list_organization_followers", (organization_id,)),
+    )
+
+    def verify_read(status: int, operation: Callable[[], object]) -> None:
+        try:
+            operation()
+        except CatalogError:
+            assert status >= 400
+        else:
+            assert status in {200, 302}
+
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
-        reads = (
-            (
-                f"/api/1/organizations/{organization_id}/datasets.csv",
-                lambda: client.organizations_memberships.organization_datasets_csv(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/dataservices.csv",
-                lambda: client.organizations_memberships.organization_dataservices_csv(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/discussions.csv",
-                lambda: client.organizations_memberships.organization_discussions_csv(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/datasets-resources.csv",
-                lambda: client.organizations_memberships.organization_datasets_resources_csv(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/catalog",
-                lambda: client.organizations_memberships.rdf_organization(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/catalog.ttl",
-                lambda: client.organizations_memberships.rdf_organization_format(organization_id, "ttl"),
-            ),
-            ("/api/1/organizations/badges/", client.organizations_memberships.available_organization_badges),
-            (
-                f"/api/1/organizations/{organization_id}/contacts/?page=1&page_size=20",
-                lambda: client.organizations_memberships.get_organization_contact_point(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/contacts/suggest/?q=ev&size=10",
-                lambda: client.organizations_memberships.suggest_org_contact_points(
-                    organization_id, OrganizationSuggestQuery("ev")
-                ),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/membership/",
-                lambda: client.organizations_memberships.list_membership_requests(
-                    organization_id,
-                    EffectivePermissions.for_credential(
-                        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
-                    ),
-                ),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/assignments/",
-                lambda: client.organizations_memberships.list_organization_assignments(
-                    organization_id,
-                    EffectivePermissions.for_credential(
-                        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
-                    ),
-                ),
-            ),
-            (
-                "/api/1/organizations/suggest/?q=ev&size=10",
-                lambda: client.organizations_memberships.suggest_organizations(OrganizationSuggestQuery("ev")),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/datasets/?page=1&page_size=20",
-                lambda: client.organizations_memberships.list_organization_datasets(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/reuses/",
-                lambda: client.organizations_memberships.list_organization_reuses(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/discussions/",
-                lambda: client.organizations_memberships.list_organization_discussions(organization_id),
-            ),
-            ("/api/1/organizations/roles/", client.organizations_memberships.org_roles),
-            ("/api/2/organizations/search/?page=1&page_size=20", client.organizations_memberships.search_organizations),
-            (
-                f"/api/2/organizations/{organization_id}/extras/",
-                lambda: client.organizations_memberships.get_organization_extras(organization_id),
-            ),
-            (
-                f"/api/1/organizations/{organization_id}/followers/",
-                lambda: client.organizations_memberships.list_organization_followers(organization_id),
-            ),
-        )
-        for path, typed_call in reads:
+        for path, method, args in reads:
             status, _, _ = _direct_request(token, "GET", path)
+            verify_read(
+                status, lambda method=method, args=args: getattr(client.organizations_memberships, method)(*args)
+            )
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            for path, method, args in reads:
+                status, _, _ = _direct_request(token, "GET", path)
+                operation = getattr(client.organizations_memberships, method)(*args)
+                try:
+                    if isawaitable(operation):
+                        await operation
+                except CatalogError:
+                    assert status >= 400
+                else:
+                    assert status in {200, 302}
+
+    asyncio.run(run_async())
+
+
+def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> None:
+    admin_token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    member_token = os.environ.get("UDATA_EVIDENCE_MEMBER_TOKEN")
+    organization_admin_token = os.environ.get("UDATA_EVIDENCE_ORGANIZATION_ADMIN_TOKEN")
+    if not admin_token or not member_token or not organization_admin_token:
+        pytest.skip("controlled organization mutations require disposable admin and member tokens")
+    from io import BytesIO
+
+    from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
+
+    admin_credential = UDataCredential(api_key=admin_token)
+    member_credential = UDataCredential(api_key=member_token)
+    org_admin_credential = UDataCredential(api_key=organization_admin_token)
+    admin_permissions = EffectivePermissions.for_credential(
+        admin_credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    member_permissions = EffectivePermissions.for_credential(member_credential, platform=CatalogPlatform.UDATA)
+    org_admin_permissions = EffectivePermissions.for_credential(org_admin_credential, platform=CatalogPlatform.UDATA)
+
+    def policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
+        return MutationPolicy(
+            destructive=destructive,
+            confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        )
+
+    def check(raw_status: int, typed: OrganizationMutationResult, operation: str, statuses: set[int]) -> None:
+        receipt = typed.receipt
+        assert raw_status in statuses
+        assert receipt.operation == operation
+        assert receipt.outcome == "succeeded"
+        assert receipt.audit_metadata["status_code"] == raw_status
+
+    async def invoke(client, method: str, *args):
+        result = getattr(client.organizations_memberships, method)(*args)
+        return await result if isawaitable(result) else result
+
+    image = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII="
+    )
+
+    async def exercise(admin_client, member_client, org_admin_client, run_id: str) -> None:
+        raw_org_id: str | None = None
+        typed_org_id: str | None = None
+        cleanup_errors: list[Exception] = []
+
+        async def cleanup(action: Callable[[], object]) -> None:
             try:
-                typed_call()
-            except CatalogError:
-                assert status >= 400
-            else:
-                assert status in {200, 302}
+                result = action()
+                if isawaitable(result):
+                    await result
+            except Exception as error:
+                cleanup_errors.append(error)
+
+        try:
+            raw_status, raw_org, _ = _direct_request(
+                admin_token,
+                "POST",
+                "/api/1/organizations/",
+                body={"name": f"Raw Org {run_id}", "description": "route differential"},
+            )
+            assert raw_status == 201
+            assert isinstance(raw_org, Mapping)
+            assert isinstance(raw_org.get("id"), str)
+            raw_org_id = raw_org["id"]
+            typed_created = await invoke(
+                admin_client,
+                "create_organization",
+                OrganizationCreateInput(name=f"Typed Org {run_id}", description="route differential"),
+                admin_permissions,
+                policy("udata/api-v1.create-organization", f"Typed Org {run_id}"),
+            )
+            check(201, typed_created, "udata/api-v1.create-organization", {201})
+            assert typed_created.record is not None
+            typed_org_id = typed_created.record.id.value
+
+            direct_status, direct_updated, _ = _direct_request(
+                admin_token,
+                "PUT",
+                f"/api/1/organizations/{raw_org_id}/",
+                body={"description": "raw updated"},
+            )
+            typed_updated = await invoke(
+                admin_client,
+                "update_organization",
+                typed_org_id,
+                OrganizationUpdateInput(description="typed updated"),
+                admin_permissions,
+                policy("udata/api-v1.update-organization", typed_org_id),
+            )
+            assert isinstance(direct_updated, Mapping)
+            check(direct_status, typed_updated, "udata/api-v1.update-organization", {200})
+
+            direct_status, direct_request, _ = _direct_request(
+                member_token,
+                "POST",
+                f"/api/1/organizations/{raw_org_id}/membership/",
+                body={"comment": "raw join"},
+            )
+            typed_request = await invoke(
+                member_client,
+                "membership_request",
+                typed_org_id,
+                MembershipRequestInput(comment="typed join"),
+                member_permissions,
+                policy("udata/api-v1.membership-request", typed_org_id),
+            )
+            check(direct_status, typed_request, "udata/api-v1.membership-request", {200, 201})
+            assert isinstance(direct_request, Mapping)
+            assert isinstance(typed_request.value, Mapping)
+            raw_request_id = direct_request["id"]
+            typed_request_id = typed_request.value["id"]
+            member_id = direct_request["user"]["id"]
+            raw_status, raw_requests, _ = _direct_request(
+                admin_token, "GET", f"/api/1/organizations/{raw_org_id}/membership/"
+            )
+            typed_requests = await invoke(admin_client, "list_membership_requests", typed_org_id, admin_permissions)
+            assert raw_status == 200
+            assert isinstance(raw_requests, list)
+            assert any(item["id"] == raw_request_id for item in raw_requests)
+            assert any(item.payload["id"] == typed_request_id for item in typed_requests)
+
+            direct_status, direct_member, _ = _direct_request(
+                admin_token,
+                "POST",
+                f"/api/1/organizations/{raw_org_id}/membership/{raw_request_id}/accept/",
+            )
+            typed_member = await invoke(
+                admin_client,
+                "accept_membership",
+                typed_org_id,
+                typed_request_id,
+                admin_permissions,
+                policy("udata/api-v1.accept-membership", f"{typed_org_id}/{typed_request_id}"),
+            )
+            assert isinstance(direct_member, Mapping)
+            assert direct_member["user"]["id"] == member_id
+            check(direct_status, typed_member, "udata/api-v1.accept-membership", {200})
+
+            raw_status, raw_role, _ = _direct_request(
+                admin_token,
+                "PUT",
+                f"/api/1/organizations/{raw_org_id}/member/{member_id}/",
+                body={"role": "partial_editor"},
+            )
+            typed_role = await invoke(
+                admin_client,
+                "update_organization_member",
+                typed_org_id,
+                member_id,
+                OrganizationMemberInput("partial_editor"),
+                admin_permissions,
+                policy("udata/api-v1.update-organization-member", f"{typed_org_id}/{member_id}"),
+            )
+            assert isinstance(raw_role, Mapping)
+            assert raw_role["role"] == "partial_editor"
+            check(raw_status, typed_role, "udata/api-v1.update-organization-member", {200})
+            raw_status, raw_assignments, _ = _direct_request(
+                admin_token, "GET", f"/api/1/organizations/{raw_org_id}/assignments/"
+            )
+            typed_assignments = await invoke(
+                admin_client, "list_organization_assignments", typed_org_id, admin_permissions
+            )
+            assert raw_status == 200
+            assert isinstance(raw_assignments, list)
+            assert not typed_assignments
+            raw_status, raw_synced, _ = _direct_request(
+                admin_token,
+                "PUT",
+                f"/api/1/organizations/{raw_org_id}/member/{member_id}/assignments/",
+                body=[],
+            )
+            typed_synced = await invoke(
+                admin_client,
+                "sync_member_assignments",
+                typed_org_id,
+                member_id,
+                [],
+                admin_permissions,
+                policy("udata/api-v1.sync-member-assignments", f"{typed_org_id}/{member_id}"),
+            )
+            assert raw_status == 200
+            assert raw_synced == []
+            check(raw_status, typed_synced, "udata/api-v1.sync-member-assignments", {200})
+            raw_status, raw_member_delete, _ = _direct_request(
+                admin_token,
+                "DELETE",
+                f"/api/1/organizations/{raw_org_id}/member/{member_id}/",
+            )
+            typed_member_delete = await invoke(
+                admin_client,
+                "delete_organization_member",
+                typed_org_id,
+                member_id,
+                admin_permissions,
+                policy(
+                    "udata/api-v1.delete-organization-member",
+                    f"{typed_org_id}/{member_id}",
+                    destructive=True,
+                ),
+            )
+            assert raw_status == 204
+            assert raw_member_delete is None
+            check(raw_status, typed_member_delete, "udata/api-v1.delete-organization-member", {204})
+
+            direct_status, raw_pending, _ = _direct_request(
+                organization_admin_token,
+                "POST",
+                f"/api/1/organizations/{raw_org_id}/membership/",
+                body={"comment": "raw refusal"},
+            )
+            typed_pending = await invoke(
+                org_admin_client,
+                "membership_request",
+                typed_org_id,
+                MembershipRequestInput(comment="typed refusal"),
+                org_admin_permissions,
+                policy("udata/api-v1.membership-request", typed_org_id),
+            )
+            check(direct_status, typed_pending, "udata/api-v1.membership-request", {201})
+            assert isinstance(raw_pending, Mapping)
+            assert isinstance(typed_pending.value, Mapping)
+            raw_status, raw_refused, _ = _direct_request(
+                admin_token,
+                "POST",
+                f"/api/1/organizations/{raw_org_id}/membership/{raw_pending['id']}/refuse/",
+                body={"comment": "raw refused"},
+            )
+            typed_refused = await invoke(
+                admin_client,
+                "refuse_membership",
+                typed_org_id,
+                typed_pending.value["id"],
+                OrganizationRefusalInput("typed refused"),
+                admin_permissions,
+                policy(
+                    "udata/api-v1.refuse-membership",
+                    f"{typed_org_id}/{typed_pending.value['id']}",
+                ),
+            )
+            assert raw_refused == {}
+            check(raw_status, typed_refused, "udata/api-v1.refuse-membership", {200})
+
+            seeded_status, seeded_organization, _ = _direct_request(
+                admin_token, "GET", "/api/1/organizations/evidence-organization/"
+            )
+            assert seeded_status == 200
+            assert isinstance(seeded_organization, Mapping)
+            seeded_members = seeded_organization["members"]
+            assert isinstance(seeded_members, list)
+            invited_user_id = next(
+                member["user"]["id"]
+                for member in seeded_members
+                if member["user"]["email"] == "organization-admin@evidence.invalid"
+            )
+            direct_status, raw_invitation, _ = _direct_request(
+                admin_token,
+                "POST",
+                f"/api/1/organizations/{raw_org_id}/member/",
+                body={"user": invited_user_id, "role": "editor"},
+            )
+            typed_invitation = await invoke(
+                admin_client,
+                "invite_organization_member",
+                typed_org_id,
+                OrganizationInvitationInput(user=invited_user_id, role="editor"),
+                admin_permissions,
+                policy("udata/api-v1.invite-organization-member", typed_org_id),
+            )
+            check(direct_status, typed_invitation, "udata/api-v1.invite-organization-member", {201})
+            assert isinstance(raw_invitation, Mapping)
+            assert isinstance(typed_invitation.value, Mapping)
+            raw_status, raw_cancel, _ = _direct_request(
+                admin_token,
+                "POST",
+                f"/api/1/organizations/{raw_org_id}/membership/{raw_invitation['id']}/cancel/",
+            )
+            typed_cancel = await invoke(
+                admin_client,
+                "cancel_membership",
+                typed_org_id,
+                typed_invitation.value["id"],
+                admin_permissions,
+                policy(
+                    "udata/api-v1.cancel-membership",
+                    f"{typed_org_id}/{typed_invitation.value['id']}",
+                ),
+            )
+            assert raw_cancel == {}
+            check(raw_status, typed_cancel, "udata/api-v1.cancel-membership", {200})
+
+            direct_status, raw_badge, _ = _direct_request(
+                admin_token,
+                "POST",
+                f"/api/1/organizations/{raw_org_id}/badges/",
+                body={"kind": "certified"},
+            )
+            typed_badge = await invoke(
+                admin_client,
+                "add_organization_badge",
+                typed_org_id,
+                "certified",
+                admin_permissions,
+                policy("udata/api-v1.add-organization-badge", f"{typed_org_id}/certified"),
+            )
+            assert isinstance(raw_badge, Mapping)
+            check(direct_status, typed_badge, "udata/api-v1.add-organization-badge", {200, 201})
+            raw_status, raw_badge_delete, _ = _direct_request(
+                admin_token, "DELETE", f"/api/1/organizations/{raw_org_id}/badges/certified/"
+            )
+            typed_badge_delete = await invoke(
+                admin_client,
+                "delete_organization_badge",
+                typed_org_id,
+                "certified",
+                admin_permissions,
+                policy(
+                    "udata/api-v1.delete-organization-badge",
+                    f"{typed_org_id}/certified",
+                    destructive=True,
+                ),
+            )
+            check(raw_status, typed_badge_delete, "udata/api-v1.delete-organization-badge", {200, 204})
+
+            for typed_side, org_id in enumerate((raw_org_id, typed_org_id)):
+                # Each upload uses the same tiny valid PNG bytes with an independent filename.
+                png = image
+                boundary = f"udata-org-logo-{run_id}-{int(typed_side)}"
+                logo_name = f"logo-{run_id}-{int(typed_side)}.png"
+                raw_logo_body = b"\r\n".join(
+                    (
+                        f"--{boundary}".encode(),
+                        f'Content-Disposition: form-data; name="file"; filename="{logo_name}"'.encode(),
+                        b"Content-Type: image/png",
+                        b"",
+                        png,
+                        f"--{boundary}--".encode(),
+                        b"",
+                    )
+                )
+                direct_status, _, _ = _direct_request(
+                    admin_token,
+                    "POST",
+                    f"/api/1/organizations/{org_id}/logo/",
+                    body=raw_logo_body,
+                    content_type=f"multipart/form-data; boundary={boundary}",
+                )
+                typed_logo = await invoke(
+                    admin_client,
+                    "organization_logo",
+                    org_id,
+                    ResourceUploadInput(BytesIO(png), logo_name, len(png), "image/png"),
+                    admin_permissions,
+                    policy("udata/api-v1.organization-logo", org_id),
+                )
+                check(direct_status, typed_logo, "udata/api-v1.organization-logo", {200})
+                resize_status, _, _ = _direct_request(
+                    admin_token,
+                    "PUT",
+                    f"/api/1/organizations/{org_id}/logo/",
+                    body=raw_logo_body,
+                    content_type=f"multipart/form-data; boundary={boundary}",
+                )
+                typed_resize = await invoke(
+                    admin_client,
+                    "resize_organization_logo",
+                    org_id,
+                    ResourceUploadInput(BytesIO(png), logo_name, len(png), "image/png"),
+                    admin_permissions,
+                    policy("udata/api-v1.resize-organization-logo", org_id),
+                )
+                check(resize_status, typed_resize, "udata/api-v1.resize-organization-logo", {200})
+
+            for org_id in (raw_org_id, typed_org_id):
+                extras_path = f"/api/2/organizations/{org_id}/extras/"
+                direct_status, direct_extras, _ = _direct_request(
+                    admin_token, "PUT", extras_path, body={"matrix": run_id}
+                )
+                typed_extras = await invoke(
+                    admin_client,
+                    "update_organization_extras",
+                    org_id,
+                    {"matrix": run_id},
+                    admin_permissions,
+                    policy("udata/api-v2.update-organization-extras", org_id),
+                )
+                assert direct_extras == {"matrix": run_id}
+                check(direct_status, typed_extras, "udata/api-v2.update-organization-extras", {200})
+                direct_status, direct_extras, _ = _direct_request(admin_token, "GET", extras_path)
+                typed_extras_value = await invoke(admin_client, "get_organization_extras", org_id)
+                assert direct_extras == typed_extras_value == {"matrix": run_id}
+                assert direct_status == 200
+                assert typed_extras_value == {"matrix": run_id}
+                direct_status, direct_deleted, _ = _direct_request(admin_token, "DELETE", extras_path, body=["matrix"])
+                typed_deleted = await invoke(
+                    admin_client,
+                    "delete_organization_extras",
+                    org_id,
+                    ("matrix",),
+                    admin_permissions,
+                    policy("udata/api-v2.delete-organization-extras", org_id, destructive=True),
+                )
+                assert direct_deleted is None or isinstance(direct_deleted, Mapping)
+                check(direct_status, typed_deleted, "udata/api-v2.delete-organization-extras", {200, 204})
+
+            raw_follow_status, _, _ = _direct_request(
+                admin_token, "GET", f"/api/1/organizations/{raw_org_id}/followers/"
+            )
+            typed_followers = await invoke(admin_client, "list_organization_followers", typed_org_id)
+            assert raw_follow_status == 200
+            assert isinstance(typed_followers, tuple)
+            raw_follow_status, raw_follow, _ = _direct_request(
+                admin_token, "POST", f"/api/1/organizations/{raw_org_id}/followers/"
+            )
+            typed_follow = await invoke(
+                admin_client,
+                "follow_organization",
+                typed_org_id,
+                admin_permissions,
+                policy("udata/api-v1.follow-organization", typed_org_id),
+            )
+            assert isinstance(raw_follow, Mapping)
+            check(raw_follow_status, typed_follow, "udata/api-v1.follow-organization", {200, 201})
+            raw_unfollow_status, raw_unfollow, _ = _direct_request(
+                admin_token, "DELETE", f"/api/1/organizations/{raw_org_id}/followers/"
+            )
+            typed_unfollow = await invoke(
+                admin_client,
+                "unfollow_organization",
+                typed_org_id,
+                admin_permissions,
+                policy("udata/api-v1.unfollow-organization", typed_org_id, destructive=True),
+            )
+            assert isinstance(raw_unfollow, Mapping)
+            check(raw_unfollow_status, typed_unfollow, "udata/api-v1.unfollow-organization", {200})
+        finally:
+            if raw_org_id is not None:
+                await cleanup(
+                    lambda: _assert_direct_delete(
+                        _direct_request(admin_token, "DELETE", f"/api/1/organizations/{raw_org_id}/")
+                    )
+                )
+                await cleanup(
+                    lambda: _assert_dataset_absent(
+                        _direct_request(admin_token, "GET", f"/api/1/organizations/{raw_org_id}/")
+                    )
+                )
+            if typed_org_id is not None:
+                await cleanup(
+                    lambda: invoke(
+                        admin_client,
+                        "delete_organization",
+                        typed_org_id,
+                        admin_permissions,
+                        policy("udata/api-v1.delete-organization", typed_org_id, destructive=True),
+                    )
+                )
+                await cleanup(
+                    lambda: _assert_dataset_absent(
+                        _direct_request(admin_token, "GET", f"/api/1/organizations/{typed_org_id}/")
+                    )
+                )
+            assert not cleanup_errors, f"{len(cleanup_errors)} organization route-matrix cleanup operations failed"
+
+    def run_sync_matrix() -> None:
+        with (
+            create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=admin_credential)) as admin_client,
+            create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=member_credential)) as member_client,
+            create_sync_client(
+                UDataClientSettings(base_url=ORIGIN, credential=org_admin_credential)
+            ) as org_admin_client,
+        ):
+            asyncio.run(exercise(admin_client, member_client, org_admin_client, "sync"))
+
+    async def run_async_matrix() -> None:
+        async with (
+            create_async_client(UDataClientSettings(base_url=ORIGIN, credential=admin_credential)) as admin_client,
+            create_async_client(UDataClientSettings(base_url=ORIGIN, credential=member_credential)) as member_client,
+            create_async_client(
+                UDataClientSettings(base_url=ORIGIN, credential=org_admin_credential)
+            ) as org_admin_client,
+        ):
+            await exercise(admin_client, member_client, org_admin_client, "async")
+
+    run_sync_matrix()
+    asyncio.run(run_async_matrix())
 
 
 def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
@@ -785,7 +1280,9 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                 f"/api/1/datasets/{dataset_id}/resources/",
                 body=ResourceCreateInput(title="Raw resource", url="https://example.com/raw.csv").payload(),
             )
-            assert status == 201 and isinstance(raw, Mapping) and isinstance(raw.get("id"), str)
+            assert status == 201
+            assert isinstance(raw, Mapping)
+            assert isinstance(raw.get("id"), str)
             direct_resource_id = raw["id"]
             typed_created = client.resources.create(
                 dataset_id,
@@ -800,7 +1297,9 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                 token, "GET", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/"
             )
             typed_get = client.resources.get(dataset_id, direct_resource_id)
-            assert raw_status == 200 and isinstance(raw_get, Mapping) and raw_get["id"] == typed_get.id.value
+            assert raw_status == 200
+            assert isinstance(raw_get, Mapping)
+            assert raw_get["id"] == typed_get.id.value
 
             update_body = ResourceUpdateInput({"title": "Raw updated"}).payload()
             raw_status, raw_update, _ = _direct_request(
@@ -813,8 +1312,11 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                 permissions,
                 policy(direct_resource_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update"),
             )
-            assert raw_status == 200 and isinstance(raw_update, Mapping) and typed_update.record is not None
-            assert raw_update["id"] == typed_update.record.id.value == direct_resource_id
+            assert raw_status == 200
+            assert isinstance(raw_update, Mapping)
+            assert typed_update.record is not None
+            assert raw_update["id"] == typed_update.record.id.value
+            assert typed_update.record.id.value == direct_resource_id
 
             reorder_body = [
                 {"id": direct_resource_id, "order": 0},
@@ -829,7 +1331,9 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                 permissions,
                 policy(dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder"),
             )
-            assert raw_status == 200 and isinstance(raw_reorder, list) and typed_reorder.records
+            assert raw_status == 200
+            assert isinstance(raw_reorder, list)
+            assert typed_reorder.records
             assert raw_reorder[0]["id"] == typed_reorder.records[0].id.value
 
             extras_path = f"/api/2/datasets/{dataset_id}/resources/{direct_resource_id}/extras/"
@@ -846,10 +1350,14 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                     "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update",
                 ),
             )
-            assert raw_status == 200 and raw_extras == typed_extras.extras == {"raw": "value", "typed": "value"}
+            assert raw_status == 200
+            assert raw_extras == {"raw": "value", "typed": "value"}
+            assert typed_extras.extras == {"raw": "value", "typed": "value"}
             raw_status, raw_extras, _ = _direct_request(token, "GET", extras_path)
             typed_extras_read = client.resources.get_extras_v2(dataset_id, direct_resource_id)
-            assert raw_status == 200 and raw_extras == typed_extras_read == {"raw": "value", "typed": "value"}
+            assert raw_status == 200
+            assert raw_extras == {"raw": "value", "typed": "value"}
+            assert typed_extras_read == {"raw": "value", "typed": "value"}
             raw_status, raw_deleted_extras, _ = _direct_request(token, "DELETE", extras_path, body=["raw"])
             typed_deleted_extras = client.resources.delete_extras_v2(
                 dataset_id,
@@ -862,38 +1370,38 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                     destructive=True,
                 ),
             )
-            assert (
-                raw_status == 204 and raw_deleted_extras is None and typed_deleted_extras.receipt.outcome == "succeeded"
-            )
+            assert raw_status == 204
+            assert raw_deleted_extras is None
+            assert typed_deleted_extras.receipt.outcome == "succeeded"
 
             raw_status, raw_dataset, _ = _direct_request(token, "GET", f"/api/2/datasets/{dataset_id}/")
             typed_dataset = client.resources.get_dataset_v2(dataset_id)
-            assert (
-                raw_status == 200 and isinstance(raw_dataset, Mapping) and raw_dataset["id"] == typed_dataset.id.value
-            )
+            assert raw_status == 200
+            assert isinstance(raw_dataset, Mapping)
+            assert raw_dataset["id"] == typed_dataset.id.value
             raw_status, raw_resource_page, _ = _direct_request(token, "GET", f"/api/2/datasets/{dataset_id}/resources/")
             typed_resource_page = client.resources.list_v2(dataset_id)
-            assert raw_status == 200 and isinstance(raw_resource_page, Mapping) and typed_resource_page.items
+            assert raw_status == 200
+            assert isinstance(raw_resource_page, Mapping)
+            assert typed_resource_page.items
             raw_status, raw_resource, _ = _direct_request(
                 token, "GET", f"/api/2/datasets/resources/{direct_resource_id}/"
             )
             typed_resource = client.resources.get_v2(direct_resource_id)
-            assert (
-                raw_status == 200
-                and isinstance(raw_resource, Mapping)
-                and typed_resource.id.value == direct_resource_id
-            )
+            assert raw_status == 200
+            assert isinstance(raw_resource, Mapping)
+            assert typed_resource.id.value == direct_resource_id
             raw_status, raw_types, _ = _direct_request(token, "GET", "/api/1/datasets/resource_types/")
             typed_types = client.resources.resource_types()
-            assert raw_status == 200 and isinstance(raw_types, list) and len(raw_types) == len(typed_types)
+            assert raw_status == 200
+            assert isinstance(raw_types, list)
+            assert len(raw_types) == len(typed_types)
             raw_status, raw_redirect, raw_headers = _direct_request(
                 token, "GET", f"/api/1/datasets/r/{direct_resource_id}"
             )
-            assert (
-                raw_status == 302
-                and raw_redirect is None
-                and raw_headers.get("location") == client.resources.redirect(direct_resource_id)
-            )
+            assert raw_status == 302
+            assert raw_redirect is None
+            assert raw_headers.get("location") == client.resources.redirect(direct_resource_id)
 
             replacement_body, replacement_type = _multipart_body(b"raw", "raw.csv")
             raw_status, raw_replaced, _ = _direct_request(
@@ -914,13 +1422,17 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                 ),
                 resource_id=direct_resource_id,
             )
-            assert raw_status == 200 and isinstance(raw_replaced, Mapping) and typed_replaced.record is not None
-            assert raw_replaced["id"] == typed_replaced.record.id.value == direct_resource_id
+            assert raw_status == 200
+            assert isinstance(raw_replaced, Mapping)
+            assert typed_replaced.record is not None
+            assert raw_replaced["id"] == typed_replaced.record.id.value
+            assert typed_replaced.record.id.value == direct_resource_id
 
             raw_status, raw_deleted, _ = _direct_request(
                 token, "DELETE", f"/api/1/datasets/{dataset_id}/resources/{direct_resource_id}/"
             )
-            assert raw_status == 204 and raw_deleted is None
+            assert raw_status == 204
+            assert raw_deleted is None
             direct_resource_id = None
 
             direct_upload_body, direct_upload_type = _multipart_body(b"raw", "raw-new.csv")
@@ -938,7 +1450,9 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                 permissions,
                 policy(dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new"),
             )
-            assert raw_status == 201 and typed_upload.record is not None and direct_upload_id is not None
+            assert raw_status == 201
+            assert typed_upload.record is not None
+            assert direct_upload_id is not None
             typed_upload_id = typed_upload.record.id.value
 
             community_body, community_type = _multipart_body(b"raw", "raw-community.csv")
@@ -960,11 +1474,9 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                     dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new"
                 ),
             )
-            assert (
-                raw_status == 201
-                and typed_community_upload.record is not None
-                and direct_community_upload_id is not None
-            )
+            assert raw_status == 201
+            assert typed_community_upload.record is not None
+            assert direct_community_upload_id is not None
             typed_community_upload_id = typed_community_upload.record.id.value
 
             community_create_body = ResourceCreateInput(
@@ -984,20 +1496,26 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                     dataset_id, "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create"
                 ),
             )
-            assert raw_status == 201 and typed_community.record is not None and direct_community_id is not None
+            assert raw_status == 201
+            assert typed_community.record is not None
+            assert direct_community_id is not None
             typed_community_id = typed_community.record.id.value
 
             raw_status, raw_community_get, _ = _direct_request(
                 token, "GET", f"/api/1/datasets/community_resources/{direct_community_id}/"
             )
             typed_community_get = client.resources.get_community(direct_community_id)
-            assert raw_status == 200 and isinstance(raw_community_get, Mapping)
-            assert raw_community_get["id"] == typed_community_get.id.value == direct_community_id
+            assert raw_status == 200
+            assert isinstance(raw_community_get, Mapping)
+            assert raw_community_get["id"] == typed_community_get.id.value
+            assert typed_community_get.id.value == direct_community_id
             raw_status, raw_community_list, _ = _direct_request(
                 token, "GET", f"/api/1/datasets/community_resources/?dataset={dataset_id}"
             )
             typed_community_list = client.resources.list_community({"dataset": dataset_id})
-            assert raw_status == 200 and isinstance(raw_community_list, Mapping) and typed_community_list.items
+            assert raw_status == 200
+            assert isinstance(raw_community_list, Mapping)
+            assert typed_community_list.items
 
             community_update_body = ResourceUpdateInput({"title": "Raw community updated"}).payload()
             raw_status, raw_community_update, _ = _direct_request(
@@ -1015,11 +1533,9 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                     "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update",
                 ),
             )
-            assert (
-                raw_status == 200
-                and isinstance(raw_community_update, Mapping)
-                and typed_community_update.record is not None
-            )
+            assert raw_status == 200
+            assert isinstance(raw_community_update, Mapping)
+            assert typed_community_update.record is not None
 
             community_replace_body, community_replace_type = _multipart_body(b"raw", "raw-community-replace.csv")
             raw_status, raw_community_replace, _ = _direct_request(
@@ -1039,13 +1555,15 @@ def test_controlled_resource_routes_match_bounded_raw_differential() -> None:
                     destructive=True,
                 ),
             )
-            assert raw_status == 200 and isinstance(raw_community_replace, Mapping)
+            assert raw_status == 200
+            assert isinstance(raw_community_replace, Mapping)
             assert typed_community_replace.record is not None
 
             raw_status, raw_community_deleted, _ = _direct_request(
                 token, "DELETE", f"/api/1/datasets/community_resources/{direct_community_id}/"
             )
-            assert raw_status == 204 and raw_community_deleted is None
+            assert raw_status == 204
+            assert raw_community_deleted is None
             direct_community_id = None
             typed_deleted_community = client.resources.delete_community(
                 typed_community_id,
