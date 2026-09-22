@@ -83,7 +83,7 @@
     "cleanup": "organization-delete-soft-state-verified",
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
-    "reviewed_sha": "7fd5020635a85743eaa09e29ea12ac12c5649c88",
+    "reviewed_sha": "60565901b7cebc7ef2a690dbbe19f26d29567fb7",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
