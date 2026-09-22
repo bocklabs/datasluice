@@ -73,6 +73,7 @@ _ASSIGNMENT_KIND = ResourceKind("assignment")
 _BADGE_KIND = ResourceKind("badge")
 _CONTACT_KIND = ResourceKind("contact-point")
 _FOLLOW_KIND = ResourceKind("follow")
+_SCHEMA_SAFE_ACTION = "Verify the response against the pinned uData organization schema."
 
 
 def _required_id(value: object, *, operation: str) -> str:
@@ -364,7 +365,7 @@ def _required_record_id(payload: Mapping[str, object], *, operation: str) -> str
             "The uData organization response omitted its id.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned uData organization schema.",
+            safe_action=_SCHEMA_SAFE_ACTION,
         )
     return value
 
@@ -375,7 +376,7 @@ def parse_organization(payload: object, *, operation: str = GET_ORGANIZATION_OPE
             "The uData organization response must be a JSON object.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned uData organization schema.",
+            safe_action=_SCHEMA_SAFE_ACTION,
         )
     identifier = _required_record_id(payload, operation=operation)
     name = payload.get("name")
@@ -384,7 +385,7 @@ def parse_organization(payload: object, *, operation: str = GET_ORGANIZATION_OPE
             "The uData organization response omitted its name.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned uData organization schema.",
+            safe_action=_SCHEMA_SAFE_ACTION,
         )
     return NativeRecord(
         platform=PLATFORM,
@@ -418,7 +419,7 @@ def parse_records(
             "The uData organization response must be a JSON array of objects.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned uData organization schema.",
+            safe_action=_SCHEMA_SAFE_ACTION,
         )
     return tuple(_mapping_record(item, kind=kind, operation=operation) for item in values)
 
@@ -426,13 +427,10 @@ def parse_records(
 def parse_organization_page(payload: object, *, operation: str = LIST_ORGANIZATIONS_OPERATION) -> UDataPageEnvelope:
     page = parse_native_page(payload, operation=operation)
     records = tuple(parse_organization(item, operation=operation) for item in page.items)
-    page_info = (
-        None
-        if page.page is None
-        else PageInfo(
-            cursor=str(page.page), next_cursor=str(page.page + 1) if page.next_page else None, total_items=page.total
-        )
-    )
+    page_info = None
+    if page.page is not None:
+        next_cursor = str(page.page + 1) if page.next_page else None
+        page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
     native_page = NativePageMetadata(
         present_fields=page.present_fields,
         page=page.page,
@@ -460,13 +458,10 @@ def parse_page(payload: object, *, operation: str, kind: ResourceKind) -> UDataP
         )
         for item in page.items
     )
-    page_info = (
-        None
-        if page.page is None
-        else PageInfo(
-            cursor=str(page.page), next_cursor=str(page.page + 1) if page.next_page else None, total_items=page.total
-        )
-    )
+    page_info = None
+    if page.page is not None:
+        next_cursor = str(page.page + 1) if page.next_page else None
+        page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
     native_page = NativePageMetadata(
         present_fields=page.present_fields,
         page=page.page,
