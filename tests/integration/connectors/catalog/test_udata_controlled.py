@@ -385,8 +385,8 @@ def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
     def verify_read(status: int, operation: Callable[[], object]) -> None:
         try:
             operation()
-        except CatalogError:
-            assert status >= 400
+        except CatalogError as error:
+            assert error.metadata.get("status_code") == status
         else:
             assert status in {200, 302}
 
@@ -405,8 +405,8 @@ def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
                 try:
                     if isawaitable(operation):
                         await operation
-                except CatalogError:
-                    assert status >= 400
+                except CatalogError as error:
+                    assert error.metadata.get("status_code") == status
                 else:
                     assert status in {200, 302}
 
@@ -463,7 +463,9 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
             try:
                 result = action()
                 if isawaitable(result):
-                    await result
+                    result = await result
+                if isinstance(result, OrganizationMutationResult):
+                    _assert_typed_delete(result)
             except Exception as error:
                 cleanup_errors.append(error)
 
@@ -504,7 +506,10 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
                 policy("udata/api-v1.update-organization", typed_org_id),
             )
             assert isinstance(direct_updated, Mapping)
+            assert direct_updated["description"] == "raw updated"
             check(direct_status, typed_updated, "udata/api-v1.update-organization", {200})
+            assert typed_updated.record is not None
+            assert typed_updated.record.payload["description"] == "typed updated"
 
             direct_status, direct_request, _ = _direct_request(
                 member_token,
@@ -551,6 +556,8 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
             assert isinstance(direct_member, Mapping)
             assert direct_member["user"]["id"] == member_id
             check(direct_status, typed_member, "udata/api-v1.accept-membership", {200})
+            assert isinstance(typed_member.value, Mapping)
+            assert typed_member.value["user"]["id"] == member_id
 
             raw_status, raw_role, _ = _direct_request(
                 admin_token,
@@ -570,6 +577,8 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
             assert isinstance(raw_role, Mapping)
             assert raw_role["role"] == "partial_editor"
             check(raw_status, typed_role, "udata/api-v1.update-organization-member", {200})
+            assert isinstance(typed_role.value, Mapping)
+            assert typed_role.value["role"] == "partial_editor"
             raw_status, raw_assignments, _ = _direct_request(
                 admin_token, "GET", f"/api/1/organizations/{raw_org_id}/assignments/"
             )
@@ -685,6 +694,8 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
             check(direct_status, typed_invitation, "udata/api-v1.invite-organization-member", {201})
             assert isinstance(raw_invitation, Mapping)
             assert isinstance(typed_invitation.value, Mapping)
+            assert raw_invitation["user"]["id"] == invited_user_id
+            assert typed_invitation.value["user"]["id"] == invited_user_id
             raw_status, raw_cancel, _ = _direct_request(
                 admin_token,
                 "POST",
