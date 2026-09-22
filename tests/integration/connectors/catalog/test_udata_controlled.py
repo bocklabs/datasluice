@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -21,6 +22,7 @@ from datasluice.connectors.catalog.udata.clients import (
     create_sync_client,
     declared_udata_profile,
 )
+from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
@@ -38,7 +40,9 @@ from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import CatalogError
 
 if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://127.0.0.1:5640":
@@ -82,10 +86,16 @@ class _DirectNoRedirect(HTTPRedirectHandler):
 
 
 def _direct_request(
-    token: str, method: str, path: str, *, body: object | None = None, content_type: str = "application/json"
+    token: str,
+    method: str,
+    path: str,
+    *,
+    body: object | None = None,
+    content_type: str = "application/json",
+    include_body: bool = False,
 ) -> tuple[int, object, dict[str, str]]:
     data = None if body is None else body if isinstance(body, bytes) else json.dumps(body).encode()
-    headers = {"X-API-KEY": token}
+    headers = {"Accept": "*/*", "X-API-KEY": token}
     if data is not None:
         headers["Content-Type"] = content_type
     request = Request(f"{ORIGIN}{path}", data=data, headers=headers, method=method)
@@ -97,23 +107,114 @@ def _direct_request(
         payload_bytes = response.read(8193)
         assert len(payload_bytes) <= 8192
         media_type = response.headers.get_content_type()
-        payload = json.loads(payload_bytes) if payload_bytes and media_type == "application/json" else None
+        payload = (
+            json.loads(payload_bytes)
+            if payload_bytes and media_type == "application/json"
+            else payload_bytes
+            if include_body
+            else None
+        )
         status = response.status
         assert type(status) is int
         return status, payload, {key.lower(): value for key, value in response.headers.items()}
 
 
-def _assert_direct_delete(result: tuple[int, object, dict[str, str]]) -> None:
+def _record_payload(record: object) -> Mapping[str, object]:
+    if isinstance(record, NativeRecord):
+        return record.payload
+    assert isinstance(record, MappingRecord)
+    return {key: value for key, value in record.payload.items() if key not in {"operation", "resource_kind"}}
+
+
+def _plain_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain_json(item) for item in value]
+    return value
+
+
+def _assert_page_matches_raw(method: str, payload: object, page: UDataPageEnvelope) -> None:
+    assert isinstance(payload, Mapping)
+    raw_items = payload.get("data")
+    assert isinstance(raw_items, list)
+    typed_items = [_record_payload(item) for item in page.items]
+    assert [_plain_json(item) for item in typed_items] == raw_items, method
+
+    page_fields = ("data", "page", "page_size", "previous_page", "next_page", "total")
+    assert page.native_page.present_fields == frozenset(name for name in page_fields if name in payload)
+    for name in page_fields[1:]:
+        if name in payload:
+            assert getattr(page.native_page, name) == payload[name]
+
+    raw_page = payload.get("page")
+    if raw_page is None:
+        assert page.page is None
+    else:
+        assert type(raw_page) is int
+        assert page.page is not None
+        assert page.page.cursor == str(raw_page)
+        next_cursor = str(raw_page + 1) if payload.get("next_page") else None
+        assert page.page.next_cursor == next_cursor
+        assert page.page.total_items == payload.get("total")
+
+
+def _assert_records_match_raw(method: str, payload: object, records: tuple[object, ...]) -> None:
+    if method == "available_organization_badges":
+        assert isinstance(payload, Mapping)
+        raw_items = [{"id": key, "label": value} for key, value in payload.items()]
+    elif isinstance(payload, Mapping):
+        raw_items = payload.get("data", payload)
+    else:
+        raw_items = payload
+    assert isinstance(raw_items, list)
+    assert all(isinstance(item, Mapping) for item in raw_items)
+    assert [_plain_json(_record_payload(item)) for item in records] == raw_items, method
+
+
+def _assert_typed_read_matches_raw(
+    method: str, status: int, payload: object, headers: Mapping[str, str], typed: object
+) -> None:
+    if isinstance(typed, SiteDocument):
+        assert isinstance(payload, bytes)
+        assert typed.status_code == status
+        media_type = headers.get("content-type", "application/octet-stream")
+        assert typed.media_type == media_type
+        assert typed.location == headers.get("location")
+        if status in {301, 302, 303, 307, 308}:
+            assert typed.size_bytes == 0
+            assert typed.sha256 == hashlib.sha256(b"").hexdigest()
+        else:
+            assert typed.size_bytes == len(payload)
+            assert typed.sha256 == hashlib.sha256(payload).hexdigest()
+    elif isinstance(typed, UDataPageEnvelope):
+        _assert_page_matches_raw(method, payload, typed)
+    elif isinstance(typed, NativeRecord):
+        assert isinstance(payload, Mapping)
+        assert _plain_json(typed.payload) == payload, method
+    elif isinstance(typed, tuple):
+        _assert_records_match_raw(method, payload, typed)
+    elif isinstance(typed, Mapping):
+        assert isinstance(payload, Mapping)
+        assert _plain_json(typed) == payload, method
+    else:
+        assert typed == payload
+
+
+def _assert_direct_delete(result: tuple[int, object, dict[str, str]]) -> int:
     status, payload, _ = result
     assert status == 204
     assert payload is None
+    return status
 
 
-def _assert_typed_delete(result: object) -> None:
+def _assert_typed_delete(result: object, *, expected_status: int = 204, operation: str | None = None) -> None:
     receipt = getattr(result, "receipt", None)
     assert receipt is not None
     assert receipt.outcome == "succeeded"
-    assert receipt.audit_metadata["status_code"] == 204
+    assert receipt.audit_metadata["status_code"] == expected_status
+    if operation is not None:
+        assert receipt.operation == operation
 
 
 def _assert_dataset_absent(result: tuple[int, object, dict[str, str]]) -> None:
@@ -382,33 +483,40 @@ def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
         (f"/api/1/organizations/{organization_id}/followers/", "list_organization_followers", (organization_id,)),
     )
 
-    def verify_read(status: int, operation: Callable[[], object]) -> None:
+    def verify_read(
+        method: str, status: int, payload: object, headers: Mapping[str, str], operation: Callable[[], object]
+    ) -> None:
         try:
-            operation()
+            typed = operation()
         except CatalogError as error:
             assert error.metadata.get("status_code") == status
         else:
             assert status in {200, 302}
+            _assert_typed_read_matches_raw(method, status, payload, headers, typed)
 
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         for path, method, args in reads:
-            status, _, _ = _direct_request(token, "GET", path)
+            status, payload, headers = _direct_request(token, "GET", path, include_body=True)
             verify_read(
-                status, lambda method=method, args=args: getattr(client.organizations_memberships, method)(*args)
+                method,
+                status,
+                payload,
+                headers,
+                lambda method=method, args=args: getattr(client.organizations_memberships, method)(*args),
             )
 
     async def run_async() -> None:
         async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
             for path, method, args in reads:
-                status, _, _ = _direct_request(token, "GET", path)
+                status, payload, headers = _direct_request(token, "GET", path, include_body=True)
                 operation = getattr(client.organizations_memberships, method)(*args)
                 try:
-                    if isawaitable(operation):
-                        await operation
+                    typed = await operation if isawaitable(operation) else operation
                 except CatalogError as error:
                     assert error.metadata.get("status_code") == status
                 else:
                     assert status in {200, 302}
+                    _assert_typed_read_matches_raw(method, status, payload, headers, typed)
 
     asyncio.run(run_async())
 
@@ -457,17 +565,30 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
     async def exercise(admin_client, member_client, org_admin_client, run_id: str) -> None:
         raw_org_id: str | None = None
         typed_org_id: str | None = None
+        raw_delete_status: int | None = None
         cleanup_errors: list[Exception] = []
 
-        async def cleanup(action: Callable[[], object]) -> None:
+        async def cleanup(
+            action: Callable[[], object], *, expected_status: int | None = None, operation: str | None = None
+        ) -> object | None:
             try:
                 result = action()
                 if isawaitable(result):
                     result = await result
-                if isinstance(result, OrganizationMutationResult):
-                    _assert_typed_delete(result)
             except Exception as error:
                 cleanup_errors.append(error)
+                return None
+            if isinstance(result, OrganizationMutationResult):
+                receipt = result.receipt
+                if (
+                    expected_status is None
+                    or operation is None
+                    or receipt.operation != operation
+                    or receipt.outcome != "succeeded"
+                    or receipt.audit_metadata["status_code"] != expected_status
+                ):
+                    cleanup_errors.append(AssertionError("typed organization delete receipt did not match raw delete"))
+            return result
 
         try:
             raw_status, raw_org, _ = _direct_request(
@@ -861,11 +982,13 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
             check(raw_unfollow_status, typed_unfollow, "udata/api-v1.unfollow-organization", {200})
         finally:
             if raw_org_id is not None:
-                await cleanup(
+                raw_delete_result = await cleanup(
                     lambda: _assert_direct_delete(
                         _direct_request(admin_token, "DELETE", f"/api/1/organizations/{raw_org_id}/")
                     )
                 )
+                if isinstance(raw_delete_result, int):
+                    raw_delete_status = raw_delete_result
                 await cleanup(
                     lambda: _assert_dataset_absent(
                         _direct_request(admin_token, "GET", f"/api/1/organizations/{raw_org_id}/")
@@ -879,7 +1002,9 @@ def test_controlled_organization_mutations_match_raw_routes_in_both_modes() -> N
                         typed_org_id,
                         admin_permissions,
                         policy("udata/api-v1.delete-organization", typed_org_id, destructive=True),
-                    )
+                    ),
+                    expected_status=raw_delete_status if raw_delete_status is not None else 204,
+                    operation="udata/api-v1.delete-organization",
                 )
                 await cleanup(
                     lambda: _assert_dataset_absent(
