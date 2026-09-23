@@ -136,7 +136,7 @@ def _mutation(
         status, payload, response = dispatch()
         receipt = _receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
         return _mutation_result(receipt, payload)
-    except BaseException as error:
+    except Exception as error:
         outcome = _mutation_outcome(error, response)
         _raise_with_receipt(
             error,

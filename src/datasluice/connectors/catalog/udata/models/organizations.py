@@ -11,7 +11,7 @@ from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freez
 from datasluice.domain.catalog.receipts import MutationReceipt
 
 _ROLES = frozenset({"admin", "editor", "partial_editor"})
-_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+_EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
 
 
 def _text(value: object, field_name: str, *, allow_none: bool = False) -> None:

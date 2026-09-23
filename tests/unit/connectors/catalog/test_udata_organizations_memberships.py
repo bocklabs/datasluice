@@ -250,7 +250,8 @@ def test_sync_organization_read_and_mutation_decode_with_redacted_receipt() -> N
             _policy(wire.CREATE_ORGANIZATION_OPERATION, "Evidence"),
         )
     assert page.items[0].id.value == "org-1"
-    assert result.record is not None and result.record.id.value == "org-1"
+    assert result.record is not None
+    assert result.record.id.value == "org-1"
     assert result.receipt.operation == wire.CREATE_ORGANIZATION_OPERATION
     assert "secret-key" not in json.dumps(result.to_dict())
 
@@ -273,6 +274,8 @@ def test_organization_inputs_reject_invalid_roles_and_ambiguous_invitations() ->
         OrganizationInvitationInput(user="user-1", email="member@example.test")
     with pytest.raises(ValueError):
         OrganizationInvitationInput(email="invalid-email")
+    with pytest.raises(ValueError):
+        OrganizationInvitationInput(email="member@example..test")
     with pytest.raises(ValueError):
         OrganizationInvitationInput(email="member@example.test", assignments=({"dataset": "one"},))
     with pytest.raises(ValueError):
