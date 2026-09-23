@@ -7,15 +7,20 @@ import base64
 import hashlib
 import json
 import os
+import subprocess
 from collections.abc import Callable, Mapping
 from importlib import resources
 from inspect import isawaitable
+from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from uuid import uuid4
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import (
+    AsyncUDataClient,
+    SyncUDataClient,
     _create_controlled_async_client,
     _create_controlled_sync_client,
     create_async_client,
@@ -36,6 +41,18 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
+from datasluice.connectors.catalog.udata.models.users import (
+    ApiTokenCreateInput,
+    ApiTokenCreationResult,
+    ApiTokenMetadata,
+    UserAvatarInput,
+    UserCreateInput,
+    UserDeleteOptions,
+    UserListQuery,
+    UserMutationResult,
+    UserSuggestQuery,
+    UserUpdateInput,
+)
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
@@ -55,6 +72,7 @@ if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://1
     )
 
 ORIGIN = "http://127.0.0.1:5640"
+_USER_READ_MAX_BYTES = 131072
 pytestmark = [
     pytest.mark.udata_controlled,
     pytest.mark.skipif(
@@ -93,6 +111,7 @@ def _direct_request(
     body: object | None = None,
     content_type: str = "application/json",
     include_body: bool = False,
+    max_bytes: int = 8192,
 ) -> tuple[int, object, dict[str, str]]:
     data = None if body is None else body if isinstance(body, bytes) else json.dumps(body).encode()
     headers = {"Accept": "*/*", "X-API-KEY": token}
@@ -104,8 +123,8 @@ def _direct_request(
     except HTTPError as error:
         response = error
     with response:
-        payload_bytes = response.read(8193)
-        assert len(payload_bytes) <= 8192
+        payload_bytes = response.read(max_bytes + 1)
+        assert len(payload_bytes) <= max_bytes
         media_type = response.headers.get_content_type()
         payload = (
             json.loads(payload_bytes)
@@ -119,6 +138,45 @@ def _direct_request(
         return status, payload, {key.lower(): value for key, value in response.headers.items()}
 
 
+def _disposable_user_token(user_id: str) -> str:
+    program = """
+import sys
+from udata.app import create_app, standalone
+from udata.models import User
+from udata.core.api_token.models import ApiToken
+app = standalone(create_app())
+with app.app_context():
+    user = User.objects(id=sys.argv[1]).first()
+    assert user is not None
+    _, token = ApiToken.generate(user, name="controlled-user-route")
+    print(token)
+"""
+    issued = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            "dev/udata-evidence/.env",
+            "-f",
+            "dev/udata-evidence/compose.yaml",
+            "exec",
+            "-T",
+            "udata",
+            "python",
+            "-c",
+            program,
+            user_id,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    token = issued.stdout.strip()
+    if issued.returncode or not token.startswith("udata_") or "\n" in token:
+        raise AssertionError("Disposable user token generation failed.")
+    return token
+
+
 def _record_payload(record: object) -> Mapping[str, object]:
     if isinstance(record, NativeRecord):
         return record.payload
@@ -129,7 +187,7 @@ def _record_payload(record: object) -> Mapping[str, object]:
 def _plain_json(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _plain_json(item) for key, item in value.items()}
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)):
         return [_plain_json(item) for item in value]
     return value
 
@@ -201,6 +259,470 @@ def _assert_typed_read_matches_raw(
         assert typed == payload
 
 
+def _assert_user_read_matches_raw(method: str, raw: object, typed: object) -> None:
+    def digest(value: object) -> str:
+        return hashlib.sha256(json.dumps(_plain_json(value), sort_keys=True).encode()).hexdigest()
+
+    if isinstance(typed, UDataPageEnvelope):
+        assert isinstance(raw, Mapping)
+        raw_items = raw.get("data")
+        assert isinstance(raw_items, list)
+        assert digest([_record_payload(item) for item in typed.items]) == digest(raw_items), method
+        for key in ("page", "page_size", "previous_page", "next_page", "total"):
+            if key in raw:
+                assert getattr(typed.native_page, key) == raw[key]
+    elif isinstance(typed, NativeRecord):
+        assert isinstance(raw, Mapping)
+        safe = {
+            key: value for key, value in raw.items() if key not in {"token", "token_hash", "password", "last_login_at"}
+        }
+        assert isinstance(raw.get("last_login_at"), str)
+        assert isinstance(typed.payload.get("last_login_at"), str)
+        assert set(typed.payload) - {"last_login_at"} == set(safe), method
+        for key, value in safe.items():
+            assert digest(typed.payload[key]) == digest(value), (method, key)
+    elif isinstance(typed, MappingRecord):
+        assert isinstance(raw, Mapping)
+        assert digest(typed.payload) == digest(raw), method
+    elif isinstance(typed, tuple):
+        raw_items = raw.get("data") if isinstance(raw, Mapping) else raw
+        assert isinstance(raw_items, list)
+        if typed and isinstance(typed[0], ApiTokenMetadata):
+            allowed = frozenset(typed[0].to_dict())
+            assert all(isinstance(item, Mapping) for item in raw_items)
+            safe_items = [{key: value for key, value in item.items() if key in allowed} for item in raw_items]
+            typed_items = [
+                {key: value for key, value in item.to_dict().items() if key in safe_items[index]}
+                for index, item in enumerate(typed)
+            ]
+        else:
+            safe_items = raw_items
+            typed_items = [_record_payload(item) for item in typed]
+        assert digest(typed_items) == digest(safe_items), method
+    else:
+        assert digest(typed) == digest(raw), method
+
+
+def test_controlled_user_reads_match_raw_routes_in_both_modes() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled user reads require a seeded disposable admin")
+    status, current_user, _ = _direct_request(token, "GET", "/api/1/me/")
+    assert status == 200
+    assert isinstance(current_user, Mapping)
+    user_id = current_user.get("id")
+    assert isinstance(user_id, str)
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    reads = (
+        ("/api/1/me/", "get_me", (permissions,)),
+        ("/api/1/me/reuses/", "my_reuses", (permissions,)),
+        ("/api/1/me/datasets/", "my_datasets", (permissions,)),
+        ("/api/1/me/metrics/", "my_metrics", (permissions,)),
+        ("/api/1/me/org_datasets/", "my_org_datasets", (permissions,)),
+        ("/api/1/me/org_community_resources/", "my_org_community_resources", (permissions,)),
+        ("/api/1/me/org_reuses/", "my_org_reuses", (permissions,)),
+        ("/api/1/me/org_discussions/", "my_org_discussions", (permissions,)),
+        ("/api/1/me/api_tokens/", "list_api_tokens", (permissions,)),
+        ("/api/1/me/org_invitations/", "list_org_invitations", (permissions,)),
+        ("/api/1/users/?page=1&page_size=20", "list_users", (permissions, UserListQuery())),
+        (f"/api/1/users/{user_id}/", "get_user", (user_id,)),
+        (f"/api/1/users/{user_id}/contacts/?page=1&page_size=20", "get_user_contact_point", (user_id,)),
+        ("/api/1/users/suggest/?q=ev&size=10", "suggest_users", (UserSuggestQuery("ev"),)),
+        ("/api/1/users/roles/", "user_roles", ()),
+        ("/api/2/me/org_topics/?page=1&page_size=20", "my_org_topics", (permissions,)),
+        (f"/api/1/users/{user_id}/followers/?page=1&page_size=20", "list_user_followers", (user_id,)),
+    )
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        for path, method, args in reads:
+            raw_status, raw_payload, _ = _direct_request(token, "GET", path, max_bytes=_USER_READ_MAX_BYTES)
+            try:
+                typed = getattr(client.users_tokens, method)(*args)
+            except CatalogError as error:
+                assert error.metadata.get("status_code") == raw_status, method
+            else:
+                assert raw_status == 200, method
+                _assert_user_read_matches_raw(method, raw_payload, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            for path, method, args in reads:
+                raw_status, raw_payload, _ = _direct_request(token, "GET", path, max_bytes=_USER_READ_MAX_BYTES)
+                operation = getattr(client.users_tokens, method)(*args)
+                try:
+                    typed = await operation if isawaitable(operation) else operation
+                except CatalogError as error:
+                    assert error.metadata.get("status_code") == raw_status, method
+                else:
+                    assert raw_status == 200, method
+                    _assert_user_read_matches_raw(method, raw_payload, typed)
+
+    asyncio.run(run_async())
+
+
+def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
+    admin_token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not admin_token:
+        pytest.skip("controlled user mutations require a seeded disposable administrator")
+    admin_credential = UDataCredential(api_key=admin_token)
+    admin_permissions = EffectivePermissions.for_credential(
+        admin_credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII="
+    )
+
+    def policy(name: str, target: str, *, destructive: bool = False) -> MutationPolicy:
+        return MutationPolicy(
+            destructive=destructive,
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation=f"udata/api-v1.{name.replace('_', '-')}", target=target
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        )
+
+    def check(status: int, result: object, name: str, target: str | None = None) -> None:
+        assert isinstance(result, (UserMutationResult, ApiTokenCreationResult))
+        receipt = result.receipt
+        assert receipt.operation == f"udata/api-v1.{name.replace('_', '-')}"
+        assert receipt.outcome == "succeeded"
+        assert receipt.audit_metadata["status_code"] == status
+        if target is not None:
+            assert receipt.target.value == target
+
+    async def invoke(service: object, name: str, *args: object) -> object:
+        result = getattr(service, name)(*args)
+        return await result if isawaitable(result) else result
+
+    async def exercise(async_mode: bool) -> None:
+        admin_client = (
+            create_async_client(UDataClientSettings(base_url=ORIGIN, credential=admin_credential))
+            if async_mode
+            else create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=admin_credential))
+        )
+        organizations: dict[str, str] = {}
+        users: dict[tuple[str, str], tuple[str, str]] = {}
+        token_ids: list[str] = []
+
+        async def user_call(user_token: str, name: str, *args: object) -> object:
+            client = (
+                create_async_client(
+                    UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=user_token))
+                )
+                if async_mode
+                else create_sync_client(
+                    UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=user_token))
+                )
+            )
+            try:
+                return await invoke(client.users_tokens, name, *args)
+            finally:
+                if isinstance(client, AsyncUDataClient):
+                    await client.aclose()
+                else:
+                    assert isinstance(client, SyncUDataClient)
+                    client.close()
+
+        try:
+            run_id = uuid4().hex
+            raw_org_name = f"Raw user evidence {run_id}"
+            typed_org_name = f"Typed user evidence {run_id}"
+            raw_org_status, raw_org, _ = _direct_request(
+                admin_token,
+                "POST",
+                "/api/1/organizations/",
+                body={"name": raw_org_name, "description": "Disposable user invitation evidence"},
+            )
+            assert raw_org_status == 201
+            assert isinstance(raw_org, Mapping)
+            raw_org_id = raw_org["id"]
+            assert isinstance(raw_org_id, str)
+            organizations["raw"] = raw_org_id
+            typed_org = await invoke(
+                admin_client.organizations_memberships,
+                "create_organization",
+                OrganizationCreateInput(name=typed_org_name, description="Disposable user invitation evidence"),
+                admin_permissions,
+                policy("create_organization", typed_org_name),
+            )
+            assert isinstance(typed_org, OrganizationMutationResult)
+            assert typed_org.record is not None
+            organizations["typed"] = typed_org.record.id.value
+            assert typed_org.receipt.audit_metadata["status_code"] == raw_org_status
+
+            for decision in ("accept", "refuse"):
+                run_id = uuid4().hex
+                raw_email = f"raw-{run_id}@gmail.com"
+                typed_email = f"typed-{run_id}@gmail.com"
+                raw_status, raw_user, _ = _direct_request(
+                    admin_token,
+                    "POST",
+                    "/api/1/users/",
+                    body={"first_name": "Raw", "last_name": "Evidence", "email": raw_email, "active": True},
+                )
+                typed = await invoke(
+                    admin_client.users_tokens,
+                    "create_user",
+                    UserCreateInput("Typed", "Evidence", typed_email, fields={"active": True}),
+                    admin_permissions,
+                    policy("create_user", f"request:{hashlib.sha256(typed_email.encode()).hexdigest()[:24]}"),
+                )
+                assert raw_status == 201
+                assert isinstance(raw_user, Mapping)
+                assert isinstance(typed, UserMutationResult)
+                assert typed.record is not None
+                check(raw_status, typed, "create_user", typed.record.id.value)
+                raw_id = raw_user["id"]
+                typed_id = typed.record.id.value
+                assert isinstance(raw_id, str)
+                users[(decision, "raw")] = (raw_id, _disposable_user_token(raw_id))
+                users[(decision, "typed")] = (typed_id, _disposable_user_token(typed_id))
+
+            assert len({user_id for user_id, _ in users.values()}) == 4
+
+            raw_id, raw_user_token = users[("accept", "raw")]
+            typed_id, typed_user_token = users[("accept", "typed")]
+            typed_permissions = EffectivePermissions.for_credential(
+                UDataCredential(api_key=typed_user_token), platform=CatalogPlatform.UDATA
+            )
+            raw_status, raw_updated, _ = _direct_request(
+                raw_user_token, "PUT", "/api/1/me/", body={"website": "https://example.org/raw"}
+            )
+            typed_updated = await user_call(
+                typed_user_token,
+                "update_me",
+                UserUpdateInput({"website": "https://example.org/typed"}),
+                typed_permissions,
+                policy("update_me", "me"),
+            )
+            assert raw_status == 200
+            assert isinstance(raw_updated, Mapping)
+            check(raw_status, typed_updated, "update_me", "me")
+
+            raw_status, raw_admin_updated, _ = _direct_request(
+                admin_token, "PUT", f"/api/1/users/{raw_id}/", body={"about": "raw evidence"}
+            )
+            typed_admin_updated = await invoke(
+                admin_client.users_tokens,
+                "update_user",
+                typed_id,
+                UserUpdateInput({"about": "typed evidence"}),
+                admin_permissions,
+                policy("update_user", typed_id),
+            )
+            assert raw_status == 200
+            assert isinstance(raw_admin_updated, Mapping)
+            check(raw_status, typed_admin_updated, "update_user", typed_id)
+
+            raw_avatar_body, raw_avatar_type = _multipart_body(png, "raw.png", media_type="image/png")
+            raw_status, _, _ = _direct_request(
+                raw_user_token, "POST", "/api/1/me/avatar/", body=raw_avatar_body, content_type=raw_avatar_type
+            )
+            typed_avatar = await user_call(
+                typed_user_token,
+                "my_avatar",
+                UserAvatarInput(BytesIO(png), "typed.png", len(png), "image/png"),
+                typed_permissions,
+                policy("my_avatar", "me"),
+            )
+            check(raw_status, typed_avatar, "my_avatar", "me")
+            raw_status, _, _ = _direct_request(
+                admin_token,
+                "POST",
+                f"/api/1/users/{raw_id}/avatar/",
+                body=raw_avatar_body,
+                content_type=raw_avatar_type,
+            )
+            typed_avatar = await invoke(
+                admin_client.users_tokens,
+                "user_avatar",
+                typed_id,
+                UserAvatarInput(BytesIO(png), "typed-admin.png", len(png), "image/png"),
+                admin_permissions,
+                policy("user_avatar", typed_id),
+            )
+            check(raw_status, typed_avatar, "user_avatar", typed_id)
+
+            raw_status, _, _ = _direct_request(admin_token, "POST", f"/api/1/users/{raw_id}/followers/")
+            typed_follow = await invoke(
+                admin_client.users_tokens, "follow_user", typed_id, admin_permissions, policy("follow_user", typed_id)
+            )
+            check(raw_status, typed_follow, "follow_user", typed_id)
+            raw_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/users/{raw_id}/followers/")
+            typed_unfollow = await invoke(
+                admin_client.users_tokens,
+                "unfollow_user",
+                typed_id,
+                admin_permissions,
+                policy("unfollow_user", typed_id, destructive=True),
+            )
+            check(raw_status, typed_unfollow, "unfollow_user", typed_id)
+
+            raw_status, raw_token, _ = _direct_request(
+                admin_token, "POST", "/api/1/me/api_tokens/", body={"name": "raw controlled"}
+            )
+            assert raw_status == 201
+            assert isinstance(raw_token, dict)
+            raw_token_id = raw_token.get("id")
+            assert isinstance(raw_token_id, str)
+            raw_token.pop("token", None)
+            token_ids.append(raw_token_id)
+            typed_token = await invoke(
+                admin_client.users_tokens,
+                "create_api_token",
+                ApiTokenCreateInput(name="typed controlled"),
+                admin_permissions,
+                policy("create_api_token", "new-api-token"),
+            )
+            assert isinstance(typed_token, ApiTokenCreationResult)
+            check(raw_status, typed_token, "create_api_token", typed_token.metadata.id)
+            if not typed_token.secret.reveal_once().startswith("udata_"):
+                pytest.fail("Created token did not match the controlled token shape.")
+            token_ids.append(typed_token.metadata.id)
+            raw_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/me/api_tokens/{raw_token_id}/")
+            typed_revoke = await invoke(
+                admin_client.users_tokens,
+                "revoke_api_token",
+                typed_token.metadata.id,
+                admin_permissions,
+                policy("revoke_api_token", typed_token.metadata.id, destructive=True),
+            )
+            check(raw_status, typed_revoke, "revoke_api_token", typed_token.metadata.id)
+
+            for decision in ("refuse", "accept"):
+                raw_id, raw_user_token = users[(decision, "raw")]
+                typed_id, typed_user_token = users[(decision, "typed")]
+                typed_permissions = EffectivePermissions.for_credential(
+                    UDataCredential(api_key=typed_user_token), platform=CatalogPlatform.UDATA
+                )
+                raw_org_status, raw_org_state, _ = _direct_request(
+                    admin_token, "GET", f"/api/1/organizations/{organizations['raw']}/"
+                )
+                assert raw_org_status == 200
+                assert isinstance(raw_org_state, Mapping)
+                assert not any(member["user"]["id"] == raw_id for member in raw_org_state["members"]), decision
+                raw_status, raw_invitation, _ = _direct_request(
+                    admin_token,
+                    "POST",
+                    f"/api/1/organizations/{organizations['raw']}/member/",
+                    body={"user": raw_id, "role": "editor"},
+                )
+                assert raw_status == 201
+                typed_invitation = await invoke(
+                    admin_client.organizations_memberships,
+                    "invite_organization_member",
+                    organizations["typed"],
+                    OrganizationInvitationInput(user=typed_id, role="editor"),
+                    admin_permissions,
+                    policy("invite_organization_member", organizations["typed"]),
+                )
+                assert isinstance(raw_invitation, Mapping)
+                assert isinstance(typed_invitation, OrganizationMutationResult)
+                assert typed_invitation.value is not None
+                raw_invitation_id = raw_invitation["id"]
+                typed_invitation_id = typed_invitation.value["id"]
+                assert isinstance(raw_invitation_id, str)
+                assert isinstance(typed_invitation_id, str)
+                raw_status, _, _ = _direct_request(
+                    raw_user_token, "POST", f"/api/1/me/org_invitations/{raw_invitation_id}/{decision}/"
+                )
+                typed_decision = await user_call(
+                    typed_user_token,
+                    f"{decision}_org_invitation",
+                    typed_invitation_id,
+                    typed_permissions,
+                    policy(f"{decision}_org_invitation", typed_invitation_id),
+                )
+                check(raw_status, typed_decision, f"{decision}_org_invitation", typed_invitation_id)
+                if decision == "accept":
+                    for org_id, user_id in ((organizations["raw"], raw_id), (organizations["typed"], typed_id)):
+                        member_status, member_org, _ = _direct_request(
+                            admin_token, "GET", f"/api/1/organizations/{org_id}/"
+                        )
+                        assert member_status == 200
+                        assert isinstance(member_org, Mapping)
+                        assert any(member["user"]["id"] == user_id for member in member_org["members"])
+                else:
+                    raw_pending_status, raw_pending, _ = _direct_request(
+                        raw_user_token, "GET", "/api/1/me/org_invitations/"
+                    )
+                    assert raw_pending_status == 200
+                    assert isinstance(raw_pending, list)
+                    assert not raw_pending
+                    typed_pending = await user_call(typed_user_token, "list_org_invitations", typed_permissions)
+                    assert not typed_pending
+
+            raw_status, _, _ = _direct_request(admin_token, "POST", f"/api/1/users/{raw_id}/rotate_password/")
+            typed_rotated = await invoke(
+                admin_client.users_tokens,
+                "rotate_user_password",
+                typed_id,
+                admin_permissions,
+                policy("rotate_user_password", typed_id),
+            )
+            check(raw_status, typed_rotated, "rotate_user_password", typed_id)
+
+            raw_refuse_id, raw_refuse_token = users[("refuse", "raw")]
+            typed_refuse_id, typed_refuse_token = users[("refuse", "typed")]
+            typed_refuse_permissions = EffectivePermissions.for_credential(
+                UDataCredential(api_key=typed_refuse_token), platform=CatalogPlatform.UDATA
+            )
+            raw_status, _, _ = _direct_request(raw_refuse_token, "DELETE", "/api/1/me/")
+            typed_deleted_me = await user_call(
+                typed_refuse_token,
+                "delete_me",
+                typed_refuse_permissions,
+                policy("delete_me", "me", destructive=True),
+            )
+            check(raw_status, typed_deleted_me, "delete_me", "me")
+            raw_accept_id = users[("accept", "raw")][0]
+            raw_delete_status, _, _ = _direct_request(
+                admin_token,
+                "DELETE",
+                f"/api/1/users/{raw_accept_id}/?send_legal_notice=false&no_mail=true&delete_comments=false",
+            )
+            typed_accept_id = users[("accept", "typed")][0]
+            typed_deleted_user = await invoke(
+                admin_client.users_tokens,
+                "delete_user",
+                typed_accept_id,
+                admin_permissions,
+                policy("delete_user", typed_accept_id, destructive=True),
+                UserDeleteOptions(no_mail=True),
+            )
+            check(raw_delete_status, typed_deleted_user, "delete_user", typed_accept_id)
+            assert raw_delete_status == 204
+            for user_id in (raw_refuse_id, typed_refuse_id, users[("accept", "raw")][0], typed_accept_id):
+                deleted_status, deleted_user, _ = _direct_request(admin_token, "GET", f"/api/1/users/{user_id}/")
+                assert deleted_status in {200, 404, 410}
+                if deleted_status == 200:
+                    assert isinstance(deleted_user, Mapping)
+                    assert deleted_user.get("active") is False
+        finally:
+            for token_id in token_ids:
+                _direct_request(admin_token, "DELETE", f"/api/1/me/api_tokens/{token_id}/")
+            for user_id, _ in users.values():
+                _direct_request(
+                    admin_token,
+                    "DELETE",
+                    f"/api/1/users/{user_id}/?send_legal_notice=false&no_mail=true&delete_comments=false",
+                )
+            for org_id in organizations.values():
+                deleted_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/organizations/{org_id}/")
+                assert deleted_status in {204, 410}
+            if isinstance(admin_client, AsyncUDataClient):
+                await admin_client.aclose()
+            else:
+                assert isinstance(admin_client, SyncUDataClient)
+                admin_client.close()
+
+    asyncio.run(exercise(False))
+    asyncio.run(exercise(True))
+
+
 def _assert_direct_delete(result: tuple[int, object, dict[str, str]]) -> int:
     status, payload, _ = result
     assert status == 204
@@ -224,12 +746,15 @@ def _assert_dataset_absent(result: tuple[int, object, dict[str, str]]) -> None:
     )
 
 
-def _multipart_body(content: bytes, file_name: str) -> tuple[bytes, str]:
+def _multipart_body(content: bytes, file_name: str, *, media_type: str | None = None) -> tuple[bytes, str]:
     boundary = "datasluice-evidence-boundary"
+    part_headers = [f'Content-Disposition: form-data; name="file"; filename="{file_name}"'.encode()]
+    if media_type is not None:
+        part_headers.append(f"Content-Type: {media_type}".encode())
     body = b"\r\n".join(
         (
             f"--{boundary}".encode(),
-            f'Content-Disposition: form-data; name="file"; filename="{file_name}"'.encode(),
+            *part_headers,
             b"",
             content,
             f"--{boundary}--".encode(),

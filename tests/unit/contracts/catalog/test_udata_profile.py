@@ -214,6 +214,34 @@ def test_controlled_organization_evidence_covers_every_route_in_both_modes() -> 
     assert reads | mutations == _ORGANIZATION_ROUTE_OPERATION_IDS
 
 
+def test_controlled_user_evidence_covers_every_route_in_both_modes() -> None:
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_user_evidence"]
+    evidence = controlled["route_differential"]
+    reads = evidence["read_operations"]
+    mutations = evidence["mutation_operations"]
+
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == ["sync", "async"]
+    assert len(reads) == 17
+    assert len(mutations) == 14
+    assert len(set(reads)) == len(reads)
+    assert len(set(mutations)) == len(mutations)
+    assert set(reads).isdisjoint(mutations)
+    assert set(reads) | set(mutations) == _USER_ROUTE_OPERATION_IDS
+    assert controlled["sanitized"] is True
+    assert controlled["local_only"] is True
+    assert (
+        controlled["controlled_test_sha256"]
+        == hashlib.sha256(
+            (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        controlled["wheel_test_sha256"]
+        == hashlib.sha256((_ROOT / "tests/e2e/test_udata_wheel.py").read_bytes()).hexdigest()
+    )
+
+
 def test_deployment_dependent_routes_require_observed_effective_evidence() -> None:
     """Declared plugin/configuration routes never claim universal availability."""
     profile = _read_json(_PROFILE_PATH)

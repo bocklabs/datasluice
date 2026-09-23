@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import importlib
 import json
@@ -279,6 +280,27 @@ def test_revoke_requires_exact_target_and_receipts_deployment_disabled() -> None
     assert isinstance(unavailable_receipt, MutationReceipt)
     assert unavailable_receipt.target.value == "token-id"
     assert unavailable_receipt.audit_metadata["status_code"] == 423
+
+
+def test_user_admin_mutations_deny_non_admin_before_dispatch() -> None:
+    router = _Router(_routes())
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    email = "controlled@example.org"
+    target = f"request:{hashlib.sha256(email.encode()).hexdigest()[:24]}"
+    with client:
+        with pytest.raises(ForbiddenError) as create_denied:
+            client.users_tokens.create_user(
+                UserCreateInput("Controlled", "User", email), PERMISSIONS, _policy("create_user", target)
+            )
+        with pytest.raises(ForbiddenError) as delete_denied:
+            client.users_tokens.delete_user("user-id", PERMISSIONS, _policy("delete_user", "user-id", destructive=True))
+    assert router.requests == []
+    create_receipt = create_denied.value.__dict__["mutation_receipt"]
+    delete_receipt = delete_denied.value.__dict__["mutation_receipt"]
+    assert create_receipt.target.value == target
+    assert delete_receipt.target.value == "user-id"
+    assert create_receipt.outcome == "rejected"
+    assert delete_receipt.outcome == "rejected"
 
 
 def test_async_token_create_matches_sync_receipt_and_secret_boundary() -> None:

@@ -87,5 +87,72 @@
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
+  },
+  "controlled_user_evidence": {
+    "captured_at": "2026-09-23",
+    "local_only": true,
+    "test_ids": [
+      "test_controlled_user_reads_match_raw_routes_in_both_modes",
+      "test_controlled_user_mutations_match_raw_routes_in_both_modes",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "route_differential": {
+      "read_modes": ["sync", "async"],
+      "read_operations": [
+        "udata/api-v1.get-me",
+        "udata/api-v1.my-reuses",
+        "udata/api-v1.my-datasets",
+        "udata/api-v1.my-metrics",
+        "udata/api-v1.my-org-datasets",
+        "udata/api-v1.my-org-community-resources",
+        "udata/api-v1.my-org-reuses",
+        "udata/api-v1.my-org-discussions",
+        "udata/api-v1.list-api-tokens",
+        "udata/api-v1.list-org-invitations",
+        "udata/api-v1.list-users",
+        "udata/api-v1.get-user",
+        "udata/api-v1.get-user-contact-point",
+        "udata/api-v1.suggest-users",
+        "udata/api-v1.user-roles",
+        "udata/api-v1.list-user-followers",
+        "udata/api-v2.my-org-topics"
+      ],
+      "mutation_modes": ["sync", "async"],
+      "mutation_operations": [
+        "udata/api-v1.update-me",
+        "udata/api-v1.delete-me",
+        "udata/api-v1.my-avatar",
+        "udata/api-v1.create-api-token",
+        "udata/api-v1.revoke-api-token",
+        "udata/api-v1.accept-org-invitation",
+        "udata/api-v1.refuse-org-invitation",
+        "udata/api-v1.create-user",
+        "udata/api-v1.user-avatar",
+        "udata/api-v1.update-user",
+        "udata/api-v1.delete-user",
+        "udata/api-v1.rotate-user-password",
+        "udata/api-v1.follow-user",
+        "udata/api-v1.unfollow-user"
+      ],
+      "assertions": [
+        "successful stable read fields match raw by SHA-256 digest; errors match exact status",
+        "server-updated last_login_at is compared by type in both requests",
+        "mutation receipts match raw status, operation, and intended target",
+        "created token plaintext is consumed only at reveal-once boundary",
+        "disposable users, management tokens, and organizations are cleaned"
+      ]
+    },
+    "response_shape": "safe-field-digest-and-status-only",
+    "cleanup": "disposable-users-soft-deleted-management-tokens-revoked-organizations-deleted",
+    "sanitized": true,
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "implementation_sha": "a9f59e105aa0b4e79d22c6dce5ae29f892b42ffb",
+    "controlled_test_sha256": "1897bc7147558c900e191d8279a95138912a4462af1a03f296bae48cdec4f7f7",
+    "wheel_test_sha256": "dc38abd10c98c72a44b60b61293d7fef118e0f6610095533e95145bbf8340c88",
+    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
+    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+    "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e"
   }
 }

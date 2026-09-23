@@ -34,6 +34,10 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "models/organizations.py",
         "wire/organizations.py",
         "services/organizations_memberships.py",
+        "models/users.py",
+        "secrets.py",
+        "wire/users.py",
+        "services/users_tokens.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
@@ -50,7 +54,7 @@ def test_wheel_import_proves_the_tracer_path_from_installed_content(built_wheel:
     """A fresh interpreter importing only the unpacked wheel runs the full tracer."""
     unpacked = _unpacked_wheel_source(built_wheel, tmp_path)
     script = """
-import json, sys
+import json, secrets, sys
 from io import BytesIO
 sys.path.insert(0, sys.argv[1])
 import datasluice
@@ -59,6 +63,7 @@ from datasluice.connectors.catalog.udata.clients import create_async_client, cre
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
+from datasluice.connectors.catalog.udata.models.users import ApiTokenCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
@@ -79,6 +84,7 @@ class Transport:
         self.requests = []
         self.close_count = 0
         self.version = version
+        self.token_value = secrets.token_urlsafe(36)
 
     def send(self, request):
         url = request.url
@@ -87,6 +93,20 @@ class Transport:
             body = json.dumps({"feed_size": 0, "id": "s", "keywords": [], "metrics": {},
                                "title": "uData", "version": self.version}).encode()
             headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/me/"):
+            body = json.dumps({"id": "wheel-user", "first_name": "Wheel", "last_name": "User"}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/me/api_tokens/") and request.method == "GET":
+            body = json.dumps([{"id": "wheel-token-id", "token_prefix": "wheel-prefix"}]).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/me/api_tokens/") and request.method == "POST":
+            body = json.dumps(
+                {"id": "wheel-token-id", "token_prefix": "wheel-prefix", "token": self.token_value}
+            ).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/me/api_tokens/wheel-token-id/") and request.method == "DELETE":
+            body = b""
+            headers = {}
         elif url.endswith(".csv"):
             body = b"id\\nwheel\\n"
             headers = {"Content-Type": "text/csv"}
@@ -109,7 +129,8 @@ class Transport:
             body = json.dumps({"data": [{"id": "abc", "title": "T"}], "next_page": None, "page": 1,
                                "page_size": 20, "previous_page": None, "total": 1}).encode()
             headers = {}
-        return RuntimeResponse(status_code=201 if request.method == "POST" else 200, headers=headers, body=body)
+        status = 204 if request.method == "DELETE" else 201 if request.method == "POST" else 200
+        return RuntimeResponse(status_code=status, headers=headers, body=body)
 
     def send_stream(self, request):
         response = self.send(request)
@@ -200,6 +221,34 @@ assert organization_created.record is not None
 assert organization_created.receipt.operation == "udata/api-v1.create-organization"
 assert organization_created.receipt.outcome == "succeeded"
 assert organization_created.receipt.audit_metadata["status_code"] == 201
+assert client.users_tokens.get_me(sync_permissions).id.value == "wheel-user"
+assert client.users_tokens.list_api_tokens(sync_permissions)[0].token_prefix == "wheel-prefix"
+created_token = client.users_tokens.create_api_token(
+    ApiTokenCreateInput(name="wheel"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.create-api-token", target="new-api-token"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert created_token.receipt.audit_metadata["status_code"] == 201
+assert "token" not in created_token.to_dict()
+if not created_token.secret.reveal_once():
+    raise AssertionError("installed-wheel token reveal failed")
+revoked_token = client.users_tokens.revoke_api_token(
+    created_token.metadata.id,
+    sync_permissions,
+    MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.revoke-api-token", target=created_token.metadata.id
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert revoked_token.receipt.audit_metadata["status_code"] == 204
 client.close()
 
 import asyncio
@@ -250,6 +299,36 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )
+        user = await active.users_tokens.get_me(permissions)
+        token_list = await active.users_tokens.list_api_tokens(permissions)
+        token_created = await active.users_tokens.create_api_token(
+            ApiTokenCreateInput(name="async wheel"),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.create-api-token", target="new-api-token"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        if not token_created.secret.reveal_once():
+            raise AssertionError("async installed-wheel token reveal failed")
+        token_revoked = await active.users_tokens.revoke_api_token(
+            token_created.metadata.id,
+            permissions,
+            MutationPolicy(
+                destructive=True,
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.revoke-api-token", target=token_created.metadata.id
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        assert user.id.value == "wheel-user"
+        assert token_list[0].token_prefix == "wheel-prefix"
+        assert token_created.receipt.audit_metadata["status_code"] == 201
+        assert "token" not in token_created.to_dict()
+        assert token_revoked.receipt.audit_metadata["status_code"] == 204
         try:
             await active.organizations_memberships.get_organization("")
         except CatalogValidationError:
@@ -315,6 +394,10 @@ assert recorded == [
     "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
     "http://127.0.0.1:5640/api/1/datasets/abc/upload/",
     "http://127.0.0.1:5640/api/1/organizations/",
+    "http://127.0.0.1:5640/api/1/me/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
 ], recorded
 assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/site/",
@@ -325,6 +408,10 @@ assert [getattr(r, "url", r) for r in async_transport.requests] == [
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
     "http://127.0.0.1:5640/api/1/organizations/",
+    "http://127.0.0.1:5640/api/1/me/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
 ]
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

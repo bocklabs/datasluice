@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+import logging
 import secrets
 from io import BytesIO
 
@@ -19,6 +21,7 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     UnauthenticatedError,
 )
+from datasluice.runtime.events import EventEmitter, ListSink, LoggingSink
 from tests.unit.connectors.catalog.test_udata_users_tokens import (
     CREDENTIAL,
     ORIGIN,
@@ -82,6 +85,31 @@ def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> Non
             if plaintext in repr(traceback.tb_frame.f_locals):
                 pytest.fail("One-time token entered a connector failure frame.")
         traceback = traceback.tb_next
+
+
+def test_created_token_never_enters_events_or_logs(caplog: pytest.LogCaptureFixture) -> None:
+    plaintext = secrets.token_urlsafe(36)
+    router = _Router(
+        _routes(
+            (
+                "POST",
+                "/api/1/me/api_tokens/",
+                201,
+                {"id": "token-id", "token_prefix": "safe-prefix", "token": plaintext},
+            )
+        )
+    )
+    events = ListSink()
+    emitter = EventEmitter(sinks=(events, LoggingSink()))
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, emitter=emitter)
+    with caplog.at_level(logging.INFO, logger="datasluice.runtime.events"), client:
+        result = client.users_tokens.create_api_token(
+            ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
+        )
+    if plaintext in repr(events.events) or plaintext in caplog.text or plaintext in repr(result.receipt):
+        pytest.fail("A one-time token entered an event, log, or receipt.")
+    if not hmac.compare_digest(result.secret.reveal_once(), plaintext):
+        pytest.fail("A one-time token did not match its reveal-once value.")
 
 
 class _CloseFault(BytesIO):
