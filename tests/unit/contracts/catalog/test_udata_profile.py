@@ -163,13 +163,19 @@ def test_evidence_pins_official_read_observation_and_controlled_mutation_boundar
 def test_controlled_organization_evidence_covers_every_route_in_both_modes() -> None:
     controlled = _read_json(_EVIDENCE_PATH)["controlled_organization_evidence"]
     evidence = controlled["route_differential"]
-    reads = set(evidence["read_operations"])
-    mutations = set(evidence["mutation_operations"])
+    read_operations = evidence["read_operations"]
+    mutation_operations = evidence["mutation_operations"]
+    reads = set(read_operations)
+    mutations = set(mutation_operations)
 
     assert "test_controlled_organization_read_matrix_matches_raw_routes" in controlled["test_ids"]
     assert "test_controlled_organization_mutations_match_raw_routes_in_both_modes" in controlled["test_ids"]
     assert evidence["read_modes"] == ["sync", "async"]
     assert evidence["mutation_modes"] == ["sync", "async"]
+    assert len(read_operations) == 21
+    assert len(reads) == len(read_operations)
+    assert len(mutation_operations) == 19
+    assert len(mutations) == len(mutation_operations)
     assert reads.isdisjoint(mutations)
     assert reads | mutations == _ORGANIZATION_ROUTE_OPERATION_IDS
 
