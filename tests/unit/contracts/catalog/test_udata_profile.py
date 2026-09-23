@@ -93,6 +93,39 @@ _ORGANIZATION_ROUTE_OPERATION_IDS = {
     "udata/api-v1.follow-organization",
     "udata/api-v1.unfollow-organization",
 }
+_USER_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.accept-org-invitation",
+    "udata/api-v1.create-api-token",
+    "udata/api-v1.create-user",
+    "udata/api-v1.delete-me",
+    "udata/api-v1.delete-user",
+    "udata/api-v1.follow-user",
+    "udata/api-v1.get-me",
+    "udata/api-v1.get-user",
+    "udata/api-v1.get-user-contact-point",
+    "udata/api-v1.list-api-tokens",
+    "udata/api-v1.list-org-invitations",
+    "udata/api-v1.list-user-followers",
+    "udata/api-v1.list-users",
+    "udata/api-v1.my-avatar",
+    "udata/api-v1.my-datasets",
+    "udata/api-v1.my-metrics",
+    "udata/api-v1.my-org-community-resources",
+    "udata/api-v1.my-org-datasets",
+    "udata/api-v1.my-org-discussions",
+    "udata/api-v1.my-org-reuses",
+    "udata/api-v1.my-reuses",
+    "udata/api-v1.refuse-org-invitation",
+    "udata/api-v1.revoke-api-token",
+    "udata/api-v1.rotate-user-password",
+    "udata/api-v1.suggest-users",
+    "udata/api-v1.unfollow-user",
+    "udata/api-v1.update-me",
+    "udata/api-v1.update-user",
+    "udata/api-v1.user-avatar",
+    "udata/api-v1.user-roles",
+    "udata/api-v2.my-org-topics",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -112,6 +145,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _DATASET_ROUTE_OPERATION_IDS
         | _RESOURCE_ROUTE_OPERATION_IDS
         | _ORGANIZATION_ROUTE_OPERATION_IDS
+        | _USER_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 

@@ -602,6 +602,42 @@ ORGANIZATION_ROUTE_OPERATION_IDS = frozenset(
     }
 )
 
+USER_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.accept-org-invitation",
+        "udata/api-v1.create-api-token",
+        "udata/api-v1.create-user",
+        "udata/api-v1.delete-me",
+        "udata/api-v1.delete-user",
+        "udata/api-v1.follow-user",
+        "udata/api-v1.get-me",
+        "udata/api-v1.get-user",
+        "udata/api-v1.get-user-contact-point",
+        "udata/api-v1.list-api-tokens",
+        "udata/api-v1.list-org-invitations",
+        "udata/api-v1.list-user-followers",
+        "udata/api-v1.list-users",
+        "udata/api-v1.my-avatar",
+        "udata/api-v1.my-datasets",
+        "udata/api-v1.my-metrics",
+        "udata/api-v1.my-org-community-resources",
+        "udata/api-v1.my-org-datasets",
+        "udata/api-v1.my-org-discussions",
+        "udata/api-v1.my-org-reuses",
+        "udata/api-v1.my-reuses",
+        "udata/api-v1.refuse-org-invitation",
+        "udata/api-v1.revoke-api-token",
+        "udata/api-v1.rotate-user-password",
+        "udata/api-v1.suggest-users",
+        "udata/api-v1.unfollow-user",
+        "udata/api-v1.update-me",
+        "udata/api-v1.update-user",
+        "udata/api-v1.user-avatar",
+        "udata/api-v1.user-roles",
+        "udata/api-v2.my-org-topics",
+    }
+)
+
 NATIVE_OPERATION_MEMBERS["udata"].update(
     {
         operation_id: ("SyncUDataServices", "AsyncUDataServices", "resources")
@@ -612,6 +648,12 @@ NATIVE_OPERATION_MEMBERS["udata"].update(
     {
         operation_id: ("SyncUDataServices", "AsyncUDataServices", "organizations_memberships")
         for operation_id in ORGANIZATION_ROUTE_OPERATION_IDS
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "users_tokens")
+        for operation_id in USER_ROUTE_OPERATION_IDS
     }
 )
 
@@ -643,6 +685,7 @@ LOCKED_DATASET_ROUTE_OPERATIONS = (
     )
     | RESOURCE_ROUTE_OPERATION_IDS
     | ORGANIZATION_ROUTE_OPERATION_IDS
+    | USER_ROUTE_OPERATION_IDS
 )
 
 LOCKED_EXTRA_OPERATION_IDS = (
@@ -655,6 +698,7 @@ LOCKED_EXTRA_OPERATION_IDS = (
     }
     | RESOURCE_ROUTE_OPERATION_IDS
     | ORGANIZATION_ROUTE_OPERATION_IDS
+    | USER_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {

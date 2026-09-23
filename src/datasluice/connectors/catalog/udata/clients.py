@@ -127,6 +127,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.root_profile import (
         SyncRootProfileService as _SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.users_tokens import (
+        AsyncUsersTokensService as _AsyncUsersTokensService,
+    )
+    from datasluice.connectors.catalog.udata.services.users_tokens import (
+        SyncUsersTokensService as _SyncUsersTokensService,
+    )
 
 _CONTROLLED_UDATA_LOCAL_DOCKER_CONTEXT = "Controlled uData evidence requires a local Unix Docker context."
 _CONTROLLED_STACK_IDENTITY_TIMEOUT = "The controlled uData stack identity check timed out."
@@ -274,6 +280,22 @@ _STATUS_RESPONSE_CLASSES = {
     403: ProbeResponseClass.FORBIDDEN,
     423: ProbeResponseClass.DEPLOYMENT_DISABLED,
 }
+_AUTH_FAILURES = {
+    "Invalid API token": "invalid",
+    "Revoked API token": "revoked",
+    "Expired API token": "expired",
+    "Inactive user": "inactive-user",
+}
+
+
+def _auth_failure_reason(body: bytes) -> str | None:
+    if len(body) > 512:
+        return None
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    return _AUTH_FAILURES.get(payload.get("message")) if isinstance(payload, dict) else None
 
 
 def _operation_id_from(value: str) -> OperationId:
@@ -2902,6 +2924,11 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._capabilities.record_response(
                 owning_id, _STATUS_RESPONSE_CLASSES[response.status_code], credential_scope=credential_scope
             )
+        metadata = None
+        if response.status_code == 401 and isinstance(response, RuntimeResponse):
+            reason = _auth_failure_reason(response.body)
+            if reason is not None:
+                metadata = {"reason_code": reason}
         raise map_catalog_error(
             NativeCatalogError(
                 "Catalog operation returned an unsuccessful HTTP status.",
@@ -2909,6 +2936,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                 platform=PLATFORM.value,
                 status_code=response.status_code,
                 retry_after=response.retry_after,
+                metadata=metadata,
             )
         )
 
@@ -3035,6 +3063,13 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the complete typed organization and membership service."""
         return SyncOrganizationsMembershipsService(self)
 
+    @property
+    def users_tokens(self) -> _SyncUsersTokensService:
+        """Expose the typed user, invitation, and API-token service."""
+        from datasluice.connectors.catalog.udata.services.users_tokens import SyncUsersTokensService
+
+        return SyncUsersTokensService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -3089,7 +3124,6 @@ class SyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
         files: tuple[UploadPart, ...] = (),
@@ -3130,8 +3164,7 @@ class SyncUDataClient(_UDataClientCore):
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=idempotency_policy
-                or IdempotencyPolicy(safe=method == "GET", explicit_retry_opt_in=allow_retry),
+                idempotency=idempotency_policy or IdempotencyPolicy(safe=method == "GET"),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -3173,7 +3206,6 @@ class SyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
@@ -3190,7 +3222,6 @@ class SyncUDataClient(_UDataClientCore):
             permissions=permissions,
             credential=credential,
             idempotency_policy=idempotency_policy,
-            allow_retry=allow_retry,
             max_response_bytes=max_response_bytes,
             emit_success=emit_success,
         )
@@ -3452,6 +3483,13 @@ class AsyncUDataClient(_UDataClientCore):
         """Expose the complete typed organization and membership service."""
         return AsyncOrganizationsMembershipsService(self)
 
+    @property
+    def users_tokens(self) -> _AsyncUsersTokensService:
+        """Expose the typed user, invitation, and API-token service."""
+        from datasluice.connectors.catalog.udata.services.users_tokens import AsyncUsersTokensService
+
+        return AsyncUsersTokensService(self)
+
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[UDataResultItem]:
@@ -3597,7 +3635,6 @@ class AsyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
         files: tuple[UploadPart, ...] = (),
@@ -3640,8 +3677,7 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=idempotency_policy
-                or IdempotencyPolicy(safe=method == "GET", explicit_retry_opt_in=allow_retry),
+                idempotency=idempotency_policy or IdempotencyPolicy(safe=method == "GET"),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
@@ -3683,7 +3719,6 @@ class AsyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
@@ -3700,7 +3735,6 @@ class AsyncUDataClient(_UDataClientCore):
             permissions=permissions,
             credential=credential,
             idempotency_policy=idempotency_policy,
-            allow_retry=allow_retry,
             max_response_bytes=max_response_bytes,
             emit_success=emit_success,
         )

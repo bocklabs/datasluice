@@ -5,10 +5,17 @@
     "platform_api_version": "uData API v1",
     "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
     "source_accessed_at": "2026-08-27",
-    "fixture_fingerprint": "e874c55cc47ad4f83b47e73d1152d7b444dec968ec2cb8c6ea631dc1c8fe6059",
+    "fixture_fingerprint": "b68ba725483db323258cc83cd8eb9898cd727326177277adcf3a08edd3f830a3",
     "operations": [
         {
             "id": "udata/api-v1.accept-membership",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.accept-org-invitation",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
@@ -43,6 +50,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.create-api-token",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.create-dataset",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -54,6 +68,13 @@
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.create-user",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
             "evidence_requirement": "controlled-environment-only"
         },
         {
@@ -232,6 +253,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.delete-me",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.delete-organization",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -253,6 +281,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.delete-user",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.feature-dataset",
             "capability": "admin",
             "authentication": "privileged",
@@ -261,6 +296,13 @@
         },
         {
             "id": "udata/api-v1.follow-organization",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.follow-user",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
@@ -281,6 +323,13 @@
             "evidence_requirement": "anonymous-read"
         },
         {
+            "id": "udata/api-v1.get-me",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.get-organization",
             "capability": "core",
             "authentication": "public",
@@ -289,6 +338,20 @@
         },
         {
             "id": "udata/api-v1.get-organization-contact-point",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.get-user",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.get-user-contact-point",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -309,6 +372,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.list-api-tokens",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.list-datasets",
             "capability": "core",
             "authentication": "public",
@@ -320,6 +390,13 @@
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.list-org-invitations",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
             "evidence_requirement": "controlled-environment-only"
         },
         {
@@ -365,10 +442,80 @@
             "evidence_requirement": "anonymous-read"
         },
         {
+            "id": "udata/api-v1.list-user-followers",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.list-users",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.membership-request",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-avatar",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-datasets",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-metrics",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-org-community-resources",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-org-datasets",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-org-discussions",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-org-reuses",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.my-reuses",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
             "evidence_requirement": "controlled-environment-only"
         },
         {
@@ -463,6 +610,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.refuse-org-invitation",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.resize-organization-logo",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -491,11 +645,25 @@
             "evidence_requirement": "anonymous-read"
         },
         {
+            "id": "udata/api-v1.revoke-api-token",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.root-and-effective-profile-probe",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
             "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.rotate-user-password",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
         },
         {
             "id": "udata/api-v1.set_site",
@@ -520,6 +688,13 @@
         },
         {
             "id": "udata/api-v1.suggest-organizations",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.suggest-users",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -561,7 +736,21 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.unfollow-user",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.update-dataset",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-me",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
@@ -580,6 +769,27 @@
             "authentication": "authenticated",
             "mutation": "update",
             "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-user",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.user-avatar",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.user-roles",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
         },
         {
             "id": "udata/api-v1.users-me-and-api-token-management",
@@ -629,6 +839,13 @@
             "authentication": "public",
             "mutation": "read",
             "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v2.my-org-topics",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
         },
         {
             "id": "udata/api-v2.search-datasets",
