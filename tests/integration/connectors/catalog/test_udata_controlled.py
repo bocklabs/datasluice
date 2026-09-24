@@ -152,7 +152,7 @@ def _direct_request(
         return status, payload, {key.lower(): value for key, value in response.headers.items()}
 
 
-def _disposable_user_token(user_id: str) -> tuple[str, str]:
+def _disposable_user_token(user_id: str, cleanup_ids: list[str]) -> tuple[str, str]:
     program = """
 import sys
 import json
@@ -192,6 +192,8 @@ with app.app_context():
         issued_token = None
     token_id = issued_token.get("id") if isinstance(issued_token, Mapping) else None
     token = issued_token.get("token") if isinstance(issued_token, Mapping) else None
+    if isinstance(token_id, str) and token_id:
+        cleanup_ids.append(token_id)
     if (
         issued.returncode
         or not isinstance(token_id, str)
@@ -201,6 +203,22 @@ with app.app_context():
     ):
         raise AssertionError("Disposable user token generation failed.")
     return token_id, token
+
+
+def test_disposable_token_id_is_registered_before_token_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({"id": "token-id", "token": "invalid"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    cleanup_ids: list[str] = []
+    with pytest.raises(AssertionError, match="Disposable user token generation failed"):
+        _disposable_user_token("user-id", cleanup_ids)
+    assert cleanup_ids == ["token-id"]
 
 
 def _controlled_user_state(user_ids: tuple[str, ...]) -> dict[str, dict[str, bool]]:
@@ -516,6 +534,7 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
         )
         organizations: dict[str, str] = {}
         users: dict[tuple[str, str], tuple[str, str]] = {}
+        created_user_ids: list[str] = []
         token_ids: list[str] = []
         user_token_ids: list[str] = []
         cleanup_errors: list[str] = []
@@ -576,6 +595,9 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                     "/api/1/users/",
                     body={"first_name": "Raw", "last_name": "Evidence", "email": raw_email, "active": True},
                 )
+                raw_id = raw_user.get("id") if isinstance(raw_user, Mapping) else None
+                if isinstance(raw_id, str):
+                    created_user_ids.append(raw_id)
                 typed = await invoke(
                     admin_client.users_tokens,
                     "create_user",
@@ -583,12 +605,13 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                     admin_permissions,
                     policy("create_user", f"request:{hashlib.sha256(typed_email.encode()).hexdigest()[:24]}"),
                 )
+                if isinstance(typed, UserMutationResult) and typed.record is not None:
+                    created_user_ids.append(typed.record.id.value)
                 assert raw_status == 201
                 assert isinstance(raw_user, Mapping)
                 assert isinstance(typed, UserMutationResult)
                 assert typed.record is not None
                 check(raw_status, typed, "create_user", typed.record.id.value)
-                raw_id = raw_user["id"]
                 typed_id = typed.record.id.value
                 assert isinstance(raw_id, str)
                 raw_read_status, raw_created_user, _ = _direct_request(admin_token, "GET", f"/api/1/users/{raw_id}/")
@@ -600,11 +623,10 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 assert typed_created_user.payload.get("email") == typed_email
                 assert raw_created_user.get("active") is True
                 assert typed_created_user.payload.get("active") is True
-                raw_user_token_id, raw_user_token = _disposable_user_token(raw_id)
-                typed_user_token_id, typed_user_token = _disposable_user_token(typed_id)
+                _, raw_user_token = _disposable_user_token(raw_id, user_token_ids)
+                _, typed_user_token = _disposable_user_token(typed_id, user_token_ids)
                 users[(decision, "raw")] = (raw_id, raw_user_token)
                 users[(decision, "typed")] = (typed_id, typed_user_token)
-                user_token_ids.extend((raw_user_token_id, typed_user_token_id))
 
             assert len({user_id for user_id, _ in users.values()}) == 4
 
@@ -744,11 +766,12 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 admin_permissions,
                 policy("create_api_token", "new-api-token"),
             )
+            if isinstance(typed_token, ApiTokenCreationResult):
+                token_ids.append(typed_token.metadata.id)
             assert isinstance(typed_token, ApiTokenCreationResult)
             check(raw_status, typed_token, "create_api_token", typed_token.metadata.id)
             if not typed_token.secret.reveal_once().startswith("udata_"):
                 pytest.fail("Created token did not match the controlled token shape.")
-            token_ids.append(typed_token.metadata.id)
             raw_list_status, raw_token_list, _ = _direct_request(admin_token, "GET", "/api/1/me/api_tokens/")
             typed_token_list = await invoke(admin_client.users_tokens, "list_api_tokens", admin_permissions)
             raw_token_rows = raw_token_list.get("data") if isinstance(raw_token_list, Mapping) else raw_token_list
@@ -954,7 +977,7 @@ with app.app_context():
                         cleanup_errors.append("disposable user token revocation failed")
                 except Exception as error:
                     cleanup_errors.append(f"disposable user token revocation raised {type(error).__name__}")
-            for user_id, _ in users.values():
+            for user_id in created_user_ids:
                 try:
                     status, _, _ = _direct_request(
                         admin_token,
