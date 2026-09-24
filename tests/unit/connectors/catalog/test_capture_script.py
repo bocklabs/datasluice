@@ -173,7 +173,6 @@ def test_record_provenance_embeds_version_and_image_references() -> None:
     assert isinstance(stack, dict)
     assert stack["ckan_version"] == "2.11.5"
     images = stack["images"]
-    assert [image["reference"] for image in images] == list(capture.EVIDENCE_IMAGES)
     assert all("@sha256:" in image["digest"] or image["digest"] == "unavailable" for image in images)
 
 

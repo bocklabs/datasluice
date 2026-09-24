@@ -128,10 +128,11 @@ def test_bare_console_script_exposes_runtime_cli_surface(bare_env: dict[str, str
         )
 
 
-def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str]) -> None:
+@pytest.mark.parametrize("retired", _RETIRED_COMMANDS)
+def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str], retired: str) -> None:
     """Former portal-era commands fail resolution in the installed bare wheel."""
     result = subprocess.run(
-        [bare_env["console"], "search", "https://data.example.test"],
+        [bare_env["console"], retired, "https://data.example.test"],
         capture_output=True,
         text=True,
         env=_clean_env(bare_env["venv"]),

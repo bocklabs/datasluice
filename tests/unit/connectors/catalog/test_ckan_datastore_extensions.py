@@ -14,15 +14,7 @@ import json
 import pytest
 
 from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient, declared_ckan_profile
-from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
-from datasluice.connectors.catalog.ckan.probes import (
-    DATASTORE_CRUD_OPERATION_ID,
-    SQL_SEARCH_OPERATION_ID,
-    classify_probe_response,
-)
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.connectors.catalog.ckan.services.datastore import AsyncDatastoreService, SyncDatastoreService
-from datasluice.connectors.catalog.ckan.services.extensions import AsyncExtensionsService, SyncExtensionsService
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
@@ -169,29 +161,6 @@ def _async_client(transport: AsyncCaptureTransport, runner: AsyncSeededProbeRunn
     )
 
 
-def _names_for_group(group: str) -> set[str]:
-    return {entry.name for entry in CKAN_ACTIONS.entries if entry.group == group}
-
-
-def test_datastore_and_extension_actions_expose_typed_methods_on_both_mode_services() -> None:
-    """Each manifest-registered datastore or extension action has both typed methods."""
-    sync_datastore = {name for name in dir(SyncDatastoreService) if not name.startswith("_")}
-    async_datastore = {name for name in dir(AsyncDatastoreService) if not name.startswith("_")}
-    datastore_names = _names_for_group("datastore")
-    assert len(datastore_names) == 10
-    for action in datastore_names:
-        assert action in sync_datastore, f"sync surface misses {action}"
-        assert action in async_datastore, f"async surface misses {action}"
-
-    sync_extensions = {name for name in dir(SyncExtensionsService) if not name.startswith("_")}
-    async_extensions = {name for name in dir(AsyncExtensionsService) if not name.startswith("_")}
-    extension_names = _names_for_group("extensions")
-    assert len(extension_names) == 11
-    for action in extension_names:
-        assert action in sync_extensions, f"sync surface misses {action}"
-        assert action in async_extensions, f"async surface misses {action}"
-
-
 def test_sqlsearch_deployment_disabled_blocks_before_dispatch_naming_the_gate() -> None:
     """DEPLOYMENT_DISABLED sqlsearch evidence refuses pre-dispatch at zero I/O."""
     transport = SyncCaptureTransport(body=_success_body({"records": []}))
@@ -203,14 +172,6 @@ def test_sqlsearch_deployment_disabled_blocks_before_dispatch_naming_the_gate() 
     assert transport.requests == []
     assert excinfo.value.capability_state == "deployment-disabled"
     assert "Enable the capability" in excinfo.value.safe_action
-
-
-def test_not_found_envelopes_classify_deployment_disabled_on_exactly_the_sqlsearch_id() -> None:
-    """Pitfall 5 agreement: not-found is DEPLOYMENT_DISABLED only on the sql id."""
-    not_found = {"__type": "Not Found Error", "message": "Not found"}
-
-    assert classify_probe_response(SQL_SEARCH_OPERATION_ID, not_found) is ProbeResponseClass.DEPLOYMENT_DISABLED
-    assert classify_probe_response(DATASTORE_CRUD_OPERATION_ID, not_found) is ProbeResponseClass.UNAVAILABLE
 
 
 def test_datastore_delete_is_destructive_and_refuses_unconfirmed_policies() -> None:

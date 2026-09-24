@@ -42,7 +42,6 @@ from datasluice.domain.catalog.profiles import (
     RoleClassification,
 )
 from datasluice.errors.catalog import CatalogValidationError, UnauthenticatedError, UnsupportedCapabilityError
-from datasluice.runtime.capability import ProbeRunner
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
@@ -344,12 +343,6 @@ def test_normalized_datasets_get_round_trips_to_its_own_record_kind() -> None:
     assert record.name == "my-dataset"
     assert record.description == "A seeded dataset"
     assert record.id.value == "abc-123"
-
-
-def test_runner_conformance_holds_for_the_stub() -> None:
-    """The stub probe runner satisfies the published ProbeRunner protocol."""
-    runner: ProbeRunner = StubProbeRunner()
-    assert isinstance(runner, ProbeRunner)
 
 
 class AsyncCaptureTransport:

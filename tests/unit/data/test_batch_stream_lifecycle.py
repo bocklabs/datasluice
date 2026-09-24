@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 from typing import Any
 
 import pytest
@@ -12,8 +11,6 @@ pytest.importorskip("pyarrow")
 
 access_module = importlib.import_module("datasluice.data.access")
 batch_stream_module = importlib.import_module("datasluice.data.batch_stream")
-if not hasattr(access_module, "_BATCH_LIFECYCLE_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("BatchStream lifecycle implementation pending GREEN phase", allow_module_level=True)
 
 BatchStream = batch_stream_module.BatchStream
 DataPlaneResourceReader = access_module.DataPlaneResourceReader

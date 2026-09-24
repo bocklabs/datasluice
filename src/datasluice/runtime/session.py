@@ -35,8 +35,6 @@ if TYPE_CHECKING:
 
 logger = get_logger("session")
 
-_SESSION_SYNC_READY = True
-
 
 def _default_budget() -> TimeBudget:
     return TimeBudget(

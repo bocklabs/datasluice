@@ -7,22 +7,42 @@ on it without pulling heavy optional deps into the import graph.
 
 from __future__ import annotations
 
-import importlib
+import os
+import subprocess
 import sys
+import textwrap
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _run_import_check(script: str) -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(_REPO_ROOT / "src")
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+
 
 _FORBIDDEN_OPTIONAL_MODULES = ("pyarrow", "pandas", "polars", "dlt", "duckdb", "openpyxl", "airflow")
 _FORBIDDEN_DOMAIN_IMPORTS = ("datasluice.adapters", "datasluice.connectors")
 
 
 def test_domain_imports_zero_optional_deps() -> None:
-    for name in list(sys.modules):
-        if name.split(".")[0] in _FORBIDDEN_OPTIONAL_MODULES:
-            del sys.modules[name]
+    script = textwrap.dedent(
+        """
+        import importlib
+        import sys
 
-    importlib.import_module("datasluice.domain")
-
-    present = [name for name in _FORBIDDEN_OPTIONAL_MODULES if name in sys.modules]
-    assert present == [], f"datasluice.domain pulled optional deps: {present}"
+        forbidden = %r
+        for name in list(sys.modules):
+            if name.split(".")[0] in forbidden:
+                del sys.modules[name]
+        importlib.import_module("datasluice.domain")
+        present = [name for name in forbidden if name in sys.modules]
+        assert present == [], present
+        """
+    ) % (_FORBIDDEN_OPTIONAL_MODULES,)
+    _run_import_check(script)
 
 
 def test_domain_package_surface_symbols() -> None:
@@ -34,11 +54,18 @@ def test_domain_package_surface_symbols() -> None:
 
 
 def test_domain_import_does_not_load_platform_or_legacy_connector_modules() -> None:
-    for name in list(sys.modules):
-        if name.startswith(_FORBIDDEN_DOMAIN_IMPORTS):
-            del sys.modules[name]
+    script = textwrap.dedent(
+        """
+        import importlib
+        import sys
 
-    importlib.import_module("datasluice.domain")
-
-    present = [name for name in _FORBIDDEN_DOMAIN_IMPORTS if name in sys.modules]
-    assert present == [], f"datasluice.domain pulled connector modules: {present}"
+        forbidden = %r
+        for name in list(sys.modules):
+            if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden):
+                del sys.modules[name]
+        importlib.import_module("datasluice.domain")
+        present = [name for name in forbidden if name in sys.modules]
+        assert present == [], present
+        """
+    ) % (_FORBIDDEN_DOMAIN_IMPORTS,)
+    _run_import_check(script)

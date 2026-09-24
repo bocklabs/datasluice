@@ -10,8 +10,6 @@ state.
 
 from __future__ import annotations
 
-import importlib
-import os
 from typing import Any
 
 import pytest
@@ -19,22 +17,8 @@ import pytest
 from datasluice.domain import HttpDownload, Resource
 from datasluice.exceptions import DataSluiceError
 from datasluice.io.filesystem import open_filesystem
+from datasluice.sync._identity import canonical_identity, validate_unique_identities
 from datasluice.sync.materialize import materialize
-
-try:
-    identity_module: Any = importlib.import_module("datasluice.sync._identity")
-except ImportError:
-    identity_module = None
-if identity_module is None or not hasattr(identity_module, "_CANONICAL_IDENTITY_READY"):
-    if os.environ.get("DATASLUICE_TDD_RED") != "1":
-        pytest.skip("canonical identity implementation pending GREEN phase", allow_module_level=True)
-
-canonical_identity: Any = getattr(identity_module, "canonical_identity", lambda *_: "")
-validate_unique_identities: Any = getattr(
-    identity_module,
-    "validate_unique_identities",
-    lambda *_: None,
-)
 
 
 def _http_resource(resource_id: str, url: str) -> Resource:

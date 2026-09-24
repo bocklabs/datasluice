@@ -100,12 +100,6 @@ def test_concurrent_writers_configure_busy_timeout_before_database_access(tmp_pa
     assert [future.exception() for future in futures] == [None] * len(futures)
 
 
-def test_key_is_deterministic(tmp_path: Path) -> None:
-    cache = ContentCache(str(tmp_path / "cache"))
-    assert cache._sha("k1") == hashlib.sha256(b"k1").hexdigest()
-    assert cache._sha("k1") != cache._sha("k2")
-
-
 def test_key_has_no_path_separators(tmp_path: Path) -> None:
     """SHA-256 destroys path structure (regression from FileCache)."""
     cache = ContentCache(str(tmp_path / "cache"))

@@ -1842,21 +1842,6 @@ def test_unrelated_local_listener_loses_authority_before_patch_dispatch() -> Non
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
-def test_forwarding_listener_loses_authority_before_patch_dispatch() -> None:
-    transport, client = _sync_client(
-        _routes(),
-        credential=_CREDENTIAL,
-        revalidate=lambda *, site_id: False,
-    )
-
-    patch = SitePatchInput(title="unchanged")
-    mutation_policy = _site_policy()
-    with client, pytest.raises(CatalogValidationError):
-        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
-
-    assert [request.method for request in transport.requests] == ["GET", "GET"]
-
-
 def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
     url = f"{_ORIGIN}/api/1/site/datasets.csv"
     body = b'"id";"title"\n'

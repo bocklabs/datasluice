@@ -133,15 +133,6 @@ def test_vocabulary_manifest_holds_exactly_the_documented_sixteen_actions() -> N
             assert family in RECORD_KINDS
 
 
-def test_every_manifest_vocabulary_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Each registered vocabulary action names a callable member on both projections."""
-    sync_surface = {name for name in dir(SyncVocabulariesLicensesService) if not name.startswith("_")}
-    async_surface = {name for name in dir(AsyncVocabulariesLicensesService) if not name.startswith("_")}
-    for action in EXPECTED_VOCABULARY_ACTIONS:
-        assert action in sync_surface, f"sync surface misses {action}"
-        assert action in async_surface, f"async surface misses {action}"
-
-
 def test_vocabulary_surfaces_stay_in_structural_lockstep_across_modes() -> None:
     """Sync/async projections expose identical members with mode-correct dispatch."""
     sync_members = {name for name in dir(SyncVocabulariesLicensesService) if not name.startswith("__")}

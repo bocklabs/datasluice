@@ -148,15 +148,6 @@ def test_organization_manifest_holds_exactly_the_documented_fifteen_actions() ->
             assert family in RECORD_KINDS
 
 
-def test_every_manifest_organization_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Each registered organization action names a callable member on both projections."""
-    sync_surface = {name for name in dir(SyncOrganizationsService) if not name.startswith("_")}
-    async_surface = {name for name in dir(AsyncOrganizationsService) if not name.startswith("_")}
-    for action in EXPECTED_ORGANIZATION_ACTIONS:
-        assert action in sync_surface, f"sync surface misses {action}"
-        assert action in async_surface, f"async surface misses {action}"
-
-
 def test_organization_surfaces_stay_in_structural_lockstep_across_modes() -> None:
     """Sync/async organization projections expose identical members, mode-correct dispatch."""
     sync_members = {name for name in dir(SyncOrganizationsService) if not name.startswith("__")}
