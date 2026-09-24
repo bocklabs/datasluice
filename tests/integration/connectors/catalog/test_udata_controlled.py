@@ -73,6 +73,20 @@ if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://1
 
 ORIGIN = "http://127.0.0.1:5640"
 _USER_READ_MAX_BYTES = 131072
+_TOKEN_SAFE_FIELDS = frozenset(
+    {
+        "id",
+        "token_prefix",
+        "name",
+        "created_at",
+        "expires_at",
+        "revoked_at",
+        "kind",
+        "scopes",
+        "last_used_at",
+        "user_agents",
+    }
+)
 pytestmark = [
     pytest.mark.udata_controlled,
     pytest.mark.skipif(
@@ -288,9 +302,11 @@ def _assert_user_read_matches_raw(method: str, raw: object, typed: object) -> No
         raw_items = raw.get("data") if isinstance(raw, Mapping) else raw
         assert isinstance(raw_items, list)
         if typed and isinstance(typed[0], ApiTokenMetadata):
-            allowed = frozenset(typed[0].to_dict())
+            assert all(set(item.to_dict()) == _TOKEN_SAFE_FIELDS for item in typed)
             assert all(isinstance(item, Mapping) for item in raw_items)
-            safe_items = [{key: value for key, value in item.items() if key in allowed} for item in raw_items]
+            safe_items = [
+                {key: value for key, value in item.items() if key in _TOKEN_SAFE_FIELDS} for item in raw_items
+            ]
             typed_items = [
                 {key: value for key, value in item.to_dict().items() if key in safe_items[index]}
                 for index, item in enumerate(typed)
@@ -406,6 +422,7 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
         organizations: dict[str, str] = {}
         users: dict[tuple[str, str], tuple[str, str]] = {}
         token_ids: list[str] = []
+        cleanup_errors: list[str] = []
 
         async def user_call(user_token: str, name: str, *args: object) -> object:
             client = (
@@ -703,21 +720,47 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                     assert deleted_user.get("active") is False
         finally:
             for token_id in token_ids:
-                _direct_request(admin_token, "DELETE", f"/api/1/me/api_tokens/{token_id}/")
+                try:
+                    status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/me/api_tokens/{token_id}/")
+                    if status not in {204, 404, 410}:
+                        cleanup_errors.append(f"token deletion returned {status}")
+                except Exception as error:
+                    cleanup_errors.append(f"token deletion raised {type(error).__name__}")
             for user_id, _ in users.values():
-                _direct_request(
-                    admin_token,
-                    "DELETE",
-                    f"/api/1/users/{user_id}/?send_legal_notice=false&no_mail=true&delete_comments=false",
-                )
+                try:
+                    status, _, _ = _direct_request(
+                        admin_token,
+                        "DELETE",
+                        f"/api/1/users/{user_id}/?send_legal_notice=false&no_mail=true&delete_comments=false",
+                    )
+                    if status not in {204, 404, 410}:
+                        cleanup_errors.append(f"user deletion returned {status}")
+                    status, payload, _ = _direct_request(admin_token, "GET", f"/api/1/users/{user_id}/")
+                    if status == 200 and (not isinstance(payload, Mapping) or payload.get("active") is not False):
+                        cleanup_errors.append("user remains active after cleanup")
+                    elif status not in {200, 404, 410}:
+                        cleanup_errors.append(f"user cleanup verification returned {status}")
+                except Exception as error:
+                    cleanup_errors.append(f"user cleanup raised {type(error).__name__}")
             for org_id in organizations.values():
-                deleted_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/organizations/{org_id}/")
-                assert deleted_status in {204, 410}
+                try:
+                    deleted_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/organizations/{org_id}/")
+                    if deleted_status not in {204, 404, 410}:
+                        cleanup_errors.append(f"organization deletion returned {deleted_status}")
+                except Exception as error:
+                    cleanup_errors.append(f"organization deletion raised {type(error).__name__}")
             if isinstance(admin_client, AsyncUDataClient):
-                await admin_client.aclose()
+                try:
+                    await admin_client.aclose()
+                except Exception as error:
+                    cleanup_errors.append(f"client close raised {type(error).__name__}")
             else:
                 assert isinstance(admin_client, SyncUDataClient)
-                admin_client.close()
+                try:
+                    admin_client.close()
+                except Exception as error:
+                    cleanup_errors.append(f"client close raised {type(error).__name__}")
+            assert not cleanup_errors, "; ".join(cleanup_errors)
 
     asyncio.run(exercise(False))
     asyncio.run(exercise(True))
