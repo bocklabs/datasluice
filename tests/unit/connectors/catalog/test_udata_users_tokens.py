@@ -28,7 +28,7 @@ from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogUnavailableError, ForbiddenError
+from datasluice.errors.catalog import CatalogUnavailableError, CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 ORIGIN = "http://127.0.0.1:5640"
@@ -194,6 +194,55 @@ def test_user_wire_preserves_query_omission_and_body_presence() -> None:
     )
 
 
+def test_user_and_api_token_inputs_reject_invalid_documented_values() -> None:
+    with pytest.raises(ValueError, match="active must be a boolean"):
+        UserCreateInput("Ada", "Lovelace", "ada@example.org", fields={"active": "false"})
+    with pytest.raises(ValueError, match="roles must be a list"):
+        UserUpdateInput({"roles": "admin"})
+    with pytest.raises(ValueError, match="roles must be a list"):
+        UserUpdateInput({"roles": [{"id": "admin"}]})
+    with pytest.raises(ValueError, match="255 characters"):
+        ApiTokenCreateInput(name="x" * 256)
+    with pytest.raises(ValueError, match="in the future"):
+        ApiTokenCreateInput(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+
+
+def test_api_token_metadata_preserves_safe_stock_fields() -> None:
+    token = wire.parse_token(
+        {
+            "id": "token-id",
+            "token_prefix": "udata_abcd",
+            "name": "evidence",
+            "created_at": "2026-09-24T00:00:00Z",
+            "expires_at": None,
+            "revoked_at": None,
+            "kind": "api_key",
+            "scopes": ["admin"],
+            "last_used_at": "2026-09-24T01:00:00Z",
+            "user_agents": ["controlled-test"],
+            "token_hash": "excluded-hash",
+        },
+        operation=wire.OPERATIONS["list_api_tokens"],
+    )
+    assert token.to_dict() == {
+        "id": "token-id",
+        "token_prefix": "udata_abcd",
+        "name": "evidence",
+        "created_at": "2026-09-24T00:00:00Z",
+        "expires_at": None,
+        "revoked_at": None,
+        "kind": "api_key",
+        "scopes": ["admin"],
+        "last_used_at": "2026-09-24T01:00:00Z",
+        "user_agents": ["controlled-test"],
+    }
+    with pytest.raises(CatalogValidationError):
+        wire.parse_token(
+            {"id": "token-id", "token_prefix": "udata_abcd", "scopes": "admin"},
+            operation=wire.OPERATIONS["list_api_tokens"],
+        )
+
+
 def test_one_time_token_cannot_enter_ordinary_retained_sinks() -> None:
     from datasluice.connectors.catalog.udata.models.users import ApiTokenCreationResult, ApiTokenMetadata
 
@@ -301,6 +350,27 @@ def test_user_admin_mutations_deny_non_admin_before_dispatch() -> None:
     assert delete_receipt.target.value == "user-id"
     assert create_receipt.outcome == "rejected"
     assert delete_receipt.outcome == "rejected"
+
+
+def test_sync_interruption_after_dispatch_retains_ambiguous_target_receipt() -> None:
+    class _InterruptedRouter(_Router):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.method == "POST" and request.url.endswith("/api/1/me/api_tokens/"):
+                self.requests.append(request)
+                raise KeyboardInterrupt
+            return super().send(request)
+
+    router = _InterruptedRouter(_routes())
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with client, pytest.raises(KeyboardInterrupt) as raised:
+        client.users_tokens.create_api_token(
+            ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
+        )
+    receipt = raised.value.__dict__["mutation_receipt"]
+    assert isinstance(receipt, MutationReceipt)
+    assert receipt.outcome == "ambiguous"
+    assert receipt.target.value == "new-api-token"
+    assert router.requests[-1].method == "POST"
 
 
 def test_async_token_create_matches_sync_receipt_and_secret_boundary() -> None:

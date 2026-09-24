@@ -2762,7 +2762,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         """Expose the injected caller-owned credential resolver or provider."""
         return self._credentials
 
-    def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
+    def _emit(self, owning_id: OperationId | str, outcome: str, **metadata: object) -> None:
         self._emitter.record(
             operation_id=str(owning_id),
             platform=PLATFORM.value,

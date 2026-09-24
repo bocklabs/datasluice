@@ -209,7 +209,8 @@ def parse_token(payload: object, *, operation: str) -> ApiTokenMetadata:
             platform=PLATFORM.value,
             safe_action=_TOKEN_SCHEMA_ACTION,
         )
-    optional = {key: payload.get(key) for key in ("name", "created_at", "expires_at", "revoked_at")}
+    string_fields = ("name", "created_at", "expires_at", "revoked_at", "kind", "last_used_at")
+    optional = {key: payload.get(key) for key in string_fields}
     if any(value is not None and not isinstance(value, str) for value in optional.values()):
         raise CatalogValidationError(
             "The uData token metadata has an invalid field.",
@@ -217,7 +218,20 @@ def parse_token(payload: object, *, operation: str) -> ApiTokenMetadata:
             platform=PLATFORM.value,
             safe_action=_TOKEN_SCHEMA_ACTION,
         )
-    return ApiTokenMetadata(id=token_id, token_prefix=prefix, **optional)
+    list_fields: dict[str, tuple[str, ...] | None] = {}
+    for key in ("scopes", "user_agents"):
+        value = payload.get(key)
+        if value is not None and (
+            not isinstance(value, list) or not all(isinstance(item, str) and item for item in value)
+        ):
+            raise CatalogValidationError(
+                "The uData token metadata has an invalid field.",
+                operation=operation,
+                platform=PLATFORM.value,
+                safe_action=_TOKEN_SCHEMA_ACTION,
+            )
+        list_fields[key] = tuple(value) if isinstance(value, list) else None
+    return ApiTokenMetadata(id=token_id, token_prefix=prefix, **optional, **list_fields)
 
 
 def parse_token_list(payload: object, *, operation: str) -> tuple[ApiTokenMetadata, ...]:

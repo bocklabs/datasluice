@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
@@ -32,6 +32,21 @@ def _fields(value: Mapping[str, object], name: str) -> Mapping[str, object]:
     if not isinstance(frozen, Mapping):
         raise ValueError(f"uData user {name} must be a JSON mapping.")
     return frozen
+
+
+def _validate_user_fields(fields: Mapping[str, object]) -> None:
+    for name in ("about", "website", "prefered_language"):
+        value = fields.get(name)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"uData user {name} must be a string or null.")
+    if "active" in fields and type(fields["active"]) is not bool:
+        raise ValueError("uData user active must be a boolean.")
+    if "roles" in fields and (
+        not isinstance(fields["roles"], tuple) or not all(isinstance(role, str) and role for role in fields["roles"])
+    ):
+        raise ValueError("uData user roles must be a list of non-empty strings.")
+    if "extras" in fields and fields["extras"] is not None and not isinstance(fields["extras"], Mapping):
+        raise ValueError("uData user extras must be a mapping or null.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +107,7 @@ class UserCreateInput:
             object.__setattr__(self, "fields", _fields(self.fields, "create fields"))
         if {"first_name", "last_name", "email"} & set(self.fields) or set(self.fields) - _USER_FIELDS:
             raise ValueError("uData user create fields must use documented writable fields.")
+        _validate_user_fields(self.fields)
 
     def payload(self) -> dict[str, object]:
         return {
@@ -112,6 +128,7 @@ class UserUpdateInput:
         object.__setattr__(self, "fields", _fields(self.fields, "update fields"))
         if set(self.fields) - _USER_FIELDS:
             raise ValueError("uData user updates must use documented writable fields.")
+        _validate_user_fields(self.fields)
 
     def payload(self) -> dict[str, object]:
         return {key: _thaw_json(value) for key, value in self.fields.items()}
@@ -140,9 +157,13 @@ class ApiTokenCreateInput:
 
     def __post_init__(self) -> None:
         _text(self.name, "token name", optional=True)
+        if self.name is not None and len(self.name) > 255:
+            raise ValueError("uData token name must not exceed 255 characters.")
         if self.expires_at is not None:
             if not isinstance(self.expires_at, datetime) or self.expires_at.tzinfo is None:
                 raise ValueError("uData token expiry must be a timezone-aware datetime.")
+            if self.expires_at <= datetime.now(UTC):
+                raise ValueError("uData token expiry must be in the future.")
         if self.scopes is not None and (not isinstance(self.scopes, tuple) or self.scopes != ("admin",)):
             raise ValueError("The pinned uData token scope is admin.")
 
@@ -167,10 +188,24 @@ class ApiTokenMetadata:
     created_at: str | None = None
     expires_at: str | None = None
     revoked_at: str | None = None
+    kind: str | None = None
+    scopes: tuple[str, ...] | None = None
+    last_used_at: str | None = None
+    user_agents: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         _text(self.id, "token id")
         _text(self.token_prefix, "token prefix")
+        for name in ("name", "created_at", "expires_at", "revoked_at", "kind", "last_used_at"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"uData token {name} must be a string or null.")
+        for name in ("scopes", "user_agents"):
+            values = getattr(self, name)
+            if values is not None and (
+                not isinstance(values, tuple) or not all(isinstance(value, str) and value for value in values)
+            ):
+                raise ValueError(f"uData token {name} must be a tuple of non-empty strings or null.")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -180,6 +215,10 @@ class ApiTokenMetadata:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "revoked_at": self.revoked_at,
+            "kind": self.kind,
+            "scopes": list(self.scopes) if self.scopes is not None else None,
+            "last_used_at": self.last_used_at,
+            "user_agents": list(self.user_agents) if self.user_agents is not None else None,
         }
 
 

@@ -6,9 +6,11 @@ import asyncio
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, cast
 
+from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenCreationResult,
+    ApiTokenMetadata,
     UserAvatarInput,
     UserCreateInput,
     UserDeleteOptions,
@@ -22,7 +24,7 @@ from datasluice.connectors.catalog.udata.wire import users as wire
 from datasluice.connectors.catalog.udata.wire.organizations import parse_page
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
@@ -43,12 +45,11 @@ if TYPE_CHECKING:
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None
 type Result = UserMutationResult | ApiTokenCreationResult
-type Parser = Callable[[object, str, object], Result]
+type ReadParser[T] = Callable[[str, object], T]
 
 _PUBLIC = frozenset({"get_user", "get_user_contact_point", "suggest_users", "user_roles", "list_user_followers"})
 _ADMIN = frozenset({"list_users", "create_user", "user_avatar", "update_user", "delete_user", "rotate_user_password"})
 _DESTRUCTIVE = frozenset({"delete_me", "revoke_api_token", "delete_user", "unfollow_user"})
-_USER_RECORD = frozenset({"get_me", "get_user"})
 _MAPPING_PAGE = {"my_org_topics": "topic", "list_user_followers": "follow", "get_user_contact_point": "contact-point"}
 _MAPPING_LIST = {
     "my_reuses": "reuse",
@@ -63,23 +64,32 @@ _MAPPING_LIST = {
 }
 
 
-def _shape_read(name: str, payload: object) -> object:
+def _parse_user_read(name: str, payload: object) -> NativeRecord:
     operation = wire.OPERATIONS[name]
-    if name in _USER_RECORD:
-        return wire.parse_user(payload, operation=operation)
+    return wire.parse_user(payload, operation=operation)
+
+
+def _parse_user_page(name: str, payload: object) -> UDataPageEnvelope:
+    operation = wire.OPERATIONS[name]
     if name == "list_users":
         return wire.parse_user_page(payload, operation=operation)
-    if name in _MAPPING_PAGE:
-        return parse_page(payload, operation=operation, kind=ResourceKind(_MAPPING_PAGE[name]))
-    if name in _MAPPING_LIST:
-        return wire.parse_mapping_list(payload, operation=operation, kind=_MAPPING_LIST[name])
-    if name == "list_api_tokens":
-        return wire.parse_token_list(payload, operation=operation)
-    if name == "my_metrics" and isinstance(payload, Mapping):
+    return parse_page(payload, operation=operation, kind=ResourceKind(_MAPPING_PAGE[name]))
+
+
+def _parse_mapping_read(name: str, payload: object) -> tuple[MappingRecord, ...]:
+    return wire.parse_mapping_list(payload, operation=wire.OPERATIONS[name], kind=_MAPPING_LIST[name])
+
+
+def _parse_token_list(name: str, payload: object) -> tuple[ApiTokenMetadata, ...]:
+    return wire.parse_token_list(payload, operation=wire.OPERATIONS[name])
+
+
+def _parse_metrics(name: str, payload: object) -> MappingRecord:
+    if isinstance(payload, Mapping):
         return MappingRecord(payload=payload)
     raise CatalogValidationError(
         "The uData user response has an undocumented shape.",
-        operation=operation,
+        operation=wire.OPERATIONS[name],
         platform="udata",
         safe_action="Verify the response against the pinned user schema.",
     )
@@ -139,11 +149,12 @@ def _error_receipt(
     error: BaseException, name: str, target: str, policy: Policy, response: RuntimeResponse | None
 ) -> None:
     operation = wire.OPERATIONS[name]
+    outcome = "ambiguous" if isinstance(error, KeyboardInterrupt) else _mutation_outcome(error, response)
     receipt = _receipt(
         operation,
         target,
         policy,
-        _mutation_outcome(error, response),
+        outcome,
         _error_status(error, response),
         name,
         kind=ResourceKind("api-token" if "api_token" in name else "user"),
@@ -175,30 +186,38 @@ class SyncUsersTokensService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    def _read(
+    def _read[T](
         self,
         name: str,
+        decoder: ReadParser[T],
         *,
         identifier: str | None = None,
         query: object = None,
         permissions: Permissions | None = None,
-    ) -> object:
+    ) -> T:
         operation = wire.OPERATIONS[name]
-        credential = None
-        if name not in _PUBLIC:
-            credential = _require_mutation_permission(
-                self._client._resolved_credential(), operation, permissions, admin=name in _ADMIN
+        try:
+            credential = None
+            if name not in _PUBLIC:
+                credential = _require_mutation_permission(
+                    self._client._resolved_credential(), operation, permissions, admin=name in _ADMIN
+                )
+            method, path, headers, _ = wire.build_request(name, identifier=identifier, query=query)
+            _, payload, _ = self._client._dataset_call(
+                method=method,
+                path=path,
+                headers=headers,
+                owning_operation=operation,
+                permissions=permissions,
+                credential=credential,
+                emit_success=False,
             )
-        method, path, headers, _ = wire.build_request(name, identifier=identifier, query=query)
-        _, payload, _ = self._client._dataset_call(
-            method=method,
-            path=path,
-            headers=headers,
-            owning_operation=operation,
-            permissions=permissions,
-            credential=credential,
-        )
-        return _shape_read(name, payload)
+            result = decoder(name, payload)
+        except (Exception, KeyboardInterrupt):
+            self._client._emit(operation, "failed")
+            raise
+        self._client._emit(operation, "succeeded")
+        return result
 
     def _write(
         self,
@@ -236,6 +255,7 @@ class SyncUsersTokensService:
                 permissions=permissions,
                 credential=credential,
                 idempotency_policy=mutation_policy.idempotency if mutation_policy else None,
+                emit_success=False,
                 files=(upload.part(),) if upload else (),
             )
             if name == "create_api_token":
@@ -250,64 +270,68 @@ class SyncUsersTokensService:
                 kind=ResourceKind("api-token" if "api_token" in name else "user"),
             )
             result = _shape_mutation(payload, receipt, name)
+            self._client._emit(operation, "succeeded")
             return result
-        except Exception as error:
+        except (Exception, KeyboardInterrupt) as error:
             primary_error = error
+            self._client._emit(operation, "failed")
             _error_receipt(error, name, target, mutation_policy, response)
             raise
         finally:
             _close_avatar(upload, result, primary_error)
 
-    def get_me(self, permissions: Permissions) -> object:
-        return self._read("get_me", permissions=permissions)
+    def get_me(self, permissions: Permissions) -> NativeRecord:
+        return self._read("get_me", _parse_user_read, permissions=permissions)
 
-    def my_reuses(self, permissions: Permissions) -> object:
-        return self._read("my_reuses", permissions=permissions)
+    def my_reuses(self, permissions: Permissions) -> tuple[MappingRecord, ...]:
+        return self._read("my_reuses", _parse_mapping_read, permissions=permissions)
 
-    def my_datasets(self, permissions: Permissions) -> object:
-        return self._read("my_datasets", permissions=permissions)
+    def my_datasets(self, permissions: Permissions) -> tuple[MappingRecord, ...]:
+        return self._read("my_datasets", _parse_mapping_read, permissions=permissions)
 
-    def my_metrics(self, permissions: Permissions) -> object:
-        return self._read("my_metrics", permissions=permissions)
+    def my_metrics(self, permissions: Permissions) -> MappingRecord:
+        return self._read("my_metrics", _parse_metrics, permissions=permissions)
 
-    def my_org_datasets(self, permissions: Permissions, q: str | None = None) -> object:
-        return self._read("my_org_datasets", permissions=permissions, query=q)
+    def my_org_datasets(self, permissions: Permissions, q: str | None = None) -> tuple[MappingRecord, ...]:
+        return self._read("my_org_datasets", _parse_mapping_read, permissions=permissions, query=q)
 
-    def my_org_community_resources(self, permissions: Permissions, q: str | None = None) -> object:
-        return self._read("my_org_community_resources", permissions=permissions, query=q)
+    def my_org_community_resources(self, permissions: Permissions, q: str | None = None) -> tuple[MappingRecord, ...]:
+        return self._read("my_org_community_resources", _parse_mapping_read, permissions=permissions, query=q)
 
-    def my_org_reuses(self, permissions: Permissions, q: str | None = None) -> object:
-        return self._read("my_org_reuses", permissions=permissions, query=q)
+    def my_org_reuses(self, permissions: Permissions, q: str | None = None) -> tuple[MappingRecord, ...]:
+        return self._read("my_org_reuses", _parse_mapping_read, permissions=permissions, query=q)
 
-    def my_org_discussions(self, permissions: Permissions, q: str | None = None) -> object:
-        return self._read("my_org_discussions", permissions=permissions, query=q)
+    def my_org_discussions(self, permissions: Permissions, q: str | None = None) -> tuple[MappingRecord, ...]:
+        return self._read("my_org_discussions", _parse_mapping_read, permissions=permissions, query=q)
 
-    def list_api_tokens(self, permissions: Permissions) -> object:
-        return self._read("list_api_tokens", permissions=permissions)
+    def list_api_tokens(self, permissions: Permissions) -> tuple[ApiTokenMetadata, ...]:
+        return self._read("list_api_tokens", _parse_token_list, permissions=permissions)
 
-    def list_org_invitations(self, permissions: Permissions) -> object:
-        return self._read("list_org_invitations", permissions=permissions)
+    def list_org_invitations(self, permissions: Permissions) -> tuple[MappingRecord, ...]:
+        return self._read("list_org_invitations", _parse_mapping_read, permissions=permissions)
 
-    def list_users(self, permissions: Permissions, query: UserListQuery | None = None) -> object:
-        return self._read("list_users", permissions=permissions, query=query or UserListQuery())
+    def list_users(self, permissions: Permissions, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return self._read("list_users", _parse_user_page, permissions=permissions, query=query or UserListQuery())
 
-    def get_user(self, user_id: str) -> object:
-        return self._read("get_user", identifier=user_id)
+    def get_user(self, user_id: str) -> NativeRecord:
+        return self._read("get_user", _parse_user_read, identifier=user_id)
 
-    def get_user_contact_point(self, user_id: str, query: UserListQuery | None = None) -> object:
-        return self._read("get_user_contact_point", identifier=user_id, query=query or UserListQuery())
+    def get_user_contact_point(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return self._read(
+            "get_user_contact_point", _parse_user_page, identifier=user_id, query=query or UserListQuery()
+        )
 
-    def suggest_users(self, query: UserSuggestQuery) -> object:
-        return self._read("suggest_users", query=query)
+    def suggest_users(self, query: UserSuggestQuery) -> tuple[MappingRecord, ...]:
+        return self._read("suggest_users", _parse_mapping_read, query=query)
 
-    def user_roles(self) -> object:
-        return self._read("user_roles")
+    def user_roles(self) -> tuple[MappingRecord, ...]:
+        return self._read("user_roles", _parse_mapping_read)
 
-    def my_org_topics(self, permissions: Permissions, query: UserListQuery | None = None) -> object:
-        return self._read("my_org_topics", permissions=permissions, query=query or UserListQuery())
+    def my_org_topics(self, permissions: Permissions, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return self._read("my_org_topics", _parse_user_page, permissions=permissions, query=query or UserListQuery())
 
-    def list_user_followers(self, user_id: str, query: UserListQuery | None = None) -> object:
-        return self._read("list_user_followers", identifier=user_id, query=query or UserListQuery())
+    def list_user_followers(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return self._read("list_user_followers", _parse_user_page, identifier=user_id, query=query or UserListQuery())
 
     def update_me(
         self, client_input: UserUpdateInput, permissions: Permissions, mutation_policy: Policy = None
@@ -465,30 +489,38 @@ class AsyncUsersTokensService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    async def _read(
+    async def _read[T](
         self,
         name: str,
+        decoder: ReadParser[T],
         *,
         identifier: str | None = None,
         query: object = None,
         permissions: Permissions | None = None,
-    ) -> object:
+    ) -> T:
         operation = wire.OPERATIONS[name]
-        credential = None
-        if name not in _PUBLIC:
-            credential = _require_mutation_permission(
-                await self._client._resolved_credential_async(), operation, permissions, admin=name in _ADMIN
+        try:
+            credential = None
+            if name not in _PUBLIC:
+                credential = _require_mutation_permission(
+                    await self._client._resolved_credential_async(), operation, permissions, admin=name in _ADMIN
+                )
+            method, path, headers, _ = wire.build_request(name, identifier=identifier, query=query)
+            _, payload, _ = await self._client._dataset_call_async(
+                method=method,
+                path=path,
+                headers=headers,
+                owning_operation=operation,
+                permissions=permissions,
+                credential=credential,
+                emit_success=False,
             )
-        method, path, headers, _ = wire.build_request(name, identifier=identifier, query=query)
-        _, payload, _ = await self._client._dataset_call_async(
-            method=method,
-            path=path,
-            headers=headers,
-            owning_operation=operation,
-            permissions=permissions,
-            credential=credential,
-        )
-        return _shape_read(name, payload)
+            result = decoder(name, payload)
+        except (Exception, asyncio.CancelledError):
+            self._client._emit(operation, "failed")
+            raise
+        self._client._emit(operation, "succeeded")
+        return result
 
     async def _write(
         self,
@@ -526,6 +558,7 @@ class AsyncUsersTokensService:
                 permissions=permissions,
                 credential=credential,
                 idempotency_policy=mutation_policy.idempotency if mutation_policy else None,
+                emit_success=False,
                 files=(upload.part(),) if upload else (),
             )
             if name == "create_api_token":
@@ -540,64 +573,74 @@ class AsyncUsersTokensService:
                 kind=ResourceKind("api-token" if "api_token" in name else "user"),
             )
             result = _shape_mutation(payload, receipt, name)
+            self._client._emit(operation, "succeeded")
             return result
         except (Exception, asyncio.CancelledError) as error:
             primary_error = error
+            self._client._emit(operation, "failed")
             _error_receipt(error, name, target, mutation_policy, response)
             raise
         finally:
             _close_avatar(upload, result, primary_error)
 
-    async def get_me(self, permissions: Permissions) -> object:
-        return await self._read("get_me", permissions=permissions)
+    async def get_me(self, permissions: Permissions) -> NativeRecord:
+        return await self._read("get_me", _parse_user_read, permissions=permissions)
 
-    async def my_reuses(self, permissions: Permissions) -> object:
-        return await self._read("my_reuses", permissions=permissions)
+    async def my_reuses(self, permissions: Permissions) -> tuple[MappingRecord, ...]:
+        return await self._read("my_reuses", _parse_mapping_read, permissions=permissions)
 
-    async def my_datasets(self, permissions: Permissions) -> object:
-        return await self._read("my_datasets", permissions=permissions)
+    async def my_datasets(self, permissions: Permissions) -> tuple[MappingRecord, ...]:
+        return await self._read("my_datasets", _parse_mapping_read, permissions=permissions)
 
-    async def my_metrics(self, permissions: Permissions) -> object:
-        return await self._read("my_metrics", permissions=permissions)
+    async def my_metrics(self, permissions: Permissions) -> MappingRecord:
+        return await self._read("my_metrics", _parse_metrics, permissions=permissions)
 
-    async def my_org_datasets(self, permissions: Permissions, q: str | None = None) -> object:
-        return await self._read("my_org_datasets", permissions=permissions, query=q)
+    async def my_org_datasets(self, permissions: Permissions, q: str | None = None) -> tuple[MappingRecord, ...]:
+        return await self._read("my_org_datasets", _parse_mapping_read, permissions=permissions, query=q)
 
-    async def my_org_community_resources(self, permissions: Permissions, q: str | None = None) -> object:
-        return await self._read("my_org_community_resources", permissions=permissions, query=q)
+    async def my_org_community_resources(
+        self, permissions: Permissions, q: str | None = None
+    ) -> tuple[MappingRecord, ...]:
+        return await self._read("my_org_community_resources", _parse_mapping_read, permissions=permissions, query=q)
 
-    async def my_org_reuses(self, permissions: Permissions, q: str | None = None) -> object:
-        return await self._read("my_org_reuses", permissions=permissions, query=q)
+    async def my_org_reuses(self, permissions: Permissions, q: str | None = None) -> tuple[MappingRecord, ...]:
+        return await self._read("my_org_reuses", _parse_mapping_read, permissions=permissions, query=q)
 
-    async def my_org_discussions(self, permissions: Permissions, q: str | None = None) -> object:
-        return await self._read("my_org_discussions", permissions=permissions, query=q)
+    async def my_org_discussions(self, permissions: Permissions, q: str | None = None) -> tuple[MappingRecord, ...]:
+        return await self._read("my_org_discussions", _parse_mapping_read, permissions=permissions, query=q)
 
-    async def list_api_tokens(self, permissions: Permissions) -> object:
-        return await self._read("list_api_tokens", permissions=permissions)
+    async def list_api_tokens(self, permissions: Permissions) -> tuple[ApiTokenMetadata, ...]:
+        return await self._read("list_api_tokens", _parse_token_list, permissions=permissions)
 
-    async def list_org_invitations(self, permissions: Permissions) -> object:
-        return await self._read("list_org_invitations", permissions=permissions)
+    async def list_org_invitations(self, permissions: Permissions) -> tuple[MappingRecord, ...]:
+        return await self._read("list_org_invitations", _parse_mapping_read, permissions=permissions)
 
-    async def list_users(self, permissions: Permissions, query: UserListQuery | None = None) -> object:
-        return await self._read("list_users", permissions=permissions, query=query or UserListQuery())
+    async def list_users(self, permissions: Permissions, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return await self._read("list_users", _parse_user_page, permissions=permissions, query=query or UserListQuery())
 
-    async def get_user(self, user_id: str) -> object:
-        return await self._read("get_user", identifier=user_id)
+    async def get_user(self, user_id: str) -> NativeRecord:
+        return await self._read("get_user", _parse_user_read, identifier=user_id)
 
-    async def get_user_contact_point(self, user_id: str, query: UserListQuery | None = None) -> object:
-        return await self._read("get_user_contact_point", identifier=user_id, query=query or UserListQuery())
+    async def get_user_contact_point(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return await self._read(
+            "get_user_contact_point", _parse_user_page, identifier=user_id, query=query or UserListQuery()
+        )
 
-    async def suggest_users(self, query: UserSuggestQuery) -> object:
-        return await self._read("suggest_users", query=query)
+    async def suggest_users(self, query: UserSuggestQuery) -> tuple[MappingRecord, ...]:
+        return await self._read("suggest_users", _parse_mapping_read, query=query)
 
-    async def user_roles(self) -> object:
-        return await self._read("user_roles")
+    async def user_roles(self) -> tuple[MappingRecord, ...]:
+        return await self._read("user_roles", _parse_mapping_read)
 
-    async def my_org_topics(self, permissions: Permissions, query: UserListQuery | None = None) -> object:
-        return await self._read("my_org_topics", permissions=permissions, query=query or UserListQuery())
+    async def my_org_topics(self, permissions: Permissions, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return await self._read(
+            "my_org_topics", _parse_user_page, permissions=permissions, query=query or UserListQuery()
+        )
 
-    async def list_user_followers(self, user_id: str, query: UserListQuery | None = None) -> object:
-        return await self._read("list_user_followers", identifier=user_id, query=query or UserListQuery())
+    async def list_user_followers(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope:
+        return await self._read(
+            "list_user_followers", _parse_user_page, identifier=user_id, query=query or UserListQuery()
+        )
 
     async def update_me(
         self, client_input: UserUpdateInput, permissions: Permissions, mutation_policy: Policy = None

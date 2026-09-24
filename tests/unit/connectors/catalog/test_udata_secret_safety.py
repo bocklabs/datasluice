@@ -71,7 +71,14 @@ def test_user_family_http_failures_keep_their_safe_error_type(status: int, error
 def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> None:
     plaintext = secrets.token_urlsafe(36)
     router = _Router(_routes(("POST", "/api/1/me/api_tokens/", 201, {"token": plaintext})))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    events = ListSink()
+    client = SyncUDataClient(
+        router,
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=CREDENTIAL,
+        emitter=EventEmitter(sinks=(events,)),
+    )
     with client, pytest.raises(CatalogValidationError) as raised:
         client.users_tokens.create_api_token(
             ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
@@ -85,6 +92,10 @@ def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> Non
             if plaintext in repr(traceback.tb_frame.f_locals):
                 pytest.fail("One-time token entered a connector failure frame.")
         traceback = traceback.tb_next
+    operation_events = [
+        event.outcome for event in events.events if event.operation_id == "udata/api-v1.create-api-token"
+    ]
+    assert operation_events == ["failed"]
 
 
 def test_created_token_never_enters_events_or_logs(caplog: pytest.LogCaptureFixture) -> None:
@@ -106,6 +117,10 @@ def test_created_token_never_enters_events_or_logs(caplog: pytest.LogCaptureFixt
         result = client.users_tokens.create_api_token(
             ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
         )
+    operation_events = [
+        event.outcome for event in events.events if event.operation_id == "udata/api-v1.create-api-token"
+    ]
+    assert operation_events == ["succeeded"]
     if plaintext in repr(events.events) or plaintext in caplog.text or plaintext in repr(result.receipt):
         pytest.fail("A one-time token entered an event, log, or receipt.")
     if not hmac.compare_digest(result.secret.reveal_once(), plaintext):
