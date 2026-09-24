@@ -101,6 +101,7 @@
       "test_controlled_user_reads_match_raw_routes_in_both_modes",
       "test_controlled_user_mutations_match_raw_routes_in_both_modes",
       "test_disposable_token_id_is_registered_before_token_validation",
+      "test_created_response_keeps_cleanup_id_when_status_assertion_fails",
       "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
       "test_wheel_import_proves_the_tracer_path_from_installed_content"
     ],
@@ -161,8 +162,8 @@
     "cleanup": "disposable-users-soft-deleted-management-and-harness-tokens-revoked-organizations-deleted",
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
-    "implementation_sha": "191ffc1fbcba8aed703b69a459ade9b8b70f1025",
-    "controlled_test_sha256": "56e54eb055035f2a45c3e0115fb59ea5180f92f098553a012bc31c273f5a6177",
+    "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
+    "controlled_test_sha256": "b1505d293ee94e536d82f6c448242b975d467aafb7fd105d36d86d8303319d6d",
     "wheel_test_sha256": "dc38abd10c98c72a44b60b61293d7fef118e0f6610095533e95145bbf8340c88",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",

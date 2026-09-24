@@ -152,6 +152,18 @@ def _direct_request(
         return status, payload, {key.lower(): value for key, value in response.headers.items()}
 
 
+def _assert_created_response(status: int, payload: object, cleanup_ids: list[str]) -> tuple[dict[str, object], str]:
+    identifier = payload.get("id") if isinstance(payload, dict) else None
+    if isinstance(identifier, str) and identifier:
+        cleanup_ids.append(identifier)
+    if isinstance(payload, dict):
+        payload.pop("token", None)
+    assert status == 201, "Controlled create response returned an unexpected status."
+    assert isinstance(payload, dict), "Controlled create response was not an object."
+    assert isinstance(identifier, str) and identifier, "Controlled create response omitted its ID."
+    return payload, identifier
+
+
 def _disposable_user_token(user_id: str, cleanup_ids: list[str]) -> tuple[str, str]:
     program = """
 import sys
@@ -219,6 +231,26 @@ def test_disposable_token_id_is_registered_before_token_validation(monkeypatch: 
     with pytest.raises(AssertionError, match="Disposable user token generation failed"):
         _disposable_user_token("user-id", cleanup_ids)
     assert cleanup_ids == ["token-id"]
+
+
+@pytest.mark.parametrize(
+    ("created_id", "kind"),
+    [
+        pytest.param("organization-id", "organization", id="raw-organization"),
+        pytest.param("token-id", "management-token", id="raw-management-token"),
+    ],
+)
+def test_created_response_keeps_cleanup_id_when_status_assertion_fails(created_id: str, kind: str) -> None:
+    cleanup_ids: list[str] = []
+    payload: dict[str, object] = {"id": created_id}
+    if kind == "management-token":
+        payload["token"] = "temporary"
+
+    with pytest.raises(AssertionError, match="unexpected status"):
+        _assert_created_response(500, payload, cleanup_ids)
+
+    assert cleanup_ids == [created_id]
+    assert "token" not in payload
 
 
 def _controlled_user_state(user_ids: tuple[str, ...]) -> dict[str, dict[str, bool]]:
@@ -533,6 +565,7 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
             else create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=admin_credential))
         )
         organizations: dict[str, str] = {}
+        organization_cleanup_ids: list[str] = []
         users: dict[tuple[str, str], tuple[str, str]] = {}
         created_user_ids: list[str] = []
         token_ids: list[str] = []
@@ -568,10 +601,7 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 "/api/1/organizations/",
                 body={"name": raw_org_name, "description": "Disposable user invitation evidence"},
             )
-            assert raw_org_status == 201
-            assert isinstance(raw_org, Mapping)
-            raw_org_id = raw_org["id"]
-            assert isinstance(raw_org_id, str)
+            raw_org, raw_org_id = _assert_created_response(raw_org_status, raw_org, organization_cleanup_ids)
             organizations["raw"] = raw_org_id
             typed_org = await invoke(
                 admin_client.organizations_memberships,
@@ -580,9 +610,17 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 admin_permissions,
                 policy("create_organization", typed_org_name),
             )
+            typed_org_id = (
+                typed_org.record.id.value
+                if isinstance(typed_org, OrganizationMutationResult) and typed_org.record is not None
+                else None
+            )
+            if isinstance(typed_org_id, str):
+                organization_cleanup_ids.append(typed_org_id)
             assert isinstance(typed_org, OrganizationMutationResult)
             assert typed_org.record is not None
-            organizations["typed"] = typed_org.record.id.value
+            assert isinstance(typed_org_id, str)
+            organizations["typed"] = typed_org_id
             assert typed_org.receipt.audit_metadata["status_code"] == raw_org_status
 
             for decision in ("accept", "refuse"):
@@ -753,12 +791,7 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
             raw_status, raw_token, _ = _direct_request(
                 admin_token, "POST", "/api/1/me/api_tokens/", body={"name": "raw controlled"}
             )
-            assert raw_status == 201
-            assert isinstance(raw_token, dict)
-            raw_token_id = raw_token.get("id")
-            assert isinstance(raw_token_id, str)
-            raw_token.pop("token", None)
-            token_ids.append(raw_token_id)
+            raw_token, raw_token_id = _assert_created_response(raw_status, raw_token, token_ids)
             typed_token = await invoke(
                 admin_client.users_tokens,
                 "create_api_token",
@@ -993,7 +1026,7 @@ with app.app_context():
                         cleanup_errors.append(f"user cleanup verification returned {status}")
                 except Exception as error:
                     cleanup_errors.append(f"user cleanup raised {type(error).__name__}")
-            for org_id in organizations.values():
+            for org_id in organization_cleanup_ids:
                 try:
                     deleted_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/organizations/{org_id}/")
                     if deleted_status not in {204, 404, 410}:
