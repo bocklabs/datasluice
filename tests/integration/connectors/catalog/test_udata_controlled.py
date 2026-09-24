@@ -152,9 +152,10 @@ def _direct_request(
         return status, payload, {key.lower(): value for key, value in response.headers.items()}
 
 
-def _disposable_user_token(user_id: str) -> str:
+def _disposable_user_token(user_id: str) -> tuple[str, str]:
     program = """
 import sys
+import json
 from udata.app import create_app, standalone
 from udata.models import User
 from udata.core.api_token.models import ApiToken
@@ -162,8 +163,8 @@ app = standalone(create_app())
 with app.app_context():
     user = User.objects(id=sys.argv[1]).first()
     assert user is not None
-    _, token = ApiToken.generate(user, name="controlled-user-route")
-    print(token)
+    record, token = ApiToken.generate(user, name="controlled-user-route")
+    print(json.dumps({"id": str(record.id), "token": token}))
 """
     issued = subprocess.run(
         [
@@ -185,10 +186,74 @@ with app.app_context():
         text=True,
         check=False,
     )
-    token = issued.stdout.strip()
-    if issued.returncode or not token.startswith("udata_") or "\n" in token:
+    try:
+        issued_token = json.loads(issued.stdout)
+    except ValueError:
+        issued_token = None
+    token_id = issued_token.get("id") if isinstance(issued_token, Mapping) else None
+    token = issued_token.get("token") if isinstance(issued_token, Mapping) else None
+    if (
+        issued.returncode
+        or not isinstance(token_id, str)
+        or not token_id
+        or not isinstance(token, str)
+        or not token.startswith("udata_")
+    ):
         raise AssertionError("Disposable user token generation failed.")
-    return token
+    return token_id, token
+
+
+def _controlled_user_state(user_ids: tuple[str, ...]) -> dict[str, dict[str, bool]]:
+    program = """
+import json
+import sys
+from udata.app import create_app, standalone
+from udata.models import User
+app = standalone(create_app())
+with app.app_context():
+    state = {}
+    for user_id in sys.argv[1:]:
+        user = User.objects(id=user_id).first()
+        assert user is not None
+        state[user_id] = {
+            "avatar_present": bool(user.avatar),
+            "password_rotation_requested": user.password_rotation_demanded is not None,
+        }
+    print(json.dumps(state))
+"""
+    checked = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            "dev/udata-evidence/.env",
+            "-f",
+            "dev/udata-evidence/compose.yaml",
+            "exec",
+            "-T",
+            "udata",
+            "python",
+            "-c",
+            program,
+            *user_ids,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if checked.returncode:
+        raise AssertionError("Controlled user state readback failed.")
+    state = json.loads(checked.stdout)
+    if not isinstance(state, dict) or set(state) != set(user_ids):
+        raise AssertionError("Controlled user state readback omitted a target.")
+    if any(
+        not isinstance(values, dict)
+        or set(values) != {"avatar_present", "password_rotation_requested"}
+        or any(type(value) is not bool for value in values.values())
+        for values in state.values()
+    ):
+        raise AssertionError("Controlled user state readback has an invalid shape.")
+    return state
 
 
 def _record_payload(record: object) -> Mapping[str, object]:
@@ -319,6 +384,31 @@ def _assert_user_read_matches_raw(method: str, raw: object, typed: object) -> No
         assert digest(typed) == digest(raw), method
 
 
+def _follower_ids(payload: object) -> set[str]:
+    if not isinstance(payload, Mapping):
+        raise AssertionError("The controlled follower read omitted its data list.")
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        raise AssertionError("The controlled follower read omitted its data list.")
+    identifiers: set[str] = set()
+    for row in rows:
+        follower = row.get("follower") if isinstance(row, Mapping) else None
+        if not isinstance(follower, Mapping) or not isinstance(follower.get("id"), str):
+            raise AssertionError("The controlled follower read returned an invalid record.")
+        identifiers.add(follower["id"])
+    return identifiers
+
+
+def _typed_follower_ids(page: UDataPageEnvelope) -> set[str]:
+    identifiers: set[str] = set()
+    for item in page.items:
+        follower = item.payload.get("follower")
+        if not isinstance(follower, Mapping) or not isinstance(follower.get("id"), str):
+            raise AssertionError("The typed controlled follower read returned an invalid record.")
+        identifiers.add(follower["id"])
+    return identifiers
+
+
 def test_controlled_user_reads_match_raw_routes_in_both_modes() -> None:
     token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
     if not token:
@@ -387,6 +477,11 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
     admin_permissions = EffectivePermissions.for_credential(
         admin_credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
+    admin_status, admin_user, _ = _direct_request(admin_token, "GET", "/api/1/me/")
+    assert admin_status == 200
+    assert isinstance(admin_user, Mapping)
+    admin_id = admin_user.get("id")
+    assert isinstance(admin_id, str)
     png = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII="
     )
@@ -422,6 +517,7 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
         organizations: dict[str, str] = {}
         users: dict[tuple[str, str], tuple[str, str]] = {}
         token_ids: list[str] = []
+        user_token_ids: list[str] = []
         cleanup_errors: list[str] = []
 
         async def user_call(user_token: str, name: str, *args: object) -> object:
@@ -495,8 +591,20 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 raw_id = raw_user["id"]
                 typed_id = typed.record.id.value
                 assert isinstance(raw_id, str)
-                users[(decision, "raw")] = (raw_id, _disposable_user_token(raw_id))
-                users[(decision, "typed")] = (typed_id, _disposable_user_token(typed_id))
+                raw_read_status, raw_created_user, _ = _direct_request(admin_token, "GET", f"/api/1/users/{raw_id}/")
+                typed_created_user = await invoke(admin_client.users_tokens, "get_user", typed_id)
+                assert raw_read_status == 200
+                assert isinstance(raw_created_user, Mapping)
+                assert isinstance(typed_created_user, NativeRecord)
+                assert raw_created_user.get("email") == raw_email
+                assert typed_created_user.payload.get("email") == typed_email
+                assert raw_created_user.get("active") is True
+                assert typed_created_user.payload.get("active") is True
+                raw_user_token_id, raw_user_token = _disposable_user_token(raw_id)
+                typed_user_token_id, typed_user_token = _disposable_user_token(typed_id)
+                users[(decision, "raw")] = (raw_id, raw_user_token)
+                users[(decision, "typed")] = (typed_id, typed_user_token)
+                user_token_ids.extend((raw_user_token_id, typed_user_token_id))
 
             assert len({user_id for user_id, _ in users.values()}) == 4
 
@@ -518,6 +626,13 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
             assert raw_status == 200
             assert isinstance(raw_updated, Mapping)
             check(raw_status, typed_updated, "update_me", "me")
+            raw_state_status, raw_state, _ = _direct_request(raw_user_token, "GET", "/api/1/me/")
+            typed_state = await user_call(typed_user_token, "get_me", typed_permissions)
+            assert raw_state_status == 200
+            assert isinstance(raw_state, Mapping)
+            assert isinstance(typed_state, NativeRecord)
+            assert raw_state.get("website") == "https://example.org/raw"
+            assert typed_state.payload.get("website") == "https://example.org/typed"
 
             raw_status, raw_admin_updated, _ = _direct_request(
                 admin_token, "PUT", f"/api/1/users/{raw_id}/", body={"about": "raw evidence"}
@@ -533,6 +648,13 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
             assert raw_status == 200
             assert isinstance(raw_admin_updated, Mapping)
             check(raw_status, typed_admin_updated, "update_user", typed_id)
+            raw_state_status, raw_state, _ = _direct_request(admin_token, "GET", f"/api/1/users/{raw_id}/")
+            typed_state = await invoke(admin_client.users_tokens, "get_user", typed_id)
+            assert raw_state_status == 200
+            assert isinstance(raw_state, Mapping)
+            assert isinstance(typed_state, NativeRecord)
+            assert raw_state.get("about") == "raw evidence"
+            assert typed_state.payload.get("about") == "typed evidence"
 
             raw_avatar_body, raw_avatar_type = _multipart_body(png, "raw.png", media_type="image/png")
             raw_status, _, _ = _direct_request(
@@ -546,28 +668,46 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 policy("my_avatar", "me"),
             )
             check(raw_status, typed_avatar, "my_avatar", "me")
+            avatar_state = _controlled_user_state((raw_id, typed_id))
+            assert avatar_state[raw_id]["avatar_present"]
+            assert avatar_state[typed_id]["avatar_present"]
+            raw_admin_id, _ = users[("refuse", "raw")]
+            typed_admin_id, _ = users[("refuse", "typed")]
             raw_status, _, _ = _direct_request(
                 admin_token,
                 "POST",
-                f"/api/1/users/{raw_id}/avatar/",
+                f"/api/1/users/{raw_admin_id}/avatar/",
                 body=raw_avatar_body,
                 content_type=raw_avatar_type,
             )
             typed_avatar = await invoke(
                 admin_client.users_tokens,
                 "user_avatar",
-                typed_id,
+                typed_admin_id,
                 UserAvatarInput(BytesIO(png), "typed-admin.png", len(png), "image/png"),
                 admin_permissions,
-                policy("user_avatar", typed_id),
+                policy("user_avatar", typed_admin_id),
             )
-            check(raw_status, typed_avatar, "user_avatar", typed_id)
+            check(raw_status, typed_avatar, "user_avatar", typed_admin_id)
+            avatar_state = _controlled_user_state((raw_admin_id, typed_admin_id))
+            assert avatar_state[raw_admin_id]["avatar_present"]
+            assert avatar_state[typed_admin_id]["avatar_present"]
 
             raw_status, _, _ = _direct_request(admin_token, "POST", f"/api/1/users/{raw_id}/followers/")
             typed_follow = await invoke(
                 admin_client.users_tokens, "follow_user", typed_id, admin_permissions, policy("follow_user", typed_id)
             )
             check(raw_status, typed_follow, "follow_user", typed_id)
+            raw_follower_status, raw_followers, _ = _direct_request(
+                admin_token,
+                "GET",
+                f"/api/1/users/{raw_id}/followers/?page=1&page_size=20",
+            )
+            typed_followers = await invoke(admin_client.users_tokens, "list_user_followers", typed_id)
+            assert raw_follower_status == 200
+            assert admin_id in _follower_ids(raw_followers)
+            assert isinstance(typed_followers, UDataPageEnvelope)
+            assert admin_id in _typed_follower_ids(typed_followers)
             raw_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/users/{raw_id}/followers/")
             typed_unfollow = await invoke(
                 admin_client.users_tokens,
@@ -577,6 +717,16 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 policy("unfollow_user", typed_id, destructive=True),
             )
             check(raw_status, typed_unfollow, "unfollow_user", typed_id)
+            raw_follower_status, raw_followers, _ = _direct_request(
+                admin_token,
+                "GET",
+                f"/api/1/users/{raw_id}/followers/?page=1&page_size=20",
+            )
+            typed_followers = await invoke(admin_client.users_tokens, "list_user_followers", typed_id)
+            assert raw_follower_status == 200
+            assert admin_id not in _follower_ids(raw_followers)
+            assert isinstance(typed_followers, UDataPageEnvelope)
+            assert admin_id not in _typed_follower_ids(typed_followers)
 
             raw_status, raw_token, _ = _direct_request(
                 admin_token, "POST", "/api/1/me/api_tokens/", body={"name": "raw controlled"}
@@ -599,6 +749,22 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
             if not typed_token.secret.reveal_once().startswith("udata_"):
                 pytest.fail("Created token did not match the controlled token shape.")
             token_ids.append(typed_token.metadata.id)
+            raw_list_status, raw_token_list, _ = _direct_request(admin_token, "GET", "/api/1/me/api_tokens/")
+            typed_token_list = await invoke(admin_client.users_tokens, "list_api_tokens", admin_permissions)
+            raw_token_rows = raw_token_list.get("data") if isinstance(raw_token_list, Mapping) else raw_token_list
+            assert raw_list_status == 200
+            assert isinstance(raw_token_rows, list)
+            assert isinstance(typed_token_list, tuple)
+            raw_active_token_ids = {
+                item["id"]
+                for item in raw_token_rows
+                if isinstance(item, Mapping) and isinstance(item.get("id"), str) and not item.get("revoked_at")
+            }
+            typed_active_token_ids = {
+                item.id for item in typed_token_list if isinstance(item, ApiTokenMetadata) and item.revoked_at is None
+            }
+            assert {raw_token_id, typed_token.metadata.id} <= raw_active_token_ids
+            assert {raw_token_id, typed_token.metadata.id} <= typed_active_token_ids
             raw_status, _, _ = _direct_request(admin_token, "DELETE", f"/api/1/me/api_tokens/{raw_token_id}/")
             typed_revoke = await invoke(
                 admin_client.users_tokens,
@@ -608,6 +774,23 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 policy("revoke_api_token", typed_token.metadata.id, destructive=True),
             )
             check(raw_status, typed_revoke, "revoke_api_token", typed_token.metadata.id)
+            raw_list_status, raw_token_list, _ = _direct_request(admin_token, "GET", "/api/1/me/api_tokens/")
+            typed_token_list = await invoke(admin_client.users_tokens, "list_api_tokens", admin_permissions)
+            raw_token_rows = raw_token_list.get("data") if isinstance(raw_token_list, Mapping) else raw_token_list
+            assert raw_list_status == 200
+            assert isinstance(raw_token_rows, list)
+            assert isinstance(typed_token_list, tuple)
+            raw_tokens_by_id = {
+                item["id"]: item
+                for item in raw_token_rows
+                if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+            }
+            typed_tokens_by_id = {item.id: item for item in typed_token_list if isinstance(item, ApiTokenMetadata)}
+            for token_id in (raw_token_id, typed_token.metadata.id):
+                raw_state = raw_tokens_by_id.get(token_id)
+                typed_state = typed_tokens_by_id.get(token_id)
+                assert raw_state is None or raw_state.get("revoked_at") is not None
+                assert typed_state is None or typed_state.revoked_at is not None
 
             for decision in ("refuse", "accept"):
                 raw_id, raw_user_token = users[(decision, "raw")]
@@ -672,6 +855,9 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                     typed_pending = await user_call(typed_user_token, "list_org_invitations", typed_permissions)
                     assert not typed_pending
 
+            before_rotation = _controlled_user_state((raw_id, typed_id))
+            assert not before_rotation[raw_id]["password_rotation_requested"]
+            assert not before_rotation[typed_id]["password_rotation_requested"]
             raw_status, _, _ = _direct_request(admin_token, "POST", f"/api/1/users/{raw_id}/rotate_password/")
             typed_rotated = await invoke(
                 admin_client.users_tokens,
@@ -681,6 +867,9 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                 policy("rotate_user_password", typed_id),
             )
             check(raw_status, typed_rotated, "rotate_user_password", typed_id)
+            after_rotation = _controlled_user_state((raw_id, typed_id))
+            assert after_rotation[raw_id]["password_rotation_requested"]
+            assert after_rotation[typed_id]["password_rotation_requested"]
 
             raw_refuse_id, raw_refuse_token = users[("refuse", "raw")]
             typed_refuse_id, typed_refuse_token = users[("refuse", "typed")]
@@ -726,6 +915,45 @@ def test_controlled_user_mutations_match_raw_routes_in_both_modes() -> None:
                         cleanup_errors.append(f"token deletion returned {status}")
                 except Exception as error:
                     cleanup_errors.append(f"token deletion raised {type(error).__name__}")
+            if user_token_ids:
+                revoke_user_tokens = """
+import sys
+from udata.app import create_app, standalone
+from udata.core.api_token.models import ApiToken
+app = standalone(create_app())
+with app.app_context():
+    for token_id in sys.argv[1:]:
+        token = ApiToken.objects(id=token_id).first()
+        if token is not None and token.revoked_at is None:
+            token.revoke()
+        token = ApiToken.objects(id=token_id).first()
+        assert token is None or token.revoked_at is not None
+"""
+                try:
+                    revoked = subprocess.run(
+                        [
+                            "docker",
+                            "compose",
+                            "--env-file",
+                            "dev/udata-evidence/.env",
+                            "-f",
+                            "dev/udata-evidence/compose.yaml",
+                            "exec",
+                            "-T",
+                            "udata",
+                            "python",
+                            "-c",
+                            revoke_user_tokens,
+                            *user_token_ids,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if revoked.returncode:
+                        cleanup_errors.append("disposable user token revocation failed")
+                except Exception as error:
+                    cleanup_errors.append(f"disposable user token revocation raised {type(error).__name__}")
             for user_id, _ in users.values():
                 try:
                     status, _, _ = _direct_request(
