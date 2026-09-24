@@ -9,7 +9,7 @@ from io import BytesIO
 
 import pytest
 
-from datasluice.connectors.catalog.udata.clients import SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenCreationResult,
@@ -25,6 +25,7 @@ from datasluice.errors.catalog import (
     CatalogUnavailableError,
     CatalogValidationError,
     ForbiddenError,
+    NativeCatalogError,
     UnauthenticatedError,
 )
 from datasluice.runtime.events import EventEmitter, ListSink, LoggingSink
@@ -33,10 +34,32 @@ from tests.unit.connectors.catalog.test_udata_users_tokens import (
     CREDENTIAL,
     ORIGIN,
     PERMISSIONS,
+    _AsyncRouter,
     _policy,
     _Router,
     _routes,
 )
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_non_finite_user_response_raises_native_error_with_operation(async_mode: bool) -> None:
+    import asyncio
+
+    routes = _routes(("GET", "/api/1/users/person/", 200, {"id": "person", "score": float("nan")}))
+    if async_mode:
+        async_client = AsyncUDataClient(_AsyncRouter(routes), declared_udata_profile(), origin=ORIGIN)
+
+        async def read_user() -> None:
+            async with async_client:
+                await async_client.users_tokens.get_user("person")
+
+        with pytest.raises(NativeCatalogError) as raised:
+            asyncio.run(read_user())
+    else:
+        sync_client = SyncUDataClient(_Router(routes), declared_udata_profile(), origin=ORIGIN)
+        with sync_client, pytest.raises(NativeCatalogError) as raised:
+            sync_client.users_tokens.get_user("person")
+    assert raised.value.operation == "udata/api-v1.get-user"
 
 
 @pytest.mark.parametrize(
@@ -152,6 +175,55 @@ def test_interruption_after_token_response_redacts_traceback_locals(monkeypatch:
             if isinstance(response, RuntimeResponse):
                 assert response.body == b""
         traceback = traceback.tb_next
+
+
+def test_async_interruption_after_token_response_redacts_traceback_locals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    plaintext = secrets.token_urlsafe(36)
+    router = _AsyncRouter(
+        _routes(
+            (
+                "POST",
+                "/api/1/me/api_tokens/",
+                201,
+                {"id": "token-id", "token_prefix": "safe-prefix", "token": plaintext},
+            )
+        )
+    )
+    client = AsyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    original_response = users_tokens_service.RuntimeResponse
+
+    def interrupt_before_response_redaction(**kwargs: object) -> object:
+        monkeypatch.setattr(users_tokens_service, "RuntimeResponse", original_response)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(users_tokens_service, "RuntimeResponse", interrupt_before_response_redaction)
+
+    async def run() -> None:
+        async with client:
+            with pytest.raises(KeyboardInterrupt) as raised:
+                await client.users_tokens.create_api_token(
+                    ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
+                )
+        receipt = raised.value.__dict__["mutation_receipt"]
+        assert isinstance(receipt, MutationReceipt)
+        assert receipt.outcome == "ambiguous"
+        assert receipt.target.value == "new-api-token"
+        traceback = raised.value.__traceback__
+        while traceback is not None:
+            frame = traceback.tb_frame
+            if "/src/datasluice/" in frame.f_code.co_filename:
+                if plaintext in repr(frame.f_locals):
+                    pytest.fail("Interrupted token plaintext remained in an async connector traceback frame.")
+                response = frame.f_locals.get("response")
+                if isinstance(response, RuntimeResponse):
+                    assert response.body == b""
+            traceback = traceback.tb_next
+
+    asyncio.run(run())
 
 
 def test_interruption_after_token_decode_discards_reveal_once_result(monkeypatch: pytest.MonkeyPatch) -> None:

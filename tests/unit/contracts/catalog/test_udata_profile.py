@@ -150,6 +150,25 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
     assert len(operation_ids) == len(set(operation_ids))
 
 
+def test_user_and_token_create_operations_declare_their_policy_metadata() -> None:
+    operations = {operation["id"]: operation for operation in _read_json(_PROFILE_PATH)["operations"]}
+
+    assert operations["udata/api-v1.create-api-token"] == {
+        "id": "udata/api-v1.create-api-token",
+        "capability": "authenticated",
+        "authentication": "authenticated",
+        "mutation": "create",
+        "evidence_requirement": "controlled-environment-only",
+    }
+    assert operations["udata/api-v1.create-user"] == {
+        "id": "udata/api-v1.create-user",
+        "capability": "admin",
+        "authentication": "privileged",
+        "mutation": "create",
+        "evidence_requirement": "controlled-environment-only",
+    }
+
+
 _DATASET_ROUTE_OPERATION_IDS = {
     "udata/api-v1.set_site",
     "udata/api-v1.list-datasets",

@@ -53,7 +53,7 @@
             "id": "udata/api-v1.create-api-token",
             "capability": "authenticated",
             "authentication": "authenticated",
-            "mutation": "update",
+            "mutation": "create",
             "evidence_requirement": "controlled-environment-only"
         },
         {
@@ -74,7 +74,7 @@
             "id": "udata/api-v1.create-user",
             "capability": "admin",
             "authentication": "privileged",
-            "mutation": "update",
+            "mutation": "create",
             "evidence_requirement": "controlled-environment-only"
         },
         {

@@ -207,6 +207,25 @@ def test_user_and_api_token_inputs_reject_invalid_documented_values() -> None:
         ApiTokenCreateInput(expires_at=datetime.now(UTC) - timedelta(seconds=1))
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"first_name": []}, id="name-type"),
+        pytest.param({"last_name": ""}, id="name-empty"),
+        pytest.param({"email": 1}, id="email-type"),
+        pytest.param({"website": "example.org"}, id="website-url"),
+    ],
+)
+def test_invalid_user_updates_fail_before_dispatch(fields: dict[str, object]) -> None:
+    router = _Router(_routes())
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with client, pytest.raises(ValueError):
+        client.users_tokens.update_user(
+            "person", UserUpdateInput(fields), PERMISSIONS, _policy("update_user", "person")
+        )
+    assert router.requests == []
+
+
 def test_empty_user_create_fields_do_not_alias_the_callers_mapping() -> None:
     fields: dict[str, object] = {}
     user = UserCreateInput("Ada", "Lovelace", "ada@example.org", fields=fields)

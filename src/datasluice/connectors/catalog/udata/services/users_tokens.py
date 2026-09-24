@@ -588,7 +588,7 @@ class AsyncUsersTokensService:
             result = _shape_mutation(payload, receipt, name)
             self._client._emit(operation, "succeeded")
             return result
-        except (Exception, asyncio.CancelledError) as error:
+        except (Exception, asyncio.CancelledError, KeyboardInterrupt) as error:
             primary_error = error
             if name == "create_api_token":
                 response = _discard_token_plaintext(payload, response)

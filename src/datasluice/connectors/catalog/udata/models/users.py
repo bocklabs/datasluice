@@ -6,6 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
@@ -39,10 +40,23 @@ def _fields(value: Mapping[str, object], name: str, *, allow_empty: bool = False
 
 
 def _validate_user_fields(fields: Mapping[str, object]) -> None:
+    for name in ("first_name", "last_name"):
+        if name in fields:
+            _text(fields[name], name)
+    if "email" in fields:
+        email = fields["email"]
+        _text(email, "email")
+        if not isinstance(email, str) or _EMAIL.fullmatch(email) is None:
+            raise ValueError("uData user email must be a valid email address.")
     for name in ("about", "website", "prefered_language"):
         value = fields.get(name)
         if value is not None and not isinstance(value, str):
             raise ValueError(f"uData user {name} must be a string or null.")
+    website = fields.get("website")
+    if isinstance(website, str) and website:
+        parts = urlsplit(website)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError("uData user website must be an HTTP URL.")
     if "active" in fields and type(fields["active"]) is not bool:
         raise ValueError("uData user active must be a boolean.")
     if "roles" in fields and (

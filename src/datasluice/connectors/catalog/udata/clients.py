@@ -153,6 +153,11 @@ _CATALOG_ORIGIN_CIRCUIT_OPEN = "The catalog origin circuit is open after consecu
 _CATALOG_CIRCUIT_RETRY_ACTION = "Wait for the circuit cool-down or explicitly reset the circuit before retrying."
 _ASYNC_UDATA_CLIENT_CLOSED = "The asynchronous uData client is closed."
 
+
+def _reject_nonfinite_json(_: str) -> None:
+    raise ValueError("Non-finite JSON constant.")
+
+
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
@@ -2853,7 +2858,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             return response.status_code, None, response
         invalid_payload = False
         try:
-            payload = json.loads(response.body)
+            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json)
         except (TypeError, ValueError):
             invalid_payload = True
             payload = None
@@ -2959,7 +2964,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             )
         invalid_payload = False
         try:
-            payload = json.loads(response.body)
+            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json)
         except (TypeError, ValueError):
             invalid_payload = True
             payload = None
