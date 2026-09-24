@@ -214,6 +214,7 @@ def test_user_and_api_token_inputs_reject_invalid_documented_values() -> None:
         pytest.param({"last_name": ""}, id="name-empty"),
         pytest.param({"email": 1}, id="email-type"),
         pytest.param({"website": "example.org"}, id="website-url"),
+        pytest.param({"website": "https://exa mple.org"}, id="website-whitespace"),
     ],
 )
 def test_invalid_user_updates_fail_before_dispatch(fields: dict[str, object]) -> None:

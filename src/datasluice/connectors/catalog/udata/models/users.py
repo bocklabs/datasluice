@@ -54,8 +54,14 @@ def _validate_user_fields(fields: Mapping[str, object]) -> None:
             raise ValueError(f"uData user {name} must be a string or null.")
     website = fields.get("website")
     if isinstance(website, str) and website:
-        parts = urlsplit(website)
-        if parts.scheme not in {"http", "https"} or not parts.netloc:
+        if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in website):
+            raise ValueError("uData user website must be an HTTP URL.")
+        try:
+            parts = urlsplit(website)
+            hostname = parts.hostname
+        except ValueError:
+            raise ValueError("uData user website must be an HTTP URL.") from None
+        if parts.scheme not in {"http", "https"} or not parts.netloc or not hostname:
             raise ValueError("uData user website must be an HTTP URL.")
     if "active" in fields and type(fields["active"]) is not bool:
         raise ValueError("uData user active must be a boolean.")

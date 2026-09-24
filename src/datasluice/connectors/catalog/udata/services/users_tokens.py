@@ -279,7 +279,7 @@ class SyncUsersTokensService:
             result = _shape_mutation(payload, receipt, name)
             self._client._emit(operation, "succeeded")
             return result
-        except (Exception, KeyboardInterrupt) as error:
+        except BaseException as error:
             primary_error = error
             if name == "create_api_token":
                 response = _discard_token_plaintext(payload, response)
@@ -287,7 +287,7 @@ class SyncUsersTokensService:
                     result.secret._discard()
                     result = None
             self._client._emit(operation, "failed")
-            _error_receipt(error, name, target, mutation_policy, response)
+            _error_receipt(error, name, _receipt_target(name, target, payload), mutation_policy, response)
             raise
         finally:
             _close_avatar(upload, result, primary_error)
@@ -588,7 +588,7 @@ class AsyncUsersTokensService:
             result = _shape_mutation(payload, receipt, name)
             self._client._emit(operation, "succeeded")
             return result
-        except (Exception, asyncio.CancelledError, KeyboardInterrupt) as error:
+        except BaseException as error:
             primary_error = error
             if name == "create_api_token":
                 response = _discard_token_plaintext(payload, response)
@@ -596,7 +596,7 @@ class AsyncUsersTokensService:
                     result.secret._discard()
                     result = None
             self._client._emit(operation, "failed")
-            _error_receipt(error, name, target, mutation_policy, response)
+            _error_receipt(error, name, _receipt_target(name, target, payload), mutation_policy, response)
             raise
         finally:
             _close_avatar(upload, result, primary_error)

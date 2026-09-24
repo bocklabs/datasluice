@@ -106,8 +106,9 @@ def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> Non
                 "POST",
                 "/api/1/me/api_tokens/",
                 201,
-                {"id": "", "token_prefix": "safe-prefix", "token": plaintext},
-            )
+                {"id": "token-id", "token_prefix": "", "token": plaintext},
+            ),
+            ("DELETE", "/api/1/me/api_tokens/token-id/", 204, None),
         )
     )
     events = ListSink()
@@ -118,26 +119,40 @@ def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> Non
         credentials=CREDENTIAL,
         emitter=EventEmitter(sinks=(events,)),
     )
-    with client, pytest.raises(CatalogValidationError) as raised:
-        client.users_tokens.create_api_token(
-            ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
+    with client:
+        with pytest.raises(CatalogValidationError) as raised:
+            client.users_tokens.create_api_token(
+                ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
+            )
+        error = raised.value
+        receipt = error.__dict__["mutation_receipt"]
+        assert isinstance(receipt, MutationReceipt)
+        assert receipt.target.value == "token-id"
+        if any(plaintext in repr(value) for value in (error, error.metadata, receipt)):
+            pytest.fail("One-time token entered a retained failure value.")
+        traceback = error.__traceback__
+        while traceback is not None:
+            if "/src/datasluice/" in traceback.tb_frame.f_code.co_filename:
+                if plaintext in repr(traceback.tb_frame.f_locals):
+                    pytest.fail("One-time token entered a connector failure frame.")
+            traceback = traceback.tb_next
+        revoked = client.users_tokens.revoke_api_token(
+            receipt.target.value,
+            PERMISSIONS,
+            _policy("revoke_api_token", receipt.target.value, destructive=True),
         )
-    error = raised.value
-    if any(plaintext in repr(value) for value in (error, error.metadata, error.__dict__["mutation_receipt"])):
-        pytest.fail("One-time token entered a retained failure value.")
-    traceback = error.__traceback__
-    while traceback is not None:
-        if "/src/datasluice/" in traceback.tb_frame.f_code.co_filename:
-            if plaintext in repr(traceback.tb_frame.f_locals):
-                pytest.fail("One-time token entered a connector failure frame.")
-        traceback = traceback.tb_next
+        assert revoked.receipt.target.value == receipt.target.value
+        assert router.requests[-1].url == f"{ORIGIN}/api/1/me/api_tokens/token-id/"
     operation_events = [
         event.outcome for event in events.events if event.operation_id == "udata/api-v1.create-api-token"
     ]
     assert operation_events == ["failed"]
 
 
-def test_interruption_after_token_response_redacts_traceback_locals(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit], ids=["keyboard-interrupt", "system-exit"])
+def test_interruption_after_token_response_redacts_traceback_locals(
+    monkeypatch: pytest.MonkeyPatch, exception_type: type[BaseException]
+) -> None:
     plaintext = secrets.token_urlsafe(36)
     router = _Router(
         _routes(
@@ -146,7 +161,8 @@ def test_interruption_after_token_response_redacts_traceback_locals(monkeypatch:
                 "/api/1/me/api_tokens/",
                 201,
                 {"id": "token-id", "token_prefix": "safe-prefix", "token": plaintext},
-            )
+            ),
+            ("DELETE", "/api/1/me/api_tokens/token-id/", 204, None),
         )
     )
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
@@ -154,31 +170,40 @@ def test_interruption_after_token_response_redacts_traceback_locals(monkeypatch:
 
     def interrupt_before_response_redaction(**kwargs: object) -> object:
         monkeypatch.setattr(users_tokens_service, "RuntimeResponse", original_response)
-        raise KeyboardInterrupt
+        raise exception_type()
 
     monkeypatch.setattr(users_tokens_service, "RuntimeResponse", interrupt_before_response_redaction)
-    with client, pytest.raises(KeyboardInterrupt) as raised:
-        client.users_tokens.create_api_token(
-            ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
+    with client:
+        with pytest.raises(exception_type) as raised:
+            client.users_tokens.create_api_token(
+                ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
+            )
+        traceback = raised.value.__traceback__
+        while traceback is not None:
+            frame = traceback.tb_frame
+            if "/src/datasluice/" in frame.f_code.co_filename:
+                if plaintext in repr(frame.f_locals):
+                    pytest.fail("Interrupted token plaintext remained in a connector traceback frame.")
+                response = frame.f_locals.get("response")
+                if isinstance(response, RuntimeResponse):
+                    assert response.body == b""
+            traceback = traceback.tb_next
+        receipt = raised.value.__dict__["mutation_receipt"]
+        assert isinstance(receipt, MutationReceipt)
+        assert receipt.outcome == "ambiguous"
+        assert receipt.target.value == "token-id"
+        revoked = client.users_tokens.revoke_api_token(
+            receipt.target.value,
+            PERMISSIONS,
+            _policy("revoke_api_token", receipt.target.value, destructive=True),
         )
-    receipt = raised.value.__dict__["mutation_receipt"]
-    assert isinstance(receipt, MutationReceipt)
-    assert receipt.outcome == "ambiguous"
-    assert receipt.target.value == "new-api-token"
-    traceback = raised.value.__traceback__
-    while traceback is not None:
-        frame = traceback.tb_frame
-        if "/src/datasluice/" in frame.f_code.co_filename:
-            if plaintext in repr(frame.f_locals):
-                pytest.fail("Interrupted token plaintext remained in a connector traceback frame.")
-            response = frame.f_locals.get("response")
-            if isinstance(response, RuntimeResponse):
-                assert response.body == b""
-        traceback = traceback.tb_next
+        assert revoked.receipt.target.value == receipt.target.value
+        assert router.requests[-1].url == f"{ORIGIN}/api/1/me/api_tokens/token-id/"
 
 
+@pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit], ids=["keyboard-interrupt", "system-exit"])
 def test_async_interruption_after_token_response_redacts_traceback_locals(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, exception_type: type[BaseException]
 ) -> None:
     import asyncio
 
@@ -190,7 +215,8 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
                 "/api/1/me/api_tokens/",
                 201,
                 {"id": "token-id", "token_prefix": "safe-prefix", "token": plaintext},
-            )
+            ),
+            ("DELETE", "/api/1/me/api_tokens/token-id/", 204, None),
         )
     )
     client = AsyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
@@ -198,30 +224,37 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
 
     def interrupt_before_response_redaction(**kwargs: object) -> object:
         monkeypatch.setattr(users_tokens_service, "RuntimeResponse", original_response)
-        raise KeyboardInterrupt
+        raise exception_type()
 
     monkeypatch.setattr(users_tokens_service, "RuntimeResponse", interrupt_before_response_redaction)
 
     async def run() -> None:
         async with client:
-            with pytest.raises(KeyboardInterrupt) as raised:
+            with pytest.raises(exception_type) as raised:
                 await client.users_tokens.create_api_token(
                     ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
                 )
-        traceback = raised.value.__traceback__
-        while traceback is not None:
-            frame = traceback.tb_frame
-            if "/src/datasluice/" in frame.f_code.co_filename:
-                if plaintext in repr(frame.f_locals):
-                    pytest.fail("Interrupted token plaintext remained in an async connector traceback frame.")
-                response = frame.f_locals.get("response")
-                if isinstance(response, RuntimeResponse):
-                    assert response.body == b""
-            traceback = traceback.tb_next
-        receipt = raised.value.__dict__["mutation_receipt"]
-        assert isinstance(receipt, MutationReceipt)
-        assert receipt.outcome == "ambiguous"
-        assert receipt.target.value == "new-api-token"
+            traceback = raised.value.__traceback__
+            while traceback is not None:
+                frame = traceback.tb_frame
+                if "/src/datasluice/" in frame.f_code.co_filename:
+                    if plaintext in repr(frame.f_locals):
+                        pytest.fail("Interrupted token plaintext remained in an async connector traceback frame.")
+                    response = frame.f_locals.get("response")
+                    if isinstance(response, RuntimeResponse):
+                        assert response.body == b""
+                traceback = traceback.tb_next
+            receipt = raised.value.__dict__["mutation_receipt"]
+            assert isinstance(receipt, MutationReceipt)
+            assert receipt.outcome == "ambiguous"
+            assert receipt.target.value == "token-id"
+            revoked = await client.users_tokens.revoke_api_token(
+                receipt.target.value,
+                PERMISSIONS,
+                _policy("revoke_api_token", receipt.target.value, destructive=True),
+            )
+            assert revoked.receipt.target.value == receipt.target.value
+            assert router.requests[-1].url == f"{ORIGIN}/api/1/me/api_tokens/token-id/"
 
     asyncio.run(run())
 
@@ -266,7 +299,7 @@ def test_interruption_after_token_decode_discards_reveal_once_result(monkeypatch
     receipt = raised.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
     assert receipt.outcome == "ambiguous"
-    assert receipt.target.value == "new-api-token"
+    assert receipt.target.value == "token-id"
     traceback = raised.value.__traceback__
     while traceback is not None:
         if "/src/datasluice/" in traceback.tb_frame.f_code.co_filename:
