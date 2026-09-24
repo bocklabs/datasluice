@@ -208,10 +208,6 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
                 await client.users_tokens.create_api_token(
                     ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
                 )
-        receipt = raised.value.__dict__["mutation_receipt"]
-        assert isinstance(receipt, MutationReceipt)
-        assert receipt.outcome == "ambiguous"
-        assert receipt.target.value == "new-api-token"
         traceback = raised.value.__traceback__
         while traceback is not None:
             frame = traceback.tb_frame
@@ -222,6 +218,10 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
                 if isinstance(response, RuntimeResponse):
                     assert response.body == b""
             traceback = traceback.tb_next
+        receipt = raised.value.__dict__["mutation_receipt"]
+        assert isinstance(receipt, MutationReceipt)
+        assert receipt.outcome == "ambiguous"
+        assert receipt.target.value == "new-api-token"
 
     asyncio.run(run())
 

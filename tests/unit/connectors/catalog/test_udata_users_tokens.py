@@ -217,12 +217,12 @@ def test_user_and_api_token_inputs_reject_invalid_documented_values() -> None:
     ],
 )
 def test_invalid_user_updates_fail_before_dispatch(fields: dict[str, object]) -> None:
-    router = _Router(_routes())
+    router = _Router(
+        _routes(("PUT", "/api/1/me/", 200, {"id": "person", "first_name": "Ada", "last_name": "Lovelace"}))
+    )
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     with client, pytest.raises(ValueError):
-        client.users_tokens.update_user(
-            "person", UserUpdateInput(fields), PERMISSIONS, _policy("update_user", "person")
-        )
+        client.users_tokens.update_me(UserUpdateInput(fields), PERMISSIONS, _policy("update_me", "me"))
     assert router.requests == []
 
 
