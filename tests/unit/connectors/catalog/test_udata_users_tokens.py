@@ -207,6 +207,13 @@ def test_user_and_api_token_inputs_reject_invalid_documented_values() -> None:
         ApiTokenCreateInput(expires_at=datetime.now(UTC) - timedelta(seconds=1))
 
 
+def test_empty_user_create_fields_do_not_alias_the_callers_mapping() -> None:
+    fields: dict[str, object] = {}
+    user = UserCreateInput("Ada", "Lovelace", "ada@example.org", fields=fields)
+    fields["active"] = "false"
+    assert user.payload() == {"first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.org"}
+
+
 def test_api_token_metadata_preserves_safe_stock_fields() -> None:
     token = wire.parse_token(
         {
@@ -241,6 +248,12 @@ def test_api_token_metadata_preserves_safe_stock_fields() -> None:
             {"id": "token-id", "token_prefix": "udata_abcd", "scopes": "admin"},
             operation=wire.OPERATIONS["list_api_tokens"],
         )
+    for payload in (
+        {"id": "", "token_prefix": "udata_abcd"},
+        {"id": "token-id", "token_prefix": ""},
+    ):
+        with pytest.raises(CatalogValidationError):
+            wire.parse_token(payload, operation=wire.OPERATIONS["list_api_tokens"])
 
 
 def test_one_time_token_cannot_enter_ordinary_retained_sinks() -> None:

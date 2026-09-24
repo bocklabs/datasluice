@@ -202,7 +202,7 @@ def parse_token(payload: object, *, operation: str) -> ApiTokenMetadata:
         )
     token_id = payload.get("id")
     prefix = payload.get("token_prefix")
-    if not isinstance(token_id, str) or not isinstance(prefix, str):
+    if not isinstance(token_id, str) or not token_id or not isinstance(prefix, str) or not prefix:
         raise CatalogValidationError(
             "The uData token response omitted safe token metadata.",
             operation=operation,

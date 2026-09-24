@@ -145,6 +145,12 @@ def _receipt_target(name: str, target: str, payload: object) -> str:
     return target
 
 
+def _discard_token_plaintext(payload: object, response: RuntimeResponse | None) -> RuntimeResponse | None:
+    if isinstance(payload, dict):
+        payload.pop("token", None)
+    return RuntimeResponse(status_code=response.status_code, headers={}, body=b"") if response is not None else None
+
+
 def _error_receipt(
     error: BaseException, name: str, target: str, policy: Policy, response: RuntimeResponse | None
 ) -> None:
@@ -233,6 +239,7 @@ class SyncUsersTokensService:
         target = _target(name, identifier, body)
         response: RuntimeResponse | None = None
         upload = body if isinstance(body, UserAvatarInput) else None
+        payload: object = None
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
@@ -274,6 +281,11 @@ class SyncUsersTokensService:
             return result
         except (Exception, KeyboardInterrupt) as error:
             primary_error = error
+            if name == "create_api_token":
+                response = _discard_token_plaintext(payload, response)
+                if isinstance(result, ApiTokenCreationResult):
+                    result.secret._discard()
+                    result = None
             self._client._emit(operation, "failed")
             _error_receipt(error, name, target, mutation_policy, response)
             raise
@@ -536,6 +548,7 @@ class AsyncUsersTokensService:
         target = _target(name, identifier, body)
         response: RuntimeResponse | None = None
         upload = body if isinstance(body, UserAvatarInput) else None
+        payload: object = None
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
@@ -577,6 +590,11 @@ class AsyncUsersTokensService:
             return result
         except (Exception, asyncio.CancelledError) as error:
             primary_error = error
+            if name == "create_api_token":
+                response = _discard_token_plaintext(payload, response)
+                if isinstance(result, ApiTokenCreationResult):
+                    result.secret._discard()
+                    result = None
             self._client._emit(operation, "failed")
             _error_receipt(error, name, target, mutation_policy, response)
             raise

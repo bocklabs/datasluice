@@ -25,9 +25,13 @@ def _text(value: object, name: str, *, optional: bool = False) -> None:
         raise ValueError(f"uData user {name} must be a non-empty string.")
 
 
-def _fields(value: Mapping[str, object], name: str) -> Mapping[str, object]:
-    if not isinstance(value, Mapping) or not value or not all(isinstance(key, str) and key for key in value):
-        raise ValueError(f"uData user {name} must be a non-empty JSON mapping.")
+def _fields(value: Mapping[str, object], name: str, *, allow_empty: bool = False) -> Mapping[str, object]:
+    if (
+        not isinstance(value, Mapping)
+        or (not allow_empty and not value)
+        or not all(isinstance(key, str) and key for key in value)
+    ):
+        raise ValueError(f"uData user {name} must be a JSON mapping.")
     frozen = _freeze_json(dict(value), f"udata.user.{name}")
     if not isinstance(frozen, Mapping):
         raise ValueError(f"uData user {name} must be a JSON mapping.")
@@ -103,8 +107,7 @@ class UserCreateInput:
             _text(getattr(self, name), name)
         if _EMAIL.fullmatch(self.email) is None:
             raise ValueError("uData user email must be a valid email address.")
-        if self.fields:
-            object.__setattr__(self, "fields", _fields(self.fields, "create fields"))
+        object.__setattr__(self, "fields", _fields(self.fields, "create fields", allow_empty=True))
         if {"first_name", "last_name", "email"} & set(self.fields) or set(self.fields) - _USER_FIELDS:
             raise ValueError("uData user create fields must use documented writable fields.")
         _validate_user_fields(self.fields)
