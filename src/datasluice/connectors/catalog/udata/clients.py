@@ -34,7 +34,7 @@ from datasluice.connectors.catalog.udata.probes import (
     SiteVersion,
     SiteVersionGate,
 )
-from datasluice.connectors.catalog.udata.settings import UDataClientSettings
+from datasluice.connectors.catalog.udata.settings import LOOPBACK_HOSTS, UDataClientSettings
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, SecretValue, UDataCredential
@@ -2779,6 +2779,44 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         """Resolve the current credential asynchronously for pre-dispatch validation."""
         return await _refreshed_credential_async(self._credentials)
 
+    def _require_dispatchable(
+        self,
+        owning_id: OperationId,
+        effective: EffectiveCapabilityProfile,
+        permissions: EffectivePermissions | None = None,
+    ) -> None:
+        """Refuse a public origin for a non-read route, then run the capability guard.
+
+        PROHIB-04-01 keeps mutations, administration, token changes, and uploads inside
+        a controlled deployment. The pinned profile's declared mutation class is the
+        only discriminator, so no route list is hand-maintained here.
+
+        Args:
+            owning_id: The pinned profile identity of the route being dispatched.
+            effective: The effective capability profile resolved for the credential.
+            permissions: Optional effective permissions required by the caller.
+
+        Raises:
+            CatalogValidationError: If the origin is public and the route is not a read.
+        """
+        if not self._controlled_origin() and self._declared_mutation_class(owning_id) is not MutationClass.READ:
+            raise CatalogValidationError(
+                "uData mutations, administration, and uploads require a controlled local deployment.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                safe_action="Point the client at a loopback uData deployment before dispatching this route.",
+            )
+        build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+
+    def _controlled_origin(self) -> bool:
+        """Return whether the configured origin addresses a loopback deployment."""
+        return urlsplit(self._origin).hostname in LOOPBACK_HOSTS
+
+    def _declared_mutation_class(self, owning_id: OperationId) -> MutationClass | None:
+        """Return the pinned profile mutation class, or None when the route is undeclared."""
+        operation = self._profile.declared_profile.operations.get(owning_id)
+        return operation.mutation_class if operation is not None else None
+
     @property
     def credentials(self) -> object | None:
         """Expose the injected caller-owned credential resolver or provider."""
@@ -3182,7 +3220,7 @@ class SyncUDataClient(_UDataClientCore):
         )
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+        self._require_dispatchable(owning_id, effective, permissions)
         if form_body is not None and (json_body is not None or files):
             raise NativeCatalogError(
                 "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
@@ -3310,7 +3348,7 @@ class SyncUDataClient(_UDataClientCore):
             self._site_gate.invalidate()
             self._credential_scope = scope
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        self._require_dispatchable(owning_id, effective)
         request_headers = dict(headers or {})
         request_headers.update(_auth_headers(resolved_credential))
         request = RuntimeRequest(
@@ -3390,7 +3428,7 @@ class SyncUDataClient(_UDataClientCore):
             self._site_gate.invalidate()
             self._credential_scope = scope
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        self._require_dispatchable(owning_id, effective)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
         if credential is not None:
@@ -3584,7 +3622,7 @@ class AsyncUDataClient(_UDataClientCore):
             self._site_gate.invalidate()
             self._credential_scope = scope
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        self._require_dispatchable(owning_id, effective)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
         if credential is not None:
@@ -3723,7 +3761,7 @@ class AsyncUDataClient(_UDataClientCore):
         )
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+        self._require_dispatchable(owning_id, effective, permissions)
         if form_body is not None and (json_body is not None or files):
             raise NativeCatalogError(
                 "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
@@ -3853,7 +3891,7 @@ class AsyncUDataClient(_UDataClientCore):
             self._site_gate.invalidate()
             self._credential_scope = scope
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        self._require_dispatchable(owning_id, effective)
         request_headers = dict(headers or {})
         request_headers.update(_auth_headers(resolved_credential))
         request = RuntimeRequest(
