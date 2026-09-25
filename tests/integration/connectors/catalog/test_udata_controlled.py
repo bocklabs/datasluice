@@ -32,10 +32,12 @@ from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
     OAuthClientRequest,
+    OAuthConsentOutcome,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
     OAuthTokenRequest,
+    OAuthTokenResult,
 )
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
@@ -2885,7 +2887,11 @@ def _assert_oauth_mutation_sync(
         if isinstance(receipt, Mapping):
             assert receipt["audit_metadata"]["status_code"] == raw[0], name
     else:
-        assert result.status_code == raw[0], name
+        if isinstance(result, OAuthConsentOutcome):
+            assert result.status_code == raw[0], name
+        else:
+            assert isinstance(result, OAuthTokenResult), name
+            assert result.receipt.audit_metadata["status_code"] == raw[0], name
 
 
 async def _assert_oauth_mutation_async(
@@ -2901,7 +2907,11 @@ async def _assert_oauth_mutation_async(
     except CatalogError as error:
         assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
     else:
-        assert result.status_code == raw[0], name
+        if isinstance(result, OAuthConsentOutcome):
+            assert result.status_code == raw[0], name
+        else:
+            assert isinstance(result, OAuthTokenResult), name
+            assert result.receipt.audit_metadata["status_code"] == raw[0], name
 
 
 def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:

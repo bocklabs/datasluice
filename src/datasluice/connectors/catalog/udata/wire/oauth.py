@@ -167,7 +167,7 @@ def parse_consent_summary(name: str, payload: object, status_code: int, media_ty
     if not isinstance(client, Mapping) or not isinstance(client.get("name"), str) or not client["name"]:
         raise _invalid(name, "omitted its client name", _SCHEMA_ACTION)
     scopes = document.get("scopes")
-    if not isinstance(scopes, list) or not all(isinstance(scope, str) and scope for scope in scopes):
+    if not isinstance(scopes, list) or not scopes or not all(isinstance(scope, str) and scope for scope in scopes):
         raise _invalid(name, "omitted its scopes", _SCHEMA_ACTION)
     return OAuthConsentSummary(client_name=client["name"], scopes=tuple(cast("list[str]", scopes)))
 

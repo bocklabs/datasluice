@@ -30,7 +30,12 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
+from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.integration.connectors.catalog.test_udata_controlled import (
+    _assert_oauth_mutation_async,
+    _assert_oauth_mutation_sync,
+)
 
 ORIGIN = "http://127.0.0.1:5640"
 _JSON = "application/json"
@@ -353,12 +358,14 @@ def test_only_the_browser_consent_post_may_send_the_api_key() -> None:
         pytest.param({"scopes": ["default"]}, id="missing-client"),
         pytest.param({"client": {}, "scopes": ["default"]}, id="missing-client-name"),
         pytest.param({"client": {"name": "Portal"}}, id="missing-scopes"),
+        pytest.param({"client": {"name": "Portal"}, "scopes": []}, id="empty-scopes"),
         pytest.param({"client": {"name": "Portal"}, "scopes": "default"}, id="scopes-not-a-list"),
     ],
 )
 def test_malformed_oauth_documents_fail_with_route_identity(payload: dict[str, object]) -> None:
-    with pytest.raises(CatalogValidationError):
+    with pytest.raises(CatalogValidationError) as raised:
         wire.parse_consent_summary("client_info", payload, 200, "application/json")
+    assert raised.value.operation == wire.OPERATIONS["client_info"]
 
 
 def test_invalid_oauth_inputs_fail_before_any_dispatch() -> None:
@@ -450,6 +457,119 @@ def test_token_success_requires_typed_metadata(document: dict[str, object]) -> N
             ),
         )
     assert raised.value.operation == wire.OPERATIONS["access_token"]
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "payload"),
+    [
+        pytest.param(
+            "access_token",
+            OAuthTokenRequest(grant_type="client_credentials", client_id="c"),
+            {"token_type": "Bearer"},
+            id="access-token",
+        ),
+        pytest.param(
+            "revoke_token",
+            OAuthRevokeRequest(token="opaque"),
+            {"unexpected": "document"},
+            id="revoke-token",
+        ),
+    ],
+)
+def test_post_dispatch_token_decode_failure_keeps_receipt_and_failed_event(
+    name: str, body: OAuthTokenRequest | OAuthRevokeRequest, payload: dict[str, object]
+) -> None:
+    path = "/oauth/token" if name == "access_token" else "/oauth/revoke"
+    events = ListSink()
+    router = _Router(_routes(("POST", path, 200, payload)))
+    client = SyncUDataClient(
+        router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, emitter=EventEmitter(sinks=(events,))
+    )
+    policy = None if name == "access_token" else _policy(name, f"request:{name}", destructive=True)
+    with client, pytest.raises(CatalogValidationError) as raised:
+        if isinstance(body, OAuthTokenRequest):
+            client.auth_oauth.access_token(body, PERMISSIONS)
+        else:
+            client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
+    receipt = raised.value.__dict__["mutation_receipt"]
+    assert receipt.operation == wire.OPERATIONS[name]
+    assert receipt.outcome == "ambiguous"
+    assert receipt.target.value == f"request:{name}"
+    assert receipt.audit_metadata["status_code"] == 200
+    assert "unexpected" not in repr(raised.value) + repr(receipt.to_dict())
+    assert [event.outcome for event in events.events if event.operation_id == wire.OPERATIONS[name]] == ["failed"]
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "payload"),
+    [
+        pytest.param(
+            "access_token",
+            OAuthTokenRequest(grant_type="client_credentials", client_id="c"),
+            {"token_type": "Bearer"},
+            id="access-token",
+        ),
+        pytest.param(
+            "revoke_token",
+            OAuthRevokeRequest(token="opaque"),
+            {"unexpected": "document"},
+            id="revoke-token",
+        ),
+    ],
+)
+def test_async_post_dispatch_token_decode_failure_keeps_receipt_and_failed_event(
+    name: str, body: OAuthTokenRequest | OAuthRevokeRequest, payload: dict[str, object]
+) -> None:
+    path = "/oauth/token" if name == "access_token" else "/oauth/revoke"
+    events = ListSink()
+    router = _AsyncRouter(_routes(("POST", path, 200, payload)))
+    policy = None if name == "access_token" else _policy(name, f"request:{name}", destructive=True)
+
+    async def run() -> tuple[CatalogValidationError, MutationReceipt]:
+        async with AsyncUDataClient(
+            router,
+            declared_udata_profile(),
+            origin=ORIGIN,
+            credentials=CREDENTIAL,
+            emitter=EventEmitter(sinks=(events,)),
+        ) as client:
+            with pytest.raises(CatalogValidationError) as raised:
+                if isinstance(body, OAuthTokenRequest):
+                    await client.auth_oauth.access_token(body, PERMISSIONS)
+                else:
+                    await client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
+            return raised.value, raised.value.__dict__["mutation_receipt"]
+
+    error, receipt = asyncio.run(run())
+    assert receipt.operation == wire.OPERATIONS[name]
+    assert receipt.outcome == "ambiguous"
+    assert receipt.target.value == f"request:{name}"
+    assert receipt.audit_metadata["status_code"] == 200
+    assert "unexpected" not in repr(error) + repr(receipt.to_dict())
+    assert [event.outcome for event in events.events if event.operation_id == wire.OPERATIONS[name]] == ["failed"]
+
+
+def test_offline_oauth_mutation_helpers_accept_empty_revocation_success_in_both_modes() -> None:
+    raw = (200, None, {"content-type": _JSON})
+    body = OAuthRevokeRequest(token="opaque")
+    with SyncUDataClient(
+        _Router(_routes(("POST", "/oauth/revoke", 200, None))),
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=CREDENTIAL,
+    ) as client:
+        _assert_oauth_mutation_sync(client, "revoke_token", raw, body, PERMISSIONS)
+
+    async def run() -> None:
+        async with AsyncUDataClient(
+            _AsyncRouter(_routes(("POST", "/oauth/revoke", 200, None))),
+            declared_udata_profile(),
+            origin=ORIGIN,
+            credentials=CREDENTIAL,
+        ) as client:
+            await _assert_oauth_mutation_async(client, "revoke_token", raw, body, PERMISSIONS)
+
+    asyncio.run(run())
 
 
 def test_oauth_secrets_never_enter_retained_results_or_reprs() -> None:
