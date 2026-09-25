@@ -2516,7 +2516,7 @@ class _SyncStreamGuard:
     deadline: DeadlineMonitor
     settled: bool = False
     consumed: bool = False
-    stream_chunks: Generator[bytes, None, None] | None = None
+    stream_chunks: Generator[bytes] | None = None
 
     def settle_failure(self, error: BaseException) -> None:
         if self.settled:
@@ -2548,7 +2548,7 @@ class _SyncStreamGuard:
         self.client._emit_breaker_change(self.owning_id, before.open, after.open)
         self.client._emit(self.owning_id, "succeeded")
 
-    def chunks(self) -> Generator[bytes, None, None]:
+    def chunks(self) -> Generator[bytes]:
         try:
             for chunk in self.response:
                 self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
@@ -2604,7 +2604,7 @@ class _AsyncStreamGuard:
     deadline: DeadlineMonitor
     settled: bool = False
     consumed: bool = False
-    stream_chunks: AsyncGenerator[bytes, None] | None = None
+    stream_chunks: AsyncGenerator[bytes] | None = None
 
     def settle_failure(self, error: BaseException) -> None:
         if self.settled:
@@ -2636,7 +2636,7 @@ class _AsyncStreamGuard:
         self.client._emit_breaker_change(self.owning_id, before.open, after.open)
         self.client._emit(self.owning_id, "succeeded")
 
-    async def chunks(self) -> AsyncGenerator[bytes, None]:
+    async def chunks(self) -> AsyncGenerator[bytes]:
         try:
             async for chunk in self.response:
                 self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)

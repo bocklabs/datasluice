@@ -475,7 +475,7 @@ def test_async_stream_document_decode_failure_is_redacted() -> None:
 
 
 def test_stream_document_cleanup_failure_preserves_primary_error() -> None:
-    def chunks() -> Generator[bytes, None, None]:
+    def chunks() -> Generator[bytes]:
         yield b"valid\n"
         raise ValueError("primary")
 
@@ -1468,7 +1468,7 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
         def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
             self.requests.append(request)
 
-            def chunks() -> Generator[bytes, None, None]:
+            def chunks() -> Generator[bytes]:
                 yield b"id\n"
                 raise TransportFailure("stream interrupted")
 
