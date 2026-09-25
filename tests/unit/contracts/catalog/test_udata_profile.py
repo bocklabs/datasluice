@@ -308,21 +308,43 @@ def test_cases_cover_required_effective_capability_outcomes() -> None:
 
 
 def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
+    """The recorded coverage must match what the named tests actually execute.
+
+    Asserting the recorded lists against themselves would ratify a false claim, so
+    this reads the controlled test and requires every claimed operation and mode to
+    be present in it.
+    """
     controlled = _read_json(_EVIDENCE_PATH)["controlled_oauth_evidence"]
     evidence = controlled["route_differential"]
     reads = evidence["read_operations"]
     mutations = evidence["mutation_operations"]
 
-    assert evidence["read_modes"] == ["sync", "async"]
-    assert evidence["mutation_modes"] == ["sync", "async"]
     assert set(reads) | set(mutations) == _OAUTH_ROUTE_OPERATION_IDS
     assert set(reads).isdisjoint(mutations)
-    assert "udata/oauth.authorize-post" in mutations
-    assert "udata/oauth.revoke-token" in mutations
     assert controlled["sanitized"] is True
     assert controlled["local_only"] is True
     assert controlled["stack_version"] == "17.6.0"
-    assert set(controlled["test_ids"]) and controlled["wheel_test_id"]
+
+    controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+    wheel_source = (_ROOT / "tests/e2e/test_udata_wheel.py").read_text()
+    for test_id in controlled["test_ids"]:
+        assert f"def {test_id}(" in controlled_source, test_id
+    assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
+
+    # Every claimed operation must actually be driven by the controlled test,
+    # either by its route name or by a direct call to the typed method.
+    for operation in set(reads) | set(mutations):
+        method = operation.rsplit(".", 1)[-1].replace("-", "_")
+        assert f'"{method}"' in controlled_source or f"auth_oauth.{method}(" in controlled_source, operation
+
+    # Both modes are claimed for both families, so both client families must appear
+    # in the read and the mutation pass.
+    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+    assert "asyncio.run(run_mutations_async())" in controlled_source
+    assert "asyncio.run(run_async())" in controlled_source
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == ["sync", "async"]
+
     assert (
         controlled["controlled_test_sha256"]
         == hashlib.sha256(

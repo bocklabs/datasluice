@@ -30,6 +30,7 @@ from datasluice.connectors.catalog.udata.clients import (
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
+    OAuthAuthorizeDecision,
     OAuthClientRequest,
     OAuthConsentSummary,
     OAuthErrorDocument,
@@ -2845,6 +2846,64 @@ def _assert_oauth_page_matches_raw(name: str, raw_status: int, raw_headers: Mapp
     assert typed.session_gated is True, name
 
 
+def _oauth_mutations(
+    raw_revoke: tuple[int, object, dict[str, str]], raw_authorize_post: tuple[int, object, dict[str, str]]
+) -> tuple[tuple[str, tuple[int, object, dict[str, str]], object], ...]:
+    """Bind every OAuth mutation to the raw status it must reproduce in both modes."""
+    return (
+        ("revoke_token", raw_revoke, OAuthRevokeRequest(token="controlled-absent-token")),
+        ("authorize_post", raw_authorize_post, OAuthAuthorizeDecision(accept=True)),
+    )
+
+
+def _oauth_mutation_policy(name: str) -> MutationPolicy:
+    target = "self" if name == "authorize_post" else f"request:{name}"
+    return MutationPolicy(
+        destructive=name == "revoke_token",
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation=f"udata/oauth.{name.replace('_', '-')}", target=target
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    )
+
+
+def _assert_oauth_mutation_sync(
+    client: SyncUDataClient,
+    name: str,
+    raw: tuple[int, object, dict[str, str]],
+    body: object,
+    permissions: object,
+) -> None:
+    """The disposable stack has no OAuth client, so the stock endpoints reject every
+    form. Either outcome is valid; what matters is that the typed status equals the raw
+    status and that no access token is ever retained."""
+    try:
+        result = getattr(client.auth_oauth, name)(body, permissions, _oauth_mutation_policy(name))
+    except CatalogError as error:
+        assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
+        receipt = error.metadata.get("receipt")
+        if isinstance(receipt, Mapping):
+            assert receipt["audit_metadata"]["status_code"] == raw[0], name
+    else:
+        assert result.status_code == raw[0], name
+
+
+async def _assert_oauth_mutation_async(
+    client: AsyncUDataClient,
+    name: str,
+    raw: tuple[int, object, dict[str, str]],
+    body: object,
+    permissions: object,
+) -> None:
+    """The async mutation path must reproduce the same status as the sync path."""
+    try:
+        result = await getattr(client.auth_oauth, name)(body, permissions, _oauth_mutation_policy(name))
+    except CatalogError as error:
+        assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
+    else:
+        assert result.status_code == raw[0], name
+
+
 def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
     """Every assigned /oauth route is compared against its raw loopback response."""
     token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
@@ -2879,12 +2938,26 @@ def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
         content_type=_OAUTH_FORM,
         max_bytes=2048,
     )
+    # The consent POST is login_required in stock, so the raw probe establishes the
+    # status the typed client must reproduce rather than assuming one.
+    raw_authorize_post = _direct_request(
+        token,
+        "POST",
+        "/oauth/authorize",
+        body=_oauth_form({"accept": "y"}),
+        content_type=_OAUTH_FORM,
+        max_bytes=2048,
+    )
     assert raw_revoke[0] in {200, 400, 401}, raw_revoke[0]
     assert raw_token[0] in {400, 401}, raw_token[0]
     # The stock /oauth/error page renders api/oauth_error.html, which this image
     # does not ship, so the deployment itself answers 500. The connector must
     # surface that status unchanged rather than mask or invent a body.
     assert raw_error[0] >= 200
+
+    _CONTROLLED_TOKEN_BODY = OAuthTokenRequest(
+        grant_type="client_credentials", client_id="absent", client_secret="absent"
+    )
 
     def check_typed(client: SyncUDataClient, raw: tuple[int, object, dict[str, str]], name: str) -> None:
         try:
@@ -2930,41 +3003,22 @@ def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
 
         asyncio.run(run_async())
 
-        # The form-authenticated routes must reach the same status as the raw call
-        # and must never carry the uData X-API-KEY header.
-        for name, raw, body in (
-            ("revoke_token", raw_revoke, OAuthRevokeRequest(token="controlled-absent-token")),
-            (
-                "access_token",
-                raw_token,
-                OAuthTokenRequest(grant_type="client_credentials", client_id="absent", client_secret="absent"),
-            ),
-        ):
-            policy = MutationPolicy(
-                destructive=name == "revoke_token",
-                confirmation=ConfirmationPolicy(
-                    confirmed=True, operation=f"udata/oauth.{name.replace('_', '-')}", target=f"request:{name}"
-                ),
-                concurrency=ConcurrencyPolicy(overwrite=True),
-            )
-            # The disposable stack has no OAuth client registered, so the stock
-            # token and revoke endpoints reject the form. Either outcome is valid;
-            # what matters is that the typed status equals the raw status and that
-            # no access token is ever retained.
-            try:
-                result = (
-                    getattr(client.auth_oauth, name)(body, permissions, policy)
-                    if name == "revoke_token"
-                    else getattr(client.auth_oauth, name)(body, permissions)
-                )
-            except CatalogError as error:
-                assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
-                receipt = error.metadata.get("receipt")
-                if isinstance(receipt, Mapping):
-                    assert receipt["audit_metadata"]["status_code"] == raw[0], name
-            else:
-                assert result.receipt.audit_metadata["status_code"] == raw[0], name
-                assert result.to_dict()["has_access_token"] is False, name
+        # The RFC 6749 exchange carries its own client secret, so the uData API key
+        # must never accompany it and no token may be retained.
+        result = client.auth_oauth.access_token(_CONTROLLED_TOKEN_BODY, permissions)
+        assert result.to_dict()["has_access_token"] is False, "the absent client issued a token"
+
+        for name, raw, body in _oauth_mutations(raw_revoke, raw_authorize_post):
+            _assert_oauth_mutation_sync(client, name, raw, body, permissions)
+
+        async def run_mutations_async() -> None:
+            async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+                async_token = await client.auth_oauth.access_token(_CONTROLLED_TOKEN_BODY, permissions)
+                assert async_token.to_dict()["has_access_token"] is False, "the absent client issued a token"
+                for name, raw, body in _oauth_mutations(raw_revoke, raw_authorize_post):
+                    await _assert_oauth_mutation_async(client, name, raw, body, permissions)
+
+        asyncio.run(run_mutations_async())
 
 
 def test_controlled_oauth_rejects_unconfirmed_destructive_revocation() -> None:
