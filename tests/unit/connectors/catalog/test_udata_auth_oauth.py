@@ -263,6 +263,14 @@ def test_authorize_post_outcomes_stay_distinguishable() -> None:
     assert run(False)["accepted"] is False
 
 
+def test_form_bodies_keep_their_declared_media_type() -> None:
+    """A form body must never be relabelled as JSON by the shared header seam."""
+    router = _Router(_routes(("POST", "/oauth/token", 200, {"access_token": "opaque", "token_type": "Bearer"})))
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        client.auth_oauth.access_token(OAuthTokenRequest(grant_type="client_credentials", client_id="c"), PERMISSIONS)
+    assert router.requests[-1].headers["Content-Type"] == wire.FORM_MEDIA_TYPE
+
+
 def test_oauth_error_returns_the_stock_missing_template_status() -> None:
     """The 17.6.0 image ships no api/oauth_error.html, so stock answers 500.
 

@@ -2829,8 +2829,10 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         request_headers.update(_auth_headers(credential))
         if idempotency_policy is not None and idempotency_policy.key is not None:
             request_headers["Idempotency-Key"] = idempotency_policy.key
-        if body is not None:
-            request_headers = {"Content-Type": _JSON_MEDIA_TYPE, **request_headers}
+        if body is not None and not any(key.lower() == "content-type" for key in request_headers):
+            # Only a body whose caller declared no media type falls back to JSON, so
+            # a form or multipart body is never silently relabelled as JSON.
+            request_headers["Content-Type"] = _JSON_MEDIA_TYPE
         return request_headers
 
     def _admit_request(self, owning_id: OperationId, request: RuntimeRequest) -> CircuitKey:
