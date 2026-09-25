@@ -110,6 +110,45 @@ class OAuthRevokeRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class OAuthClientRequest:
+    """The query parameters stock uData reads on the GET /oauth routes.
+
+    ``client_info`` requires the token presented by the browser session, and
+    ``authorize`` requires a client identifier and a response type; without
+    them stock answers an error page instead of the requested document.
+    """
+
+    client_id: str | None = None
+    response_type: str = "code"
+    scope: str | None = None
+    state: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.client_id is not None:
+            _text(self.client_id, "client_id")
+        _text(self.response_type, "response_type")
+        if self.scope is not None and (not isinstance(self.scope, str) or _SCOPE.fullmatch(self.scope) is None):
+            raise ValueError("uData OAuth scope must be a space-delimited list of RFC 6749 scope tokens.")
+        if self.state is not None and (not isinstance(self.state, str) or not self.state):
+            raise ValueError("uData OAuth state must be a non-empty string or null.")
+
+    def query_fields(self, name: str) -> dict[str, str]:
+        """Return the exact query keys the stock route reads, omitting absent ones."""
+        if name == "client_info":
+            if self.client_id is None:
+                raise ValueError("The uData client_info route requires a client_id.")
+            return {"client_id": self.client_id}
+        if self.client_id is None:
+            raise ValueError("The uData authorize route requires a client_id.")
+        fields = {"client_id": self.client_id, "response_type": self.response_type}
+        for key in ("scope", "state"):
+            value = getattr(self, key)
+            if value is not None:
+                fields[key] = value
+        return fields
+
+
+@dataclass(frozen=True, slots=True)
 class OAuthAuthorizeDecision:
     """Consent outcome for the stock authorize POST form."""
 

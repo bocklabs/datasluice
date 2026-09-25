@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
+    OAuthClientRequest,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
@@ -109,10 +110,10 @@ class SyncAuthOAuthService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    def _read(self, name: str, permissions: Permissions) -> tuple[int, object, str]:
+    def _read(self, name: str, query: OAuthClientRequest, permissions: Permissions) -> tuple[int, object, str]:
         operation = wire.OPERATIONS[name]
         credential = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
-        method, path, headers, body = wire.build_request(name)
+        method, path, headers, body = wire.build_request(name, query)
         try:
             status, payload, response = self._client._dataset_call(
                 method=method,
@@ -179,12 +180,13 @@ class SyncAuthOAuthService:
         receipt = _success_receipt(wire.OPERATIONS["revoke_token"], _target("revoke_token"), mutation_policy, status)
         return _revocation_result(payload, receipt)
 
-    def client_info(self, permissions: Permissions) -> OAuthConsentSummary:
-        status, payload, media_type = self._read("client_info", permissions)
+    def client_info(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
+        status, payload, media_type = self._read("client_info", query, permissions)
         return wire.parse_consent_summary("client_info", _json_or_none(payload), status, media_type)
 
-    def authorize(self, permissions: Permissions) -> OAuthConsentSummary:
-        status, payload, media_type = self._read("authorize", permissions)
+    def authorize(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
+        """Read the consent page for one client, sending the query stock requires."""
+        status, payload, media_type = self._read("authorize", query, permissions)
         return wire.parse_consent_summary("authorize", _json_or_none(payload), status, media_type)
 
     def authorize_post(
@@ -223,12 +225,14 @@ class AsyncAuthOAuthService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    async def _read_async(self, name: str, permissions: Permissions) -> tuple[int, object, str]:
+    async def _read_async(
+        self, name: str, query: OAuthClientRequest, permissions: Permissions
+    ) -> tuple[int, object, str]:
         operation = wire.OPERATIONS[name]
         credential = _require_mutation_permission(
             await self._client._resolved_credential_async(), operation, permissions
         )
-        method, path, headers, body = wire.build_request(name)
+        method, path, headers, body = wire.build_request(name, query)
         try:
             status, payload, response = await self._client._dataset_call_async(
                 method=method,
@@ -299,12 +303,13 @@ class AsyncAuthOAuthService:
         receipt = _success_receipt(wire.OPERATIONS["revoke_token"], _target("revoke_token"), mutation_policy, status)
         return _revocation_result(payload, receipt)
 
-    async def client_info(self, permissions: Permissions) -> OAuthConsentSummary:
-        status, payload, media_type = await self._read_async("client_info", permissions)
+    async def client_info(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
+        status, payload, media_type = await self._read_async("client_info", query, permissions)
         return wire.parse_consent_summary("client_info", _json_or_none(payload), status, media_type)
 
-    async def authorize(self, permissions: Permissions) -> OAuthConsentSummary:
-        status, payload, media_type = await self._read_async("authorize", permissions)
+    async def authorize(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
+        """Read the consent page for one client, sending the query stock requires."""
+        status, payload, media_type = await self._read_async("authorize", query, permissions)
         return wire.parse_consent_summary("authorize", _json_or_none(payload), status, media_type)
 
     async def authorize_post(

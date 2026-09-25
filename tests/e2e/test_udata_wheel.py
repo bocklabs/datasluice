@@ -66,7 +66,11 @@ from datasluice.connectors.catalog.udata.clients import create_async_client, cre
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
-from datasluice.connectors.catalog.udata.models.oauth import OAuthRevokeRequest, OAuthTokenRequest
+from datasluice.connectors.catalog.udata.models.oauth import (
+    OAuthClientRequest,
+    OAuthRevokeRequest,
+    OAuthTokenRequest,
+)
 from datasluice.connectors.catalog.udata.models.users import ApiTokenCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
@@ -269,7 +273,7 @@ oauth_revoked = client.auth_oauth.revoke_token(
 )
 assert oauth_revoked.receipt.operation == "udata/oauth.revoke-token"
 assert client.auth_oauth.oauth_error().session_gated is True
-assert client.auth_oauth.authorize(sync_permissions).session_gated is True
+assert client.auth_oauth.authorize(OAuthClientRequest(client_id="wheel-client"), sync_permissions).session_gated is True
 assert created_token.receipt.audit_metadata["status_code"] == 201
 assert "token" not in created_token.to_dict()
 if not created_token.secret.reveal_once():

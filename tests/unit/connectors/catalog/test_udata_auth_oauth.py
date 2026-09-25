@@ -16,6 +16,7 @@ import pytest
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
+    OAuthClientRequest,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
@@ -112,12 +113,41 @@ _FORM_SAMPLES = {
 }
 
 
+_QUERY_SAMPLES = {
+    "client_info": OAuthClientRequest(client_id="client-id"),
+    "authorize": OAuthClientRequest(client_id="client-id", response_type="code", scope="default", state="xyz"),
+}
+
+
 @pytest.mark.parametrize(("name", "method", "path"), ASSIGNED_ROUTES)
 def test_every_assigned_oauth_route_has_exact_verb_and_path(name: str, method: str, path: str) -> None:
-    request = wire.build_request(name, _FORM_SAMPLES.get(name))
+    request = wire.build_request(name, _FORM_SAMPLES.get(name) or _QUERY_SAMPLES.get(name))
     assert request[0] == method
-    assert request[1] == path
+    assert request[1].split("?")[0] == path
     assert (request[3] is not None) == (name in _FORM_SAMPLES)
+
+
+def test_query_routes_send_the_parameters_stock_requires() -> None:
+    """Stock GET /oauth/authorize reads client_id and response_type from the query."""
+    method, path, _headers, body = wire.build_request(
+        "authorize", OAuthClientRequest(client_id="client-id", response_type="code", scope="default", state="xyz")
+    )
+    assert (method, body) == ("GET", None)
+    assert dict(parse_qsl(path.partition("?")[2])) == {
+        "client_id": "client-id",
+        "response_type": "code",
+        "scope": "default",
+        "state": "xyz",
+    }
+    _method, client_path, _headers, _body = wire.build_request("client_info", OAuthClientRequest(client_id="client-id"))
+    assert dict(parse_qsl(client_path.partition("?")[2])) == {"client_id": "client-id"}
+
+
+def test_query_routes_refuse_a_request_stock_would_reject() -> None:
+    with pytest.raises(ValueError):
+        wire.build_request("authorize", OAuthClientRequest(client_id=None))
+    with pytest.raises(ValueError):
+        wire.build_request("client_info", OAuthClientRequest(client_id=None))
 
 
 def test_oauth_token_route_sends_exact_form_without_cookie_or_session_auth() -> None:
@@ -154,11 +184,11 @@ def test_oauth_revoke_route_sends_exact_form_and_records_target() -> None:
 
 def test_oauth_client_info_reports_the_stock_session_gate_without_fabricating_consent() -> None:
     """Stock guards this route with login_required, so an API key gets no consent body."""
-    router = _Router(_routes(("GET", "/oauth/client_info", 401, None)))
+    router = _Router(_routes(("GET", "/oauth/client_info?client_id=client-id", 401, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     with client, pytest.raises(CatalogError):
-        client.auth_oauth.client_info(PERMISSIONS)
-    assert (router.requests[-1].method, router.requests[-1].url) == ("GET", f"{ORIGIN}/oauth/client_info")
+        client.auth_oauth.client_info(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+    assert router.requests[-1].url == f"{ORIGIN}/oauth/client_info?client_id=client-id"
 
 
 def test_oauth_consent_summary_decodes_the_stock_document_when_one_is_returned() -> None:
@@ -177,12 +207,13 @@ def test_oauth_consent_summary_keeps_only_status_for_a_session_gated_reply() -> 
     assert summary.to_dict() == {"session_gated": True, "status_code": 302, "media_type": "text/html"}
 
 
-def test_oauth_authorize_get_sends_no_form_body() -> None:
-    router = _Router(_routes(("GET", "/oauth/authorize", 200, None)))
+def test_oauth_authorize_get_sends_the_query_and_no_form_body() -> None:
+    router = _Router(_routes(("GET", "/oauth/authorize?client_id=client-id&response_type=code", 200, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     with client:
-        summary = client.auth_oauth.authorize(PERMISSIONS)
-    assert (router.requests[-1].method, router.requests[-1].url) == ("GET", f"{ORIGIN}/oauth/authorize")
+        summary = client.auth_oauth.authorize(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+    assert router.requests[-1].method == "GET"
+    assert router.requests[-1].url == f"{ORIGIN}/oauth/authorize?client_id=client-id&response_type=code"
     assert router.requests[-1].body is None
     assert summary.session_gated is True
 
@@ -253,14 +284,20 @@ def test_oauth_error_route_never_sends_the_api_key() -> None:
 
 def test_session_gated_reads_never_send_the_api_key() -> None:
     """client_info and authorize are browser-session routes; the key cannot authorize them."""
-    routes = _routes(("GET", "/oauth/client_info", 401, None), ("GET", "/oauth/authorize", 401, None))
+    routes = _routes(
+        ("GET", "/oauth/client_info?client_id=client-id", 401, None),
+        ("GET", "/oauth/authorize?client_id=client-id&response_type=code", 401, None),
+    )
     router = _Router(routes)
     with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
         for name in ("client_info", "authorize"):
             with pytest.raises(CatalogError):
-                getattr(client.auth_oauth, name)(PERMISSIONS)
+                getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
     oauth_requests = [request for request in router.requests if request.url.startswith(f"{ORIGIN}/oauth/")]
-    assert {request.url.rsplit("/", 1)[-1] for request in oauth_requests} == {"client_info", "authorize"}
+    assert {request.url.split("/oauth/")[1].partition("?")[0] for request in oauth_requests} == {
+        "client_info",
+        "authorize",
+    }
     assert all("X-API-KEY" not in request.headers for request in oauth_requests)
 
 
@@ -298,13 +335,13 @@ def test_invalid_oauth_inputs_fail_before_any_dispatch() -> None:
 def test_async_oauth_service_matches_sync_wire_exactly() -> None:
     routes = _routes(
         ("POST", "/oauth/token", 200, {"access_token": "opaque", "token_type": "Bearer"}),
-        ("GET", "/oauth/client_info", 200, {"client": {"name": "Portal"}, "scopes": ["default"]}),
+        ("GET", "/oauth/client_info?client_id=client-id", 200, {"client": {"name": "Portal"}, "scopes": ["default"]}),
     )
     token = OAuthTokenRequest(grant_type="client_credentials", client_id="client-id", client_secret="secret-value")
     sync_router = _Router(routes)
     with SyncUDataClient(sync_router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
         sync_token = client.auth_oauth.access_token(token, PERMISSIONS)
-        sync_info = client.auth_oauth.client_info(PERMISSIONS)
+        sync_info = client.auth_oauth.client_info(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
 
     async_router = _AsyncRouter(routes)
 
@@ -313,7 +350,7 @@ def test_async_oauth_service_matches_sync_wire_exactly() -> None:
             async_router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
         ) as client:
             return await client.auth_oauth.access_token(token, PERMISSIONS), await client.auth_oauth.client_info(
-                PERMISSIONS
+                OAuthClientRequest(client_id="client-id"), PERMISSIONS
             )
 
     async_token, async_info = asyncio.run(run())

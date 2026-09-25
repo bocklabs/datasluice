@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
+    OAuthClientRequest,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
@@ -94,12 +95,19 @@ def _optional_text(name: str, payload: Mapping[str, object], key: str) -> str | 
     return value
 
 
+_QUERY_ROUTES = frozenset({"client_info", "authorize"})
+
+
 def build_request(name: str, body: object = None) -> Request:
     """Build one documented OAuth request from its named stock route."""
     if name not in OPERATIONS:
         raise ValueError("The uData OAuth route is not assigned to this family.")
     method = _METHODS[name]
     path = _PATHS[name]
+    if name in _QUERY_ROUTES:
+        if not isinstance(body, OAuthClientRequest):
+            raise ValueError(f"uData OAuth {name} requires its typed query body.")
+        return method, f"{path}?{urlencode(body.query_fields(name))}", {"Accept": "application/json"}, None
     if name not in _FORM_BODIES:
         return method, path, {}, None
     if not isinstance(body, (OAuthTokenRequest, OAuthRevokeRequest, OAuthAuthorizeDecision)):

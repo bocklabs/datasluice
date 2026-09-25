@@ -30,6 +30,7 @@ from datasluice.connectors.catalog.udata.clients import (
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
+    OAuthClientRequest,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
@@ -2856,10 +2857,12 @@ def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
 
     # Raw first, so each expected status comes from the deployment, not from us.
     raw_error = _direct_request(token, "GET", "/oauth/error", max_bytes=1024)
-    raw_client_info = _direct_request(token, "GET", "/oauth/client_info", max_bytes=8192)
+    raw_client_info = _direct_request(token, "GET", "/oauth/client_info?client_id=absent", max_bytes=8192)
     # The typed client follows redirects, so the raw probe must too, otherwise the
     # two legitimately differ by exactly that hop.
-    raw_authorize = _direct_following_request(token, "GET", "/oauth/authorize", max_bytes=8192)
+    raw_authorize = _direct_following_request(
+        token, "GET", "/oauth/authorize?client_id=absent&response_type=code", max_bytes=8192
+    )
     raw_revoke = _direct_request(
         token,
         "POST",
@@ -2888,7 +2891,7 @@ def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
             typed = (
                 client.auth_oauth.oauth_error()
                 if name == "oauth_error"
-                else getattr(client.auth_oauth, name)(permissions)
+                else getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="absent"), permissions)
             )
         except CatalogError as error:
             # The deployment's own status is propagated, never masked by the client.
@@ -2915,7 +2918,7 @@ def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
                         typed = await (
                             client.auth_oauth.oauth_error()
                             if name == "oauth_error"
-                            else getattr(client.auth_oauth, name)(permissions)
+                            else getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="absent"), permissions)
                         )
                     except CatalogError as error:
                         assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
