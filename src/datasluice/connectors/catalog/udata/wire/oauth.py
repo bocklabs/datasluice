@@ -7,6 +7,7 @@ Expectations are transcribed from the independent upstream oracle
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.models.oauth import (
@@ -117,8 +118,20 @@ def parse_token(name: str, payload: object, receipt: MutationReceipt) -> OAuthTo
     )
 
 
-def parse_consent_summary(name: str, payload: object) -> OAuthConsentSummary:
-    """Decode the stock client_info and authorize consent document."""
+def parse_consent_summary(name: str, payload: object, status_code: int, media_type: str) -> OAuthConsentSummary:
+    """Decode the stock consent document, or report a session-gated reply as-is.
+
+    The stock routes are ``login_required``: without a browser session they
+    answer a redirect or an unauthorized page rather than a consent JSON body.
+    """
+    if not isinstance(media_type, str) or not media_type:
+        raise _invalid(name, "omitted its media type", "Verify the response against the pinned OAuth schema.")
+    if payload is None:
+        return OAuthConsentSummary(
+            session_gated=True,
+            status_code=status_code,
+            media_type=media_type.split(";", 1)[0].strip().lower(),
+        )
     document = _document(name, payload)
     client = document.get("client")
     if not isinstance(client, Mapping) or not isinstance(client.get("name"), str) or not client["name"]:
@@ -126,17 +139,11 @@ def parse_consent_summary(name: str, payload: object) -> OAuthConsentSummary:
     scopes = document.get("scopes")
     if not isinstance(scopes, list) or not all(isinstance(scope, str) and scope for scope in scopes):
         raise _invalid(name, "omitted its scopes", "Verify the response against the pinned OAuth schema.")
-    return OAuthConsentSummary(client_name=client["name"], scopes=tuple(scopes))
+    return OAuthConsentSummary(client_name=client["name"], scopes=tuple(cast("list[str]", scopes)))
 
 
-def parse_error_document(name: str, payload: object) -> OAuthErrorDocument:
-    """Decode the bounded public /oauth/error document."""
-    document = _document(name, payload)
-    error = document.get("error")
-    if not isinstance(error, str) or not error:
-        raise _invalid(name, "omitted its error code", "Verify the response against the pinned OAuth schema.")
-    return OAuthErrorDocument(
-        error=error,
-        error_description=_optional_text(name, document, "error_description"),
-        error_uri=_optional_text(name, document, "error_uri"),
-    )
+def parse_error_document(name: str, status_code: int, media_type: str) -> OAuthErrorDocument:
+    """Type the bounded public /oauth/error HTML page metadata."""
+    if not isinstance(media_type, str) or not media_type:
+        raise _invalid(name, "omitted its media type", "Verify the response against the pinned OAuth schema.")
+    return OAuthErrorDocument(status_code=status_code, media_type=media_type.split(";", 1)[0].strip().lower())

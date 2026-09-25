@@ -29,6 +29,12 @@ from datasluice.connectors.catalog.udata.clients import (
 )
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
+from datasluice.connectors.catalog.udata.models.oauth import (
+    OAuthConsentSummary,
+    OAuthErrorDocument,
+    OAuthRevokeRequest,
+    OAuthTokenRequest,
+)
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
     OrganizationCreateInput,
@@ -2802,3 +2808,172 @@ def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> 
     assert version == "17.6.0"
     assert total is not None
     assert total >= 0
+
+
+_OAUTH_FORM = "application/x-www-form-urlencoded"
+
+
+def _direct_following_request(
+    token: str, method: str, path: str, *, max_bytes: int = 8192
+) -> tuple[int, object, dict[str, str]]:
+    """Raw probe that follows redirects, matching the typed client's default."""
+    request = Request(f"{ORIGIN}{path}", headers={"Accept": "*/*", "X-API-KEY": token}, method=method)
+    with build_opener().open(request, timeout=10) as response:
+        body = response.read(max_bytes + 1)
+        assert len(body) <= max_bytes
+        media_type = response.headers.get_content_type()
+        return (
+            response.status,
+            json.loads(body) if body and media_type == "application/json" else None,
+            {key.lower(): value for key, value in response.headers.items()},
+        )
+
+
+def _oauth_form(fields: Mapping[str, str]) -> bytes:
+    from urllib.parse import urlencode
+
+    return urlencode(fields).encode()
+
+
+def _assert_oauth_page_matches_raw(name: str, raw_status: int, raw_headers: Mapping[str, str], typed: object) -> None:
+    """The stock /oauth pages keep only status and media type, never their body."""
+    expected = raw_headers.get("content-type", "application/octet-stream").split(";")[0].lower()
+    assert isinstance(typed, (OAuthErrorDocument, OAuthConsentSummary)), name
+    assert typed.status_code == raw_status, name
+    assert typed.media_type == expected, name
+    assert typed.session_gated is True, name
+
+
+def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
+    """Every assigned /oauth route is compared against its raw loopback response."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled OAuth evidence requires a seeded disposable admin")
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+
+    # Raw first, so each expected status comes from the deployment, not from us.
+    raw_error = _direct_request(token, "GET", "/oauth/error", max_bytes=1024)
+    raw_client_info = _direct_request(token, "GET", "/oauth/client_info", max_bytes=8192)
+    # The typed client follows redirects, so the raw probe must too, otherwise the
+    # two legitimately differ by exactly that hop.
+    raw_authorize = _direct_following_request(token, "GET", "/oauth/authorize", max_bytes=8192)
+    raw_revoke = _direct_request(
+        token,
+        "POST",
+        "/oauth/revoke",
+        body=_oauth_form({"token": "controlled-absent-token"}),
+        content_type=_OAUTH_FORM,
+        max_bytes=2048,
+    )
+    raw_token = _direct_request(
+        token,
+        "POST",
+        "/oauth/token",
+        body=_oauth_form({"grant_type": "client_credentials", "client_id": "absent", "client_secret": "absent"}),
+        content_type=_OAUTH_FORM,
+        max_bytes=2048,
+    )
+    assert raw_revoke[0] in {200, 400, 401}, raw_revoke[0]
+    assert raw_token[0] in {400, 401}, raw_token[0]
+    # The stock /oauth/error page renders api/oauth_error.html, which this image
+    # does not ship, so the deployment itself answers 500. The connector must
+    # surface that status unchanged rather than mask or invent a body.
+    assert raw_error[0] >= 200
+
+    def check_typed(client: SyncUDataClient, raw: tuple[int, object, dict[str, str]], name: str) -> None:
+        try:
+            typed = (
+                client.auth_oauth.oauth_error()
+                if name == "oauth_error"
+                else getattr(client.auth_oauth, name)(permissions)
+            )
+        except CatalogError as error:
+            # The deployment's own status is propagated, never masked by the client.
+            assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
+        else:
+            if raw[1] is None:
+                _assert_oauth_page_matches_raw(name, raw[0], raw[2], typed)
+            else:
+                assert raw[0] < 500, (name, raw[0])
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        check_typed(client, raw_error, "oauth_error")
+        check_typed(client, raw_client_info, "client_info")
+        check_typed(client, raw_authorize, "authorize")
+
+        async def run_async() -> None:
+            async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+                for raw, name in (
+                    (raw_error, "oauth_error"),
+                    (raw_client_info, "client_info"),
+                    (raw_authorize, "authorize"),
+                ):
+                    try:
+                        typed = await (
+                            client.auth_oauth.oauth_error()
+                            if name == "oauth_error"
+                            else getattr(client.auth_oauth, name)(permissions)
+                        )
+                    except CatalogError as error:
+                        assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
+                    else:
+                        if raw[1] is None:
+                            _assert_oauth_page_matches_raw(name, raw[0], raw[2], typed)
+                        else:
+                            assert raw[0] < 500, (name, raw[0])
+
+        asyncio.run(run_async())
+
+        # The form-authenticated routes must reach the same status as the raw call
+        # and must never carry the uData X-API-KEY header.
+        for name, raw, body in (
+            ("revoke_token", raw_revoke, OAuthRevokeRequest(token="controlled-absent-token")),
+            (
+                "access_token",
+                raw_token,
+                OAuthTokenRequest(grant_type="client_credentials", client_id="absent", client_secret="absent"),
+            ),
+        ):
+            policy = MutationPolicy(
+                destructive=name == "revoke_token",
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation=f"udata/oauth.{name.replace('_', '-')}", target=f"request:{name}"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            )
+            # The disposable stack has no OAuth client registered, so the stock
+            # token and revoke endpoints reject the form. Either outcome is valid;
+            # what matters is that the typed status equals the raw status and that
+            # no access token is ever retained.
+            try:
+                result = (
+                    getattr(client.auth_oauth, name)(body, permissions, policy)
+                    if name == "revoke_token"
+                    else getattr(client.auth_oauth, name)(body, permissions)
+                )
+            except CatalogError as error:
+                assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
+                receipt = error.metadata.get("receipt")
+                if isinstance(receipt, Mapping):
+                    assert receipt["audit_metadata"]["status_code"] == raw[0], name
+            else:
+                assert result.receipt.audit_metadata["status_code"] == raw[0], name
+                assert result.to_dict()["has_access_token"] is False, name
+
+
+def test_controlled_oauth_rejects_unconfirmed_destructive_revocation() -> None:
+    """A revoke without a confirmed policy fails closed before any dispatch."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled OAuth evidence requires a seeded disposable admin")
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        with pytest.raises(CatalogError) as denial:
+            client.auth_oauth.revoke_token(OAuthRevokeRequest(token="controlled-absent-token"), permissions)
+    assert denial.value.metadata.get("status_code") is None

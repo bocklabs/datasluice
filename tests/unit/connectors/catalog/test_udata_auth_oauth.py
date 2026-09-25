@@ -25,7 +25,7 @@ from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError
+from datasluice.errors.catalog import CatalogError, CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 ORIGIN = "http://127.0.0.1:5640"
@@ -147,34 +147,49 @@ def test_oauth_revoke_route_sends_exact_form_and_records_target() -> None:
     assert _form(request) == {"token": "opaque-access-token", "token_type_hint": "access_token"}
 
 
-def test_oauth_client_info_decodes_stock_consent_summary() -> None:
-    router = _Router(_routes(("GET", "/oauth/client_info", 200, {"client": {"name": "Portal"}, "scopes": ["default"]})))
+def test_oauth_client_info_reports_the_stock_session_gate_without_fabricating_consent() -> None:
+    """Stock guards this route with login_required, so an API key gets no consent body."""
+    router = _Router(_routes(("GET", "/oauth/client_info", 401, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
-    with client:
-        summary = client.auth_oauth.client_info(PERMISSIONS)
+    with client, pytest.raises(CatalogError):
+        client.auth_oauth.client_info(PERMISSIONS)
     assert (router.requests[-1].method, router.requests[-1].url) == ("GET", f"{ORIGIN}/oauth/client_info")
+
+
+def test_oauth_consent_summary_decodes_the_stock_document_when_one_is_returned() -> None:
+    summary = wire.parse_consent_summary(
+        "client_info", {"client": {"name": "Portal"}, "scopes": ["default"]}, 200, "application/json"
+    )
     assert summary.client_name == "Portal"
     assert summary.scopes == ("default",)
+    assert summary.to_dict() == {"session_gated": False, "client": {"name": "Portal"}, "scopes": ["default"]}
     assert "client_secret" not in json.dumps(summary.to_dict())
 
 
-def test_oauth_authorize_get_omits_forms_and_authorize_post_sends_consent_form() -> None:
-    router = _Router(_routes(("GET", "/oauth/authorize", 200, {"client": {"name": "Portal"}, "scopes": ["default"]})))
+def test_oauth_consent_summary_keeps_only_status_for_a_session_gated_reply() -> None:
+    summary = wire.parse_consent_summary("authorize", None, 302, "text/html; charset=utf-8")
+    assert summary.session_gated is True
+    assert summary.to_dict() == {"session_gated": True, "status_code": 302, "media_type": "text/html"}
+
+
+def test_oauth_authorize_get_sends_no_form_body() -> None:
+    router = _Router(_routes(("GET", "/oauth/authorize", 200, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     with client:
-        client.auth_oauth.authorize(PERMISSIONS)
+        summary = client.auth_oauth.authorize(PERMISSIONS)
     assert (router.requests[-1].method, router.requests[-1].url) == ("GET", f"{ORIGIN}/oauth/authorize")
     assert router.requests[-1].body is None
+    assert summary.session_gated is True
 
 
-def test_oauth_error_route_is_an_exact_public_read() -> None:
-    router = _Router(_routes(("GET", "/oauth/error", 200, {"error": "access_denied"})))
+def test_oauth_error_route_is_an_exact_public_html_read() -> None:
+    """The stock route renders api/oauth_error.html and keeps no JSON body."""
+    router = _Router(_routes(("GET", "/oauth/error", 200, None)))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN)
     with client:
         outcome = client.auth_oauth.oauth_error()
     assert (router.requests[-1].method, router.requests[-1].url) == ("GET", f"{ORIGIN}/oauth/error")
-    assert outcome.error == "access_denied"
-    assert outcome.to_dict() == {"error": "access_denied", "error_description": None, "error_uri": None}
+    assert outcome.to_dict() == {"session_gated": True, "status_code": 200, "media_type": "application/json"}
 
 
 @pytest.mark.parametrize(
@@ -188,7 +203,7 @@ def test_oauth_error_route_is_an_exact_public_read() -> None:
 )
 def test_malformed_oauth_documents_fail_with_route_identity(payload: dict[str, object]) -> None:
     with pytest.raises(CatalogValidationError):
-        wire.parse_consent_summary("client_info", payload)
+        wire.parse_consent_summary("client_info", payload, 200, "application/json")
 
 
 def test_invalid_oauth_inputs_fail_before_any_dispatch() -> None:

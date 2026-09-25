@@ -38,6 +38,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "secrets.py",
         "wire/users.py",
         "services/users_tokens.py",
+        "models/oauth.py",
+        "wire/oauth.py",
+        "services/auth_oauth.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
@@ -63,6 +66,7 @@ from datasluice.connectors.catalog.udata.clients import create_async_client, cre
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
+from datasluice.connectors.catalog.udata.models.oauth import OAuthRevokeRequest, OAuthTokenRequest
 from datasluice.connectors.catalog.udata.models.users import ApiTokenCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
@@ -107,6 +111,18 @@ class Transport:
         elif url.endswith("/api/1/me/api_tokens/wheel-token-id/") and request.method == "DELETE":
             body = b""
             headers = {}
+        elif "/oauth/token" in url and request.method == "POST":
+            body = json.dumps({"access_token": "wheel-access", "token_type": "Bearer", "expires_in": 60}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/oauth/revoke" in url and request.method == "POST":
+            body = b""
+            headers = {}
+        elif "/oauth/client_info" in url or "/oauth/authorize" in url:
+            body = b"\\n"
+            headers = {"Content-Type": "text/html; charset=utf-8"}
+        elif "/oauth/error" in url:
+            body = b"\\n"
+            headers = {"Content-Type": "text/html; charset=utf-8"}
         elif url.endswith(".csv"):
             body = b"id\\nwheel\\n"
             headers = {"Content-Type": "text/csv"}
@@ -233,6 +249,27 @@ created_token = client.users_tokens.create_api_token(
         concurrency=ConcurrencyPolicy(overwrite=True),
     ),
 )
+oauth_token = client.auth_oauth.access_token(
+    OAuthTokenRequest(grant_type="client_credentials", client_id="wheel-client", client_secret="wheel-secret"),
+    sync_permissions,
+)
+assert oauth_token.receipt.outcome == "succeeded"
+assert oauth_token.token_type == "Bearer"
+assert "wheel-access" not in json.dumps(oauth_token.to_dict())
+oauth_revoked = client.auth_oauth.revoke_token(
+    OAuthRevokeRequest(token="wheel-access"),
+    sync_permissions,
+    MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/oauth.revoke-token", target="request:revoke_token"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert oauth_revoked.receipt.operation == "udata/oauth.revoke-token"
+assert client.auth_oauth.oauth_error().session_gated is True
+assert client.auth_oauth.authorize(sync_permissions).session_gated is True
 assert created_token.receipt.audit_metadata["status_code"] == 201
 assert "token" not in created_token.to_dict()
 if not created_token.secret.reveal_once():
@@ -397,6 +434,12 @@ assert recorded == [
     "http://127.0.0.1:5640/api/1/me/",
     "http://127.0.0.1:5640/api/1/me/api_tokens/",
     "http://127.0.0.1:5640/api/1/me/api_tokens/",
+    "http://127.0.0.1:5640/oauth/token",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/oauth/revoke",
+    "http://127.0.0.1:5640/oauth/error",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/oauth/authorize",
     "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
 ], recorded
 assert [getattr(r, "url", r) for r in async_transport.requests] == [

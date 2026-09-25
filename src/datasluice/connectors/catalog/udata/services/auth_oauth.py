@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models.oauth import (
@@ -48,6 +50,23 @@ def _scrub(response: RuntimeResponse | None) -> RuntimeResponse | None:
     return None if response is None else RuntimeResponse(status_code=response.status_code, headers={}, body=b"")
 
 
+def _json_or_none(payload: object) -> object:
+    """raw_text returns bytes; only a JSON media body becomes a decoded document."""
+    if isinstance(payload, bytes):
+        try:
+            return json.loads(payload)
+        except ValueError:
+            return None
+    return payload
+
+
+def _media_type(headers: Mapping[str, str]) -> str:
+    for key, value in headers.items():
+        if key.lower() == "content-type":
+            return value
+    return "application/octet-stream"
+
+
 def _success_receipt(operation: str, target: str, policy: Policy, status: int) -> MutationReceipt:
     """Build the redacted receipt for one successful OAuth mutation."""
     return _receipt(operation, target, policy, "succeeded", status, "oauth", kind=_KIND)
@@ -91,18 +110,19 @@ class SyncAuthOAuthService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    def _read(self, name: str, permissions: Permissions) -> object:
+    def _read(self, name: str, permissions: Permissions) -> tuple[int, object, str]:
         operation = wire.OPERATIONS[name]
         credential = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
         method, path, headers, body = wire.build_request(name)
         try:
-            _, payload, _ = self._client._dataset_call(
+            status, payload, response = self._client._dataset_call(
                 method=method,
                 path=path,
                 headers=headers,
                 owning_operation=operation,
                 permissions=permissions,
                 credential=credential,
+                raw_text=True,
                 emit_success=False,
                 form_body=body,
             )
@@ -110,14 +130,14 @@ class SyncAuthOAuthService:
             self._client._emit(operation, "failed")
             raise
         self._client._emit(operation, "succeeded")
-        return payload
+        return status, payload, _media_type(response.headers)
 
     def _write(self, name: str, body: object, permissions: Permissions, mutation_policy: Policy) -> tuple[object, int]:
         operation = wire.OPERATIONS[name]
         response: RuntimeResponse | None = None
         payload: object = None
         try:
-            if mutation_policy is not None:
+            if name != "access_token":
                 _enforce_mutation_policy(operation, _target(name), mutation_policy, destructive=name in _DESTRUCTIVE)
             credential = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
             method, path, headers, encoded = wire.build_request(name, body)
@@ -160,12 +180,12 @@ class SyncAuthOAuthService:
         return _revocation_result(payload, receipt)
 
     def client_info(self, permissions: Permissions) -> OAuthConsentSummary:
-        payload = self._read("client_info", permissions)
-        return wire.parse_consent_summary("client_info", payload)
+        status, payload, media_type = self._read("client_info", permissions)
+        return wire.parse_consent_summary("client_info", _json_or_none(payload), status, media_type)
 
     def authorize(self, permissions: Permissions) -> OAuthConsentSummary:
-        payload = self._read("authorize", permissions)
-        return wire.parse_consent_summary("authorize", payload)
+        status, payload, media_type = self._read("authorize", permissions)
+        return wire.parse_consent_summary("authorize", _json_or_none(payload), status, media_type)
 
     def authorize_post(
         self,
@@ -180,14 +200,15 @@ class SyncAuthOAuthService:
     def oauth_error(self) -> OAuthErrorDocument:
         """Read the one public OAuth route without credential evidence."""
         method, path, headers, _ = wire.build_request("oauth_error")
-        _, payload, _ = self._client._dataset_call(
+        status, _, response = self._client._dataset_call(
             method=method,
             path=path,
             headers=headers,
             owning_operation=wire.OPERATIONS["oauth_error"],
+            raw_text=True,
             emit_success=False,
         )
-        return wire.parse_error_document("oauth_error", payload)
+        return wire.parse_error_document("oauth_error", status, _media_type(response.headers))
 
 
 class AsyncAuthOAuthService:
@@ -200,20 +221,21 @@ class AsyncAuthOAuthService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    async def _read_async(self, name: str, permissions: Permissions) -> object:
+    async def _read_async(self, name: str, permissions: Permissions) -> tuple[int, object, str]:
         operation = wire.OPERATIONS[name]
         credential = _require_mutation_permission(
             await self._client._resolved_credential_async(), operation, permissions
         )
         method, path, headers, body = wire.build_request(name)
         try:
-            _, payload, _ = await self._client._dataset_call_async(
+            status, payload, response = await self._client._dataset_call_async(
                 method=method,
                 path=path,
                 headers=headers,
                 owning_operation=operation,
                 permissions=permissions,
                 credential=credential,
+                raw_text=True,
                 emit_success=False,
                 form_body=body,
             )
@@ -221,7 +243,7 @@ class AsyncAuthOAuthService:
             self._client._emit(operation, "failed")
             raise
         self._client._emit(operation, "succeeded")
-        return payload
+        return status, payload, _media_type(response.headers)
 
     async def _write_async(
         self, name: str, body: object, permissions: Permissions, mutation_policy: Policy
@@ -230,7 +252,7 @@ class AsyncAuthOAuthService:
         response: RuntimeResponse | None = None
         payload: object = None
         try:
-            if mutation_policy is not None:
+            if name != "access_token":
                 _enforce_mutation_policy(operation, _target(name), mutation_policy, destructive=name in _DESTRUCTIVE)
             credential = _require_mutation_permission(
                 await self._client._resolved_credential_async(), operation, permissions
@@ -275,10 +297,12 @@ class AsyncAuthOAuthService:
         return _revocation_result(payload, receipt)
 
     async def client_info(self, permissions: Permissions) -> OAuthConsentSummary:
-        return wire.parse_consent_summary("client_info", await self._read_async("client_info", permissions))
+        status, payload, media_type = await self._read_async("client_info", permissions)
+        return wire.parse_consent_summary("client_info", _json_or_none(payload), status, media_type)
 
     async def authorize(self, permissions: Permissions) -> OAuthConsentSummary:
-        return wire.parse_consent_summary("authorize", await self._read_async("authorize", permissions))
+        status, payload, media_type = await self._read_async("authorize", permissions)
+        return wire.parse_consent_summary("authorize", _json_or_none(payload), status, media_type)
 
     async def authorize_post(
         self,
@@ -293,11 +317,12 @@ class AsyncAuthOAuthService:
     async def oauth_error(self) -> OAuthErrorDocument:
         """Read the one public OAuth route without credential evidence."""
         method, path, headers, _ = wire.build_request("oauth_error")
-        _, payload, _ = await self._client._dataset_call_async(
+        status, _, response = await self._client._dataset_call_async(
             method=method,
             path=path,
             headers=headers,
             owning_operation=wire.OPERATIONS["oauth_error"],
+            raw_text=True,
             emit_success=False,
         )
-        return wire.parse_error_document("oauth_error", payload)
+        return wire.parse_error_document("oauth_error", status, _media_type(response.headers))

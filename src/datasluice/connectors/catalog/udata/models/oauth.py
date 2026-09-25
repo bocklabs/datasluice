@@ -171,34 +171,53 @@ class OAuthTokenResult:
 
 @dataclass(frozen=True, slots=True)
 class OAuthConsentSummary:
-    """The stock client_info/authorize consent document."""
+    """The stock consent document, or the raw status of a browser-only page.
 
-    client_name: str
-    scopes: tuple[str, ...]
+    Stock uData guards ``client_info`` and ``authorize`` with ``login_required``,
+    so they answer a browser session, not an API key. This connector never
+    fabricates cookie or session authentication: a session-gated reply is
+    reported as its status and media type instead of an invented consent body.
+    """
+
+    client_name: str | None = None
+    scopes: tuple[str, ...] | None = None
+    status_code: int | None = None
+    media_type: str | None = None
+    session_gated: bool = False
 
     def __post_init__(self) -> None:
+        if self.session_gated:
+            if type(self.status_code) is not int:
+                raise ValueError("A session-gated uData OAuth reply must carry its status code.")
+            _text(self.media_type, "media type")
+            return
         _text(self.client_name, "client name")
         if not self.scopes or not all(isinstance(scope, str) and scope for scope in self.scopes):
             raise ValueError("uData OAuth consent scopes must be non-empty strings.")
 
     def to_dict(self) -> dict[str, object]:
-        return {"client": {"name": self.client_name}, "scopes": list(self.scopes)}
+        if self.session_gated or self.scopes is None:
+            return {"session_gated": True, "status_code": self.status_code, "media_type": self.media_type}
+        return {"session_gated": False, "client": {"name": self.client_name}, "scopes": list(self.scopes)}
 
 
 @dataclass(frozen=True, slots=True)
 class OAuthErrorDocument:
-    """The bounded public /oauth/error document."""
+    """The bounded metadata of the stock /oauth/error HTML page.
 
-    error: str
-    error_description: str | None = None
-    error_uri: str | None = None
+    The stock route renders ``api/oauth_error.html`` and never returns a JSON
+    body, so only the status and media type are typed here. The rendered bytes
+    are deliberately not retained.
+    """
+
+    status_code: int
+    media_type: str
+    session_gated: bool = True
 
     def __post_init__(self) -> None:
-        _text(self.error, "error")
-        for name in ("error_description", "error_uri"):
-            value = getattr(self, name)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(f"uData OAuth {name} must be a string or null.")
+        if type(self.status_code) is not int or self.status_code < 100 or self.status_code > 599:
+            raise ValueError("uData OAuth error status must be a valid HTTP status code.")
+        _text(self.media_type, "media type")
 
     def to_dict(self) -> dict[str, object]:
-        return {"error": self.error, "error_description": self.error_description, "error_uri": self.error_uri}
+        return {"session_gated": self.session_gated, "status_code": self.status_code, "media_type": self.media_type}

@@ -305,3 +305,31 @@ def test_cases_cover_required_effective_capability_outcomes() -> None:
         "deployment-disabled",
         "unavailable",
     }
+
+
+def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_oauth_evidence"]
+    evidence = controlled["route_differential"]
+    reads = evidence["read_operations"]
+    mutations = evidence["mutation_operations"]
+
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == ["sync", "async"]
+    assert set(reads) | set(mutations) == _OAUTH_ROUTE_OPERATION_IDS
+    assert set(reads).isdisjoint(mutations)
+    assert "udata/oauth.authorize-post" in mutations
+    assert "udata/oauth.revoke-token" in mutations
+    assert controlled["sanitized"] is True
+    assert controlled["local_only"] is True
+    assert controlled["stack_version"] == "17.6.0"
+    assert set(controlled["test_ids"]) and controlled["wheel_test_id"]
+    assert (
+        controlled["controlled_test_sha256"]
+        == hashlib.sha256(
+            (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        controlled["wheel_test_sha256"]
+        == hashlib.sha256((_ROOT / "tests/e2e/test_udata_wheel.py").read_bytes()).hexdigest()
+    )

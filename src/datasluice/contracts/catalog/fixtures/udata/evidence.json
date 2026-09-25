@@ -163,11 +163,53 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "b1505d293ee94e536d82f6c448242b975d467aafb7fd105d36d86d8303319d6d",
-    "wheel_test_sha256": "dc38abd10c98c72a44b60b61293d7fef118e0f6610095533e95145bbf8340c88",
+    "controlled_test_sha256": "1749b5397968b0abd43d88c15c4b772c5587547133f760cefeac7df6ebe94ba6",
+    "wheel_test_sha256": "20881b482c9f3520f51df25c0562e9830575432125fc929aac1e7eda63a12992",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e"
+  },
+  "controlled_oauth_evidence": {
+    "captured_at": "2026-09-25",
+    "local_only": true,
+    "stack_version": "17.6.0",
+    "sanitized": true,
+    "test_ids": [
+      "test_controlled_oauth_routes_match_raw_semantics_in_both_modes",
+      "test_controlled_oauth_rejects_unconfirmed_destructive_revocation"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/oauth.access-token",
+        "udata/oauth.client-info",
+        "udata/oauth.authorize",
+        "udata/oauth.oauth-error"
+      ],
+      "mutation_operations": [
+        "udata/oauth.authorize-post",
+        "udata/oauth.revoke-token"
+      ]
+    },
+    "observed_stock_semantics": {
+      "token": "RFC 6749 form-encoded grant; the disposable stack has no registered client, so the typed status equals the raw 400/401.",
+      "revoke": "RFC 7009 answers 200 with an empty body; the typed result never invents a document.",
+      "client_info": "login_required in stock, so an API key yields 401 and no consent body is fabricated.",
+      "authorize": "login_required in stock; the typed client follows the redirect like the raw probe.",
+      "authorize_post": "consent form accept/decline; no cookie or session authentication is invented.",
+      "oauth_error": "renders api/oauth_error.html, so only status and media type are retained, never the body."
+    },
+    "controlled_test_sha256": "1749b5397968b0abd43d88c15c4b772c5587547133f760cefeac7df6ebe94ba6",
+    "wheel_test_sha256": "20881b482c9f3520f51df25c0562e9830575432125fc929aac1e7eda63a12992",
+    "auth_surface_separation": "Token and revocation forms authenticate from their own body; no request carries the uData X-API-KEY header."
   }
 }
