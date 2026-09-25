@@ -656,6 +656,22 @@ NATIVE_OPERATION_MEMBERS["udata"].update(
         for operation_id in USER_ROUTE_OPERATION_IDS
     }
 )
+OAUTH_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/oauth.access-token",
+        "udata/oauth.authorize",
+        "udata/oauth.authorize-post",
+        "udata/oauth.client-info",
+        "udata/oauth.oauth-error",
+        "udata/oauth.revoke-token",
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "auth_oauth")
+        for operation_id in OAUTH_ROUTE_OPERATION_IDS
+    }
+)
 
 LOCKED_DATASET_ROUTE_OPERATIONS = (
     frozenset(
@@ -699,10 +715,11 @@ LOCKED_EXTRA_OPERATION_IDS = (
     | RESOURCE_ROUTE_OPERATION_IDS
     | ORGANIZATION_ROUTE_OPERATION_IDS
     | USER_ROUTE_OPERATION_IDS
+    | OAUTH_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
-    "udata": LOCKED_DATASET_ROUTE_OPERATIONS,
+    "udata": LOCKED_DATASET_ROUTE_OPERATIONS | OAUTH_ROUTE_OPERATION_IDS,
 }
 
 

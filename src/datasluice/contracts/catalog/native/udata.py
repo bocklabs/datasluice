@@ -13,6 +13,14 @@ from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+    from datasluice.connectors.catalog.udata.models.oauth import (
+        OAuthAuthorizeDecision,
+        OAuthConsentSummary,
+        OAuthErrorDocument,
+        OAuthRevokeRequest,
+        OAuthTokenRequest,
+        OAuthTokenResult,
+    )
     from datasluice.connectors.catalog.udata.models.resources import (
         ResourceCreateInput,
         ResourceMutationResult,
@@ -874,6 +882,56 @@ class AsyncUDataUsersTokensService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataAuthOAuthService(Protocol):
+    """Synchronous stock uData /oauth routes."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def access_token(self, body: OAuthTokenRequest, permissions: EffectivePermissions) -> OAuthTokenResult: ...
+    def revoke_token(
+        self,
+        body: OAuthRevokeRequest,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthTokenResult: ...
+    def client_info(self, permissions: EffectivePermissions) -> OAuthConsentSummary: ...
+    def authorize(self, permissions: EffectivePermissions) -> OAuthConsentSummary: ...
+    def authorize_post(
+        self,
+        body: OAuthAuthorizeDecision,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthConsentSummary: ...
+    def oauth_error(self) -> OAuthErrorDocument: ...
+
+
+@runtime_checkable
+class AsyncUDataAuthOAuthService(Protocol):
+    """Asynchronous stock uData /oauth routes."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def access_token(self, body: OAuthTokenRequest, permissions: EffectivePermissions) -> OAuthTokenResult: ...
+    async def revoke_token(
+        self,
+        body: OAuthRevokeRequest,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthTokenResult: ...
+    async def client_info(self, permissions: EffectivePermissions) -> OAuthConsentSummary: ...
+    async def authorize(self, permissions: EffectivePermissions) -> OAuthConsentSummary: ...
+    async def authorize_post(
+        self,
+        body: OAuthAuthorizeDecision,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthConsentSummary: ...
+    async def oauth_error(self) -> OAuthErrorDocument: ...
+
+
+@runtime_checkable
 class SyncUDataService(Protocol):
     """Synchronous uData operation group."""
 
@@ -913,7 +971,7 @@ class SyncUDataServices(Protocol):
     def users_tokens(self) -> SyncUDataUsersTokensService: ...
 
     @property
-    def auth_oauth(self) -> SyncUDataService: ...
+    def auth_oauth(self) -> SyncUDataAuthOAuthService: ...
 
     @property
     def taxonomies(self) -> SyncUDataService: ...
@@ -951,7 +1009,7 @@ class AsyncUDataServices(Protocol):
     def users_tokens(self) -> AsyncUDataUsersTokensService: ...
 
     @property
-    def auth_oauth(self) -> AsyncUDataService: ...
+    def auth_oauth(self) -> AsyncUDataAuthOAuthService: ...
 
     @property
     def taxonomies(self) -> AsyncUDataService: ...

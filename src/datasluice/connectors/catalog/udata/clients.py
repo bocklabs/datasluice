@@ -103,6 +103,12 @@ from datasluice.runtime.transport.base import (
 from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
 if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.services.auth_oauth import (
+        AsyncAuthOAuthService as _AsyncAuthOAuthService,
+    )
+    from datasluice.connectors.catalog.udata.services.auth_oauth import (
+        SyncAuthOAuthService as _SyncAuthOAuthService,
+    )
     from datasluice.connectors.catalog.udata.services.datasets import (
         AsyncDatasetsService as _AsyncDatasetsService,
     )
@@ -3084,6 +3090,11 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the typed user, invitation, and API-token service."""
         return SyncUsersTokensService(self)
 
+    @property
+    def auth_oauth(self) -> _SyncAuthOAuthService:
+        """Expose the typed OAuth and authentication service."""
+        return SyncAuthOAuthService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -3141,23 +3152,42 @@ class SyncUDataClient(_UDataClientCore):
         max_response_bytes: int | None = None,
         emit_success: bool = True,
         files: tuple[UploadPart, ...] = (),
+        form_body: bytes | None = None,
+        omit_credential: bool = False,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
         self._require_site_version()
-        resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
+        resolved_credential = (
+            None
+            if omit_credential
+            else credential
+            if credential is not None
+            else _refreshed_credential(self._credentials)
+        )
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+        if form_body is not None and (json_body is not None or files):
+            raise NativeCatalogError(
+                "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
         if json_body is not None and files:
             raise NativeCatalogError(
                 "Catalog dataset requests cannot combine a JSON body with multipart parts.",
                 operation=str(owning_id),
                 platform=PLATFORM.value,
             )
-        body = None if files else self._json_body(json_body, owning_id)
+        if files:
+            body = None
+        elif form_body is not None:
+            body = form_body
+        else:
+            body = self._json_body(json_body, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
@@ -3508,6 +3538,11 @@ class AsyncUDataClient(_UDataClientCore):
         """Expose the typed user, invitation, and API-token service."""
         return AsyncUsersTokensService(self)
 
+    @property
+    def auth_oauth(self) -> _AsyncAuthOAuthService:
+        """Expose the typed OAuth and authentication service."""
+        return AsyncAuthOAuthService(self)
+
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[UDataResultItem]:
@@ -3656,6 +3691,8 @@ class AsyncUDataClient(_UDataClientCore):
         max_response_bytes: int | None = None,
         emit_success: bool = True,
         files: tuple[UploadPart, ...] = (),
+        form_body: bytes | None = None,
+        omit_credential: bool = False,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
@@ -3663,18 +3700,33 @@ class AsyncUDataClient(_UDataClientCore):
         owning_id = _operation_id_from(owning_operation)
         await self.site_version()
         resolved_credential = (
-            credential if credential is not None else await _refreshed_credential_async(self._credentials)
+            None
+            if omit_credential
+            else credential
+            if credential is not None
+            else await _refreshed_credential_async(self._credentials)
         )
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+        if form_body is not None and (json_body is not None or files):
+            raise NativeCatalogError(
+                "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
         if json_body is not None and files:
             raise NativeCatalogError(
                 "Catalog dataset requests cannot combine a JSON body with multipart parts.",
                 operation=str(owning_id),
                 platform=PLATFORM.value,
             )
-        body = None if files else self._json_body(json_body, owning_id)
+        if files:
+            body = None
+        elif form_body is not None:
+            body = form_body
+        else:
+            body = self._json_body(json_body, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
@@ -3981,6 +4033,7 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
 
 
 def _load_services():
+    from datasluice.connectors.catalog.udata.services.auth_oauth import AsyncAuthOAuthService, SyncAuthOAuthService
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
         AsyncOrganizationsMembershipsService,
@@ -4007,6 +4060,8 @@ def _load_services():
         SyncOrganizationsMembershipsService,
         AsyncUsersTokensService,
         SyncUsersTokensService,
+        AsyncAuthOAuthService,
+        SyncAuthOAuthService,
     )
 
 
@@ -4021,4 +4076,6 @@ def _load_services():
     SyncOrganizationsMembershipsService,
     AsyncUsersTokensService,
     SyncUsersTokensService,
+    AsyncAuthOAuthService,
+    SyncAuthOAuthService,
 ) = _load_services()

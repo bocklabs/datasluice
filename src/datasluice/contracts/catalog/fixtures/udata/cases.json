@@ -466,6 +466,34 @@
     {
       "operation": "udata/api-v2.my-org-topics",
       "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.access-token",
+      "outcome": "optional"
+    },
+    {
+      "operation": "udata/oauth.access-token",
+      "outcome": "invalid-credentials"
+    },
+    {
+      "operation": "udata/oauth.revoke-token",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.client-info",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.authorize",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.authorize-post",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.oauth-error",
+      "outcome": "optional"
     }
   ]
 }

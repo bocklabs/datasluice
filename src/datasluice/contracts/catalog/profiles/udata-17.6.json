@@ -5,7 +5,7 @@
     "platform_api_version": "uData API v1",
     "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
     "source_accessed_at": "2026-08-27",
-    "fixture_fingerprint": "b68ba725483db323258cc83cd8eb9898cd727326177277adcf3a08edd3f830a3",
+    "fixture_fingerprint": "b992f4c694658cf762ae7a9133ddb1067058c3cf6a79e75235eef147bb9f2977",
     "operations": [
         {
             "id": "udata/api-v1.accept-membership",
@@ -881,6 +881,48 @@
             "authentication": "public",
             "mutation": "read",
             "evidence_requirement": "deployment-probe"
+        },
+        {
+            "id": "udata/oauth.access-token",
+            "capability": "optional",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "deployment-probe"
+        },
+        {
+            "id": "udata/oauth.authorize",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/oauth.authorize-post",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/oauth.client-info",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/oauth.oauth-error",
+            "capability": "optional",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/oauth.revoke-token",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
         }
     ]
 }

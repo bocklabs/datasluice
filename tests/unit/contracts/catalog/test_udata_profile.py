@@ -128,6 +128,16 @@ _USER_ROUTE_OPERATION_IDS = {
 }
 
 
+_OAUTH_ROUTE_OPERATION_IDS = {
+    "udata/oauth.access-token",
+    "udata/oauth.authorize",
+    "udata/oauth.authorize-post",
+    "udata/oauth.client-info",
+    "udata/oauth.oauth-error",
+    "udata/oauth.revoke-token",
+}
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -146,6 +156,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _RESOURCE_ROUTE_OPERATION_IDS
         | _ORGANIZATION_ROUTE_OPERATION_IDS
         | _USER_ROUTE_OPERATION_IDS
+        | _OAUTH_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 
