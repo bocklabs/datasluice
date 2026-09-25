@@ -442,8 +442,7 @@ assert recorded == [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/oauth/revoke",
     "http://127.0.0.1:5640/oauth/error",
-    "http://127.0.0.1:5640/api/1/site/",
-    "http://127.0.0.1:5640/oauth/authorize",
+    "http://127.0.0.1:5640/oauth/authorize?client_id=wheel-client&response_type=code",
     "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
 ], recorded
 assert [getattr(r, "url", r) for r in async_transport.requests] == [
