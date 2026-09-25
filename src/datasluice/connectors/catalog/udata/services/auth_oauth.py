@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
     OAuthClientRequest,
+    OAuthConsentOutcome,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
@@ -85,9 +86,11 @@ def _revocation_result(payload: object, receipt: MutationReceipt) -> OAuthTokenR
     )
 
 
-def _accepted_consent() -> OAuthConsentSummary:
-    """A stock authorize POST answers with a redirect, not a consent document."""
-    return OAuthConsentSummary(client_name="authorized", scopes=("default",))
+def _consent_outcome(accepted: bool, status: int, media_type: str) -> OAuthConsentOutcome:
+    """Report the status stock returned instead of inventing a consent document."""
+    return OAuthConsentOutcome(
+        accepted=accepted, status_code=status, media_type=media_type.split(";", 1)[0].strip().lower()
+    )
 
 
 def _error_receipt(
@@ -133,7 +136,9 @@ class SyncAuthOAuthService:
         self._client._emit(operation, "succeeded")
         return status, payload, _media_type(response.headers)
 
-    def _write(self, name: str, body: object, permissions: Permissions, mutation_policy: Policy) -> tuple[object, int]:
+    def _write(
+        self, name: str, body: object, permissions: Permissions, mutation_policy: Policy
+    ) -> tuple[object, int, str]:
         operation = wire.OPERATIONS[name]
         response: RuntimeResponse | None = None
         payload: object = None
@@ -161,11 +166,11 @@ class SyncAuthOAuthService:
             )
             raise
         self._client._emit(operation, "succeeded")
-        return payload, status
+        return payload, status, _media_type(response.headers if response is not None else {})
 
     def access_token(self, body: OAuthTokenRequest, permissions: Permissions) -> OAuthTokenResult:
         """Exchange one typed grant for a token without retaining its secrets."""
-        payload, status = self._write("access_token", body, permissions, None)
+        payload, status, _ = self._write("access_token", body, permissions, None)
         return _token_result(
             "access_token",
             payload,
@@ -176,7 +181,7 @@ class SyncAuthOAuthService:
         self, body: OAuthRevokeRequest, permissions: Permissions, mutation_policy: Policy = None
     ) -> OAuthTokenResult:
         """Revoke one typed token under an explicit confirmed mutation policy."""
-        payload, status = self._write("revoke_token", body, permissions, mutation_policy)
+        payload, status, _ = self._write("revoke_token", body, permissions, mutation_policy)
         receipt = _success_receipt(wire.OPERATIONS["revoke_token"], _target("revoke_token"), mutation_policy, status)
         return _revocation_result(payload, receipt)
 
@@ -194,10 +199,10 @@ class SyncAuthOAuthService:
         body: OAuthAuthorizeDecision,
         permissions: Permissions,
         mutation_policy: Policy = None,
-    ) -> OAuthConsentSummary:
-        """Submit one consent decision under an explicit confirmed mutation policy."""
-        self._write("authorize_post", body, permissions, mutation_policy)
-        return _accepted_consent()
+    ) -> OAuthConsentOutcome:
+        """Submit one consent decision and report the status stock returned."""
+        _payload, status, media_type = self._write("authorize_post", body, permissions, mutation_policy)
+        return _consent_outcome(body.accept, status, media_type)
 
     def oauth_error(self) -> OAuthErrorDocument:
         """Read the one public OAuth route without credential evidence."""
@@ -254,7 +259,7 @@ class AsyncAuthOAuthService:
 
     async def _write_async(
         self, name: str, body: object, permissions: Permissions, mutation_policy: Policy
-    ) -> tuple[object, int]:
+    ) -> tuple[object, int, str]:
         operation = wire.OPERATIONS[name]
         response: RuntimeResponse | None = None
         payload: object = None
@@ -284,11 +289,11 @@ class AsyncAuthOAuthService:
             )
             raise
         self._client._emit(operation, "succeeded")
-        return payload, status
+        return payload, status, _media_type(response.headers if response is not None else {})
 
     async def access_token(self, body: OAuthTokenRequest, permissions: Permissions) -> OAuthTokenResult:
         """Exchange one typed grant for a token without retaining its secrets."""
-        payload, status = await self._write_async("access_token", body, permissions, None)
+        payload, status, _ = await self._write_async("access_token", body, permissions, None)
         return _token_result(
             "access_token",
             payload,
@@ -299,7 +304,7 @@ class AsyncAuthOAuthService:
         self, body: OAuthRevokeRequest, permissions: Permissions, mutation_policy: Policy = None
     ) -> OAuthTokenResult:
         """Revoke one typed token under an explicit confirmed mutation policy."""
-        payload, status = await self._write_async("revoke_token", body, permissions, mutation_policy)
+        payload, status, _ = await self._write_async("revoke_token", body, permissions, mutation_policy)
         receipt = _success_receipt(wire.OPERATIONS["revoke_token"], _target("revoke_token"), mutation_policy, status)
         return _revocation_result(payload, receipt)
 
@@ -317,10 +322,10 @@ class AsyncAuthOAuthService:
         body: OAuthAuthorizeDecision,
         permissions: Permissions,
         mutation_policy: Policy = None,
-    ) -> OAuthConsentSummary:
-        """Submit one consent decision under an explicit confirmed mutation policy."""
-        await self._write_async("authorize_post", body, permissions, mutation_policy)
-        return _accepted_consent()
+    ) -> OAuthConsentOutcome:
+        """Submit one consent decision and report the status stock returned."""
+        _payload, status, media_type = await self._write_async("authorize_post", body, permissions, mutation_policy)
+        return _consent_outcome(body.accept, status, media_type)
 
     async def oauth_error(self) -> OAuthErrorDocument:
         """Read the one public OAuth route without credential evidence."""

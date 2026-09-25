@@ -241,6 +241,35 @@ class OAuthConsentSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class OAuthConsentOutcome:
+    """The observed result of one consent decision, never a fabricated consent.
+
+    Stock answers a redirect or a confirmation page rather than a consent
+    document, and never reports which decision the user made. The outcome
+    therefore carries only what the deployment actually returned, so an accept
+    and a decline stay distinguishable to the caller.
+    """
+
+    accepted: bool
+    status_code: int
+    media_type: str
+
+    def __post_init__(self) -> None:
+        if type(self.accepted) is not bool:
+            raise ValueError("uData OAuth consent outcome must record a boolean decision.")
+        if type(self.status_code) is not int or not 100 <= self.status_code <= 599:
+            raise ValueError("uData OAuth consent outcome must carry a valid HTTP status code.")
+        _text(self.media_type, "media type")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "accepted": self.accepted,
+            "status_code": self.status_code,
+            "media_type": self.media_type,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class OAuthErrorDocument:
     """The bounded metadata of the stock /oauth/error HTML page.
 

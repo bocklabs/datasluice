@@ -17,6 +17,7 @@ from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUD
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
     OAuthClientRequest,
+    OAuthConsentOutcome,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
@@ -229,6 +230,37 @@ def test_oauth_error_route_is_an_exact_public_html_read() -> None:
     # Stock serves this page as HTML, so the assertion exercises real semantics
     # rather than echoing a router constant.
     assert outcome.to_dict() == {"session_gated": True, "status_code": 200, "media_type": "text/html"}
+
+
+@pytest.mark.parametrize("accept", [True, False])
+def test_authorize_post_reports_the_observed_outcome_not_a_fabricated_consent(accept: bool) -> None:
+    """The consent POST must not report "authorized" for a declined decision."""
+    router = _Router(_routes(("POST", "/oauth/authorize", 200, None)))
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        outcome = client.auth_oauth.authorize_post(
+            OAuthAuthorizeDecision(accept=accept),
+            PERMISSIONS,
+            _policy("authorize_post", "self"),
+        )
+    assert isinstance(outcome, OAuthConsentOutcome)
+    assert outcome.accepted is accept
+    assert outcome.status_code == 200
+    assert outcome.media_type == "text/html"
+    assert _form(router.requests[-1]) == ({"accept": "y"} if accept else {"decline": "y"})
+
+
+def test_authorize_post_outcomes_stay_distinguishable() -> None:
+    """Accept and decline must never collapse into one reported summary."""
+
+    def run(accept: bool) -> dict[str, object]:
+        router = _Router(_routes(("POST", "/oauth/authorize", 200, None)))
+        with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+            return client.auth_oauth.authorize_post(
+                OAuthAuthorizeDecision(accept=accept), PERMISSIONS, _policy("authorize_post", "self")
+            ).to_dict()
+
+    assert run(True)["accepted"] is True
+    assert run(False)["accepted"] is False
 
 
 def test_oauth_error_returns_the_stock_missing_template_status() -> None:

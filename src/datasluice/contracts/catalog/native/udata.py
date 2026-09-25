@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.models.oauth import (
         OAuthAuthorizeDecision,
         OAuthClientRequest,
+        OAuthConsentOutcome,
         OAuthConsentSummary,
         OAuthErrorDocument,
         OAuthRevokeRequest,
@@ -903,7 +904,7 @@ class SyncUDataAuthOAuthService(Protocol):
         body: OAuthAuthorizeDecision,
         permissions: EffectivePermissions,
         mutation_policy: MutationPolicy | None = None,
-    ) -> OAuthConsentSummary: ...
+    ) -> OAuthConsentOutcome: ...
     def oauth_error(self) -> OAuthErrorDocument: ...
 
 
@@ -930,7 +931,7 @@ class AsyncUDataAuthOAuthService(Protocol):
         body: OAuthAuthorizeDecision,
         permissions: EffectivePermissions,
         mutation_policy: MutationPolicy | None = None,
-    ) -> OAuthConsentSummary: ...
+    ) -> OAuthConsentOutcome: ...
     async def oauth_error(self) -> OAuthErrorDocument: ...
 
 
