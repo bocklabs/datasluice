@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -20,7 +19,7 @@ from datasluice.connectors.catalog.udata.models.organizations import (
 )
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PageInfo, PlatformMetadata
-from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = CatalogPlatform.UDATA
 ORGANIZATIONS_OPERATION = "udata/api-v1.organizations-and-memberships"
@@ -68,11 +67,8 @@ UNFOLLOW_ORGANIZATION_OPERATION = "udata/api-v1.unfollow-organization"
 
 _ORGANIZATION_KIND = ResourceKind.ORGANIZATION
 _MEMBERSHIP_KIND = ResourceKind("membership")
-_MEMBER_KIND = ResourceKind("member")
-_ASSIGNMENT_KIND = ResourceKind("assignment")
 _BADGE_KIND = ResourceKind("badge")
 _CONTACT_KIND = ResourceKind("contact-point")
-_FOLLOW_KIND = ResourceKind("follow")
 _SCHEMA_SAFE_ACTION = "Verify the response against the pinned uData organization schema."
 
 
@@ -447,6 +443,10 @@ def parse_organization_page(payload: object, *, operation: str = LIST_ORGANIZATI
     )
 
 
+def parse_contact_points(payload: object, *, operation: str) -> tuple[MappingRecord, ...]:
+    return parse_records(payload, operation=operation, kind=_CONTACT_KIND)
+
+
 def parse_page(payload: object, *, operation: str, kind: ResourceKind) -> UDataPageEnvelope:
     page = parse_native_page(payload, operation=operation)
     records = tuple(
@@ -495,30 +495,6 @@ def parse_extras(payload: object, *, operation: str = GET_ORGANIZATION_EXTRAS_OP
             safe_action="Verify the response against the pinned uData extras schema.",
         )
     return MappingProxyType(dict(payload))
-
-
-def parse_document(
-    body: bytes,
-    *,
-    endpoint: str,
-    media_type: str,
-    status_code: int,
-    operation: str,
-    location: str | None = None,
-) -> dict[str, object]:
-    if not isinstance(body, bytes):
-        raise NativeCatalogError(
-            "The uData organization document body must be bytes.", operation=operation, platform=PLATFORM.value
-        )
-    digest = hashlib.sha256(body).hexdigest()
-    return {
-        "endpoint": endpoint,
-        "media_type": media_type.split(";", 1)[0].strip().lower(),
-        "status_code": status_code,
-        "size_bytes": len(body),
-        "sha256": digest,
-        **({"location": location} if location else {}),
-    }
 
 
 __all__ = [

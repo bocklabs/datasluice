@@ -385,6 +385,17 @@ def test_user_admin_mutations_deny_non_admin_before_dispatch() -> None:
     assert delete_receipt.outcome == "rejected"
 
 
+def test_update_me_role_escalation_requires_admin_before_dispatch() -> None:
+    router = _Router(_routes())
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with client, pytest.raises(ForbiddenError) as denied:
+        client.users_tokens.update_me(UserUpdateInput({"roles": ["admin"]}), PERMISSIONS, _policy("update_me", "me"))
+    assert router.requests == []
+    receipt = denied.value.__dict__["mutation_receipt"]
+    assert isinstance(receipt, MutationReceipt)
+    assert receipt.outcome == "rejected"
+
+
 def test_sync_interruption_after_dispatch_retains_ambiguous_target_receipt() -> None:
     class _InterruptedRouter(_Router):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:

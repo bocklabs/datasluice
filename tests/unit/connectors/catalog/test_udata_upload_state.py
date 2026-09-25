@@ -13,9 +13,14 @@ from datasluice.connectors.catalog.udata.models.resources import ResourceUploadI
 from datasluice.connectors.catalog.udata.wire import resources as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+from datasluice.domain.catalog.safety import (
+    ConcurrencyPolicy,
+    ConfirmationPolicy,
+    IdempotencyPolicy,
+    MutationPolicy,
+)
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
 
 
 class _InterruptingTransport:
@@ -224,14 +229,14 @@ def test_upload_malformed_2xx_is_ambiguous_and_307_is_not_replayed() -> None:
         confirmation=ConfirmationPolicy(confirmed=True, operation=wire.UPLOAD_NEW_OPERATION, target="dataset"),
         concurrency=ConcurrencyPolicy(overwrite=True),
     )
+    transport = Responses()
     client = SyncUDataClient(
-        Responses(),
+        transport,
         declared_udata_profile(),
         origin="http://127.0.0.1:5640",
         credentials=credential,
         owns_transport=False,
     )
-
     with client:
         with pytest.raises(Exception) as raised:
             client.resources.upload("dataset", ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3), permissions, policy)
@@ -244,6 +249,7 @@ def test_upload_malformed_2xx_is_ambiguous_and_307_is_not_replayed() -> None:
             )
     assert raised.value.__dict__["mutation_receipt"].outcome == "ambiguous"
     assert redirected.value.__dict__["mutation_receipt"].outcome == "ambiguous"
+    assert transport.upload_calls == 2
 
 
 def test_async_upload_cancellation_closes_source_and_records_cancelled() -> None:
@@ -279,3 +285,83 @@ def test_async_upload_cancellation_closes_source_and_records_cancelled() -> None
     assert source.closed
     assert transport.close_count == 0
     assert error.__dict__["mutation_receipt"].outcome == "cancelled"
+
+
+def test_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one_shot() -> None:
+    """A one-shot upload part is never replayed, even when the caller opted into retries."""
+    credential = UDataCredential(api_key="local-test-key")
+    upload_calls = 0
+
+    class MidStreamReset(_InterruptingTransport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            nonlocal upload_calls
+            if request.url.endswith("/api/1/site/"):
+                return super().send(request)
+            upload_calls += 1
+            data = request.files[0].data
+            assert not isinstance(data, bytes)
+            data.read(1)
+            raise TransportFailure("connection reset mid upload")
+
+    client = SyncUDataClient(
+        MidStreamReset(),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=credential,
+        max_attempts=3,
+        owns_transport=False,
+    )
+    upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
+
+    with client, pytest.raises(TransportFailure):
+        client._dataset_call(
+            method="POST",
+            path="/api/1/datasets/dataset/upload/",
+            owning_operation=wire.UPLOAD_NEW_OPERATION,
+            idempotency_policy=IdempotencyPolicy(explicit_retry_opt_in=True),
+            files=(upload.part(),),
+        )
+
+    upload.close()
+    assert upload_calls == 1
+
+
+def test_async_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one_shot() -> None:
+    credential = UDataCredential(api_key="local-test-key")
+    upload_calls = 0
+
+    class AsyncMidStreamReset(_CancellingTransport):
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            nonlocal upload_calls
+            if request.url.endswith("/api/1/site/"):
+                return _InterruptingTransport().send(request)
+            upload_calls += 1
+            data = request.files[0].data
+            assert not isinstance(data, bytes)
+            data.read(1)
+            raise TransportFailure("connection reset mid upload")
+
+    client = AsyncUDataClient(
+        AsyncMidStreamReset(),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=credential,
+        max_attempts=3,
+        owns_transport=False,
+    )
+    upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
+
+    async def run() -> None:
+        async with client:
+            with pytest.raises(TransportFailure):
+                await client._dataset_call_async(
+                    method="POST",
+                    path="/api/1/datasets/dataset/upload/",
+                    owning_operation=wire.UPLOAD_NEW_OPERATION,
+                    idempotency_policy=IdempotencyPolicy(explicit_retry_opt_in=True),
+                    files=(upload.part(),),
+                )
+
+    asyncio.run(run())
+    upload.close()
+    assert upload_calls == 1

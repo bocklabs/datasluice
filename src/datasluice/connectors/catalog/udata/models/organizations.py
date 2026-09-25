@@ -9,8 +9,10 @@ from dataclasses import dataclass, field
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.exceptions import DataSluiceError
 
 _ROLES = frozenset({"admin", "editor", "partial_editor"})
+_ORGANIZATION_FIELDS = frozenset({"name", "description", "acronym", "url", "business_number_id"})
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
 
 
@@ -32,15 +34,32 @@ def _email(value: str | None) -> None:
         raise ValueError("uData invitation email must be a valid email address.")
 
 
-def _fields(value: Mapping[str, object] | None, field_name: str) -> Mapping[str, object] | None:
-    if value is None:
-        return None
+def _frozen_mapping(value: object, field_name: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping) or not all(isinstance(key, str) and key for key in value):
         raise ValueError(f"uData organization {field_name} must be a JSON mapping.")
-    frozen = _freeze_json(dict(value), f"udata.organization.{field_name}")
+    try:
+        frozen = _freeze_json(dict(value), f"udata.organization.{field_name}")
+    except DataSluiceError as error:
+        raise ValueError(f"uData organization {field_name} must contain JSON-safe values only.") from error
     if not isinstance(frozen, Mapping):
         raise ValueError(f"uData organization {field_name} must be a JSON mapping.")
     return frozen
+
+
+def _fields(value: Mapping[str, object] | None, field_name: str) -> Mapping[str, object] | None:
+    return None if value is None else _frozen_mapping(value, field_name)
+
+
+def _is_filter_value(value: object) -> bool:
+    """Return whether one filter value is a string, a boolean, or a tuple of non-empty strings."""
+    return isinstance(value, (str, bool)) or (
+        type(value) is tuple and all(isinstance(item, str) and item for item in value)
+    )
+
+
+def _reserved_fields(fields: Mapping[str, object] | None, reserved: frozenset[str]) -> None:
+    if fields is not None and reserved & set(fields):
+        raise ValueError("uData organization fields cannot override the typed organization values.")
 
 
 def _payload(value: Mapping[str, object] | object) -> dict[str, object]:
@@ -69,9 +88,10 @@ class OrganizationListQuery:
         if self.sort is not None and (not isinstance(self.sort, str) or not self.sort):
             raise ValueError("uData organization sort must be a non-empty string when supplied.")
         if self.filters is not None:
-            if not isinstance(self.filters, Mapping):
-                raise ValueError("uData organization filters must be a mapping.")
-            object.__setattr__(self, "filters", _fields(self.filters, "filters"))
+            for key, value in self.filters.items():
+                if not _is_filter_value(value):
+                    raise ValueError(f"uData organization filter {key!r} must be a string, boolean, or string tuple.")
+            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         params = [("page", str(self.page)), ("page_size", str(self.page_size))]
@@ -137,6 +157,7 @@ class OrganizationCreateInput:
         _text(self.acronym, "acronym", allow_none=True)
         _text(self.url, "url", allow_none=True)
         _text(self.business_number_id, "business number", allow_none=True)
+        _reserved_fields(self.fields, _ORGANIZATION_FIELDS)
         object.__setattr__(self, "fields", _fields(self.fields, "fields"))
 
     def payload(self) -> dict[str, object]:
@@ -180,6 +201,7 @@ class OrganizationUpdateInput:
             and not self.fields
         ):
             raise ValueError("uData organization updates require at least one field.")
+        _reserved_fields(self.fields, _ORGANIZATION_FIELDS)
         object.__setattr__(self, "fields", _fields(self.fields, "fields"))
 
     def payload(self) -> dict[str, object]:
@@ -310,10 +332,7 @@ class OrganizationMutationResult:
         ):
             raise ValueError("uData organization result records require typed records.")
         if self.value is not None:
-            frozen = _freeze_json(_payload(self.value), "udata.organization.result")
-            if not isinstance(frozen, Mapping):
-                raise ValueError("uData organization result values must be a JSON mapping.")
-            object.__setattr__(self, "value", frozen)
+            object.__setattr__(self, "value", _frozen_mapping(_payload(self.value), "result values"))
 
     def to_dict(self) -> dict[str, object]:
         return {

@@ -300,7 +300,18 @@ def _auth_failure_reason(body: bytes) -> str | None:
         payload = json.loads(body)
     except (TypeError, ValueError):
         return None
-    return _AUTH_FAILURES.get(payload.get("message")) if isinstance(payload, dict) else None
+    if not isinstance(payload, dict) or not isinstance(payload.get("message"), str):
+        return None
+    return _AUTH_FAILURES.get(payload["message"])
+
+
+def _dataset_idempotency(
+    policy: IdempotencyPolicy | None, method: str, files: tuple[UploadPart, ...]
+) -> IdempotencyPolicy:
+    """Return the retry policy for one request, never repeating a one-shot stream part."""
+    if any(not isinstance(part.data, bytes) for part in files):
+        return IdempotencyPolicy(safe=False)
+    return policy or IdempotencyPolicy(safe=method == "GET")
 
 
 def _operation_id_from(value: str) -> OperationId:
@@ -3071,8 +3082,6 @@ class SyncUDataClient(_UDataClientCore):
     @property
     def users_tokens(self) -> _SyncUsersTokensService:
         """Expose the typed user, invitation, and API-token service."""
-        from datasluice.connectors.catalog.udata.services.users_tokens import SyncUsersTokensService
-
         return SyncUsersTokensService(self)
 
     def _require_site_version(self) -> SiteVersion:
@@ -3142,6 +3151,12 @@ class SyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+        if json_body is not None and files:
+            raise NativeCatalogError(
+                "Catalog dataset requests cannot combine a JSON body with multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
         body = None if files else self._json_body(json_body, owning_id)
         request = RuntimeRequest(
             method=method,
@@ -3169,7 +3184,7 @@ class SyncUDataClient(_UDataClientCore):
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=idempotency_policy or IdempotencyPolicy(safe=method == "GET"),
+                idempotency=_dataset_idempotency(idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -3491,8 +3506,6 @@ class AsyncUDataClient(_UDataClientCore):
     @property
     def users_tokens(self) -> _AsyncUsersTokensService:
         """Expose the typed user, invitation, and API-token service."""
-        from datasluice.connectors.catalog.udata.services.users_tokens import AsyncUsersTokensService
-
         return AsyncUsersTokensService(self)
 
     async def datasets_list(
@@ -3655,6 +3668,12 @@ class AsyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+        if json_body is not None and files:
+            raise NativeCatalogError(
+                "Catalog dataset requests cannot combine a JSON body with multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
         body = None if files else self._json_body(json_body, owning_id)
         request = RuntimeRequest(
             method=method,
@@ -3682,7 +3701,7 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=idempotency_policy or IdempotencyPolicy(safe=method == "GET"),
+                idempotency=_dataset_idempotency(idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
@@ -3972,6 +3991,10 @@ def _load_services():
         AsyncRootProfileService,
         SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.users_tokens import (
+        AsyncUsersTokensService,
+        SyncUsersTokensService,
+    )
 
     return (
         AsyncDatasetsService,
@@ -3982,6 +4005,8 @@ def _load_services():
         SyncResourcesService,
         AsyncOrganizationsMembershipsService,
         SyncOrganizationsMembershipsService,
+        AsyncUsersTokensService,
+        SyncUsersTokensService,
     )
 
 
@@ -3994,4 +4019,6 @@ def _load_services():
     SyncResourcesService,
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
+    AsyncUsersTokensService,
+    SyncUsersTokensService,
 ) = _load_services()

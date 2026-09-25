@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -16,7 +17,7 @@ def _freeze(value: object) -> object:
     if value is None or isinstance(value, (str, bool)) or type(value) is int:
         return value
     if isinstance(value, float):
-        if value == value and value not in (float("inf"), float("-inf")):
+        if math.isfinite(value):
             return value
         raise ValueError("uData resource inputs require finite JSON numbers.")
     if isinstance(value, Mapping):
@@ -42,6 +43,10 @@ def _text(value: object, field_name: str) -> str:
     return value
 
 
+class MidStreamUploadError(OSError):
+    """A bounded upload source failed after the request already started sending bytes."""
+
+
 class _BoundedSource:
     def __init__(self, source: BinaryIO, limit: int) -> None:
         self._source = source
@@ -56,10 +61,10 @@ class _BoundedSource:
         request_size = remaining + 1 if size < 0 else min(size, remaining + 1)
         chunk = self._source.read(request_size)
         if not isinstance(chunk, bytes):
-            raise ValueError("uData upload sources must return bytes.")
+            raise MidStreamUploadError("uData upload sources must return bytes.")
         self._read += len(chunk)
         if self._read > self._limit:
-            raise ValueError("uData upload source exceeds its byte limit.")
+            raise MidStreamUploadError("uData upload source exceeds its byte limit.")
         return chunk
 
     def close(self) -> None:

@@ -10,7 +10,9 @@ import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.resources import (
+    MidStreamUploadError,
     ResourceCreateInput,
+    ResourceMutationResult,
     ResourceUpdateInput,
     ResourceUploadInput,
 )
@@ -576,7 +578,7 @@ def test_resource_inputs_do_not_render_upload_or_configuration_values() -> None:
 def test_upload_rejects_a_source_larger_than_its_byte_ceiling() -> None:
     upload = ResourceUploadInput(source=BytesIO(b"abcd"), file_name="data.csv", max_upload_bytes=3)
 
-    with pytest.raises(ValueError, match="byte limit"):
+    with pytest.raises(MidStreamUploadError, match="byte limit"):
         part = upload.part()
         assert not isinstance(part.data, bytes)
         part.data.read()
@@ -713,3 +715,113 @@ def test_async_resource_service_matches_sync_create_route() -> None:
 
     assert asyncio.run(run()) == "succeeded"
     assert transport.requests[-1].url.endswith("/api/1/datasets/dataset/resources/")
+
+
+def test_resource_mutations_send_the_credential_they_were_authorized_with() -> None:
+    """A rotating resolver must not let the wire identity drift from the checked one."""
+    issued: list[str] = []
+
+    class RotatingCredential:
+        def resolve(self) -> UDataCredential:
+            issued.append("refresh")
+            return _CREDENTIAL
+
+    origin = "http://127.0.0.1:5640"
+    create_url = f"{origin}/api/1/datasets/dataset/resources/"
+    transport = _Router(_routes({("POST", create_url): (201, {"id": "resource"})}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=origin, credentials=RotatingCredential(), owns_transport=False
+    )
+
+    with client:
+        client.resources.create(
+            "dataset",
+            ResourceCreateInput(title="Remote", url="https://example.test/data.csv"),
+            _PERMISSIONS,
+            _policy("dataset", operation=wire.CREATE_OPERATION),
+        )
+
+    assert transport.requests[-1].headers.get("X-API-KEY") == "secret-key"
+    assert issued == ["refresh"]
+
+
+def test_async_resource_mutations_resolve_the_credential_asynchronously() -> None:
+    class AsyncOnlyCredential:
+        def __init__(self) -> None:
+            self.async_calls = 0
+
+        async def resolve_async(self) -> UDataCredential:
+            self.async_calls += 1
+            return _CREDENTIAL
+
+    origin = "http://127.0.0.1:5640"
+    create_url = f"{origin}/api/1/datasets/dataset/resources/"
+    extras_url = f"{origin}/api/2/datasets/dataset/resources/resource/extras/"
+    provider = AsyncOnlyCredential()
+    transport = _AsyncRouter(
+        _routes({("POST", create_url): (201, {"id": "resource"}), ("PUT", extras_url): (204, None)})
+    )
+    client = AsyncUDataClient(
+        transport, declared_udata_profile(), origin=origin, credentials=provider, owns_transport=False
+    )
+
+    async def run() -> ResourceMutationResult:
+        async with client:
+            await client.resources.create(
+                "dataset",
+                ResourceCreateInput(title="Remote", url="https://example.test/data.csv"),
+                _PERMISSIONS,
+                _policy("dataset", operation=wire.CREATE_OPERATION),
+            )
+            return await client.resources.update_extras_v2(
+                "dataset",
+                "resource",
+                {"key": "value"},
+                _PERMISSIONS,
+                _policy("resource", operation=wire.EXTRAS_UPDATE_OPERATION),
+            )
+
+    updated = asyncio.run(run())
+    assert provider.async_calls >= 2
+    assert transport.requests[-1].headers.get("X-API-KEY") == "secret-key"
+    assert updated.extras == {}
+    assert updated.receipt.outcome == "succeeded"
+
+
+def test_sync_extras_update_with_an_empty_204_body_succeeds() -> None:
+    origin = "http://127.0.0.1:5640"
+    extras_url = f"{origin}/api/2/datasets/dataset/resources/resource/extras/"
+    transport = _Router(_routes({("PUT", extras_url): (204, None)}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=origin, credentials=_CREDENTIAL, owns_transport=False
+    )
+
+    with client:
+        updated = client.resources.update_extras_v2(
+            "dataset",
+            "resource",
+            {"key": "value"},
+            _PERMISSIONS,
+            _policy("resource", operation=wire.EXTRAS_UPDATE_OPERATION),
+        )
+
+    assert updated.extras == {}
+    assert updated.receipt.outcome == "succeeded"
+
+
+def test_preflight_upload_reuse_is_not_marked_ambiguous() -> None:
+    origin = "http://127.0.0.1:5640"
+    transport = _Router(_routes({}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=origin, credentials=_CREDENTIAL, owns_transport=False
+    )
+    upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
+    upload.part()
+
+    with client, pytest.raises(ValueError) as raised:
+        client.resources.upload(
+            "dataset", upload, _PERMISSIONS, _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION)
+        )
+
+    assert raised.value.__dict__["mutation_receipt"].outcome == "failed"
+    assert not transport.requests

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from io import BytesIO
+from typing import cast
 
 import pytest
 
@@ -31,6 +33,7 @@ from datasluice.contracts.catalog.native.udata import (
 )
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.models import MappingRecord
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
@@ -87,10 +90,6 @@ def _policy(operation: str, target: str, *, destructive: bool = False) -> Mutati
 
 
 def test_organization_services_are_typed_and_mode_parity_is_preserved() -> None:
-    assert isinstance(SyncUDataClient(_Router(_routes({})), declared_udata_profile(), origin=ORIGIN), SyncUDataClient)
-    assert isinstance(
-        AsyncUDataClient(_AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN), AsyncUDataClient
-    )
     expected = {
         name
         for name in dir(SyncOrganizationsMembershipsService)
@@ -104,10 +103,14 @@ def test_organization_services_are_typed_and_mode_parity_is_preserved() -> None:
 
 
 def test_clients_expose_organization_protocols() -> None:
-    sync = SyncUDataClient(_Router(_routes({})), declared_udata_profile(), origin=ORIGIN)
-    async_client = AsyncUDataClient(_AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN)
-    assert isinstance(sync.organizations_memberships, SyncUDataOrganizationsMembershipsService)
-    assert isinstance(async_client.organizations_memberships, AsyncUDataOrganizationsMembershipsService)
+    with SyncUDataClient(_Router(_routes({})), declared_udata_profile(), origin=ORIGIN) as sync:
+        assert isinstance(sync.organizations_memberships, SyncUDataOrganizationsMembershipsService)
+
+    async def run() -> None:
+        async with AsyncUDataClient(_AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN) as client:
+            assert isinstance(client.organizations_memberships, AsyncUDataOrganizationsMembershipsService)
+
+    asyncio.run(run())
 
 
 def test_organization_wire_builders_preserve_exact_paths_and_omission() -> None:
@@ -280,6 +283,60 @@ def test_organization_inputs_reject_invalid_roles_and_ambiguous_invitations() ->
         OrganizationInvitationInput(email="member@example.test", assignments=({"dataset": "one"},))
     with pytest.raises(ValueError):
         OrganizationMemberInput("editor", fields={"role": "admin"})
+
+
+@pytest.mark.parametrize("value", [None, 1, 1.5, {"nested": True}, ["a"]])
+def test_organization_filters_reject_values_outside_the_declared_union(value: object) -> None:
+    with pytest.raises(ValueError, match="filter"):
+        OrganizationListQuery(filters=cast("Mapping[str, str | bool | tuple[str, ...]]", {"status": value}))
+
+
+def test_organization_filters_accept_the_declared_union() -> None:
+    query = OrganizationListQuery(filters={"status": "validated", "featured": True, "tag": ("a", "b")})
+
+    assert query.query_params() == [
+        ("page", "1"),
+        ("page_size", "20"),
+        ("featured", "true"),
+        ("status", "validated"),
+        ("tag", "a"),
+        ("tag", "b"),
+    ]
+
+
+def test_organization_fields_cannot_override_typed_values() -> None:
+    with pytest.raises(ValueError, match="cannot override"):
+        OrganizationCreateInput(name="Evidence", description="Org", fields={"name": "Other"})
+    with pytest.raises(ValueError, match="cannot override"):
+        OrganizationUpdateInput(acronym="E", fields={"description": "Other"})
+
+
+def test_organization_inputs_reject_non_json_field_values_with_value_error() -> None:
+    with pytest.raises(ValueError, match="JSON-safe"):
+        OrganizationCreateInput(name="Evidence", description="Org", fields={"broken": object()})
+    with pytest.raises(ValueError, match="JSON-safe"):
+        OrganizationUpdateInput(acronym="E", fields={"broken": object()})
+
+
+def test_contact_points_are_typed_as_contact_points_in_both_modes() -> None:
+    contacts_url = f"{ORIGIN}/api/1/organizations/org-1/contacts/?page=1&page_size=20"
+    payload = {"data": [{"id": "contact-1", "name": "Contact"}], "page": 1, "page_size": 20, "total": 1}
+
+    sync = SyncUDataClient(_Router(_routes({("GET", contacts_url): payload})), declared_udata_profile(), origin=ORIGIN)
+    with sync:
+        sync_records = sync.organizations_memberships.get_organization_contact_point("org-1")
+
+    async def run() -> tuple[MappingRecord, ...]:
+        async with AsyncUDataClient(
+            _AsyncRouter(_routes({("GET", contacts_url): payload})), declared_udata_profile(), origin=ORIGIN
+        ) as client:
+            return await client.organizations_memberships.get_organization_contact_point("org-1")
+
+    async_records = asyncio.run(run())
+    assert [record.payload["resource_kind"] for record in (*sync_records, *async_records)] == [
+        "contact-point",
+        "contact-point",
+    ]
 
 
 def test_badges_require_admin_evidence_before_dispatch_in_both_modes() -> None:

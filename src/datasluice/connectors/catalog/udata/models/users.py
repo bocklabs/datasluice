@@ -12,8 +12,10 @@ from datasluice.connectors.catalog.udata.models.resources import ResourceUploadI
 from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.exceptions import DataSluiceError
 
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
+_WEBSITE_REQUIRED = "uData user website must be an HTTP URL."
 _USER_FIELDS = frozenset(
     {"first_name", "last_name", "email", "website", "about", "prefered_language", "extras", "roles", "active"}
 )
@@ -27,50 +29,76 @@ def _text(value: object, name: str, *, optional: bool = False) -> None:
 
 
 def _fields(value: Mapping[str, object], name: str, *, allow_empty: bool = False) -> Mapping[str, object]:
+    return _frozen(value, name, allow_empty=allow_empty)
+
+
+def _frozen(value: object, name: str, *, allow_empty: bool = False) -> Mapping[str, object]:
     if (
         not isinstance(value, Mapping)
         or (not allow_empty and not value)
         or not all(isinstance(key, str) and key for key in value)
     ):
         raise ValueError(f"uData user {name} must be a JSON mapping.")
-    frozen = _freeze_json(dict(value), f"udata.user.{name}")
+    try:
+        frozen = _freeze_json(dict(value), f"udata.user.{name}")
+    except DataSluiceError as error:
+        raise ValueError(f"uData user {name} must contain JSON-safe values only.") from error
     if not isinstance(frozen, Mapping):
         raise ValueError(f"uData user {name} must be a JSON mapping.")
     return frozen
 
 
+def _website(value: object) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value:
+        raise ValueError(_WEBSITE_REQUIRED)
+    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError(_WEBSITE_REQUIRED)
+    try:
+        parts = urlsplit(value)
+        hostname = parts.hostname
+    except ValueError:
+        raise ValueError(_WEBSITE_REQUIRED) from None
+    if parts.scheme not in {"http", "https"} or not parts.netloc or not hostname:
+        raise ValueError(_WEBSITE_REQUIRED)
+
+
+def _optional_text(value: object, name: str) -> None:
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"uData user {name} must be a string or null.")
+
+
+def _email_field(value: object) -> None:
+    _text(value, "email")
+    if not isinstance(value, str) or _EMAIL.fullmatch(value) is None:
+        raise ValueError("uData user email must be a valid email address.")
+
+
+def _roles(value: object) -> None:
+    if not isinstance(value, tuple) or not all(isinstance(role, str) and role for role in value):
+        raise ValueError("uData user roles must be a list of non-empty strings.")
+
+
+def _extras(value: object) -> None:
+    if value is not None and not isinstance(value, Mapping):
+        raise ValueError("uData user extras must be a mapping or null.")
+
+
 def _validate_user_fields(fields: Mapping[str, object]) -> None:
-    for name in ("first_name", "last_name"):
+    for name in ("first_name", "last_name", "about", "prefered_language"):
         if name in fields:
-            _text(fields[name], name)
-    if "email" in fields:
-        email = fields["email"]
-        _text(email, "email")
-        if not isinstance(email, str) or _EMAIL.fullmatch(email) is None:
-            raise ValueError("uData user email must be a valid email address.")
-    for name in ("about", "website", "prefered_language"):
-        value = fields.get(name)
-        if value is not None and not isinstance(value, str):
-            raise ValueError(f"uData user {name} must be a string or null.")
-    website = fields.get("website")
-    if isinstance(website, str) and website:
-        if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in website):
-            raise ValueError("uData user website must be an HTTP URL.")
-        try:
-            parts = urlsplit(website)
-            hostname = parts.hostname
-        except ValueError:
-            raise ValueError("uData user website must be an HTTP URL.") from None
-        if parts.scheme not in {"http", "https"} or not parts.netloc or not hostname:
-            raise ValueError("uData user website must be an HTTP URL.")
+            _text(fields[name], name, optional=True)
+    for name, validate in (
+        ("email", _email_field),
+        ("website", _website),
+        ("roles", _roles),
+        ("extras", _extras),
+    ):
+        if name in fields:
+            validate(fields[name])
     if "active" in fields and type(fields["active"]) is not bool:
         raise ValueError("uData user active must be a boolean.")
-    if "roles" in fields and (
-        not isinstance(fields["roles"], tuple) or not all(isinstance(role, str) and role for role in fields["roles"])
-    ):
-        raise ValueError("uData user roles must be a list of non-empty strings.")
-    if "extras" in fields and fields["extras"] is not None and not isinstance(fields["extras"], Mapping):
-        raise ValueError("uData user extras must be a mapping or null.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +155,7 @@ class UserCreateInput:
             _text(getattr(self, name), name)
         if _EMAIL.fullmatch(self.email) is None:
             raise ValueError("uData user email must be a valid email address.")
-        object.__setattr__(self, "fields", _fields(self.fields, "create fields", allow_empty=True))
+        object.__setattr__(self, "fields", _frozen(self.fields, "create fields", allow_empty=True))
         if {"first_name", "last_name", "email"} & set(self.fields) or set(self.fields) - _USER_FIELDS:
             raise ValueError("uData user create fields must use documented writable fields.")
         _validate_user_fields(self.fields)

@@ -29,7 +29,7 @@ from datasluice.errors.catalog import (
     UnauthenticatedError,
 )
 from datasluice.runtime.events import EventEmitter, ListSink, LoggingSink
-from datasluice.runtime.transport.base import RuntimeResponse
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 from tests.unit.connectors.catalog.test_udata_users_tokens import (
     CREDENTIAL,
     ORIGIN,
@@ -98,6 +98,30 @@ def test_user_family_http_failures_keep_their_safe_error_type(status: int, error
         client.users_tokens.get_user("person")
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b'{"message": ["Invalid API token"]}', id="list-message"),
+        pytest.param(b'{"message": {"text": "Invalid API token"}}', id="object-message"),
+        pytest.param(b"not-json", id="non-json"),
+        pytest.param(b"x" * 513, id="oversized"),
+    ],
+)
+def test_malformed_authentication_failures_stay_unauthenticated_without_reason_code(body: bytes) -> None:
+    class RawBodyRouter(_Router):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/api/1/me/api_tokens/"):
+                self.requests.append(request)
+                return RuntimeResponse(401, {"Content-Type": "application/json"}, body)
+            return super().send(request)
+
+    client = SyncUDataClient(RawBodyRouter(_routes()), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with client, pytest.raises(UnauthenticatedError) as raised:
+        client.users_tokens.list_api_tokens(PERMISSIONS)
+    assert "reason_code" not in (raised.value.metadata or {})
+    assert raised.value.capability_state == "unauthorized"
+
+
 def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> None:
     plaintext = secrets.token_urlsafe(36)
     router = _Router(
@@ -132,7 +156,7 @@ def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> Non
             pytest.fail("One-time token entered a retained failure value.")
         traceback = error.__traceback__
         while traceback is not None:
-            if "/src/datasluice/" in traceback.tb_frame.f_code.co_filename:
+            if str(traceback.tb_frame.f_globals.get("__name__", "")).startswith("datasluice"):
                 if plaintext in repr(traceback.tb_frame.f_locals):
                     pytest.fail("One-time token entered a connector failure frame.")
             traceback = traceback.tb_next
@@ -181,7 +205,7 @@ def test_interruption_after_token_response_redacts_traceback_locals(
         traceback = raised.value.__traceback__
         while traceback is not None:
             frame = traceback.tb_frame
-            if "/src/datasluice/" in frame.f_code.co_filename:
+            if str(frame.f_globals.get("__name__", "")).startswith("datasluice"):
                 if plaintext in repr(frame.f_locals):
                     pytest.fail("Interrupted token plaintext remained in a connector traceback frame.")
                 response = frame.f_locals.get("response")
@@ -237,7 +261,7 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
             traceback = raised.value.__traceback__
             while traceback is not None:
                 frame = traceback.tb_frame
-                if "/src/datasluice/" in frame.f_code.co_filename:
+                if str(frame.f_globals.get("__name__", "")).startswith("datasluice"):
                     if plaintext in repr(frame.f_locals):
                         pytest.fail("Interrupted token plaintext remained in an async connector traceback frame.")
                     response = frame.f_locals.get("response")
@@ -302,7 +326,7 @@ def test_interruption_after_token_decode_discards_reveal_once_result(monkeypatch
     assert receipt.target.value == "token-id"
     traceback = raised.value.__traceback__
     while traceback is not None:
-        if "/src/datasluice/" in traceback.tb_frame.f_code.co_filename:
+        if str(traceback.tb_frame.f_globals.get("__name__", "")).startswith("datasluice"):
             if plaintext in repr(traceback.tb_frame.f_locals):
                 pytest.fail("Interrupted token plaintext remained in a connector traceback frame.")
         traceback = traceback.tb_next

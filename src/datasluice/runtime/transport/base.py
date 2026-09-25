@@ -151,6 +151,10 @@ class RuntimeRequest:
         _validate_request_payload(self.body, self.files)
         if not isinstance(self.redirect_policy, RedirectPolicy):
             raise ValueError("Runtime request redirect policies must use RedirectPolicy.")
+        if self.redirect_policy is RedirectPolicy.FOLLOW and any(
+            not isinstance(part.data, bytes) for part in self.files
+        ):
+            raise ValueError("Multipart parts carrying one-shot streams require RedirectPolicy.NO_FOLLOW.")
         _validate_response_limit(self.max_response_bytes)
         object.__setattr__(self, "headers", _freeze_request_headers(self.headers))
         object.__setattr__(self, "files", tuple(self.files))

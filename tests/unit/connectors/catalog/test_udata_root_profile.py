@@ -529,6 +529,45 @@ def test_stream_document_interrupt_closes_and_settles_failure() -> None:
     assert failures == [excinfo.value]
 
 
+def test_async_stream_document_interrupt_closes_and_settles_failure() -> None:
+    closed: list[bool] = []
+    failures: list[BaseException] = []
+
+    async def interrupt(_: bytes) -> None:
+        raise KeyboardInterrupt
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"valid\n"
+
+    async def close() -> None:
+        closed.append(True)
+
+    async def fail(error: BaseException) -> None:
+        failures.append(error)
+
+    response = AsyncRuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=chunks(),
+        close_callback=close,
+        failure_callback=fail,
+    )
+
+    async def run() -> None:
+        with pytest.raises(KeyboardInterrupt) as excinfo:
+            await wire.digest_stream_document_async(
+                response,
+                endpoint=_SITE_URL,
+                expected_media_type="text/csv",
+                max_bytes=8,
+                sink=interrupt,
+            )
+        assert closed == [True]
+        assert failures == [excinfo.value]
+
+    asyncio.run(run())
+
+
 def test_async_stream_document_cleanup_failure_preserves_primary_error() -> None:
     async def chunks() -> AsyncIterator[bytes]:
         yield b"valid\n"

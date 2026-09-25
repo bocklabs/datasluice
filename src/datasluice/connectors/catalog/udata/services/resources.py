@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.resources import (
+    MidStreamUploadError,
     ResourceCreateInput,
     ResourceMutationResult,
     ResourceUpdateInput,
@@ -19,7 +20,7 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import NativeCatalogError, attach_catalog_metadata
+from datasluice.errors.catalog import attach_catalog_metadata
 from datasluice.runtime.mutation import build_mutation_receipt
 
 from .datasets import (
@@ -100,14 +101,14 @@ def _mutation_result(receipt: MutationReceipt, payload: object, mutation: str) -
     if mutation == "extras_updated" or (mutation == "extras_deleted" and payload is not None):
         return ResourceMutationResult(
             receipt=receipt,
-            extras=dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION),
+            extras={} if payload is None else dataset_wire.parse_extras(payload, operation=wire.RESOURCE_OPERATION),
         )
     if mutation == "deleted" or mutation == "extras_deleted":
         return ResourceMutationResult(receipt=receipt)
     return ResourceMutationResult(receipt=receipt, record=wire.parse_resource(payload))
 
 
-def _route_operation(mutation: str, resource_kind: ResourceKind, destructive: bool, operation: str) -> str:
+def _route_operation(mutation: str, resource_kind: ResourceKind, operation: str) -> str:
     if operation != wire.RESOURCE_OPERATION:
         return operation
     if mutation == "reordered":
@@ -147,19 +148,11 @@ def _resource_mutation(
     resource_kind: ResourceKind = ResourceKind.RESOURCE,
     operation: str = wire.RESOURCE_OPERATION,
 ) -> Result:
-    operation = _route_operation(mutation, resource_kind, destructive, operation)
+    operation = _route_operation(mutation, resource_kind, operation)
     response: object | None = None
     try:
         _enforce_mutation_policy(operation, target, policy, destructive=destructive)
         status, payload, response = dispatch()
-        if mutation == "uploaded" and status >= 300:
-            raise NativeCatalogError(
-                "The uData upload did not return a final success response.",
-                operation=operation,
-                platform="udata",
-                status_code=status,
-                metadata={"ambiguous": True},
-            )
         return _mutation_result(
             _receipt(policy, target, "succeeded", status, mutation, resource_kind=resource_kind, operation=operation),
             payload,
@@ -169,7 +162,7 @@ def _resource_mutation(
         outcome = (
             "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
         )
-        if mutation == "uploaded" and isinstance(error, (OSError, ValueError)):
+        if mutation == "uploaded" and isinstance(error, (OSError, MidStreamUploadError)):
             outcome = "ambiguous"
         receipt = _receipt(
             policy,
@@ -194,19 +187,11 @@ async def _async_resource_mutation(
     resource_kind: ResourceKind = ResourceKind.RESOURCE,
     operation: str = wire.RESOURCE_OPERATION,
 ) -> Result:
-    operation = _route_operation(mutation, resource_kind, destructive, operation)
+    operation = _route_operation(mutation, resource_kind, operation)
     response: object | None = None
     try:
         _enforce_mutation_policy(operation, target, policy, destructive=destructive)
         status, payload, response = await dispatch()
-        if mutation == "uploaded" and status >= 300:
-            raise NativeCatalogError(
-                "The uData upload did not return a final success response.",
-                operation=operation,
-                platform="udata",
-                status_code=status,
-                metadata={"ambiguous": True},
-            )
         return _mutation_result(
             _receipt(policy, target, "succeeded", status, mutation, resource_kind=resource_kind, operation=operation),
             payload,
@@ -216,7 +201,7 @@ async def _async_resource_mutation(
         outcome = (
             "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
         )
-        if mutation == "uploaded" and isinstance(error, (OSError, ValueError)):
+        if mutation == "uploaded" and isinstance(error, (OSError, MidStreamUploadError)):
             outcome = "ambiguous"
         receipt = _receipt(
             policy,
@@ -590,13 +575,14 @@ class SyncResourcesService:
         self, method: str, path: str, body: object, permissions: Permissions, policy: Policy
     ) -> tuple[int, object, object]:
         capability_operation = _dispatch_operation(policy)
-        _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
+        resolved = _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return self._client._dataset_call(
             method=method,
             path=path,
             owning_operation=capability_operation,
             json_body=body,
             permissions=permissions,
+            credential=resolved,
             idempotency_policy=policy.idempotency if policy else None,
         )
 
@@ -610,13 +596,14 @@ class SyncResourcesService:
         policy: Policy,
     ) -> tuple[int, object, object]:
         capability_operation = _dispatch_operation(policy)
-        _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
+        resolved = _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
         return self._client._dataset_call(
             method=method,
             path=path,
             owning_operation=capability_operation,
             headers=headers,
             permissions=permissions,
+            credential=resolved,
             idempotency_policy=policy.idempotency if policy else None,
             files=(client_input.part(),),
         )
@@ -1054,13 +1041,16 @@ class AsyncResourcesService:
         self, method: str, path: str, body: object, permissions: Permissions, policy: Policy
     ) -> tuple[int, object, object]:
         capability_operation = _dispatch_operation(policy)
-        _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
+        resolved = _require_mutation_permission(
+            await self._client._resolved_credential_async(), capability_operation, permissions
+        )
         return await self._client._dataset_call_async(
             method=method,
             path=path,
             owning_operation=capability_operation,
             json_body=body,
             permissions=permissions,
+            credential=resolved,
             idempotency_policy=policy.idempotency if policy else None,
         )
 
@@ -1074,13 +1064,16 @@ class AsyncResourcesService:
         policy: Policy,
     ) -> tuple[int, object, object]:
         capability_operation = _dispatch_operation(policy)
-        _require_mutation_permission(self._client._resolved_credential(), capability_operation, permissions)
+        resolved = _require_mutation_permission(
+            await self._client._resolved_credential_async(), capability_operation, permissions
+        )
         return await self._client._dataset_call_async(
             method=method,
             path=path,
             owning_operation=capability_operation,
             headers=headers,
             permissions=permissions,
+            credential=resolved,
             idempotency_policy=policy.idempotency if policy else None,
             files=(client_input.part(),),
         )

@@ -45,7 +45,6 @@ if TYPE_CHECKING:
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None
 type Result = UserMutationResult | ApiTokenCreationResult
-type ReadParser[T] = Callable[[str, object], T]
 
 _PUBLIC = frozenset({"get_user", "get_user_contact_point", "suggest_users", "user_roles", "list_user_followers"})
 _ADMIN = frozenset({"list_users", "create_user", "user_avatar", "update_user", "delete_user", "rotate_user_password"})
@@ -195,7 +194,7 @@ class SyncUsersTokensService:
     def _read[T](
         self,
         name: str,
-        decoder: ReadParser[T],
+        decoder: Callable[[str, object], T],
         *,
         identifier: str | None = None,
         query: object = None,
@@ -504,7 +503,7 @@ class AsyncUsersTokensService:
     async def _read[T](
         self,
         name: str,
-        decoder: ReadParser[T],
+        decoder: Callable[[str, object], T],
         *,
         identifier: str | None = None,
         query: object = None,

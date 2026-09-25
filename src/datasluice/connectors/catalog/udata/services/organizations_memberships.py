@@ -489,7 +489,7 @@ class SyncOrganizationsMembershipsService:
         _, payload, _ = self._client._dataset_call(
             method=request[0], path=request[1], owning_operation=wire.GET_ORGANIZATION_CONTACT_POINT_OPERATION
         )
-        return _page_items(payload, operation=wire.GET_ORGANIZATION_CONTACT_POINT_OPERATION)
+        return wire.parse_contact_points(payload, operation=wire.GET_ORGANIZATION_CONTACT_POINT_OPERATION)
 
     def suggest_org_contact_points(
         self, organization_id: str, query: OrganizationSuggestQuery
@@ -1078,7 +1078,7 @@ class AsyncOrganizationsMembershipsService:
         _, payload, _ = await self._client._dataset_call_async(
             method=request[0], path=request[1], owning_operation=wire.GET_ORGANIZATION_CONTACT_POINT_OPERATION
         )
-        return _page_items(payload, operation=wire.GET_ORGANIZATION_CONTACT_POINT_OPERATION)
+        return wire.parse_contact_points(payload, operation=wire.GET_ORGANIZATION_CONTACT_POINT_OPERATION)
 
     async def suggest_org_contact_points(
         self, organization_id: str, query: OrganizationSuggestQuery
