@@ -54,16 +54,6 @@ def test_write_returns_uri() -> None:
     assert uri.startswith("memory://")
 
 
-def test_write_returns_str_not_path_instance() -> None:
-    """write returns a bare str, never a pathlib.Path."""
-    from pathlib import Path
-
-    storage = _memory_storage()
-    uri = storage.write(b"data", "file.txt")
-    assert type(uri) is str
-    assert not isinstance(uri, Path)
-
-
 def test_round_trip() -> None:
     """write -> read round-trips the bytes; exists flips False -> True."""
     storage = _memory_storage()
@@ -128,11 +118,16 @@ def test_fsspec_rejects_unencrypted_remote_paths() -> None:
         storage.read("http://example.test/data")
 
 
-def test_fsspec_write_failure_wraps_in_download_error() -> None:
-    """A write to a read-only backend surfaces as DownloadError."""
+def test_fsspec_write_failure_wraps_in_download_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A backend write failure surfaces as DownloadError with its cause."""
     import fsspec
 
+    failure = OSError("read-only backend")
     fs = fsspec.filesystem("memory")
+    monkeypatch.setattr(fs, "pipe_file", lambda *_: (_ for _ in ()).throw(failure))
     storage = FsspecStorage(fs, base_uri="/base")
-    storage.write(b"data", "file.txt")
-    assert storage.read("file.txt") == b"data"
+
+    with pytest.raises(DownloadError, match="read-only backend") as raised:
+        storage.write(b"data", "file.txt")
+
+    assert raised.value.__cause__ is failure

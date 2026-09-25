@@ -397,6 +397,9 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
             "AsyncUDataServices",
             "resources",
         ),
+        "udata/api-v1.resource-reads": ("SyncUDataServices", "AsyncUDataServices", "resources"),
+        "udata/api-v1.resource-mutations": ("SyncUDataServices", "AsyncUDataServices", "resources"),
+        "udata/api-v1.resource-destructive-mutations": ("SyncUDataServices", "AsyncUDataServices", "resources"),
         "udata/api-v1.organizations-and-memberships": (
             "SyncUDataServices",
             "AsyncUDataServices",
@@ -527,33 +530,196 @@ def _row_to_operation_id(row: str) -> str:
     return f"{platform}/{name}"
 
 
-LOCKED_DATASET_ROUTE_OPERATIONS = frozenset(
+RESOURCE_ROUTE_OPERATION_IDS = frozenset(
     {
-        "udata/api-v1.set_site",
-        "udata/api-v1.list-datasets",
-        "udata/api-v1.create-dataset",
-        "udata/api-v1.recent-datasets-atom",
-        "udata/api-v1.get-dataset",
-        "udata/api-v1.update-dataset",
-        "udata/api-v1.delete-dataset",
-        "udata/api-v1.feature-dataset",
-        "udata/api-v1.unfeature-dataset",
-        "udata/api-v1.rdf-dataset",
-        "udata/api-v1.rdf-dataset-format",
-        "udata/api-v1.suggest-datasets",
-        "udata/api-v2.search-datasets",
-        "udata/api-v2.list-datasets",
-        "udata/api-v2.get-dataset",
-        "udata/api-v2.get-dataset-extras",
-        "udata/api-v2.update-dataset-extras",
-        "udata/api-v2.delete-dataset-extras",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-replace",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-list",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-delete",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-redirect",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-types",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-dataset-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-list",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-get",
+        "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-extras-get",
     }
 )
 
-LOCKED_EXTRA_OPERATION_IDS = LOCKED_DATASET_ROUTE_OPERATIONS & {"udata/api-v1.set_site"}
+ORGANIZATION_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-organizations",
+        "udata/api-v1.create-organization",
+        "udata/api-v1.get-organization",
+        "udata/api-v1.update-organization",
+        "udata/api-v1.delete-organization",
+        "udata/api-v1.organization-datasets-csv",
+        "udata/api-v1.organization-dataservices-csv",
+        "udata/api-v1.organization-discussions-csv",
+        "udata/api-v1.organization-datasets-resources-csv",
+        "udata/api-v1.rdf-organization",
+        "udata/api-v1.rdf-organization-format",
+        "udata/api-v1.available-organization-badges",
+        "udata/api-v1.add-organization-badge",
+        "udata/api-v1.delete-organization-badge",
+        "udata/api-v1.get-organization-contact-point",
+        "udata/api-v1.suggest-org-contact-points",
+        "udata/api-v1.list-membership-requests",
+        "udata/api-v1.membership-request",
+        "udata/api-v1.accept-membership",
+        "udata/api-v1.refuse-membership",
+        "udata/api-v1.cancel-membership",
+        "udata/api-v1.invite-organization-member",
+        "udata/api-v1.update-organization-member",
+        "udata/api-v1.delete-organization-member",
+        "udata/api-v1.list-organization-assignments",
+        "udata/api-v1.sync-member-assignments",
+        "udata/api-v1.suggest-organizations",
+        "udata/api-v1.organization-logo",
+        "udata/api-v1.resize-organization-logo",
+        "udata/api-v1.list-organization-datasets",
+        "udata/api-v1.list-organization-reuses",
+        "udata/api-v1.list-organization-discussions",
+        "udata/api-v1.org-roles",
+        "udata/api-v2.search-organizations",
+        "udata/api-v2.get-organization-extras",
+        "udata/api-v2.update-organization-extras",
+        "udata/api-v2.delete-organization-extras",
+        "udata/api-v1.list-organization-followers",
+        "udata/api-v1.follow-organization",
+        "udata/api-v1.unfollow-organization",
+    }
+)
+
+USER_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.accept-org-invitation",
+        "udata/api-v1.create-api-token",
+        "udata/api-v1.create-user",
+        "udata/api-v1.delete-me",
+        "udata/api-v1.delete-user",
+        "udata/api-v1.follow-user",
+        "udata/api-v1.get-me",
+        "udata/api-v1.get-user",
+        "udata/api-v1.get-user-contact-point",
+        "udata/api-v1.list-api-tokens",
+        "udata/api-v1.list-org-invitations",
+        "udata/api-v1.list-user-followers",
+        "udata/api-v1.list-users",
+        "udata/api-v1.my-avatar",
+        "udata/api-v1.my-datasets",
+        "udata/api-v1.my-metrics",
+        "udata/api-v1.my-org-community-resources",
+        "udata/api-v1.my-org-datasets",
+        "udata/api-v1.my-org-discussions",
+        "udata/api-v1.my-org-reuses",
+        "udata/api-v1.my-reuses",
+        "udata/api-v1.refuse-org-invitation",
+        "udata/api-v1.revoke-api-token",
+        "udata/api-v1.rotate-user-password",
+        "udata/api-v1.suggest-users",
+        "udata/api-v1.unfollow-user",
+        "udata/api-v1.update-me",
+        "udata/api-v1.update-user",
+        "udata/api-v1.user-avatar",
+        "udata/api-v1.user-roles",
+        "udata/api-v2.my-org-topics",
+    }
+)
+
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "resources")
+        for operation_id in RESOURCE_ROUTE_OPERATION_IDS
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "organizations_memberships")
+        for operation_id in ORGANIZATION_ROUTE_OPERATION_IDS
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "users_tokens")
+        for operation_id in USER_ROUTE_OPERATION_IDS
+    }
+)
+OAUTH_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/oauth.access-token",
+        "udata/oauth.authorize",
+        "udata/oauth.authorize-post",
+        "udata/oauth.client-info",
+        "udata/oauth.oauth-error",
+        "udata/oauth.revoke-token",
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "auth_oauth")
+        for operation_id in OAUTH_ROUTE_OPERATION_IDS
+    }
+)
+
+LOCKED_DATASET_ROUTE_OPERATIONS = (
+    frozenset(
+        {
+            "udata/api-v1.set_site",
+            "udata/api-v1.resource-reads",
+            "udata/api-v1.resource-mutations",
+            "udata/api-v1.resource-destructive-mutations",
+            "udata/api-v1.list-datasets",
+            "udata/api-v1.create-dataset",
+            "udata/api-v1.recent-datasets-atom",
+            "udata/api-v1.get-dataset",
+            "udata/api-v1.update-dataset",
+            "udata/api-v1.delete-dataset",
+            "udata/api-v1.feature-dataset",
+            "udata/api-v1.unfeature-dataset",
+            "udata/api-v1.rdf-dataset",
+            "udata/api-v1.rdf-dataset-format",
+            "udata/api-v1.suggest-datasets",
+            "udata/api-v2.search-datasets",
+            "udata/api-v2.list-datasets",
+            "udata/api-v2.get-dataset",
+            "udata/api-v2.get-dataset-extras",
+            "udata/api-v2.update-dataset-extras",
+            "udata/api-v2.delete-dataset-extras",
+        }
+    )
+    | RESOURCE_ROUTE_OPERATION_IDS
+    | ORGANIZATION_ROUTE_OPERATION_IDS
+    | USER_ROUTE_OPERATION_IDS
+)
+
+LOCKED_EXTRA_OPERATION_IDS = (
+    LOCKED_DATASET_ROUTE_OPERATIONS
+    & {
+        "udata/api-v1.set_site",
+        "udata/api-v1.resource-reads",
+        "udata/api-v1.resource-mutations",
+        "udata/api-v1.resource-destructive-mutations",
+    }
+    | RESOURCE_ROUTE_OPERATION_IDS
+    | ORGANIZATION_ROUTE_OPERATION_IDS
+    | USER_ROUTE_OPERATION_IDS
+    | OAUTH_ROUTE_OPERATION_IDS
+)
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
-    "udata": LOCKED_DATASET_ROUTE_OPERATIONS,
+    "udata": LOCKED_DATASET_ROUTE_OPERATIONS | OAUTH_ROUTE_OPERATION_IDS,
 }
 
 

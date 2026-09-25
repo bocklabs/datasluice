@@ -19,7 +19,6 @@ logger = get_logger("data.access")
 
 
 _DEFAULT_BATCH_SIZE = 65536
-_BATCH_LIFECYCLE_READY = True
 
 
 class _StreamClosingBytesIO(IterableBytesIO):

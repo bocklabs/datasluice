@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-import os
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -20,8 +19,6 @@ from datasluice.ports.state_store import StateStore
 from datasluice.sync.state_store import FileStateStore, InMemoryStateStore
 
 state_store_module = importlib.import_module("datasluice.sync.state_store")
-if not hasattr(state_store_module, "_SECRET_FREE_STATE_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("secret-free durable state implementation pending GREEN phase", allow_module_level=True)
 
 
 def _sha_watermark(character: str = "a") -> str:
@@ -486,11 +483,6 @@ def test_inmemory_protocol_conformance() -> None:
     assert isinstance(InMemoryStateStore(), StateStore)
 
 
-_ADVERSARIAL_READY = getattr(state_store_module, "_ADVERSARIAL_VALIDATOR_READY", False)
-_skip_adversarial = pytest.mark.skipif(not _ADVERSARIAL_READY, reason="adversarial validator pending GREEN")
-
-
-@_skip_adversarial
 def test_adversarial_signed_url_etag_rejected(tmp_path: Path) -> None:
     key = "resource-signed-url"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -507,7 +499,6 @@ def test_adversarial_signed_url_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_adversarial_bearer_credential_etag_rejected(tmp_path: Path) -> None:
     key = "resource-bearer"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -521,7 +512,6 @@ def test_adversarial_bearer_credential_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_adversarial_control_byte_etag_rejected(tmp_path: Path) -> None:
     key = "resource-control"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -535,7 +525,6 @@ def test_adversarial_control_byte_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_adversarial_oversized_etag_rejected(tmp_path: Path) -> None:
     key = "resource-oversized"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -549,7 +538,6 @@ def test_adversarial_oversized_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_legitimate_etag_still_accepted(file_store: FileStateStore) -> None:
     key = "resource-legitimate"
     etags = (
@@ -563,7 +551,6 @@ def test_legitimate_etag_still_accepted(file_store: FileStateStore) -> None:
         assert file_store.get(key) == state
 
 
-@_skip_adversarial
 def test_contract_reconciliation_documented_as_accepted_override() -> None:
     docstring = FileStateStore.__doc__ or ""
     assert "Contract Reconciliation" in docstring

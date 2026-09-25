@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import FrozenInstanceError
+from io import BytesIO
+from typing import cast
 
 import pytest
 
 httpx = pytest.importorskip("httpx")
 
 from datasluice.runtime.transport.base import (
+    RedirectPolicy,
     RuntimeRequest,
     TransportFailure,
     UploadPart,
+    UploadStream,
 )
 from datasluice.runtime.transport.httpx_transport import (
     AsyncHttpxCatalogTransport,
@@ -36,6 +40,20 @@ def test_runtime_request_accepts_files_with_none_body() -> None:
 def test_runtime_request_rejects_body_and_files_together() -> None:
     with pytest.raises(ValueError, match="cannot carry a byte body and multipart parts together"):
         RuntimeRequest("POST", "https://example.test/upload", {}, b"payload", _PARTS)
+
+
+def test_runtime_request_rejects_stream_parts_with_followed_redirects() -> None:
+    part = UploadPart(
+        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, BytesIO(b"a,b\n"))
+    )
+
+    with pytest.raises(ValueError, match="one-shot streams require RedirectPolicy.NO_FOLLOW"):
+        RuntimeRequest("POST", "https://example.test/upload", files=(part,))
+
+    request = RuntimeRequest(
+        "POST", "https://example.test/upload", files=(part,), redirect_policy=RedirectPolicy.NO_FOLLOW
+    )
+    assert request.files == (part,)
 
 
 def test_runtime_request_freezes_parts_into_a_tuple() -> None:

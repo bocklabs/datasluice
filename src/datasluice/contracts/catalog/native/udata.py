@@ -2,16 +2,45 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions
-from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+    from datasluice.connectors.catalog.udata.models.oauth import (
+        OAuthAuthorizeDecision,
+        OAuthClientRequest,
+        OAuthConsentOutcome,
+        OAuthConsentSummary,
+        OAuthErrorDocument,
+        OAuthRevokeRequest,
+        OAuthTokenRequest,
+        OAuthTokenResult,
+    )
+    from datasluice.connectors.catalog.udata.models.resources import (
+        ResourceCreateInput,
+        ResourceMutationResult,
+        ResourceUpdateInput,
+        ResourceUploadInput,
+    )
+    from datasluice.connectors.catalog.udata.models.users import (
+        ApiTokenCreateInput,
+        ApiTokenCreationResult,
+        ApiTokenMetadata,
+        UserAvatarInput,
+        UserCreateInput,
+        UserDeleteOptions,
+        UserListQuery,
+        UserMutationResult,
+        UserSuggestQuery,
+        UserUpdateInput,
+    )
     from datasluice.domain.catalog.udata import (
         SiteCatalogQuery,
         SiteDataserviceCsvQuery,
@@ -145,6 +174,768 @@ class AsyncUDataRootProfileService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataResourcesService(Protocol):
+    """Typed synchronous resource and bounded-upload service."""
+
+    def redirect(self, resource_id: str) -> str: ...
+    def create(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def reorder(
+        self,
+        dataset_id: str,
+        values: tuple[ResourceUpdateInput, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def upload(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        resource_id: str | None = None,
+        community: bool = False,
+    ) -> ResourceMutationResult: ...
+    def upload_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def reupload_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def get(self, dataset_id: str, resource_id: str) -> NativeRecord: ...
+    def update(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def delete(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope: ...
+    def create_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def get_community(self, resource_id: str) -> NativeRecord: ...
+    def update_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def delete_community(
+        self, resource_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ResourceMutationResult: ...
+    def resource_types(self) -> tuple[Mapping[str, str], ...]: ...
+    def get_dataset_v2(self, dataset_id: str) -> NativeRecord: ...
+    def list_v2(self, dataset_id: str) -> UDataPageEnvelope: ...
+    def get_v2(self, resource_id: str) -> NativeRecord: ...
+    def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]: ...
+    def update_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    def delete_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataResourcesService(Protocol):
+    """Typed asynchronous resource and bounded-upload service."""
+
+    async def redirect(self, resource_id: str) -> str: ...
+    async def create(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def reorder(
+        self,
+        dataset_id: str,
+        values: tuple[ResourceUpdateInput, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def upload(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        resource_id: str | None = None,
+        community: bool = False,
+    ) -> ResourceMutationResult: ...
+    async def upload_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def reupload_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUploadInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def get(self, dataset_id: str, resource_id: str) -> NativeRecord: ...
+    async def update(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def delete(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def list_community(self, params: Mapping[str, str | int] | None = None) -> UDataPageEnvelope: ...
+    async def create_community(
+        self,
+        dataset_id: str,
+        client_input: ResourceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def get_community(self, resource_id: str) -> NativeRecord: ...
+    async def update_community(
+        self,
+        resource_id: str,
+        client_input: ResourceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def delete_community(
+        self, resource_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ResourceMutationResult: ...
+    async def resource_types(self) -> tuple[Mapping[str, str], ...]: ...
+    async def get_dataset_v2(self, dataset_id: str) -> NativeRecord: ...
+    async def list_v2(self, dataset_id: str) -> UDataPageEnvelope: ...
+    async def get_v2(self, resource_id: str) -> NativeRecord: ...
+    async def get_extras_v2(self, dataset_id: str, resource_id: str) -> Mapping[str, object]: ...
+    async def update_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+    async def delete_extras_v2(
+        self,
+        dataset_id: str,
+        resource_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ResourceMutationResult: ...
+
+
+@runtime_checkable
+class SyncUDataOrganizationsMembershipsService(Protocol):
+    """Typed synchronous organization and membership service."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_organizations(self, query: object | None = None) -> object: ...
+    def create_organization(
+        self, client_input: object, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    def get_organization(self, organization_id: str) -> object: ...
+    def update_organization(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    def organization_datasets_csv(self, organization_id: str) -> object: ...
+    def organization_dataservices_csv(self, organization_id: str) -> object: ...
+    def organization_discussions_csv(self, organization_id: str) -> object: ...
+    def organization_datasets_resources_csv(self, organization_id: str) -> object: ...
+    def rdf_organization(self, organization_id: str) -> object: ...
+    def rdf_organization_format(self, organization_id: str, fmt: str) -> object: ...
+    def available_organization_badges(self) -> object: ...
+    def add_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def get_organization_contact_point(self, organization_id: str, query: object | None = None) -> object: ...
+    def suggest_org_contact_points(self, organization_id: str, query: object) -> object: ...
+    def list_membership_requests(
+        self, organization_id: str, permissions: EffectivePermissions, query: object | None = None
+    ) -> object: ...
+    def membership_request(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def accept_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def refuse_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def cancel_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def invite_organization_member(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def update_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def list_organization_assignments(self, organization_id: str, permissions: EffectivePermissions) -> object: ...
+    def sync_member_assignments(
+        self,
+        organization_id: str,
+        user_id: str,
+        assignments: list[Mapping[str, object]],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def suggest_organizations(self, query: object) -> object: ...
+    def organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def resize_organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def list_organization_datasets(self, organization_id: str, query: object | None = None) -> object: ...
+    def list_organization_reuses(self, organization_id: str) -> object: ...
+    def list_organization_discussions(self, organization_id: str) -> object: ...
+    def org_roles(self) -> object: ...
+    def search_organizations(self, query: object | None = None) -> object: ...
+    def get_organization_extras(self, organization_id: str) -> object: ...
+    def update_organization_extras(
+        self,
+        organization_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def delete_organization_extras(
+        self,
+        organization_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    def list_organization_followers(self, organization_id: str) -> object: ...
+    def follow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    def unfollow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+
+
+@runtime_checkable
+class AsyncUDataOrganizationsMembershipsService(Protocol):
+    """Typed asynchronous organization and membership service."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_organizations(self, query: object | None = None) -> object: ...
+    async def create_organization(
+        self, client_input: object, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    async def get_organization(self, organization_id: str) -> object: ...
+    async def update_organization(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    async def organization_datasets_csv(self, organization_id: str) -> object: ...
+    async def organization_dataservices_csv(self, organization_id: str) -> object: ...
+    async def organization_discussions_csv(self, organization_id: str) -> object: ...
+    async def organization_datasets_resources_csv(self, organization_id: str) -> object: ...
+    async def rdf_organization(self, organization_id: str) -> object: ...
+    async def rdf_organization_format(self, organization_id: str, fmt: str) -> object: ...
+    async def available_organization_badges(self) -> object: ...
+    async def add_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization_badge(
+        self,
+        organization_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def get_organization_contact_point(self, organization_id: str, query: object | None = None) -> object: ...
+    async def suggest_org_contact_points(self, organization_id: str, query: object) -> object: ...
+    async def list_membership_requests(
+        self, organization_id: str, permissions: EffectivePermissions, query: object | None = None
+    ) -> object: ...
+    async def membership_request(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def accept_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def refuse_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def cancel_membership(
+        self,
+        organization_id: str,
+        request_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def invite_organization_member(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def update_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization_member(
+        self,
+        organization_id: str,
+        user_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def list_organization_assignments(
+        self, organization_id: str, permissions: EffectivePermissions
+    ) -> object: ...
+    async def sync_member_assignments(
+        self,
+        organization_id: str,
+        user_id: str,
+        assignments: list[Mapping[str, object]],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def suggest_organizations(self, query: object) -> object: ...
+    async def organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def resize_organization_logo(
+        self,
+        organization_id: str,
+        client_input: object,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def list_organization_datasets(self, organization_id: str, query: object | None = None) -> object: ...
+    async def list_organization_reuses(self, organization_id: str) -> object: ...
+    async def list_organization_discussions(self, organization_id: str) -> object: ...
+    async def org_roles(self) -> object: ...
+    async def search_organizations(self, query: object | None = None) -> object: ...
+    async def get_organization_extras(self, organization_id: str) -> object: ...
+    async def update_organization_extras(
+        self,
+        organization_id: str,
+        values: Mapping[str, object],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def delete_organization_extras(
+        self,
+        organization_id: str,
+        keys: tuple[str, ...],
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> object: ...
+    async def list_organization_followers(self, organization_id: str) -> object: ...
+    async def follow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+    async def unfollow_organization(
+        self, organization_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> object: ...
+
+
+@runtime_checkable
+class SyncUDataUsersTokensService(Protocol):
+    """Named synchronous stock user and token operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def get_me(self, permissions: EffectivePermissions) -> NativeRecord: ...
+    def update_me(
+        self,
+        client_input: UserUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    def delete_me(
+        self, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    def my_avatar(
+        self,
+        client_input: UserAvatarInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    def my_reuses(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    def my_datasets(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    def my_metrics(self, permissions: EffectivePermissions) -> MappingRecord: ...
+    def my_org_datasets(self, permissions: EffectivePermissions, q: str | None = None) -> tuple[MappingRecord, ...]: ...
+    def my_org_community_resources(
+        self, permissions: EffectivePermissions, q: str | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+    def my_org_reuses(self, permissions: EffectivePermissions, q: str | None = None) -> tuple[MappingRecord, ...]: ...
+    def my_org_discussions(
+        self, permissions: EffectivePermissions, q: str | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+    def list_api_tokens(self, permissions: EffectivePermissions) -> tuple[ApiTokenMetadata, ...]: ...
+    def create_api_token(
+        self,
+        client_input: ApiTokenCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ApiTokenCreationResult: ...
+    def revoke_api_token(
+        self, token_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    def list_org_invitations(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    def accept_org_invitation(
+        self, invitation_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    def refuse_org_invitation(
+        self, invitation_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    def list_users(
+        self, permissions: EffectivePermissions, query: UserListQuery | None = None
+    ) -> UDataPageEnvelope: ...
+    def create_user(
+        self,
+        client_input: UserCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    def user_avatar(
+        self,
+        user_id: str,
+        client_input: UserAvatarInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    def get_user(self, user_id: str) -> NativeRecord: ...
+    def update_user(
+        self,
+        user_id: str,
+        client_input: UserUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    def delete_user(
+        self,
+        user_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        options: UserDeleteOptions | None = None,
+    ) -> UserMutationResult: ...
+    def rotate_user_password(
+        self, user_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    def get_user_contact_point(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope: ...
+    def follow_user(
+        self, user_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    def suggest_users(self, query: UserSuggestQuery) -> tuple[MappingRecord, ...]: ...
+    def user_roles(self) -> tuple[MappingRecord, ...]: ...
+    def my_org_topics(
+        self, permissions: EffectivePermissions, query: UserListQuery | None = None
+    ) -> UDataPageEnvelope: ...
+    def list_user_followers(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope: ...
+    def unfollow_user(
+        self, user_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataUsersTokensService(Protocol):
+    """Named asynchronous stock user and token operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def get_me(self, permissions: EffectivePermissions) -> NativeRecord: ...
+    async def update_me(
+        self,
+        client_input: UserUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    async def delete_me(
+        self, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    async def my_avatar(
+        self,
+        client_input: UserAvatarInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    async def my_reuses(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    async def my_datasets(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    async def my_metrics(self, permissions: EffectivePermissions) -> MappingRecord: ...
+    async def my_org_datasets(
+        self, permissions: EffectivePermissions, q: str | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+    async def my_org_community_resources(
+        self, permissions: EffectivePermissions, q: str | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+    async def my_org_reuses(
+        self, permissions: EffectivePermissions, q: str | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+    async def my_org_discussions(
+        self, permissions: EffectivePermissions, q: str | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+    async def list_api_tokens(self, permissions: EffectivePermissions) -> tuple[ApiTokenMetadata, ...]: ...
+    async def create_api_token(
+        self,
+        client_input: ApiTokenCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ApiTokenCreationResult: ...
+    async def revoke_api_token(
+        self, token_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    async def list_org_invitations(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    async def accept_org_invitation(
+        self, invitation_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    async def refuse_org_invitation(
+        self, invitation_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    async def list_users(
+        self, permissions: EffectivePermissions, query: UserListQuery | None = None
+    ) -> UDataPageEnvelope: ...
+    async def create_user(
+        self,
+        client_input: UserCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    async def user_avatar(
+        self,
+        user_id: str,
+        client_input: UserAvatarInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    async def get_user(self, user_id: str) -> NativeRecord: ...
+    async def update_user(
+        self,
+        user_id: str,
+        client_input: UserUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> UserMutationResult: ...
+    async def delete_user(
+        self,
+        user_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        options: UserDeleteOptions | None = None,
+    ) -> UserMutationResult: ...
+    async def rotate_user_password(
+        self, user_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    async def get_user_contact_point(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope: ...
+    async def follow_user(
+        self, user_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+    async def suggest_users(self, query: UserSuggestQuery) -> tuple[MappingRecord, ...]: ...
+    async def user_roles(self) -> tuple[MappingRecord, ...]: ...
+    async def my_org_topics(
+        self, permissions: EffectivePermissions, query: UserListQuery | None = None
+    ) -> UDataPageEnvelope: ...
+    async def list_user_followers(self, user_id: str, query: UserListQuery | None = None) -> UDataPageEnvelope: ...
+    async def unfollow_user(
+        self, user_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> UserMutationResult: ...
+
+
+@runtime_checkable
+class SyncUDataAuthOAuthService(Protocol):
+    """Synchronous stock uData /oauth routes."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def access_token(self, body: OAuthTokenRequest, permissions: EffectivePermissions) -> OAuthTokenResult: ...
+    def revoke_token(
+        self,
+        body: OAuthRevokeRequest,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthTokenResult: ...
+    def client_info(self, query: OAuthClientRequest, permissions: EffectivePermissions) -> OAuthConsentSummary: ...
+    def authorize(self, query: OAuthClientRequest, permissions: EffectivePermissions) -> OAuthConsentSummary: ...
+    def authorize_post(
+        self,
+        body: OAuthAuthorizeDecision,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthConsentOutcome: ...
+    def oauth_error(self) -> OAuthErrorDocument: ...
+
+
+@runtime_checkable
+class AsyncUDataAuthOAuthService(Protocol):
+    """Asynchronous stock uData /oauth routes."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def access_token(self, body: OAuthTokenRequest, permissions: EffectivePermissions) -> OAuthTokenResult: ...
+    async def revoke_token(
+        self,
+        body: OAuthRevokeRequest,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthTokenResult: ...
+    async def client_info(
+        self, query: OAuthClientRequest, permissions: EffectivePermissions
+    ) -> OAuthConsentSummary: ...
+    async def authorize(self, query: OAuthClientRequest, permissions: EffectivePermissions) -> OAuthConsentSummary: ...
+    async def authorize_post(
+        self,
+        body: OAuthAuthorizeDecision,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> OAuthConsentOutcome: ...
+    async def oauth_error(self) -> OAuthErrorDocument: ...
+
+
+@runtime_checkable
 class SyncUDataService(Protocol):
     """Synchronous uData operation group."""
 
@@ -175,16 +966,16 @@ class SyncUDataServices(Protocol):
     def datasets(self) -> SyncUDataService: ...
 
     @property
-    def resources(self) -> SyncUDataService: ...
+    def resources(self) -> SyncUDataResourcesService: ...
 
     @property
-    def organizations_memberships(self) -> SyncUDataService: ...
+    def organizations_memberships(self) -> SyncUDataOrganizationsMembershipsService: ...
 
     @property
-    def users_tokens(self) -> SyncUDataService: ...
+    def users_tokens(self) -> SyncUDataUsersTokensService: ...
 
     @property
-    def auth_oauth(self) -> SyncUDataService: ...
+    def auth_oauth(self) -> SyncUDataAuthOAuthService: ...
 
     @property
     def taxonomies(self) -> SyncUDataService: ...
@@ -213,16 +1004,16 @@ class AsyncUDataServices(Protocol):
     def datasets(self) -> AsyncUDataService: ...
 
     @property
-    def resources(self) -> AsyncUDataService: ...
+    def resources(self) -> AsyncUDataResourcesService: ...
 
     @property
-    def organizations_memberships(self) -> AsyncUDataService: ...
+    def organizations_memberships(self) -> AsyncUDataOrganizationsMembershipsService: ...
 
     @property
-    def users_tokens(self) -> AsyncUDataService: ...
+    def users_tokens(self) -> AsyncUDataUsersTokensService: ...
 
     @property
-    def auth_oauth(self) -> AsyncUDataService: ...
+    def auth_oauth(self) -> AsyncUDataAuthOAuthService: ...
 
     @property
     def taxonomies(self) -> AsyncUDataService: ...

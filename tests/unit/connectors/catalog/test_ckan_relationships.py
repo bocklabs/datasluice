@@ -9,7 +9,6 @@ import json
 import pytest
 
 from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient, declared_ckan_profile
-from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.connectors.catalog.ckan.services.relationships_activity import (
     AsyncRelationshipsActivityService,
     SyncRelationshipsActivityService,
@@ -118,22 +117,6 @@ def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
     return AsyncCKANClient(
         transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
     )
-
-
-def _core_names() -> set[str]:
-    return {entry.name for entry in CKAN_ACTIONS.entries if entry.owning_operation_id == RELATIONSHIPS_ID}
-
-
-def test_every_core_relationship_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Each manifest-registered core action names a callable member on both projections."""
-    sync_surface = {name for name in dir(SyncRelationshipsActivityService) if not name.startswith("_")}
-    async_surface = {name for name in dir(AsyncRelationshipsActivityService) if not name.startswith("_")}
-    names = _core_names()
-    assert names == EXPECTED_RELATIONSHIP_ACTIONS
-    for action in names:
-        assert action in sync_surface, f"sync surface misses {action}"
-        assert action in async_surface, f"async surface misses {action}"
-        assert callable(getattr(SyncRelationshipsActivityService, action))
 
 
 def test_relationship_surfaces_stay_in_structural_lockstep_across_modes() -> None:

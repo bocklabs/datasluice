@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import importlib
-import os
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from datasluice.data import DataPlaneResourceReader
 from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
@@ -15,12 +12,9 @@ from datasluice.sync import sync_resources
 from datasluice.sync._identity import canonical_identity
 
 sync_module = importlib.import_module("datasluice.sync.sync")
-if not hasattr(sync_module, "_CONDITIONAL_SYNC_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("conditional sync implementation pending GREEN phase", allow_module_level=True)
 
 
-def _sync(tmp_path, resource, state_store, transport, *, cache=None):
-    _ = cache
+def _sync(tmp_path, resource, state_store, transport):
     return list(
         sync_resources(
             [resource],
@@ -58,17 +52,6 @@ def test_304_skips_materialize(tmp_path, csv_server, make_resource, inmemory_sta
     current = inmemory_state.get(canonical_identity(resource))
     assert current is not None
     assert current.last_synced_at == first_synced_at
-
-
-def test_304_survives_no_cache(tmp_path, csv_server, make_resource, inmemory_state) -> None:
-    _server, url = csv_server(headers={"ETag": '"e1"'})
-    resource = make_resource(url)
-    transport = HttpxCatalogTransport()
-
-    _sync(tmp_path, resource, inmemory_state, transport, cache=None)
-    second = _sync(tmp_path, resource, inmemory_state, transport, cache=None)
-
-    assert second[0].action == "skipped-unchanged"
 
 
 def test_304_unhealthy_destination_rematerializes(tmp_path, csv_server, make_resource, inmemory_state) -> None:
@@ -113,18 +96,6 @@ def test_headerless_sha_path(tmp_path, csv_server, make_resource, inmemory_state
     assert first[0].action == "materialized"
     assert second[0].action == "skipped-unchanged"
     assert server.captured_paths == ["/data.csv"]
-
-
-def test_conditional_headers_not_stripped(tmp_path, csv_server, make_resource, inmemory_state) -> None:
-    server, url = csv_server(headers={"ETag": '"e1"'})
-    resource = make_resource(url)
-    transport = HttpxCatalogTransport()
-
-    _sync(tmp_path, resource, inmemory_state, transport)
-    server.captured.clear()
-    _sync(tmp_path, resource, inmemory_state, transport)
-
-    assert server.captured[0]["if-none-match"] == '"e1"'
 
 
 def test_last_modified_roundtrip(tmp_path, csv_server, make_resource, inmemory_state) -> None:

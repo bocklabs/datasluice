@@ -4,59 +4,11 @@
   "profile_version": "17.6.0",
   "cases": [
     {
-      "operation": "udata/api-v1.root-and-effective-profile-probe",
-      "outcome": "core"
-    },
-    {
-      "operation": "udata/api-v1.set_site",
+      "operation": "udata/api-v1.accept-membership",
       "outcome": "authenticated-success"
     },
     {
-      "operation": "udata/api-v1.set_site",
-      "outcome": "forbidden"
-    },
-    {
-      "operation": "udata/api-v1.set_site",
-      "outcome": "deployment-disabled"
-    },
-    {
-      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
-      "outcome": "optional"
-    },
-    {
-      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
-      "outcome": "missing-credentials"
-    },
-    {
-      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
-      "outcome": "invalid-credentials"
-    },
-    {
-      "operation": "udata/api-v1.harvest-moderation-and-admin-operations",
-      "outcome": "forbidden"
-    },
-    {
-      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
-      "outcome": "deployment-disabled"
-    },
-    {
-      "operation": "udata/api-v1.root-and-effective-profile-probe",
-      "outcome": "unavailable"
-    },
-    {
-      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.organizations-and-memberships",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.users-me-and-api-token-management",
+      "operation": "udata/api-v1.add-organization-badge",
       "outcome": "authenticated-success"
     },
     {
@@ -64,15 +16,483 @@
       "outcome": "optional"
     },
     {
-      "operation": "udata/api-v1.taxonomies-licenses-frequencies-formats-badges-and-schemas",
+      "operation": "udata/api-v1.available-organization-badges",
       "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.cancel-membership",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "invalid-credentials"
+    },
+    {
+      "operation": "udata/api-v1.dataset-list-search-show-create-update-delete",
+      "outcome": "missing-credentials"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-admin"
+      }
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-create",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-get",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-list",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-community-update",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-extras-update",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-get",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-redirect",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-reorder",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-types",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-update",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-new",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-community-replace",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-new",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-upload-replace",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-dataset-get",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-extras-get",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-get",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-v2-resource-list",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.delete-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-organization-badge",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-organization-member",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.follow-organization",
+      "outcome": "authenticated-success"
     },
     {
       "operation": "udata/api-v1.followers-activities-discussions-and-reuses",
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.get-organization",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.get-organization-contact-point",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.harvest-moderation-and-admin-operations",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "udata/api-v1.invite-organization-member",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-membership-requests",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-organization-assignments",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-organization-datasets",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-organization-discussions",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-organization-followers",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-organization-reuses",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-organizations",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.membership-request",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.org-roles",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.organization-dataservices-csv",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.organization-datasets-csv",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.organization-datasets-resources-csv",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.organization-discussions-csv",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.organization-logo",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.organizations-and-memberships",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.rdf-organization",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.rdf-organization-format",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.refuse-membership",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.resize-organization-logo",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.resource-destructive-mutations",
+      "outcome": "authenticated-success",
+      "receipt_metadata": {
+        "receipt_id_shape": "mutation-receipt-v1",
+        "actor_role_class": "authenticated-admin"
+      }
+    },
+    {
+      "operation": "udata/api-v1.resource-mutations",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.resource-reads",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.root-and-effective-profile-probe",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.root-and-effective-profile-probe",
+      "outcome": "unavailable"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "deployment-disabled"
+    },
+    {
+      "operation": "udata/api-v1.set_site",
+      "outcome": "forbidden"
+    },
+    {
+      "operation": "udata/api-v1.suggest-org-contact-points",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.suggest-organizations",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.sync-member-assignments",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.taxonomies-licenses-frequencies-formats-badges-and-schemas",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.topics-territories-contact-points-and-dataservices",
+      "outcome": "optional"
+    },
+    {
+      "operation": "udata/api-v1.unfollow-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-organization-member",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.users-me-and-api-token-management",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v2.delete-organization-extras",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v2.get-organization-extras",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v2.search-organizations",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v2.update-organization-extras",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
+      "outcome": "deployment-disabled"
+    },
+    {
+      "operation": "udata/deployment-plugin-and-configuration-dependent-routes",
+      "outcome": "optional"
+    },
+    {
+      "operation": "udata/api-v1.accept-org-invitation",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-api-token",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-me",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.follow-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.get-me",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.get-user",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.get-user-contact-point",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-api-tokens",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-org-invitations",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-user-followers",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-users",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-avatar",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-datasets",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-metrics",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-community-resources",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-datasets",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-discussions",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-reuses",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-reuses",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.refuse-org-invitation",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.revoke-api-token",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.rotate-user-password",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.suggest-users",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.unfollow-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-me",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.user-avatar",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.user-roles",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v2.my-org-topics",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.access-token",
+      "outcome": "optional"
+    },
+    {
+      "operation": "udata/oauth.access-token",
+      "outcome": "invalid-credentials"
+    },
+    {
+      "operation": "udata/oauth.revoke-token",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.client-info",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.authorize",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.authorize-post",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/oauth.oauth-error",
       "outcome": "optional"
     }
   ]

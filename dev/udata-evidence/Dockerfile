@@ -30,6 +30,7 @@ RUN printf '%s\n' \
     'MAIL_PORT = 1025' \
     'SEND_MAIL = False' \
     'SESSION_COOKIE_SECURE = False' \
+    'RESOURCES_FS_URL = "https://example.com/udata-evidence/"' \
     > /opt/udata/udata.cfg
 
 EXPOSE 7000

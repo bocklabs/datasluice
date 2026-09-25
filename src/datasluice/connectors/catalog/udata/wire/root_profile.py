@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import math
@@ -491,7 +490,7 @@ async def _digest_stream_chunk_async(
 def _report_sync_stream_failure(response: RuntimeStreamResponse, error: BaseException) -> BaseException | None:
     try:
         response.fail(error)
-    except Exception as report_error:
+    except BaseException as report_error:
         return report_error
     return None
 
@@ -501,7 +500,7 @@ async def _report_async_stream_failure(
 ) -> BaseException | None:
     try:
         await response.fail(error)
-    except (Exception, asyncio.CancelledError) as report_error:
+    except BaseException as report_error:
         return report_error
     return None
 
@@ -511,7 +510,7 @@ def _finish_sync_stream_failure(
 ) -> Never:
     try:
         response.close()
-    except Exception as cleanup_error:
+    except BaseException as cleanup_error:
         raise error from cleanup_error
     if report_error is not None:
         raise error from report_error
@@ -523,7 +522,7 @@ async def _finish_async_stream_failure(
 ) -> Never:
     try:
         await response.aclose()
-    except (Exception, asyncio.CancelledError) as cleanup_error:
+    except BaseException as cleanup_error:
         raise error from cleanup_error
     if report_error is not None:
         raise error from report_error
@@ -582,7 +581,7 @@ def digest_stream_document(
             platform="udata",
             status_code=response.status_code,
         )
-    except Exception as error:
+    except BaseException as error:
         failure = error
     if failure is not None:
         report_error = _report_sync_stream_failure(response, failure)
@@ -636,7 +635,7 @@ async def digest_stream_document_async(
             platform="udata",
             status_code=response.status_code,
         )
-    except (Exception, asyncio.CancelledError) as error:
+    except BaseException as error:
         failure = error
     if failure is not None:
         report_error = await _report_async_stream_failure(response, failure)

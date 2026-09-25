@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 import importlib
-import os
 from collections.abc import Iterator
 from typing import Any
-
-import pytest
 
 from datasluice.domain import SyncState
 from datasluice.runtime.plugin_manager import PluginManager
 from datasluice.sync import FileStateStore, InMemoryStateStore
 
 session_module = importlib.import_module("datasluice.runtime.session")
-if not hasattr(session_module, "_SESSION_SYNC_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("session sync composition pending GREEN phase", allow_module_level=True)
 
 
 class _StateStoreSpy:

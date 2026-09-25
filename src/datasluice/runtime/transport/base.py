@@ -26,6 +26,14 @@ class RedirectPolicy(StrEnum):
     NO_FOLLOW = "no-follow"
 
 
+class UploadStream(Protocol):
+    """A closeable byte stream used for one multipart part."""
+
+    def read(self, size: int = -1) -> bytes: ...
+
+    def close(self) -> None: ...
+
+
 def strip_sensitive_redirect_headers(headers: Mapping[str, str]) -> dict[str, str]:
     """Return a copy without credential-bearing headers."""
     return {key: value for key, value in headers.items() if key.lower() not in SENSITIVE_REDIRECT_HEADERS}
@@ -46,24 +54,27 @@ class UploadPart:
     """
 
     field_name: str
-    data: bytes = field(repr=False)
+    data: bytes | UploadStream = field(repr=False)
     file_name: str | None = None
     content_type: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.field_name, str) or not self.field_name:
             raise ValueError("Upload part field names must be non-empty strings.")
-        if not isinstance(self.data, bytes):
-            raise ValueError("Upload part data must be bytes.")
+        if not isinstance(self.data, bytes) and not (
+            callable(getattr(self.data, "read", None)) and callable(getattr(self.data, "close", None))
+        ):
+            raise ValueError("Upload part data must be bytes or a closeable byte stream.")
         if self.file_name is not None and (not isinstance(self.file_name, str) or not self.file_name):
             raise ValueError("Upload part file names must be non-empty strings when supplied.")
         if self.content_type is not None and (not isinstance(self.content_type, str) or not self.content_type):
             raise ValueError("Upload part content types must be non-empty strings when supplied.")
 
     def __repr__(self) -> str:
+        size = len(self.data) if isinstance(self.data, bytes) else "stream"
         return (
             f"{type(self).__name__}(field_name={self.field_name!r}, file_name={self.file_name!r}, "
-            f"content_type={self.content_type!r}, data=<{len(self.data)} masked bytes>)"
+            f"content_type={self.content_type!r}, data=<{size} masked bytes>)"
         )
 
 
@@ -140,6 +151,10 @@ class RuntimeRequest:
         _validate_request_payload(self.body, self.files)
         if not isinstance(self.redirect_policy, RedirectPolicy):
             raise ValueError("Runtime request redirect policies must use RedirectPolicy.")
+        if self.redirect_policy is RedirectPolicy.FOLLOW and any(
+            not isinstance(part.data, bytes) for part in self.files
+        ):
+            raise ValueError("Multipart parts carrying one-shot streams require RedirectPolicy.NO_FOLLOW.")
         _validate_response_limit(self.max_response_bytes)
         object.__setattr__(self, "headers", _freeze_request_headers(self.headers))
         object.__setattr__(self, "files", tuple(self.files))

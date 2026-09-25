@@ -213,9 +213,10 @@ def test_installed_help_advertises_exactly_the_retained_commands(installed_env: 
         assert retired not in result.stdout, f"installed --help must not advertise retired command {retired}"
 
 
-def test_installed_retired_commands_are_not_invokable(installed_env: dict[str, str]) -> None:
+@pytest.mark.parametrize("retired", _RETIRED_COMMANDS)
+def test_installed_retired_commands_are_not_invokable(installed_env: dict[str, str], retired: str) -> None:
     """Former portal-era commands fail resolution instead of redirecting."""
-    result = _run_cli(installed_env, ["search", "https://data.example.test"])
+    result = _run_cli(installed_env, [retired, "https://data.example.test"])
 
     assert result.returncode != 0
     combined = result.stdout + result.stderr

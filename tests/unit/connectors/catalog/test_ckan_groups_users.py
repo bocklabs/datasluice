@@ -161,15 +161,6 @@ def test_group_manifest_holds_exactly_the_documented_twelve_actions() -> None:
             assert family in RECORD_KINDS
 
 
-def test_every_manifest_group_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Each registered group action names a callable member on both projections."""
-    sync_surface = {name for name in dir(SyncGroupsService) if not name.startswith("_")}
-    async_surface = {name for name in dir(AsyncGroupsService) if not name.startswith("_")}
-    for action in EXPECTED_GROUP_ACTIONS:
-        assert action in sync_surface, f"sync surface misses {action}"
-        assert action in async_surface, f"async surface misses {action}"
-
-
 def test_group_surfaces_stay_in_structural_lockstep_across_modes() -> None:
     """Sync/async group projections expose identical members, mode-correct dispatch."""
     sync_members = {name for name in dir(SyncGroupsService) if not name.startswith("__")}
@@ -328,15 +319,6 @@ def test_user_manifest_holds_exactly_the_documented_twelve_actions() -> None:
         assert outcome == entry.result_kind
         if family is not None:
             assert family in RECORD_KINDS
-
-
-def test_every_manifest_user_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Each registered user action names a callable member on both projections."""
-    sync_surface = {name for name in dir(SyncUsersService) if not name.startswith("_")}
-    async_surface = {name for name in dir(AsyncUsersService) if not name.startswith("_")}
-    for action in EXPECTED_USER_ACTIONS:
-        assert action in sync_surface, f"sync surface misses {action}"
-        assert action in async_surface, f"async surface misses {action}"
 
 
 def test_user_surfaces_stay_in_structural_lockstep_across_modes() -> None:

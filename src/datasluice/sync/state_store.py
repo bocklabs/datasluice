@@ -44,8 +44,6 @@ _GLOBAL_LOCKS_USERS: dict[str, int] = {}
 _GLOBAL_LOCKS_GUARD = threading.Lock()
 
 _UNSET = object()
-_SECRET_FREE_STATE_READY = True
-_ADVERSARIAL_VALIDATOR_READY = True
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
 _COMPLETED_ARTIFACT_KEYS = {"destination_identity", "destination_size", "destination_checksum"}

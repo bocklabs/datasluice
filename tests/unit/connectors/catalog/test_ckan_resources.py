@@ -10,11 +10,9 @@ from pathlib import Path
 
 import pytest
 
-import datasluice.connectors.catalog.ckan.services.filestore as filestore_module
 from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient, declared_ckan_profile
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.connectors.catalog.ckan.services.resources import AsyncResourcesService, SyncResourcesService
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.models import NativeRecord, ValueRecord
@@ -25,14 +23,14 @@ from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 
+STREAMING_MARKERS = ("chunked", "stream=True", "iter_content", "iter_bytes", "iter_raw")
+
 RESOURCE_SHOW_RESULT: dict[str, object] = {
     "id": "res-9",
     "package_id": "pkg-1",
     "name": "sample",
     "url": "https://example.test/sample.csv",
 }
-
-STREAMING_MARKERS = ("chunked", "stream=True", "iter_content", "iter_bytes", "iter_raw")
 
 
 def _success_body(result: object) -> bytes:
@@ -105,7 +103,11 @@ def _async_client(transport: AsyncCaptureTransport) -> AsyncCKANClient:
 
 
 def _upload_parts(request: RuntimeRequest) -> dict[str, tuple[bytes, str | None]]:
-    return {part.field_name: (part.data, part.file_name) for part in request.files}
+    parts: dict[str, tuple[bytes, str | None]] = {}
+    for part in request.files:
+        assert isinstance(part.data, bytes)
+        parts[part.field_name] = part.data, part.file_name
+    return parts
 
 
 def test_upload_buffers_path_and_handle_sources_to_identical_wire_bytes(tmp_path: Path) -> None:
@@ -243,17 +245,6 @@ def test_filestore_projection_routes_through_the_resource_paths() -> None:
     assert isinstance(record, NativeRecord)
     assert record.id.value == "res-9"
     assert not [entry for entry in CKAN_ACTIONS.entries if entry.group == "filestore"]
-    assert "zero dedicated Action API endpoints" in (filestore_module.__doc__ or "")
-
-
-def test_every_manifest_resource_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    entries = [entry for entry in CKAN_ACTIONS.entries if entry.group == "resources"]
-    assert len(entries) == 6
-    sync_surface = {name for name in dir(SyncResourcesService) if not name.startswith("_")}
-    async_surface = {name for name in dir(AsyncResourcesService) if not name.startswith("_")}
-    for entry in entries:
-        assert entry.name in sync_surface, f"sync surface misses {entry.name}"
-        assert entry.name in async_surface, f"async surface misses {entry.name}"
 
 
 def test_services_package_carries_no_streaming_constructs() -> None:

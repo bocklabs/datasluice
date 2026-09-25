@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 from typing import Any
 
 import pytest
@@ -16,8 +15,6 @@ from datasluice.sync.state_store import InMemoryStateStore
 from tests.unit.sync.conftest import CSV_BYTES, FaultInjectingStateStore
 
 sync_module = importlib.import_module("datasluice.sync.sync")
-if not hasattr(sync_module, "_CONDITIONAL_SYNC_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("resume implementation pending GREEN phase", allow_module_level=True)
 
 
 def test_crash_then_resume_skips_completed_resource(

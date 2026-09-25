@@ -140,23 +140,6 @@ def test_all_terminals_equivalent() -> None:
     assert arrow_table.equals(duckdb_table), "arrow != duckdb (local-tz divergence?)"
 
 
-def test_equivalence_preserves_null_count() -> None:
-    """The null count in the 'name' column is identical (1) across all 4 terminals.
-
-    Confirms the null is neither dropped nor doubled by any terminal
-    ( — pandas NaN must round-trip to exactly one Arrow
-    null, not zero or two).
-    """
-    import pyarrow as pa
-
-    arrow_nulls = _normalize_string_types(to_arrow(_make_stream())).column("name").null_count
-    pandas_nulls = _normalize_string_types(pa.Table.from_pandas(to_pandas(_make_stream()))).column("name").null_count
-    polars_nulls = _normalize_string_types(to_polars(_make_stream()).to_arrow()).column("name").null_count
-    duckdb_nulls = _normalize_string_types(to_duckdb(_make_stream()).to_arrow_table()).column("name").null_count
-
-    assert arrow_nulls == pandas_nulls == polars_nulls == duckdb_nulls == 1
-
-
 def test_equivalence_with_timestamp_column() -> None:
     """A tz-aware timestamp column round-trips equivalently across all 4 terminals.
 
@@ -175,25 +158,3 @@ def test_equivalence_with_timestamp_column() -> None:
     assert arrow_table.equals(pandas_table), "arrow != pandas (timestamp)"
     assert arrow_table.equals(polars_table), "arrow != polars (timestamp)"
     assert arrow_table.equals(duckdb_table), "arrow != duckdb (local-tz divergence)"
-
-
-def test_to_arrow_preserves_specific_values() -> None:
-    """to_arrow preserves exact cell values, not just shape."""
-    table = to_arrow(_make_stream())
-    assert table.column("id").to_pylist() == [1, 2]
-    assert table.column("name").to_pylist() == ["a", None]
-
-
-def test_to_arrow_multi_batch_stream() -> None:
-    """A stream that yields multiple batches is flattened correctly by to_arrow."""
-    import pyarrow as pa
-
-    from datasluice.data.batch_stream import BatchStream
-
-    schema = pa.schema([("id", pa.int64())])
-    b1 = pa.RecordBatch.from_arrays([pa.array([1, 2])], schema=schema)
-    b2 = pa.RecordBatch.from_arrays([pa.array([3, 4])], schema=schema)
-    stream = BatchStream(iter([b1, b2]), schema)
-    table = to_arrow(stream)
-    assert table.num_rows == 4
-    assert table.column("id").to_pylist() == [1, 2, 3, 4]

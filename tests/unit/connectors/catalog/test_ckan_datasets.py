@@ -321,17 +321,6 @@ def test_disabled_collaborator_probe_state_surfaces_a_typed_refusal_not_a_silent
     assert transport.requests == []
 
 
-def test_every_manifest_dataset_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Manifest-driven completeness: each registered dataset action names a typed method."""
-    entries = [entry for entry in CKAN_ACTIONS.entries if entry.group == "datasets"]
-    assert len(entries) == 20
-    sync_surface = {name for name in dir(SyncDatasetsService) if not name.startswith("_")}
-    async_surface = {name for name in dir(AsyncDatasetsService) if not name.startswith("_")}
-    for entry in entries:
-        assert entry.name in sync_surface, f"sync surface misses {entry.name}"
-        assert entry.name in async_surface, f"async surface misses {entry.name}"
-
-
 def test_async_package_search_and_create_mirror_the_sync_semantics() -> None:
     """The async twin keeps faithful paging and receipt-bearing mutations."""
     transport = AsyncCaptureTransport(body=_success_body(PACKAGE_CREATE_RESULT))

@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      provenance: false
+      sbom: false
       args:
         UDATA_COMMIT: 0546582058d84706812a1c37387576efc4e5ad1f
     platform: linux/amd64
@@ -38,6 +40,7 @@ services:
     tmpfs:
       - /tmp
       - /var/lib/udata
+      - /usr/local/var
     restart: "no"
 
   mongo:
@@ -84,7 +87,7 @@ services:
     restart: "no"
 
   storage:
-    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     platform: linux/amd64
     pull_policy: never
     environment:

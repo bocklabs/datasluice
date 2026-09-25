@@ -9,5 +9,207 @@
     "response_class": "success",
     "sanitized": true
   },
-  "mutation_evidence": "controlled-environment-only"
+  "mutation_evidence": "controlled-environment-only",
+  "controlled_resource_evidence": {
+    "captured_at": "2026-09-20",
+    "local_only": true,
+    "test_id": "test_controlled_resource_family_mutation_and_read_chain",
+    "response_shape": "record-id-only",
+    "sanitized": true
+  },
+  "controlled_organization_evidence": {
+    "captured_at": "2026-09-23",
+    "local_only": true,
+    "test_ids": [
+      "test_controlled_organization_family_matches_raw_shapes_and_cleans_up",
+      "test_controlled_async_organization_reads_match_raw_shapes",
+      "test_controlled_organization_read_matrix_matches_raw_routes",
+      "test_controlled_organization_mutations_match_raw_routes_in_both_modes"
+    ],
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.list-organizations",
+        "udata/api-v1.get-organization",
+        "udata/api-v1.organization-datasets-csv",
+        "udata/api-v1.organization-dataservices-csv",
+        "udata/api-v1.organization-discussions-csv",
+        "udata/api-v1.organization-datasets-resources-csv",
+        "udata/api-v1.rdf-organization",
+        "udata/api-v1.rdf-organization-format",
+        "udata/api-v1.available-organization-badges",
+        "udata/api-v1.get-organization-contact-point",
+        "udata/api-v1.suggest-org-contact-points",
+        "udata/api-v1.list-membership-requests",
+        "udata/api-v1.list-organization-assignments",
+        "udata/api-v1.suggest-organizations",
+        "udata/api-v1.list-organization-datasets",
+        "udata/api-v1.list-organization-reuses",
+        "udata/api-v1.list-organization-discussions",
+        "udata/api-v1.org-roles",
+        "udata/api-v2.search-organizations",
+        "udata/api-v2.get-organization-extras",
+        "udata/api-v1.list-organization-followers"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.create-organization",
+        "udata/api-v1.update-organization",
+        "udata/api-v1.delete-organization",
+        "udata/api-v1.membership-request",
+        "udata/api-v1.accept-membership",
+        "udata/api-v1.refuse-membership",
+        "udata/api-v1.cancel-membership",
+        "udata/api-v1.invite-organization-member",
+        "udata/api-v1.update-organization-member",
+        "udata/api-v1.delete-organization-member",
+        "udata/api-v1.sync-member-assignments",
+        "udata/api-v1.add-organization-badge",
+        "udata/api-v1.delete-organization-badge",
+        "udata/api-v1.organization-logo",
+        "udata/api-v1.resize-organization-logo",
+        "udata/api-v2.update-organization-extras",
+        "udata/api-v2.delete-organization-extras",
+        "udata/api-v1.follow-organization",
+        "udata/api-v1.unfollow-organization"
+      ],
+      "assertions": [
+        "raw-and-typed-success-values-match-or-error-statuses-match",
+        "mutation-receipt-operation-and-status-match-raw",
+        "selected-post-state-and-cleanup-verified"
+      ]
+    },
+    "response_shape": "bounded-record-and-status-skeleton",
+    "cleanup": "organization-delete-soft-state-verified",
+    "sanitized": true,
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "reviewed_sha": "1cdb7a33c0c9a88578a3b3c6d8438d647b3a896f",
+    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
+    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
+  },
+  "controlled_user_evidence": {
+    "captured_at": "2026-09-24",
+    "local_only": true,
+    "test_ids": [
+      "test_controlled_user_reads_match_raw_routes_in_both_modes",
+      "test_controlled_user_mutations_match_raw_routes_in_both_modes",
+      "test_disposable_token_id_is_registered_before_token_validation",
+      "test_created_response_keeps_cleanup_id_when_status_assertion_fails",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.get-me",
+        "udata/api-v1.my-reuses",
+        "udata/api-v1.my-datasets",
+        "udata/api-v1.my-metrics",
+        "udata/api-v1.my-org-datasets",
+        "udata/api-v1.my-org-community-resources",
+        "udata/api-v1.my-org-reuses",
+        "udata/api-v1.my-org-discussions",
+        "udata/api-v1.list-api-tokens",
+        "udata/api-v1.list-org-invitations",
+        "udata/api-v1.list-users",
+        "udata/api-v1.get-user",
+        "udata/api-v1.get-user-contact-point",
+        "udata/api-v1.suggest-users",
+        "udata/api-v1.user-roles",
+        "udata/api-v1.list-user-followers",
+        "udata/api-v2.my-org-topics"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.update-me",
+        "udata/api-v1.delete-me",
+        "udata/api-v1.my-avatar",
+        "udata/api-v1.create-api-token",
+        "udata/api-v1.revoke-api-token",
+        "udata/api-v1.accept-org-invitation",
+        "udata/api-v1.refuse-org-invitation",
+        "udata/api-v1.create-user",
+        "udata/api-v1.user-avatar",
+        "udata/api-v1.update-user",
+        "udata/api-v1.delete-user",
+        "udata/api-v1.rotate-user-password",
+        "udata/api-v1.follow-user",
+        "udata/api-v1.unfollow-user"
+      ],
+      "assertions": [
+        "successful stable read fields match raw by SHA-256 digest; errors match exact status",
+        "server-updated last_login_at is compared by type in both requests",
+        "mutation receipts match raw status, operation, and intended target",
+        "created token plaintext is consumed only at reveal-once boundary",
+        "cleanup identifiers are registered before later setup or assertions",
+        "disposable users, management tokens, and organizations are cleaned"
+      ]
+    },
+    "response_shape": "safe-field-digest-and-status-only",
+    "cleanup": "disposable-users-soft-deleted-management-and-harness-tokens-revoked-organizations-deleted",
+    "sanitized": true,
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
+    "controlled_test_sha256": "c31af07a18573f07f181793ff50da0275bff94cfd173e2e3c6f1add553ee8939",
+    "wheel_test_sha256": "29f96c51ef1ef4384a6d8acf1e187a74a73fac77284e3dad0dd0c4683b80a9f7",
+    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
+    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+    "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e"
+  },
+  "controlled_oauth_evidence": {
+    "captured_at": "2026-09-25",
+    "local_only": true,
+    "stack_version": "17.6.0",
+    "sanitized": true,
+    "test_ids": [
+      "test_controlled_oauth_routes_match_raw_semantics_in_both_modes",
+      "test_controlled_oauth_rejects_unconfirmed_destructive_revocation"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/oauth.access-token",
+        "udata/oauth.client-info",
+        "udata/oauth.authorize",
+        "udata/oauth.oauth-error"
+      ],
+      "mutation_operations": [
+        "udata/oauth.authorize-post",
+        "udata/oauth.revoke-token"
+      ]
+    },
+    "observed_stock_semantics": {
+      "token": "RFC 6749 form-encoded grant; the disposable stack has no registered client, so the typed status equals the raw 400/401.",
+      "revoke": "RFC 7009 answers 200 with an empty body; the typed result never invents a document.",
+      "client_info": "login_required in stock, so an API key yields 401 and no consent body is fabricated.",
+      "authorize": "login_required in stock; the typed client follows the redirect like the raw probe.",
+      "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
+      "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
+    },
+    "controlled_test_sha256": "c31af07a18573f07f181793ff50da0275bff94cfd173e2e3c6f1add553ee8939",
+    "wheel_test_sha256": "29f96c51ef1ef4384a6d8acf1e187a74a73fac77284e3dad0dd0c4683b80a9f7",
+    "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
+  }
 }

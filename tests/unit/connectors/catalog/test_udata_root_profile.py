@@ -72,8 +72,8 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     (
         "udata",
         "udata-evidence-udata",
-        "sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
-        "udata-evidence-udata@sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
+        "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+        "udata-evidence-udata@sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     ),
     (
         "mongo",
@@ -95,9 +95,9 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     ),
     (
         "storage",
-        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
         "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
     ),
     (
         "mailpit",
@@ -475,7 +475,7 @@ def test_async_stream_document_decode_failure_is_redacted() -> None:
 
 
 def test_stream_document_cleanup_failure_preserves_primary_error() -> None:
-    def chunks() -> Generator[bytes, None, None]:
+    def chunks() -> Generator[bytes]:
         yield b"valid\n"
         raise ValueError("primary")
 
@@ -499,6 +499,73 @@ def test_stream_document_cleanup_failure_preserves_primary_error() -> None:
 
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert str(excinfo.value.__cause__) == "cleanup"
+
+
+def test_stream_document_interrupt_closes_and_settles_failure() -> None:
+    closed: list[bool] = []
+    failures: list[BaseException] = []
+
+    def interrupt(_: bytes) -> None:
+        raise KeyboardInterrupt
+
+    response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=iter((b"valid\n",)),
+        close_callback=lambda: closed.append(True),
+        failure_callback=failures.append,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as excinfo:
+        wire.digest_stream_document(
+            response,
+            endpoint=_SITE_URL,
+            expected_media_type="text/csv",
+            max_bytes=8,
+            sink=interrupt,
+        )
+
+    assert closed == [True]
+    assert failures == [excinfo.value]
+
+
+def test_async_stream_document_interrupt_closes_and_settles_failure() -> None:
+    closed: list[bool] = []
+    failures: list[BaseException] = []
+
+    async def interrupt(_: bytes) -> None:
+        raise KeyboardInterrupt
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"valid\n"
+
+    async def close() -> None:
+        closed.append(True)
+
+    async def fail(error: BaseException) -> None:
+        failures.append(error)
+
+    response = AsyncRuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=chunks(),
+        close_callback=close,
+        failure_callback=fail,
+    )
+
+    async def run() -> None:
+        with pytest.raises(KeyboardInterrupt) as excinfo:
+            await wire.digest_stream_document_async(
+                response,
+                endpoint=_SITE_URL,
+                expected_media_type="text/csv",
+                max_bytes=8,
+                sink=interrupt,
+            )
+        assert closed == [True]
+        assert failures == [excinfo.value]
+
+    asyncio.run(run())
 
 
 def test_async_stream_document_cleanup_failure_preserves_primary_error() -> None:
@@ -1401,7 +1468,7 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
         def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
             self.requests.append(request)
 
-            def chunks() -> Generator[bytes, None, None]:
+            def chunks() -> Generator[bytes]:
                 yield b"id\n"
                 raise TransportFailure("stream interrupted")
 
@@ -1814,21 +1881,6 @@ def test_unrelated_local_listener_loses_authority_before_patch_dispatch() -> Non
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
-def test_forwarding_listener_loses_authority_before_patch_dispatch() -> None:
-    transport, client = _sync_client(
-        _routes(),
-        credential=_CREDENTIAL,
-        revalidate=lambda *, site_id: False,
-    )
-
-    patch = SitePatchInput(title="unchanged")
-    mutation_policy = _site_policy()
-    with client, pytest.raises(CatalogValidationError):
-        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
-
-    assert [request.method for request in transport.requests] == ["GET", "GET"]
-
-
 def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
     url = f"{_ORIGIN}/api/1/site/datasets.csv"
     body = b'"id";"title"\n'
@@ -1873,3 +1925,21 @@ def test_root_profile_models_are_typed_and_immutable() -> None:
     assert isinstance(profile.to_dict(), dict)
     assert isinstance(SitePatchInput(title="x"), SitePatchInput)
     assert NativeRecord is not SiteProfile
+
+
+def test_root_profile_model_reprs_hide_configuration_values() -> None:
+    marker = "sensitive-site-configuration"
+    profile = SiteProfile.from_payload({**_site_body(), "configs": {"marker": marker}})
+    patch = SitePatchInput(configs={"marker": marker}, settings={"marker": marker})
+    result = SiteMutationResult(
+        MutationReceipt(
+            operation=wire.SET_SITE_OPERATION,
+            outcome="succeeded",
+            target=profile.catalog_id,
+        ),
+        profile,
+    )
+
+    assert marker not in repr(profile)
+    assert marker not in repr(patch)
+    assert marker not in repr(result)

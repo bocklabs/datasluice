@@ -22,8 +22,6 @@ _PARQUET_MEDIA_TYPE = "application/x-parquet"
 
 LegacyArtifactRecord = tuple[str, str, int, str]
 
-_IDEMPOTENT_MATERIALIZE_READY = True
-_ARTIFACT_HEALTH_READY = True
 
 logger = get_logger("sync.materialize")
 

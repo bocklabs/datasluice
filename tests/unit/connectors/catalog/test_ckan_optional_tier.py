@@ -14,13 +14,7 @@ import json
 import pytest
 
 from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient, declared_ckan_profile
-from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.connectors.catalog.ckan.services.relationships_activity import (
-    AsyncRelationshipsActivityService,
-    SyncRelationshipsActivityService,
-)
-from datasluice.connectors.catalog.ckan.services.views import AsyncViewsService, SyncViewsService
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.operations import OperationId
@@ -170,29 +164,6 @@ def _async_client(transport: AsyncCaptureTransport, runner: AsyncSeededProbeRunn
         ),
         owns_transport=False,
     )
-
-
-def _names_for(owning_id: str) -> set[str]:
-    return {entry.name for entry in CKAN_ACTIONS.entries if entry.owning_operation_id == owning_id}
-
-
-def test_every_activity_and_view_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Each optional-tier manifest action names a callable member on both projections."""
-    sync_relationships = {name for name in dir(SyncRelationshipsActivityService) if not name.startswith("_")}
-    async_relationships = {name for name in dir(AsyncRelationshipsActivityService) if not name.startswith("_")}
-    activity_names = _names_for(ACTIVITY_ID)
-    assert len(activity_names) == 13
-    for action in activity_names:
-        assert action in sync_relationships, f"sync surface misses {action}"
-        assert action in async_relationships, f"async surface misses {action}"
-
-    sync_views = {name for name in dir(SyncViewsService) if not name.startswith("_")}
-    async_views = {name for name in dir(AsyncViewsService) if not name.startswith("_")}
-    view_names = _names_for(VIEWS_ID)
-    assert len(view_names) == 9
-    for action in view_names:
-        assert action in sync_views, f"sync surface misses {action}"
-        assert action in async_views, f"async surface misses {action}"
 
 
 def test_activity_unsupported_blocks_package_activity_list_before_any_transport_io() -> None:
