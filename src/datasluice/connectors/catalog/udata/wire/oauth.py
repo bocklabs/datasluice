@@ -26,6 +26,7 @@ from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = CatalogPlatform.UDATA
 FORM_MEDIA_TYPE = "application/x-www-form-urlencoded"
+_SCHEMA_ACTION = "Verify the response against the pinned OAuth schema."
 
 # Operation identities map the pinned COVERAGE inventory rows 263-268. The two
 # authorize verbs are separate dispatchable identities, matching how every other
@@ -49,8 +50,8 @@ _PATHS = {
     "authorize_post": "/oauth/authorize",
     "oauth_error": "/oauth/error",
 }
-_METHODS = {name: "POST" for name in ("access_token", "revoke_token", "authorize_post")}
-_METHODS.update({name: "GET" for name in ("client_info", "authorize", "oauth_error")})
+_METHODS = dict.fromkeys(("access_token", "revoke_token", "authorize_post"), "POST")
+_METHODS.update(dict.fromkeys(("client_info", "authorize", "oauth_error"), "GET"))
 _FORM_BODIES = frozenset({"access_token", "revoke_token", "authorize_post"})
 
 # Which stock route authenticates the caller with the uData API key, transcribed from
@@ -83,14 +84,14 @@ def _invalid(name: str, detail: str, action: str) -> CatalogValidationError:
 
 def _document(name: str, payload: object) -> Mapping[str, object]:
     if not isinstance(payload, Mapping):
-        raise _invalid(name, "must be a JSON object", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "must be a JSON object", _SCHEMA_ACTION)
     return payload
 
 
 def _optional_text(name: str, payload: Mapping[str, object], key: str) -> str | None:
     value = payload.get(key)
     if value is not None and not isinstance(value, str):
-        raise _invalid(name, f"has an invalid {key}", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, f"has an invalid {key}", _SCHEMA_ACTION)
     return value
 
 
@@ -131,12 +132,12 @@ def parse_token(name: str, payload: object, receipt: MutationReceipt) -> OAuthTo
     token_type = document.get("token_type")
     access_token = document.get("access_token")
     if not isinstance(token_type, str) or token_type not in TOKEN_TYPES:
-        raise _invalid(name, "has an invalid token type", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "has an invalid token type", _SCHEMA_ACTION)
     if not isinstance(access_token, str) or not access_token:
-        raise _invalid(name, "omitted its access token", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "omitted its access token", _SCHEMA_ACTION)
     expires_in = document.get("expires_in")
     if expires_in is not None and (type(expires_in) is not int or expires_in < 0):
-        raise _invalid(name, "has an invalid expiry", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "has an invalid expiry", _SCHEMA_ACTION)
     return OAuthTokenResult(
         receipt=receipt,
         token_type=token_type,
@@ -154,7 +155,7 @@ def parse_consent_summary(name: str, payload: object, status_code: int, media_ty
     answer a redirect or an unauthorized page rather than a consent JSON body.
     """
     if not isinstance(media_type, str) or not media_type:
-        raise _invalid(name, "omitted its media type", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "omitted its media type", _SCHEMA_ACTION)
     if payload is None:
         return OAuthConsentSummary(
             session_gated=True,
@@ -164,15 +165,15 @@ def parse_consent_summary(name: str, payload: object, status_code: int, media_ty
     document = _document(name, payload)
     client = document.get("client")
     if not isinstance(client, Mapping) or not isinstance(client.get("name"), str) or not client["name"]:
-        raise _invalid(name, "omitted its client name", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "omitted its client name", _SCHEMA_ACTION)
     scopes = document.get("scopes")
     if not isinstance(scopes, list) or not all(isinstance(scope, str) and scope for scope in scopes):
-        raise _invalid(name, "omitted its scopes", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "omitted its scopes", _SCHEMA_ACTION)
     return OAuthConsentSummary(client_name=client["name"], scopes=tuple(cast("list[str]", scopes)))
 
 
 def parse_error_document(name: str, status_code: int, media_type: str) -> OAuthErrorDocument:
     """Type the bounded public /oauth/error HTML page metadata."""
     if not isinstance(media_type, str) or not media_type:
-        raise _invalid(name, "omitted its media type", "Verify the response against the pinned OAuth schema.")
+        raise _invalid(name, "omitted its media type", _SCHEMA_ACTION)
     return OAuthErrorDocument(status_code=status_code, media_type=media_type.split(";", 1)[0].strip().lower())

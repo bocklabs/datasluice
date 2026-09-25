@@ -12,6 +12,7 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 GRANT_TYPES = frozenset({"authorization_code", "client_credentials", "password", "refresh_token"})
 TOKEN_TYPE_HINTS = frozenset({"access_token", "refresh_token"})
 TOKEN_TYPES = frozenset({"Bearer"})
+_MEDIA_TYPE = "media type"
 _SCOPE = re.compile(r"[A-Za-z0-9_.:-]+(?: [A-Za-z0-9_.:-]+)*")
 
 
@@ -227,7 +228,7 @@ class OAuthConsentSummary:
         if self.session_gated:
             if type(self.status_code) is not int:
                 raise ValueError("A session-gated uData OAuth reply must carry its status code.")
-            _text(self.media_type, "media type")
+            _text(self.media_type, _MEDIA_TYPE)
             return
         _text(self.client_name, "client name")
         if not self.scopes or not all(isinstance(scope, str) and scope for scope in self.scopes):
@@ -258,7 +259,7 @@ class OAuthConsentOutcome:
             raise ValueError("uData OAuth consent outcome must record a boolean decision.")
         if type(self.status_code) is not int or not 100 <= self.status_code <= 599:
             raise ValueError("uData OAuth consent outcome must carry a valid HTTP status code.")
-        _text(self.media_type, "media type")
+        _text(self.media_type, _MEDIA_TYPE)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -284,7 +285,7 @@ class OAuthErrorDocument:
     def __post_init__(self) -> None:
         if type(self.status_code) is not int or self.status_code < 100 or self.status_code > 599:
             raise ValueError("uData OAuth error status must be a valid HTTP status code.")
-        _text(self.media_type, "media type")
+        _text(self.media_type, _MEDIA_TYPE)
 
     def to_dict(self) -> dict[str, object]:
         return {"session_gated": self.session_gated, "status_code": self.status_code, "media_type": self.media_type}
