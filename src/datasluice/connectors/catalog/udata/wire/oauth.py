@@ -51,14 +51,12 @@ _PATHS = {
 _METHODS = {name: "POST" for name in ("access_token", "revoke_token", "authorize_post")}
 _METHODS.update({name: "GET" for name in ("client_info", "authorize", "oauth_error")})
 _FORM_BODIES = frozenset({"access_token", "revoke_token", "authorize_post"})
-_MUTATIONS = frozenset({"access_token", "revoke_token", "authorize_post"})
 
-# How each stock route authenticates the caller, transcribed from udata/api/oauth2.py
-# at v17.6.0. Only an "api-key" route may carry the uData X-API-KEY header: the RFC 6749
-# and RFC 7009 forms carry their own client secret, and the login_required browser
-# routes reject an API key outright, so sending it would only disclose the credential.
-# A new route is therefore credential-free until it is declared here, which fails
-# closed rather than leaking the key.
+# Which stock route authenticates the caller with the uData API key, transcribed from
+# udata/api/oauth2.py at v17.6.0. The RFC 6749 and RFC 7009 forms carry their own client
+# secret and the login_required browser routes reject an API key outright, so only the
+# consent POST may send it. A new route stays credential-free until it is declared here,
+# which fails closed rather than leaking the key.
 _CREDENTIAL_ROUTES = frozenset({"authorize_post"})
 
 # The stock /oauth/error route is a terminal HTML page rather than a redirect. The
