@@ -194,8 +194,8 @@ class OAuthTokenResult:
             raise ValueError("uData OAuth expires_in must be a non-negative integer or null.")
         for name in ("scope", "access_token", "refresh_token"):
             value = getattr(self, name)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(f"uData OAuth {name} must be a string or null.")
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"uData OAuth {name} must be a non-empty string or null.")
 
     def to_dict(self) -> dict[str, object]:
         return {

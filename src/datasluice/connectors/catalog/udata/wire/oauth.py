@@ -90,7 +90,7 @@ def _document(name: str, payload: object) -> Mapping[str, object]:
 
 def _optional_text(name: str, payload: Mapping[str, object], key: str) -> str | None:
     value = payload.get(key)
-    if value is not None and not isinstance(value, str):
+    if value is not None and (not isinstance(value, str) or not value):
         raise _invalid(name, f"has an invalid {key}", _SCHEMA_ACTION)
     return value
 

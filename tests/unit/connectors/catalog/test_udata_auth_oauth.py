@@ -431,6 +431,11 @@ def test_malformed_json_on_query_reads_fails_with_operation_identity(name: str) 
         pytest.param({"token_type": "Bearer"}, id="missing-access-token"),
         pytest.param({"token_type": "MAC", "access_token": "opaque"}, id="invalid-token-type"),
         pytest.param({"token_type": "Bearer", "access_token": ""}, id="empty-access-token"),
+        pytest.param({"token_type": "Bearer", "access_token": "opaque", "scope": ""}, id="empty-scope"),
+        pytest.param(
+            {"token_type": "Bearer", "access_token": "opaque", "refresh_token": ""},
+            id="empty-refresh-token",
+        ),
     ],
 )
 def test_token_success_requires_typed_metadata(document: dict[str, object]) -> None:
