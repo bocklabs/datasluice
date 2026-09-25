@@ -26,7 +26,8 @@ from datasluice.connectors.catalog.udata.models.oauth import (
 )
 from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
-from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
@@ -58,7 +59,7 @@ class _Router:
         self.requests.append(request)
         status, payload = self.routes[(request.method, request.url)]
         # None models the stock RFC 7009 empty 200 body.
-        body = b"" if payload is None else json.dumps(payload).encode()
+        body = b"" if payload is None else payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         return RuntimeResponse(
             status_code=status, headers={"Content-Type": _HTML if payload is None else _JSON}, body=body
         )
@@ -401,8 +402,62 @@ def test_async_oauth_service_matches_sync_wire_exactly() -> None:
     ]
 
 
+@pytest.mark.parametrize("name", ["client_info", "authorize"])
+def test_malformed_json_on_query_reads_fails_with_operation_identity(name: str) -> None:
+    path = wire.build_request(name, OAuthClientRequest(client_id="client-id"))[1]
+    router = _Router(_routes(("GET", path, 200, b"{")))
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    with client, pytest.raises(CatalogValidationError) as raised:
+        getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+    assert raised.value.operation == wire.OPERATIONS[name]
+
+    async def run() -> None:
+        async with AsyncUDataClient(
+            _AsyncRouter(_routes(("GET", path, 200, b"{"))),
+            declared_udata_profile(),
+            origin=ORIGIN,
+            credentials=CREDENTIAL,
+        ) as async_client:
+            with pytest.raises(CatalogValidationError):
+                await getattr(async_client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param({"access_token": "opaque"}, id="missing-token-type"),
+        pytest.param({"token_type": "Bearer"}, id="missing-access-token"),
+        pytest.param({"token_type": "MAC", "access_token": "opaque"}, id="invalid-token-type"),
+        pytest.param({"token_type": "Bearer", "access_token": ""}, id="empty-access-token"),
+    ],
+)
+def test_token_success_requires_typed_metadata(document: dict[str, object]) -> None:
+    with pytest.raises(CatalogValidationError) as raised:
+        wire.parse_token(
+            "access_token",
+            document,
+            MutationReceipt(
+                operation=wire.OPERATIONS["access_token"],
+                outcome="succeeded",
+                target=CatalogId(CatalogPlatform.UDATA, ResourceKind("oauth-token"), "self"),
+            ),
+        )
+    assert raised.value.operation == wire.OPERATIONS["access_token"]
+
+
 def test_oauth_secrets_never_enter_retained_results_or_reprs() -> None:
-    router = _Router(_routes(("POST", "/oauth/token", 200, {"access_token": "opaque-secret-token", "expires_in": 60})))
+    router = _Router(
+        _routes(
+            (
+                "POST",
+                "/oauth/token",
+                200,
+                {"token_type": "Bearer", "access_token": "opaque-secret-token", "expires_in": 60},
+            )
+        )
+    )
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     token = OAuthTokenRequest(grant_type="client_credentials", client_id="client-id", client_secret="secret-value")
     with client:

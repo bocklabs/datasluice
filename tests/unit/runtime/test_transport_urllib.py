@@ -7,10 +7,12 @@ import ssl
 from collections.abc import Mapping
 from http.client import IncompleteRead
 from typing import Any, cast
+from urllib.parse import urlencode
 from urllib.request import Request
 
 import pytest
 
+from datasluice.connectors.catalog.udata.models.oauth import OAuthRevokeRequest
 from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
@@ -375,6 +377,27 @@ def test_urllib_redirect_preserves_method_and_body(status: int) -> None:
     assert follow_up.method == "POST"
     assert follow_up.data == body
     assert forwarded["content-type"] == "application/json"
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_urllib_cross_origin_body_redirect_fails_closed(status: int) -> None:
+    body = urlencode(OAuthRevokeRequest(token="redirect-body-secret").form_fields()).encode()
+    opener = _RecordingOpener([_FakeResponse(status, {"Location": "https://other.test/next"})])
+    transport = UrllibCatalogTransport()
+    cast(Any, transport)._opener = opener
+
+    with pytest.raises(TransportFailure, match="different redirect origin"):
+        transport.send(
+            RuntimeRequest(
+                "POST",
+                "https://origin.test/oauth/revoke",
+                {"Content-Type": "application/x-www-form-urlencoded"},
+                body,
+            )
+        )
+
+    assert len(opener.requests) == 1
+    assert "redirect-body-secret" not in opener.requests[0].full_url
 
 
 def test_urllib_malformed_location_port_does_not_escape_send() -> None:

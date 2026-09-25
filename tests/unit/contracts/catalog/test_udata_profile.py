@@ -8,6 +8,8 @@ from typing import Any
 
 from tests.unit.contracts.catalog.evidence_execution import (
     controlled_test_source,
+    executed_modes,
+    typed_methods,
     unexecuted_operations,
 )
 
@@ -451,3 +453,14 @@ def test_the_execution_gate_fails_when_a_user_async_mutation_pass_is_removed() -
 
     assert not unexecuted_operations(source, test, mutations, modes)
     assert unexecuted_operations(gutted, test, mutations, modes)
+
+
+def test_the_execution_gate_ignores_an_unrelated_method_name() -> None:
+    """A matching method on an untyped object must not credit constructed-client coverage."""
+    source = """\
+def test_unrelated_name() -> None:
+    client = create_sync_client(settings)
+    unrelated.revoke_token()
+"""
+    methods = typed_methods({"udata/oauth.revoke-token"})
+    assert executed_modes(source, "test_unrelated_name", methods) == {"revoke_token": set()}

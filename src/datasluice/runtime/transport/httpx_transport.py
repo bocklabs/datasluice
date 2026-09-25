@@ -62,6 +62,15 @@ def _redirect_request(
     headers = dict(request.headers)
     if not _retains_credentials(credential_scope, request.url, next_url):
         headers = strip_sensitive_redirect_headers(headers)
+    if (
+        status in {307, 308}
+        and (request.body is not None or request.files)
+        and _origin(request.url) != _origin(next_url)
+    ):
+        raise TransportFailure(
+            "httpx refused to relay a request body to a different redirect origin "
+            f"{_redacted_redirect_url(next_url)!r}."
+        )
     method, body, files = redirect_method_and_body(request.method, status, request.body, request.files)
     if body is None and not files:
         headers = drop_body_transfer_headers(headers)

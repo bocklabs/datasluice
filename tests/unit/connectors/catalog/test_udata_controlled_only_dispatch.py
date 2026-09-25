@@ -43,7 +43,12 @@ class _Router:
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         self.requests.append(request)
-        body = SITE if request.url.endswith("/api/1/site/") else {"client": {"name": "Portal"}, "scopes": ["default"]}
+        if request.url.endswith("/api/1/site/"):
+            body: object = SITE
+        elif request.url.endswith("/oauth/revoke"):
+            body = None
+        else:
+            body = {"client": {"name": "Portal"}, "scopes": ["default"]}
         return RuntimeResponse(status_code=200, headers={"Content-Type": _JSON}, body=json.dumps(body).encode())
 
     def close(self) -> None:

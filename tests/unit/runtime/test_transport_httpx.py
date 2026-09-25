@@ -6,11 +6,13 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from typing import cast
+from urllib.parse import urlencode
 
 import pytest
 
 httpx = pytest.importorskip("httpx")
 
+from datasluice.connectors.catalog.udata.models.oauth import OAuthRevokeRequest
 from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import (
     RedirectPolicy,
@@ -258,6 +260,66 @@ def test_httpx_redirect_preserves_method_and_body(status: int) -> None:
     assert follow_up.method == "POST"
     assert follow_up.read() == b'{"key": "value"}'
     assert follow_up.headers["content-type"] == "application/json"
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_httpx_cross_origin_body_redirect_fails_closed(status: int) -> None:
+    body = urlencode(OAuthRevokeRequest(token="redirect-body-secret").form_fields()).encode()
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "origin.test":
+            return httpx.Response(status, headers={"Location": "https://other.test/next"})
+        pytest.fail("a cross-origin body-bearing redirect target must not receive the body")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(TransportFailure, match="different redirect origin"):
+            transport.send(
+                RuntimeRequest(
+                    "POST",
+                    "https://origin.test/oauth/revoke",
+                    {"Content-Type": "application/x-www-form-urlencoded"},
+                    body,
+                )
+            )
+    finally:
+        transport.close()
+
+    assert len(seen) == 1
+    assert "redirect-body-secret" not in str(seen[0])
+
+
+def test_async_httpx_cross_origin_body_redirect_fails_closed() -> None:
+    body = urlencode(OAuthRevokeRequest(token="redirect-body-secret").form_fields()).encode()
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "origin.test":
+            return httpx.Response(307, headers={"Location": "https://other.test/next"})
+        pytest.fail("a cross-origin body-bearing redirect target must not receive the body")
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            await transport.send(
+                RuntimeRequest(
+                    "POST",
+                    "https://origin.test/oauth/revoke",
+                    {"Content-Type": "application/x-www-form-urlencoded"},
+                    body,
+                )
+            )
+        finally:
+            await transport.aclose()
+
+    with pytest.raises(TransportFailure, match="different redirect origin"):
+        asyncio.run(send())
+
+    assert len(seen) == 1
+    assert "redirect-body-secret" not in str(seen[0])
 
 
 def test_httpx_exceeding_max_redirects_raises_transport_failure() -> None:

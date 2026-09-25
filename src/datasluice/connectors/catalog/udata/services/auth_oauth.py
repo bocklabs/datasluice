@@ -22,7 +22,7 @@ from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import NativeCatalogError
+from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
 
 from .datasets import _enforce_mutation_policy, _error_status, _mutation_outcome, _require_mutation_permission
@@ -51,14 +51,21 @@ def _scrub(response: RuntimeResponse | None) -> RuntimeResponse | None:
     return None if response is None else RuntimeResponse(status_code=response.status_code, headers={}, body=b"")
 
 
-def _json_or_none(payload: object) -> object:
-    """raw_text returns bytes; only a JSON media body becomes a decoded document."""
-    if isinstance(payload, bytes):
-        try:
-            return json.loads(payload)
-        except ValueError:
-            return None
-    return payload
+def _json_or_none(payload: object, name: str, media_type: str) -> object:
+    """raw_text returns bytes; only a valid JSON media body becomes a decoded document."""
+    if not isinstance(payload, bytes):
+        return payload
+    if media_type.split(";", 1)[0].strip().lower() != "application/json":
+        return None
+    try:
+        return json.loads(payload)
+    except ValueError as error:
+        raise CatalogValidationError(
+            "The uData OAuth response contains malformed JSON.",
+            operation=wire.OPERATIONS[name],
+            platform=wire.PLATFORM.value,
+            safe_action="Verify the response against the pinned OAuth schema.",
+        ) from error
 
 
 def _media_type(headers: Mapping[str, str]) -> str:
@@ -187,12 +194,16 @@ class SyncAuthOAuthService:
 
     def client_info(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
         status, payload, media_type = self._read("client_info", query, permissions)
-        return wire.parse_consent_summary("client_info", _json_or_none(payload), status, media_type)
+        return wire.parse_consent_summary(
+            "client_info", _json_or_none(payload, "client_info", media_type), status, media_type
+        )
 
     def authorize(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
         """Read the consent page for one client, sending the query stock requires."""
         status, payload, media_type = self._read("authorize", query, permissions)
-        return wire.parse_consent_summary("authorize", _json_or_none(payload), status, media_type)
+        return wire.parse_consent_summary(
+            "authorize", _json_or_none(payload, "authorize", media_type), status, media_type
+        )
 
     def authorize_post(
         self,
@@ -310,12 +321,16 @@ class AsyncAuthOAuthService:
 
     async def client_info(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
         status, payload, media_type = await self._read_async("client_info", query, permissions)
-        return wire.parse_consent_summary("client_info", _json_or_none(payload), status, media_type)
+        return wire.parse_consent_summary(
+            "client_info", _json_or_none(payload, "client_info", media_type), status, media_type
+        )
 
     async def authorize(self, query: OAuthClientRequest, permissions: Permissions) -> OAuthConsentSummary:
         """Read the consent page for one client, sending the query stock requires."""
         status, payload, media_type = await self._read_async("authorize", query, permissions)
-        return wire.parse_consent_summary("authorize", _json_or_none(payload), status, media_type)
+        return wire.parse_consent_summary(
+            "authorize", _json_or_none(payload, "authorize", media_type), status, media_type
+        )
 
     async def authorize_post(
         self,

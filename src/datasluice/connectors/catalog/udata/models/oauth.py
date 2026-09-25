@@ -20,14 +20,13 @@ def _text(value: object, name: str) -> None:
         raise ValueError(f"uData OAuth {name} must be a non-empty string.")
 
 
-def _safe_url(value: str, name: str) -> tuple[str, str]:
+def _validate_url(value: str, name: str) -> None:
     try:
         parts = urlsplit(value)
     except ValueError:
         raise ValueError(f"uData OAuth {name} must be a valid absolute URI.") from None
     if parts.scheme not in {"http", "https"} or not parts.netloc or parts.username or parts.password:
         raise ValueError(f"uData OAuth {name} must be an absolute HTTP(S) URI without credentials.")
-    return parts.scheme, parts.netloc
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +163,7 @@ class OAuthAuthorizeDecision:
             if value is not None and (not isinstance(value, str) or not value):
                 raise ValueError(f"uData OAuth {name} must be a non-empty string or null.")
         if self.redirect_uri is not None:
-            _safe_url(self.redirect_uri, "redirect_uri")
+            _validate_url(self.redirect_uri, "redirect_uri")
 
     def form_fields(self) -> dict[str, str]:
         """Return the consent form the stock authorize POST reads."""
