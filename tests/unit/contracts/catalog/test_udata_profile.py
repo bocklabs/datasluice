@@ -1,11 +1,15 @@
-"""Contract tests for the pinned uData capability profile."""
-
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
 from typing import Any
+
+from tests.unit.contracts.catalog.evidence_execution import (
+    controlled_test_source,
+    unexecuted_operations,
+)
 
 _ROOT = Path(__file__).parents[4]
 _PROFILE_PATH = _ROOT / "src/datasluice/contracts/catalog/profiles/udata-17.6.json"
@@ -127,6 +131,24 @@ _USER_ROUTE_OPERATION_IDS = {
     "udata/api-v2.my-org-topics",
 }
 
+
+# Each recorded evidence family is claimed by the controlled test that drives it;
+# the read and mutation matrices are separate tests for the user and organization
+# families and one combined test for the OAuth family.
+_EVIDENCE_CLAIMING_TESTS = {
+    "controlled_oauth_evidence": {
+        "read": "test_controlled_oauth_routes_match_raw_semantics_in_both_modes",
+        "mutation": "test_controlled_oauth_routes_match_raw_semantics_in_both_modes",
+    },
+    "controlled_user_evidence": {
+        "read": "test_controlled_user_reads_match_raw_routes_in_both_modes",
+        "mutation": "test_controlled_user_mutations_match_raw_routes_in_both_modes",
+    },
+    "controlled_organization_evidence": {
+        "read": "test_controlled_organization_read_matrix_matches_raw_routes",
+        "mutation": "test_controlled_organization_mutations_match_raw_routes_in_both_modes",
+    },
+}
 
 _OAUTH_ROUTE_OPERATION_IDS = {
     "udata/oauth.access-token",
@@ -355,3 +377,77 @@ def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
         controlled["wheel_test_sha256"]
         == hashlib.sha256((_ROOT / "tests/e2e/test_udata_wheel.py").read_bytes()).hexdigest()
     )
+
+
+def _without_async_passes(source: str, test_name: str) -> str:
+    """Return the controlled source with every async pass of one test removed."""
+    target = next(
+        node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == test_name
+    )
+    async_passes = [node for node in ast.walk(target) if isinstance(node, ast.AsyncFunctionDef)]
+    assert async_passes, f"{test_name} must drive an async pass"
+    lines = source.splitlines(keepends=True)
+    first = min(pass_.lineno for pass_ in async_passes)
+    last = max((pass_.end_lineno or pass_.lineno) for pass_ in async_passes)
+    return "".join(lines[: first - 1] + lines[last:])
+
+
+def test_controlled_evidence_coverage_is_derived_from_executed_passes() -> None:
+    """Every recorded route must be driven by a real client pass in every claimed mode.
+
+    A recorded list compared against itself ratifies a false claim, so the recorded
+    coverage is checked against the controlled test's parsed structure: each claimed
+    read and mutation must be reached by a pass that constructs a client of every
+    claimed mode. The recorded SHA digests stay as tamper-evidence, but the gate
+    is load-bearing only because of this structural derivation.
+    """
+    source = controlled_test_source(_ROOT)
+    evidence_document = _read_json(_EVIDENCE_PATH)
+    unexecuted: dict[str, set[str]] = {}
+
+    for family, tests in _EVIDENCE_CLAIMING_TESTS.items():
+        differential = evidence_document[family]["route_differential"]
+        for kind in ("read", "mutation"):
+            unexecuted[f"{family}.{kind}"] = unexecuted_operations(
+                source,
+                tests[kind],
+                set(differential[f"{kind}_operations"]),
+                differential[f"{kind}_modes"],
+            )
+
+    expected_empty = {f"{family}.{kind}" for family in _EVIDENCE_CLAIMING_TESTS for kind in ("read", "mutation")}
+    assert {family: operations for family, operations in unexecuted.items() if operations} == {}
+    assert set(unexecuted) == expected_empty
+
+
+def test_the_execution_gate_fails_when_the_async_mutation_pass_is_removed() -> None:
+    """The regression: gut the async OAuth mutation pass and the gate must catch it.
+
+    This is the falsification the reviewer performed. Keeping the recorded lists and
+    rebinding the digests must not be enough to keep the suite green once the code
+    that executes the async mutation pass is gone.
+    """
+    source = controlled_test_source(_ROOT)
+    differential = _read_json(_EVIDENCE_PATH)["controlled_oauth_evidence"]["route_differential"]
+    mutations = set(differential["mutation_operations"])
+    modes = differential["mutation_modes"]
+    test = _EVIDENCE_CLAIMING_TESTS["controlled_oauth_evidence"]["mutation"]
+
+    gutted = _without_async_passes(source, test)
+    assert gutted != source, "the async OAuth mutation pass was not found to remove"
+    assert not unexecuted_operations(source, test, mutations, modes)
+    assert unexecuted_operations(gutted, test, mutations, modes) == mutations
+
+
+def test_the_execution_gate_fails_when_a_user_async_mutation_pass_is_removed() -> None:
+    """The same structural gate holds for the user family, not just OAuth."""
+    source = controlled_test_source(_ROOT)
+    differential = _read_json(_EVIDENCE_PATH)["controlled_user_evidence"]["route_differential"]
+    mutations = set(differential["mutation_operations"])
+    modes = differential["mutation_modes"]
+    test = _EVIDENCE_CLAIMING_TESTS["controlled_user_evidence"]["mutation"]
+
+    gutted = _without_async_passes(source, test)
+
+    assert not unexecuted_operations(source, test, mutations, modes)
+    assert unexecuted_operations(gutted, test, mutations, modes)
