@@ -29,6 +29,8 @@ from datasluice.errors.catalog import CatalogError, CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 ORIGIN = "http://127.0.0.1:5640"
+_JSON = "application/json"
+_HTML = "text/html; charset=utf-8"
 SITE = {"id": "site", "title": "uData", "version": "17.6.0"}
 CREDENTIAL = UDataCredential(api_key="unit-credential")
 PERMISSIONS = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA)
@@ -54,7 +56,9 @@ class _Router:
         status, payload = self.routes[(request.method, request.url)]
         # None models the stock RFC 7009 empty 200 body.
         body = b"" if payload is None else json.dumps(payload).encode()
-        return RuntimeResponse(status_code=status, headers={"Content-Type": "application/json"}, body=body)
+        return RuntimeResponse(
+            status_code=status, headers={"Content-Type": _HTML if payload is None else _JSON}, body=body
+        )
 
     def close(self) -> None:
         return None
@@ -183,13 +187,52 @@ def test_oauth_authorize_get_sends_no_form_body() -> None:
 
 
 def test_oauth_error_route_is_an_exact_public_html_read() -> None:
-    """The stock route renders api/oauth_error.html and keeps no JSON body."""
+    """The stock route answers the public error page, and keeps no body."""
     router = _Router(_routes(("GET", "/oauth/error", 200, None)))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN)
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     with client:
         outcome = client.auth_oauth.oauth_error()
-    assert (router.requests[-1].method, router.requests[-1].url) == ("GET", f"{ORIGIN}/oauth/error")
-    assert outcome.to_dict() == {"session_gated": True, "status_code": 200, "media_type": "application/json"}
+    request = router.requests[-1]
+    assert (request.method, request.url) == ("GET", f"{ORIGIN}/oauth/error")
+    # Stock serves this page as HTML, so the assertion exercises real semantics
+    # rather than echoing a router constant.
+    assert outcome.to_dict() == {"session_gated": True, "status_code": 200, "media_type": "text/html"}
+
+
+def test_oauth_error_route_never_sends_the_api_key() -> None:
+    """The public error page needs no credential, so the API key must not reach it."""
+    routes = _routes(("GET", "/oauth/error", 200, None))
+    sync_router = _Router(routes)
+    with SyncUDataClient(sync_router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        client.auth_oauth.oauth_error()
+    assert "X-API-KEY" not in sync_router.requests[-1].headers
+
+    router = _AsyncRouter(routes)
+
+    async def run() -> None:
+        async with AsyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+            await client.auth_oauth.oauth_error()
+
+    asyncio.run(run())
+    assert "X-API-KEY" not in router.requests[-1].headers
+
+
+def test_session_gated_reads_never_send_the_api_key() -> None:
+    """client_info and authorize are browser-session routes; the key cannot authorize them."""
+    routes = _routes(("GET", "/oauth/client_info", 401, None), ("GET", "/oauth/authorize", 401, None))
+    router = _Router(routes)
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        for name in ("client_info", "authorize"):
+            with pytest.raises(CatalogError):
+                getattr(client.auth_oauth, name)(PERMISSIONS)
+    oauth_requests = [request for request in router.requests if request.url.startswith(f"{ORIGIN}/oauth/")]
+    assert {request.url.rsplit("/", 1)[-1] for request in oauth_requests} == {"client_info", "authorize"}
+    assert all("X-API-KEY" not in request.headers for request in oauth_requests)
+
+
+def test_only_the_browser_consent_post_may_send_the_api_key() -> None:
+    """The family contract: exactly one route authenticates with the uData API key."""
+    assert {name for name in wire.OPERATIONS if wire.sends_credential(name)} == {"authorize_post"}
 
 
 @pytest.mark.parametrize(

@@ -52,6 +52,14 @@ _METHODS.update({name: "GET" for name in ("client_info", "authorize", "oauth_err
 _FORM_BODIES = frozenset({"access_token", "revoke_token", "authorize_post"})
 _MUTATIONS = frozenset({"access_token", "revoke_token", "authorize_post"})
 
+# How each stock route authenticates the caller, transcribed from udata/api/oauth2.py
+# at v17.6.0. Only an "api-key" route may carry the uData X-API-KEY header: the RFC 6749
+# and RFC 7009 forms carry their own client secret, and the login_required browser
+# routes reject an API key outright, so sending it would only disclose the credential.
+# A new route is therefore credential-free until it is declared here, which fails
+# closed rather than leaking the key.
+_CREDENTIAL_ROUTES = frozenset({"authorize_post"})
+
 
 def _invalid(name: str, detail: str, action: str) -> CatalogValidationError:
     return CatalogValidationError(
@@ -89,14 +97,14 @@ def build_request(name: str, body: object = None) -> Request:
     return method, path, {"Content-Type": FORM_MEDIA_TYPE, "Accept": "application/json"}, encoded
 
 
-def is_mutation(name: str) -> bool:
-    """Return whether this stock route changes server-side OAuth state."""
-    return name in _MUTATIONS
+def sends_credential(name: str) -> bool:
+    """Return whether this stock route may carry the uData API-key header.
 
-
-def requires_credential(name: str) -> bool:
-    """Return whether the stock route reads or changes a credential-bound resource."""
-    return name != "oauth_error"
+    This is the family's single credential-transmission contract, derived from the
+    route's declared authentication mechanism rather than a per-call-site opt-in, so
+    no dispatch site can forget to apply it.
+    """
+    return name in _CREDENTIAL_ROUTES
 
 
 def parse_token(name: str, payload: object, receipt: MutationReceipt) -> OAuthTokenResult:

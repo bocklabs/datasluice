@@ -32,10 +32,9 @@ if TYPE_CHECKING:
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None
 
-# The RFC 6749 token and RFC 7009 revocation endpoints authenticate from their
-# own form body, so these routes must never carry the uData X-API-KEY header.
-# That keeps OAuth credentials and API-token credentials strictly distinct.
-_FORM_AUTHENTICATED = frozenset({"access_token", "revoke_token"})
+# wire.sends_credential is the single credential-transmission contract for this
+# family, so the uData X-API-KEY never reaches a route that does not authenticate
+# with it. That keeps OAuth and API-token credentials strictly distinct.
 _DESTRUCTIVE = frozenset({"revoke_token"})
 _KIND = ResourceKind("oauth-token")
 
@@ -125,6 +124,7 @@ class SyncAuthOAuthService:
                 raw_text=True,
                 emit_success=False,
                 form_body=body,
+                omit_credential=not wire.sends_credential(name),
             )
         except (Exception, KeyboardInterrupt):
             self._client._emit(operation, "failed")
@@ -151,7 +151,7 @@ class SyncAuthOAuthService:
                 idempotency_policy=mutation_policy.idempotency if mutation_policy else None,
                 emit_success=False,
                 form_body=encoded,
-                omit_credential=name in _FORM_AUTHENTICATED,
+                omit_credential=not wire.sends_credential(name),
             )
         except BaseException as error:
             self._client._emit(operation, "failed")
@@ -207,6 +207,7 @@ class SyncAuthOAuthService:
             owning_operation=wire.OPERATIONS["oauth_error"],
             raw_text=True,
             emit_success=False,
+            omit_credential=not wire.sends_credential("oauth_error"),
         )
         return wire.parse_error_document("oauth_error", status, _media_type(response.headers))
 
@@ -238,6 +239,7 @@ class AsyncAuthOAuthService:
                 raw_text=True,
                 emit_success=False,
                 form_body=body,
+                omit_credential=not wire.sends_credential(name),
             )
         except (Exception, asyncio.CancelledError):
             self._client._emit(operation, "failed")
@@ -268,7 +270,7 @@ class AsyncAuthOAuthService:
                 idempotency_policy=mutation_policy.idempotency if mutation_policy else None,
                 emit_success=False,
                 form_body=encoded,
-                omit_credential=name in _FORM_AUTHENTICATED,
+                omit_credential=not wire.sends_credential(name),
             )
         except BaseException as error:
             self._client._emit(operation, "failed")
@@ -324,5 +326,6 @@ class AsyncAuthOAuthService:
             owning_operation=wire.OPERATIONS["oauth_error"],
             raw_text=True,
             emit_success=False,
+            omit_credential=not wire.sends_credential("oauth_error"),
         )
         return wire.parse_error_document("oauth_error", status, _media_type(response.headers))
