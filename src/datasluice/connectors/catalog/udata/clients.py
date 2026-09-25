@@ -2857,8 +2857,15 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         json_body: object,
         method: str,
         credential_scope: str,
+        accept_status: Callable[[int], bool] | None = None,
     ) -> tuple[int, object, RuntimeResponse]:
-        self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=credential_scope)
+        self._validate_status(
+            owning_id,
+            response,
+            redirect_mode=redirect_mode,
+            credential_scope=credential_scope,
+            accept_status=accept_status,
+        )
         if max_response_bytes is not None and len(response.body) > max_response_bytes:
             raise NativeCatalogError(
                 "Catalog operation returned a response larger than its configured byte limit.",
@@ -2937,8 +2944,11 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         *,
         redirect_mode: bool = False,
         credential_scope: str = "anonymous",
+        accept_status: Callable[[int], bool] | None = None,
     ) -> None:
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
+            return
+        if accept_status is not None and accept_status(response.status_code):
             return
         if 200 <= response.status_code < 300:
             return
@@ -3154,6 +3164,7 @@ class SyncUDataClient(_UDataClientCore):
         files: tuple[UploadPart, ...] = (),
         form_body: bytes | None = None,
         omit_credential: bool = False,
+        accept_status: Callable[[int], bool] | None = None,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
         if self._closed:
@@ -3235,6 +3246,7 @@ class SyncUDataClient(_UDataClientCore):
                 json_body=json_body,
                 method=method,
                 credential_scope=scope,
+                accept_status=accept_status,
             )
         except Exception as error:
             self._emit_dataset_failure(owning_id, error, emit_success=emit_success)
@@ -3693,6 +3705,7 @@ class AsyncUDataClient(_UDataClientCore):
         files: tuple[UploadPart, ...] = (),
         form_body: bytes | None = None,
         omit_credential: bool = False,
+        accept_status: Callable[[int], bool] | None = None,
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
         if self._closed:
@@ -3774,6 +3787,7 @@ class AsyncUDataClient(_UDataClientCore):
                 json_body=json_body,
                 method=method,
                 credential_scope=scope,
+                accept_status=accept_status,
             )
         except Exception as error:
             self._emit_dataset_failure(owning_id, error, emit_success=emit_success)

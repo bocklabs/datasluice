@@ -17,6 +17,7 @@ from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUD
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
     OAuthConsentSummary,
+    OAuthErrorDocument,
     OAuthRevokeRequest,
     OAuthTokenRequest,
     OAuthTokenResult,
@@ -197,6 +198,39 @@ def test_oauth_error_route_is_an_exact_public_html_read() -> None:
     # Stock serves this page as HTML, so the assertion exercises real semantics
     # rather than echoing a router constant.
     assert outcome.to_dict() == {"session_gated": True, "status_code": 200, "media_type": "text/html"}
+
+
+def test_oauth_error_returns_the_stock_missing_template_status() -> None:
+    """The 17.6.0 image ships no api/oauth_error.html, so stock answers 500.
+
+    The typed surface exists to report that page, so the status must be returned
+    rather than raised past the model.
+    """
+    router = _Router(_routes(("GET", "/oauth/error", 500, None)))
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        outcome = client.auth_oauth.oauth_error()
+    assert outcome.to_dict() == {"session_gated": True, "status_code": 500, "media_type": "text/html"}
+
+    async def run() -> OAuthErrorDocument:
+        async with AsyncUDataClient(
+            _AsyncRouter(_routes(("GET", "/oauth/error", 500, None))),
+            declared_udata_profile(),
+            origin=ORIGIN,
+            credentials=CREDENTIAL,
+        ) as client:
+            return await client.auth_oauth.oauth_error()
+
+    assert asyncio.run(run()).status_code == 500
+
+
+def test_oauth_error_still_raises_on_a_status_outside_the_modelled_page() -> None:
+    """A status the route does not model must not be laundered into a document."""
+    router = _Router(_routes(("GET", "/oauth/error", 502, None)))
+    with (
+        SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client,
+        pytest.raises(CatalogError),
+    ):
+        client.auth_oauth.oauth_error()
 
 
 def test_oauth_error_route_never_sends_the_api_key() -> None:

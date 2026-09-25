@@ -208,6 +208,7 @@ class SyncAuthOAuthService:
             raw_text=True,
             emit_success=False,
             omit_credential=not wire.sends_credential("oauth_error"),
+            accept_status=wire.is_error_page,
         )
         return wire.parse_error_document("oauth_error", status, _media_type(response.headers))
 
@@ -327,5 +328,6 @@ class AsyncAuthOAuthService:
             raw_text=True,
             emit_success=False,
             omit_credential=not wire.sends_credential("oauth_error"),
+            accept_status=wire.is_error_page,
         )
         return wire.parse_error_document("oauth_error", status, _media_type(response.headers))

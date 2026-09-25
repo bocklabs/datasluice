@@ -60,6 +60,17 @@ _MUTATIONS = frozenset({"access_token", "revoke_token", "authorize_post"})
 # closed rather than leaking the key.
 _CREDENTIAL_ROUTES = frozenset({"authorize_post"})
 
+# The stock /oauth/error route is a terminal HTML page rather than a redirect. The
+# 17.6.0 image does not ship api/oauth_error.html, so the deployment itself answers
+# 500. That status is the modelled outcome of the route, not a transport failure, so
+# it is returned to the caller instead of being raised past the typed surface.
+_ERROR_PAGE_STATUSES = frozenset({200, 404, 500})
+
+
+def is_error_page(status_code: int) -> bool:
+    """Return whether a status is the stock /oauth/error page rather than a fault."""
+    return status_code in _ERROR_PAGE_STATUSES
+
 
 def _invalid(name: str, detail: str, action: str) -> CatalogValidationError:
     return CatalogValidationError(
