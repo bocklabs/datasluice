@@ -163,7 +163,7 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "e8a6d666d77e6fcced4da27379935314897d7218c2556186dc2853011d8ae5ec",
+    "controlled_test_sha256": "69c08a63042dceb1d4d27235f72e162122709225ef77c02427808db14f9c443e",
     "wheel_test_sha256": "29f96c51ef1ef4384a6d8acf1e187a74a73fac77284e3dad0dd0c4683b80a9f7",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
@@ -208,7 +208,7 @@
       "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
       "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
     },
-    "controlled_test_sha256": "e8a6d666d77e6fcced4da27379935314897d7218c2556186dc2853011d8ae5ec",
+    "controlled_test_sha256": "69c08a63042dceb1d4d27235f72e162122709225ef77c02427808db14f9c443e",
     "wheel_test_sha256": "29f96c51ef1ef4384a6d8acf1e187a74a73fac77284e3dad0dd0c4683b80a9f7",
     "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
   }

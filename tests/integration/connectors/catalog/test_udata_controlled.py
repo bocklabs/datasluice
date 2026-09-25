@@ -170,7 +170,8 @@ def _assert_created_response(status: int, payload: object, cleanup_ids: list[str
         payload.pop("token", None)
     assert status == 201, "Controlled create response returned an unexpected status."
     assert isinstance(payload, dict), "Controlled create response was not an object."
-    assert isinstance(identifier, str) and identifier, "Controlled create response omitted its ID."
+    assert isinstance(identifier, str), "Controlled create response ID was not a string."
+    assert identifier, "Controlled create response omitted its ID."
     return payload, identifier
 
 
