@@ -2695,6 +2695,14 @@ class _UDataClientOptions(TypedDict, total=False):
     root_export_max_bytes: int
 
 
+class _DatasetCallOverrides(TypedDict, total=False):
+    raw_text: bool
+    redirect_mode: bool
+    emit_success: bool
+    accept_status: Callable[[int], bool] | None
+    omit_credential: bool
+
+
 class _SyncUDataClientOptions(_UDataClientOptions, total=False):
     probe_runner: ProbeRunner | None
 
@@ -2847,6 +2855,25 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._site_gate.invalidate()
             self._credential_scope = scope
         return scope
+
+    def _dataset_body(
+        self, json_body: object, form_body: bytes | None, files: tuple[UploadPart, ...], owning_id: OperationId
+    ) -> bytes | None:
+        if form_body is not None and (json_body is not None or files):
+            raise NativeCatalogError(
+                "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
+        if json_body is not None and files:
+            raise NativeCatalogError(
+                "Catalog dataset requests cannot combine a JSON body with multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
+        if files:
+            return None
+        return form_body if form_body is not None else self._json_body(json_body, owning_id)
 
     @staticmethod
     def _json_body(json_body: object, owning_id: OperationId) -> bytes | None:
@@ -3205,51 +3232,34 @@ class SyncUDataClient(_UDataClientCore):
         owning_operation: str,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
-        raw_text: bool = False,
-        redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
         max_response_bytes: int | None = None,
-        emit_success: bool = True,
         files: tuple[UploadPart, ...] = (),
         form_body: bytes | None = None,
-        omit_credential: bool = False,
-        accept_status: Callable[[int], bool] | None = None,
+        **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
+        raw_text = overrides.get("raw_text", False)
+        redirect_mode = overrides.get("redirect_mode", False)
+        emit_success = overrides.get("emit_success", True)
+        accept_status = overrides.get("accept_status")
+        omit_credential = overrides.get("omit_credential", False)
         if self._closed:
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
         self._require_site_version()
-        resolved_credential = (
-            None
-            if omit_credential
-            else credential
-            if credential is not None
-            else _refreshed_credential(self._credentials)
-        )
+        if omit_credential:
+            resolved_credential = None
+        elif credential is not None:
+            resolved_credential = credential
+        else:
+            resolved_credential = _refreshed_credential(self._credentials)
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective, permissions)
-        if form_body is not None and (json_body is not None or files):
-            raise NativeCatalogError(
-                "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-            )
-        if json_body is not None and files:
-            raise NativeCatalogError(
-                "Catalog dataset requests cannot combine a JSON body with multipart parts.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-            )
-        if files:
-            body = None
-        elif form_body is not None:
-            body = form_body
-        else:
-            body = self._json_body(json_body, owning_id)
+        body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
@@ -3751,51 +3761,34 @@ class AsyncUDataClient(_UDataClientCore):
         owning_operation: str,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
-        raw_text: bool = False,
-        redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
         max_response_bytes: int | None = None,
-        emit_success: bool = True,
         files: tuple[UploadPart, ...] = (),
         form_body: bytes | None = None,
-        omit_credential: bool = False,
-        accept_status: Callable[[int], bool] | None = None,
+        **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
+        raw_text = overrides.get("raw_text", False)
+        redirect_mode = overrides.get("redirect_mode", False)
+        emit_success = overrides.get("emit_success", True)
+        accept_status = overrides.get("accept_status")
+        omit_credential = overrides.get("omit_credential", False)
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
         await self.site_version()
-        resolved_credential = (
-            None
-            if omit_credential
-            else credential
-            if credential is not None
-            else await _refreshed_credential_async(self._credentials)
-        )
+        if omit_credential:
+            resolved_credential = None
+        elif credential is not None:
+            resolved_credential = credential
+        else:
+            resolved_credential = await _refreshed_credential_async(self._credentials)
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective, permissions)
-        if form_body is not None and (json_body is not None or files):
-            raise NativeCatalogError(
-                "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-            )
-        if json_body is not None and files:
-            raise NativeCatalogError(
-                "Catalog dataset requests cannot combine a JSON body with multipart parts.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-            )
-        if files:
-            body = None
-        elif form_body is not None:
-            body = form_body
-        else:
-            body = self._json_body(json_body, owning_id)
+        body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
