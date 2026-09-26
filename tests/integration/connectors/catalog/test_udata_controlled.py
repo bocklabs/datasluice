@@ -51,6 +51,7 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
+from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery, TaxonomyMutationResult
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenCreationResult,
@@ -1165,6 +1166,216 @@ def test_controlled_stack_proves_dataset_family_reads() -> None:
     assert page.items, "expected seeded datasets on the controlled stack"
     assert isinstance(suggestions, tuple)
     assert v2_page.page is not None
+
+
+def _taxonomy_payloads(records: object) -> list[object]:
+    assert isinstance(records, tuple)
+    return [record.payload for record in records]
+
+
+def test_controlled_taxonomy_reads_match_raw_routes_in_both_modes() -> None:
+    paths = (
+        "/api/1/datasets/badges/",
+        "/api/1/datasets/suggest/formats/?q=cs&size=5",
+        "/api/1/datasets/suggest/mime/?q=js&size=5",
+        "/api/1/datasets/licenses/",
+        "/api/1/datasets/frequencies/",
+        "/api/1/datasets/extensions/",
+        "/api/1/datasets/schemas/",
+    )
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        dataset_id = client.datasets.list(DatasetListQuery(page=1, page_size=1)).items[0].id.value
+        calls = [
+            ("available_badges", ()),
+            ("suggest_formats", (SuggestQuery("cs", 5),)),
+            ("suggest_mime", (SuggestQuery("js", 5),)),
+            ("licenses", ()),
+            ("frequencies", ()),
+            ("extensions", ()),
+            ("schemas", ()),
+            ("dataset_schemas", (dataset_id,)),
+        ]
+        for index, (method, args) in enumerate(calls):
+            path = paths[index] if index < len(paths) else f"/api/2/datasets/{dataset_id}/schemas/"
+            status, payload, _ = _direct_request("", "GET", path)
+            typed = getattr(client.taxonomies, method)(*args)
+            assert status == 200
+            if method == "extensions":
+                assert payload == list(typed)
+            elif method == "available_badges":
+                assert typed.payload == payload
+            else:
+                assert _taxonomy_payloads(typed) == payload
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            dataset_id = (await client.datasets.list(DatasetListQuery(page=1, page_size=1))).items[0].id.value
+            for path, method, args in (
+                ("/api/1/datasets/badges/", "available_badges", ()),
+                ("/api/1/datasets/suggest/formats/?q=cs&size=5", "suggest_formats", (SuggestQuery("cs", 5),)),
+                ("/api/1/datasets/suggest/mime/?q=js&size=5", "suggest_mime", (SuggestQuery("js", 5),)),
+                ("/api/1/datasets/licenses/", "licenses", ()),
+                ("/api/1/datasets/frequencies/", "frequencies", ()),
+                ("/api/1/datasets/extensions/", "extensions", ()),
+                ("/api/1/datasets/schemas/", "schemas", ()),
+                (f"/api/2/datasets/{dataset_id}/schemas/", "dataset_schemas", (dataset_id,)),
+            ):
+                status, payload, _ = _direct_request("", "GET", path)
+                operation = getattr(client.taxonomies, method)(*args)
+                typed = await operation
+                assert status == 200
+                if method == "extensions":
+                    assert payload == list(typed)
+                elif method == "available_badges":
+                    assert typed.payload == payload
+                else:
+                    assert payload == _taxonomy_payloads(typed)
+
+    asyncio.run(run_async())
+
+
+def test_controlled_taxonomy_badge_lifecycle_matches_raw_in_both_modes() -> None:
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled taxonomy mutations require UDATA_EVIDENCE_ADMIN_TOKEN")
+    from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput, DatasetDeleteOptions
+    from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+
+    def policy(operation: str, target: str) -> MutationPolicy:
+        return MutationPolicy(
+            destructive=False,
+            confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        )
+
+    def exercise(mode: str) -> None:
+        dataset_id: str | None = None
+        raw_kind = "inspire" if mode == "sync" else "hvd"
+        typed_kind = "pivotal-data"
+        try:
+            with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+                created = client.datasets.create(
+                    DatasetCreateInput(title=f"Taxonomy evidence {mode}", description="d"),
+                    permissions,
+                    policy("udata/api-v1.create-dataset", f"Taxonomy evidence {mode}"),
+                )
+                assert created.record is not None
+                dataset_id = created.record.id.value
+                try:
+                    client.taxonomies.add_badge(dataset_id, BadgeCreateInput(typed_kind), permissions, None)
+                except CatalogError as error:
+                    assert "mutation_receipt" in error.__dict__
+                else:
+                    raise AssertionError("unconfirmed taxonomy mutation was dispatched")
+
+                raw_status, raw_payload, _ = _direct_request(
+                    token, "POST", f"/api/1/datasets/{dataset_id}/badges/", body={"kind": raw_kind}
+                )
+                typed = client.taxonomies.add_badge(
+                    dataset_id,
+                    BadgeCreateInput(typed_kind),
+                    permissions,
+                    policy("udata/api-v1.add-dataset-badge", dataset_id),
+                )
+                assert raw_status in {200, 201}
+                assert isinstance(raw_payload, Mapping)
+                assert raw_payload["kind"] == raw_kind
+                assert isinstance(typed, TaxonomyMutationResult)
+                assert typed.record is not None
+                assert typed.record.payload["kind"] == typed_kind
+                assert typed.receipt.operation == "udata/api-v1.add-dataset-badge"
+                assert typed.receipt.audit_metadata["status_code"] in {200, 201}
+
+                status, payload, _ = _direct_request(token, "GET", "/api/1/datasets/badges/")
+                available = client.taxonomies.available_badges()
+                assert status == 200
+                assert isinstance(payload, Mapping)
+                available_kinds = set(available.payload)
+                assert {raw_kind, typed_kind} <= set(available_kinds)
+
+                raw_delete_status, _, _ = _direct_request(
+                    token, "DELETE", f"/api/1/datasets/{dataset_id}/badges/{raw_kind}/"
+                )
+                deleted = client.taxonomies.delete_badge(
+                    dataset_id,
+                    typed_kind,
+                    permissions,
+                    policy("udata/api-v1.delete-dataset-badge", f"{dataset_id}:{typed_kind}"),
+                )
+                assert raw_delete_status == 204
+                assert deleted.record is None
+                assert deleted.receipt.operation == "udata/api-v1.delete-dataset-badge"
+                assert deleted.receipt.audit_metadata["status_code"] == 204
+                _, dataset_payload, _ = _direct_request(token, "GET", f"/api/1/datasets/{dataset_id}/")
+                remaining = (
+                    {badge["kind"] for badge in dataset_payload.get("badges", [])}
+                    if isinstance(dataset_payload, Mapping)
+                    else set()
+                )
+                assert raw_kind not in remaining
+                assert typed_kind not in remaining
+        finally:
+            if dataset_id is not None:
+                with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+                    client.datasets.delete(
+                        dataset_id,
+                        permissions,
+                        DatasetDeleteOptions(),
+                        MutationPolicy(
+                            destructive=True,
+                            confirmation=ConfirmationPolicy(
+                                confirmed=True, operation="udata/api-v1.delete-dataset", target=dataset_id
+                            ),
+                            concurrency=ConcurrencyPolicy(overwrite=True),
+                        ),
+                    )
+
+    exercise("sync")
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            created = await client.datasets.create(
+                DatasetCreateInput(title="Taxonomy evidence async", description="d"),
+                permissions,
+                policy("udata/api-v1.create-dataset", "Taxonomy evidence async"),
+            )
+            assert created.record is not None
+            dataset_id = created.record.id.value
+            try:
+                typed = await client.taxonomies.add_badge(
+                    dataset_id,
+                    BadgeCreateInput("pivotal-data"),
+                    permissions,
+                    policy("udata/api-v1.add-dataset-badge", dataset_id),
+                )
+                deleted = await client.taxonomies.delete_badge(
+                    dataset_id,
+                    "pivotal-data",
+                    permissions,
+                    policy("udata/api-v1.delete-dataset-badge", f"{dataset_id}:pivotal-data"),
+                )
+                assert typed.record is not None
+                assert deleted.record is None
+            finally:
+                await client.datasets.delete(
+                    dataset_id,
+                    permissions,
+                    DatasetDeleteOptions(),
+                    MutationPolicy(
+                        destructive=True,
+                        confirmation=ConfirmationPolicy(
+                            confirmed=True, operation="udata/api-v1.delete-dataset", target=dataset_id
+                        ),
+                        concurrency=ConcurrencyPolicy(overwrite=True),
+                    ),
+                )
+
+    asyncio.run(run_async())
 
 
 def test_controlled_organization_family_matches_raw_shapes_and_cleans_up() -> None:

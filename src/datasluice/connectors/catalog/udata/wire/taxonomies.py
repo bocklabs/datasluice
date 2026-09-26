@@ -20,6 +20,7 @@ FREQUENCIES_OPERATION = "udata/api-v1.list-frequencies"
 EXTENSIONS_OPERATION = "udata/api-v1.allowed-extensions"
 SCHEMAS_OPERATION = "udata/api-v1.list-dataset-schemas"
 DATASET_SCHEMAS_OPERATION = "udata/api-v2.get-dataset-schemas"
+_PINNED_SCHEMA_ACTION = "Verify the response against the pinned uData 17.6 schema."
 
 
 def _request(method: str, path: str, body: object = None) -> tuple[str, str, dict[str, str], object | None]:
@@ -77,13 +78,24 @@ def dataset_schemas_request(dataset_id: str) -> tuple[str, str, dict[str, str], 
     return _request("GET", f"/api/2/datasets/{segment(dataset_id, DATASET_SCHEMAS_OPERATION)}/schemas/")
 
 
+def parse_mapping(payload: object, operation: str) -> MappingRecord:
+    if not isinstance(payload, Mapping):
+        raise CatalogValidationError(
+            "The uData taxonomy badges response must be an object.",
+            operation=operation,
+            platform=PLATFORM,
+            safe_action=_PINNED_SCHEMA_ACTION,
+        )
+    return MappingRecord(payload)
+
+
 def parse_objects(payload: object, operation: str) -> tuple[MappingRecord, ...]:
     if not isinstance(payload, list) or not all(isinstance(item, Mapping) for item in payload):
         raise CatalogValidationError(
             "The uData taxonomy response must be a list of objects.",
             operation=operation,
             platform=PLATFORM,
-            safe_action="Verify the response against the pinned uData 17.6 schema.",
+            safe_action=_PINNED_SCHEMA_ACTION,
         )
     return tuple(MappingRecord(item) for item in payload)
 
@@ -94,6 +106,6 @@ def parse_strings(payload: object, operation: str) -> tuple[str, ...]:
             "The uData taxonomy response must be a list of non-empty strings.",
             operation=operation,
             platform=PLATFORM,
-            safe_action="Verify the response against the pinned uData 17.6 schema.",
+            safe_action=_PINNED_SCHEMA_ACTION,
         )
     return tuple(payload)

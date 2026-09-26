@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
@@ -59,7 +60,7 @@ def _mutation(
 ) -> TaxonomyMutationResult:
     try:
         method, path, headers, body = request()
-    except BaseException as error:
+    except (Exception, KeyboardInterrupt, GeneratorExit) as error:
         _reject(error, target, policy, mutation, operation)
     response: object | None = None
     try:
@@ -69,9 +70,11 @@ def _mutation(
             _tax_receipt(target, policy, "succeeded", status, mutation, operation),
             MappingRecord(payload) if isinstance(payload, Mapping) and payload else None,
         )
-    except BaseException as error:
+    except (Exception, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as error:
         outcome = (
-            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
+            "cancelled"
+            if isinstance(error, (KeyboardInterrupt, GeneratorExit, asyncio.CancelledError))
+            else _mutation_outcome(error, response)
         )
         receipt = _tax_receipt(target, policy, outcome, _error_status(error, response), mutation, operation)
         _attach(error, receipt)
@@ -89,7 +92,7 @@ async def _mutation_async(
 ) -> TaxonomyMutationResult:
     try:
         method, path, headers, body = request()
-    except BaseException as error:
+    except (Exception, KeyboardInterrupt, GeneratorExit) as error:
         _reject(error, target, policy, mutation, operation)
     response: object | None = None
     try:
@@ -99,9 +102,11 @@ async def _mutation_async(
             _tax_receipt(target, policy, "succeeded", status, mutation, operation),
             MappingRecord(payload) if isinstance(payload, Mapping) and payload else None,
         )
-    except BaseException as error:
+    except (Exception, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as error:
         outcome = (
-            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
+            "cancelled"
+            if isinstance(error, (KeyboardInterrupt, GeneratorExit, asyncio.CancelledError))
+            else _mutation_outcome(error, response)
         )
         receipt = _tax_receipt(target, policy, outcome, _error_status(error, response), mutation, operation)
         _attach(error, receipt)
@@ -119,8 +124,8 @@ class SyncTaxonomiesService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    def available_badges(self) -> tuple[MappingRecord, ...]:
-        return self._read(wire.available_badges_request(), wire.AVAILABLE_BADGES_OPERATION, wire.parse_objects)
+    def available_badges(self) -> MappingRecord:
+        return self._read(wire.available_badges_request(), wire.AVAILABLE_BADGES_OPERATION, wire.parse_mapping)
 
     def add_badge(
         self,
@@ -223,8 +228,8 @@ class AsyncTaxonomiesService:
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    async def available_badges(self) -> tuple[MappingRecord, ...]:
-        return await self._read(wire.available_badges_request(), wire.AVAILABLE_BADGES_OPERATION, wire.parse_objects)
+    async def available_badges(self) -> MappingRecord:
+        return await self._read(wire.available_badges_request(), wire.AVAILABLE_BADGES_OPERATION, wire.parse_mapping)
 
     async def add_badge(
         self,

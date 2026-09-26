@@ -25,6 +25,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
     for module in ("settings.py", "clients.py", "probes.py", "mapping.py", "live.py", "factory.py", "connector.py"):
         assert (package / module).is_file(), module
     for module in (
+        "models/taxonomies.py",
+        "wire/taxonomies.py",
+        "services/taxonomies.py",
         "models/root_profile.py",
         "wire/root_profile.py",
         "services/root_profile.py",
@@ -66,6 +69,7 @@ from datasluice.connectors.catalog.udata.clients import create_async_client, cre
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
+from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthClientRequest,
     OAuthRevokeRequest,
@@ -132,6 +136,26 @@ class Transport:
             headers = {"Content-Type": "text/csv"}
         elif "/api/1/organizations/abc/" in url:
             body = json.dumps({"id": "abc", "name": "Wheel organization", "description": "d"}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/datasets/badges/"):
+            body = json.dumps({"pivotal-data": "Pivotal data"}).encode() if request.method == "GET" else json.dumps(
+                {"kind": "pivotal-data", "label": "Pivotal data"}
+            ).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/datasets/suggest/formats/" in url or "/datasets/suggest/mime/" in url:
+            body = json.dumps([{"text": "csv"}]).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/datasets/licenses/"):
+            body = json.dumps([{"id": "lov2", "title": "Licence Ouverte"}]).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/datasets/frequencies/"):
+            body = json.dumps([{"id": "punctual", "label": "Punctual"}]).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/datasets/extensions/"):
+            body = json.dumps(["csv"]).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/datasets/schemas/") or "/api/2/datasets/abc/schemas/" in url:
+            body = json.dumps([]).encode()
             headers = {"Content-Type": "application/json"}
         elif request.method == "POST":
             body = json.dumps(
@@ -290,6 +314,35 @@ revoked_token = client.users_tokens.revoke_api_token(
     ),
 )
 assert revoked_token.receipt.audit_metadata["status_code"] == 204
+assert client.taxonomies.available_badges().payload["pivotal-data"] == "Pivotal data"
+assert client.taxonomies.extensions() == ("csv",)
+assert client.taxonomies.licenses()[0].payload["id"] == "lov2"
+assert client.taxonomies.frequencies()[0].payload["label"] == "Punctual"
+assert client.taxonomies.suggest_formats(SuggestQuery("cs"))[0].payload["text"] == "csv"
+assert client.taxonomies.schemas() == ()
+assert client.taxonomies.dataset_schemas("abc") == ()
+taxonomy_badge = client.taxonomies.add_badge(
+    "abc",
+    BadgeCreateInput("pivotal-data"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.add-dataset-badge", target="abc"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert taxonomy_badge.record is not None
+taxonomy_deleted = client.taxonomies.delete_badge(
+    "abc",
+    "pivotal-data",
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.delete-dataset-badge", target="abc:pivotal-data"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert taxonomy_deleted.receipt.audit_metadata["status_code"] == 204
 client.close()
 
 import asyncio
@@ -370,6 +423,33 @@ async def run_async():
         assert token_created.receipt.audit_metadata["status_code"] == 201
         assert "token" not in token_created.to_dict()
         assert token_revoked.receipt.audit_metadata["status_code"] == 204
+        assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
+        assert await active.taxonomies.extensions() == ("csv",)
+        assert (await active.taxonomies.suggest_mime(SuggestQuery("js")))[0].payload["text"] == "csv"
+        taxonomy_badge = await active.taxonomies.add_badge(
+            "abc",
+            BadgeCreateInput("pivotal-data"),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.add-dataset-badge", target="abc"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        taxonomy_deleted = await active.taxonomies.delete_badge(
+            "abc",
+            "pivotal-data",
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.delete-dataset-badge", target="abc:pivotal-data"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        assert taxonomy_badge.record is not None
+        assert taxonomy_deleted.receipt.audit_metadata["status_code"] == 204
         try:
             await active.organizations_memberships.get_organization("")
         except CatalogValidationError:
@@ -444,21 +524,35 @@ assert recorded == [
     "http://127.0.0.1:5640/oauth/error",
     "http://127.0.0.1:5640/oauth/authorize?client_id=wheel-client&response_type=code",
     "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
+    "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/datasets/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/extensions/",
+    "http://127.0.0.1:5640/api/1/datasets/licenses/",
+    "http://127.0.0.1:5640/api/1/datasets/frequencies/",
+    "http://127.0.0.1:5640/api/1/datasets/suggest/formats/?q=cs&size=10",
+    "http://127.0.0.1:5640/api/1/datasets/schemas/",
+    "http://127.0.0.1:5640/api/2/datasets/abc/schemas/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
 ], recorded
-assert [getattr(r, "url", r) for r in async_transport.requests] == [
+async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
+assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
-    "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/datasets.csv",
-    "http://127.0.0.1:5640/api/1/organizations/abc/",
     "http://127.0.0.1:5640/api/1/datasets/",
     "http://127.0.0.1:5640/api/1/datasets/abc/resources/",
+    "http://127.0.0.1:5640/api/1/organizations/abc/",
     "http://127.0.0.1:5640/api/1/organizations/",
     "http://127.0.0.1:5640/api/1/me/",
     "http://127.0.0.1:5640/api/1/me/api_tokens/",
-    "http://127.0.0.1:5640/api/1/me/api_tokens/",
     "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
-]
+    "http://127.0.0.1:5640/api/1/datasets/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/extensions/",
+    "http://127.0.0.1:5640/api/1/datasets/suggest/mime/?q=js&size=10",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
+    "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
+}
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
 

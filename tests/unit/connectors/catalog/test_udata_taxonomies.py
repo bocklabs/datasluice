@@ -169,7 +169,7 @@ def test_every_taxonomy_route_has_an_exact_wire_shape() -> None:
 
 def test_taxonomy_reads_decode_losslessly_and_fail_typed_in_both_modes() -> None:
     responses = {
-        "available_badges": [{"kind": "certified", "label": "Certified"}],
+        "available_badges": {"certified": "Certified"},
         "suggest_formats": [{"text": "csv"}, {"text": "tsv"}],
         "suggest_mime": [{"text": "application/json"}],
         "licenses": [{"id": "lov2", "title": "Licence Ouverte", "flags": []}],
@@ -190,9 +190,7 @@ def test_taxonomy_reads_decode_losslessly_and_fail_typed_in_both_modes() -> None
     }
     with SyncUDataClient(_Router(_routes(routes)), declared_udata_profile(), origin=ORIGIN) as client:
         service = client.taxonomies
-        assert _thawed([record.payload for record in service.available_badges()]) == _thawed(
-            responses["available_badges"]
-        )
+        assert service.available_badges().payload == _thawed(responses["available_badges"])
         assert _thawed([record.payload for record in service.suggest_formats(SuggestQuery("csv"))]) == _thawed(
             responses["suggest_formats"]
         )
@@ -258,7 +256,8 @@ def test_badge_mutations_are_permission_guarded_and_return_redacted_receipts() -
         added = client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), PERMISSIONS, add_policy)
         removed = client.taxonomies.delete_badge("dataset-1", "certified", PERMISSIONS, delete_policy)
         assert isinstance(added, TaxonomyMutationResult)
-        assert added.record is not None and added.record.payload == badge
+        assert added.record is not None
+        assert added.record.payload == badge
         added_receipt = added.receipt.to_dict()
         added_metadata = cast(dict[str, object], added_receipt["audit_metadata"])
         assert added_metadata["mutation"] == "added"
