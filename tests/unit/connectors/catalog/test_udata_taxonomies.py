@@ -345,3 +345,57 @@ def test_badge_permissions_discriminate_add_from_delete_in_both_modes() -> None:
 
     run_sync()
     asyncio.run(run_async())
+
+
+def test_badge_dispatch_uses_exact_operation_in_both_modes(monkeypatch: pytest.MonkeyPatch) -> None:
+    add_calls: list[dict[str, object]] = []
+    delete_calls: list[dict[str, object]] = []
+
+    def record(target: list[dict[str, object]], status: int):
+        def capture(**kwargs: object) -> tuple[int, object, object]:
+            target.append(kwargs)
+            return status, {"kind": "certified"} if status == 201 else None, object()
+
+        return capture
+
+    router = _Router(_routes({}))
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        monkeypatch.setattr(client, "_dataset_call", record(add_calls, 201))
+        added = client.taxonomies.add_badge(
+            "dataset-1",
+            BadgeCreateInput("certified"),
+            ADD_ONLY_PERMISSIONS,
+            _policy(wire.ADD_BADGE_OPERATION, "dataset-1"),
+        )
+        monkeypatch.setattr(client, "_dataset_call", record(delete_calls, 204))
+        deleted = client.taxonomies.delete_badge(
+            "dataset-1",
+            "certified",
+            DELETE_ONLY_PERMISSIONS,
+            _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified"),
+        )
+
+    assert add_calls[0]["owning_operation"] == wire.ADD_BADGE_OPERATION
+    assert delete_calls[0]["owning_operation"] == wire.DELETE_BADGE_OPERATION
+    assert added.receipt.operation == wire.ADD_BADGE_OPERATION
+    assert deleted.receipt.operation == wire.DELETE_BADGE_OPERATION
+
+    async def run_async() -> None:
+        async def capture(**kwargs: object) -> tuple[int, object, object]:
+            assert kwargs["owning_operation"] == wire.DELETE_BADGE_OPERATION
+            return 204, None, object()
+
+        async with AsyncUDataClient(
+            _AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+        ) as client:
+            monkeypatch.setattr(client, "_dataset_call_async", capture)
+            deleted = await client.taxonomies.delete_badge(
+                "dataset-1",
+                "certified",
+                DELETE_ONLY_PERMISSIONS,
+                _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified"),
+            )
+
+        assert deleted.receipt.operation == wire.DELETE_BADGE_OPERATION
+
+    asyncio.run(run_async())
