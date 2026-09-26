@@ -28,6 +28,13 @@ from datasluice.connectors.catalog.udata.clients import (
     declared_udata_profile,
 )
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+from datasluice.connectors.catalog.udata.models.activity_discussions import (
+    ActivityQuery,
+    CommentInput,
+    DiscussionCreateInput,
+    DiscussionSearchQuery,
+    DiscussionUpdateInput,
+)
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
@@ -3256,3 +3263,159 @@ def test_controlled_oauth_rejects_unconfirmed_destructive_revocation() -> None:
         with pytest.raises(CatalogError) as denial:
             client.auth_oauth.revoke_token(OAuthRevokeRequest(token="controlled-absent-token"), permissions)
     assert denial.value.metadata.get("status_code") is None
+
+
+def test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned read route returns the same native envelope typed and raw."""
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        for path, method, args in (
+            ("/api/1/activity/?page=1&page_size=20", "activity", (ActivityQuery(),)),
+            ("/api/1/discussions/?page=1&page_size=20", "list_discussions", ()),
+            ("/api/2/discussions/search/?page=1&page_size=20", "search_discussions", (DiscussionSearchQuery(),)),
+        ):
+            status, payload, _ = _direct_request("", "GET", path)
+            typed = getattr(client.activity_discussions, method)(*args)
+            assert status == 200
+            assert isinstance(payload, Mapping)
+            assert typed.payload == payload
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            for path, method, args in (
+                ("/api/1/activity/?page=1&page_size=20", "activity", (ActivityQuery(),)),
+                ("/api/1/discussions/?page=1&page_size=20", "list_discussions", ()),
+                ("/api/2/discussions/search/?page=1&page_size=20", "search_discussions", (DiscussionSearchQuery(),)),
+            ):
+                status, payload, _ = _direct_request("", "GET", path)
+                operation = getattr(client.activity_discussions, method)(*args)
+                typed = await operation
+                assert status == 200
+                assert isinstance(payload, Mapping)
+                assert typed.payload == payload
+
+    asyncio.run(run_async())
+
+
+def test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up() -> None:
+    """Seed one deterministic thread and drive every assigned discussion mutation."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled discussion evidence requires UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    title = "evidence discussion"
+
+    def policy(operation: str, target: str) -> MutationPolicy:
+        return MutationPolicy(
+            destructive=operation.endswith("delete-discussion") or operation.endswith("delete-discussion-comment"),
+            confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        )
+
+    def dataset_subject(client: SyncUDataClient) -> dict[str, str]:
+        dataset_id = client.datasets.list(DatasetListQuery(page=1, page_size=1)).items[0].id.value
+        return {"id": dataset_id, "class": "Dataset"}
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        created = client.activity_discussions.create_discussion(
+            DiscussionCreateInput(title=title, comment="evidence opening comment", subject=dataset_subject(client)),
+            permissions,
+            policy("udata/api-v1.create-discussion", title),
+        )
+        assert created.record is not None
+        discussion_id = str(created.record.payload["id"])
+        assert created.receipt.operation == "udata/api-v1.create-discussion"
+        try:
+            status, raw, _ = _direct_request(token, "GET", f"/api/1/discussions/{discussion_id}/")
+            assert status == 200
+            assert isinstance(raw, Mapping)
+            assert raw["title"] == title
+            assert client.activity_discussions.get_discussion(discussion_id).payload == raw
+
+            commented = client.activity_discussions.comment_discussion(
+                discussion_id,
+                CommentInput(comment="evidence reply"),
+                permissions,
+                policy("udata/api-v1.comment-discussion", discussion_id),
+            )
+            assert commented.receipt.operation == "udata/api-v1.comment-discussion"
+            _, after_comment, _ = _direct_request(token, "GET", f"/api/1/discussions/{discussion_id}/")
+            assert isinstance(after_comment, Mapping)
+            assert len(after_comment["discussion"]) == len(raw["discussion"]) + 1
+
+            updated = client.activity_discussions.update_discussion(
+                discussion_id,
+                DiscussionUpdateInput(title=f"{title} renamed"),
+                permissions,
+                policy("udata/api-v1.update-discussion", discussion_id),
+            )
+            assert updated.record is not None
+            assert updated.record.payload["title"] == f"{title} renamed"
+
+            edited = client.activity_discussions.edit_discussion_comment(
+                discussion_id,
+                "1",
+                CommentInput(comment="evidence edited reply"),
+                permissions,
+                policy("udata/api-v1.edit-discussion-comment", f"{discussion_id}:1"),
+            )
+            assert edited.record is not None
+            assert isinstance(edited.record.payload, Mapping)
+            edited_messages = edited.record.payload["discussion"]
+            assert isinstance(edited_messages, list)
+            edited_first_reply = edited_messages[1]
+            assert isinstance(edited_first_reply, Mapping)
+            assert edited_first_reply["content"] == "evidence edited reply"
+
+            comment_deleted = client.activity_discussions.delete_discussion_comment(
+                discussion_id,
+                "1",
+                permissions,
+                policy("udata/api-v1.delete-discussion-comment", f"{discussion_id}:1"),
+            )
+            assert comment_deleted.record is None
+            _, after_delete, _ = _direct_request(token, "GET", f"/api/1/discussions/{discussion_id}/")
+            assert isinstance(after_delete, Mapping)
+            assert len(after_delete["discussion"]) == len(raw["discussion"])
+        finally:
+            deleted = client.activity_discussions.delete_discussion(
+                discussion_id, permissions, policy("udata/api-v1.delete-discussion", discussion_id)
+            )
+            assert deleted.record is None
+        status, _, _ = _direct_request(token, "GET", f"/api/1/discussions/{discussion_id}/")
+        assert status == 404
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            dataset_id = (await client.datasets.list(DatasetListQuery(page=1, page_size=1))).items[0].id.value
+            created = await client.activity_discussions.create_discussion(
+                DiscussionCreateInput(
+                    title=title, comment="evidence opening comment", subject={"id": dataset_id, "class": "Dataset"}
+                ),
+                permissions,
+                policy("udata/api-v1.create-discussion", title),
+            )
+            assert created.record is not None
+            discussion_id = str(created.record.payload["id"])
+            try:
+                commented = await client.activity_discussions.comment_discussion(
+                    discussion_id,
+                    CommentInput(comment="evidence reply"),
+                    permissions,
+                    policy("udata/api-v1.comment-discussion", discussion_id),
+                )
+                assert commented.receipt.operation == "udata/api-v1.comment-discussion"
+                status, raw, _ = _direct_request(token, "GET", f"/api/1/discussions/{discussion_id}/")
+                assert status == 200
+                assert isinstance(raw, Mapping)
+                assert len(raw["discussion"]) == 2
+            finally:
+                await client.activity_discussions.delete_discussion(
+                    discussion_id, permissions, policy("udata/api-v1.delete-discussion", discussion_id)
+                )
+
+    asyncio.run(run_async())

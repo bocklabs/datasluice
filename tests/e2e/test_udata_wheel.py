@@ -44,6 +44,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "models/oauth.py",
         "wire/oauth.py",
         "services/auth_oauth.py",
+        "models/activity_discussions.py",
+        "wire/activity_discussions.py",
+        "services/activity_discussions.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
@@ -69,6 +72,13 @@ from datasluice.connectors.catalog.udata.clients import create_async_client, cre
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
+from datasluice.connectors.catalog.udata.models.activity_discussions import (
+    ActivityQuery,
+    CommentInput,
+    DiscussionCreateInput,
+    DiscussionSearchQuery,
+    DiscussionUpdateInput,
+)
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthClientRequest,
@@ -156,6 +166,20 @@ class Transport:
             headers = {"Content-Type": "application/json"}
         elif url.endswith("/api/1/datasets/schemas/") or "/api/2/datasets/abc/schemas/" in url:
             body = json.dumps([]).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/api/1/discussions/" in url or "/api/1/discussions" in url:
+            body = json.dumps(
+                {"id": "wheel-discussion", "title": "Wheel discussion", "discussion": [],
+                 "extras": {}, "closed": None}
+            ).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/api/1/activity/" in url:
+            body = json.dumps({"data": [{"id": "wheel-activity", "label": "dataset.created"}],
+                               "next_page": None, "page": 1, "page_size": 20,
+                               "previous_page": None, "total": 1}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/api/2/discussions/search/" in url:
+            body = json.dumps({"data": [], "facets": {}, "links": {}, "meta": {"total": 0}}).encode()
             headers = {"Content-Type": "application/json"}
         elif request.method == "POST":
             body = json.dumps(
@@ -343,6 +367,77 @@ taxonomy_deleted = client.taxonomies.delete_badge(
     ),
 )
 assert taxonomy_deleted.receipt.audit_metadata["status_code"] == 204
+assert client.activity_discussions.activity(ActivityQuery()).payload["total"] == 1
+assert client.activity_discussions.list_discussions().payload["id"] == "wheel-discussion"
+assert client.activity_discussions.get_discussion("wheel-discussion").payload["title"] == "Wheel discussion"
+assert client.activity_discussions.search_discussions(DiscussionSearchQuery()).payload["meta"]["total"] == 0
+assert client.activity_discussions.create_discussion(
+    DiscussionCreateInput(title="t", comment="c", subject={"id": "abc", "class": "Dataset"}),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.create-discussion", target="abc"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+).receipt.operation == "udata/api-v1.create-discussion"
+assert client.activity_discussions.comment_discussion(
+    "wheel-discussion",
+    CommentInput(comment="hello"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.comment-discussion", target="wheel-discussion"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+).receipt.operation == "udata/api-v1.comment-discussion"
+assert client.activity_discussions.update_discussion(
+    "wheel-discussion",
+    DiscussionUpdateInput(title="new"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.update-discussion", target="wheel-discussion"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+).receipt.operation == "udata/api-v1.update-discussion"
+assert client.activity_discussions.edit_discussion_comment(
+    "wheel-discussion",
+    "0",
+    CommentInput(comment="edited"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.edit-discussion-comment", target="wheel-discussion:0"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+).receipt.operation == "udata/api-v1.edit-discussion-comment"
+assert client.activity_discussions.delete_discussion(
+    "wheel-discussion",
+    sync_permissions,
+    MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.delete-discussion", target="wheel-discussion"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+).receipt.audit_metadata["status_code"] == 204
+assert client.activity_discussions.delete_discussion_comment(
+    "wheel-discussion",
+    "1",
+    sync_permissions,
+    MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.delete-discussion-comment", target="wheel-discussion:1"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+).receipt.audit_metadata["status_code"] == 204
 client.close()
 
 import asyncio
@@ -450,6 +545,32 @@ async def run_async():
         )
         assert taxonomy_badge.record is not None
         assert taxonomy_deleted.receipt.audit_metadata["status_code"] == 204
+        assert (await active.activity_discussions.activity(ActivityQuery())).payload["total"] == 1
+        wheel_discussion = await active.activity_discussions.get_discussion("wheel-discussion")
+        assert wheel_discussion.payload["id"] == "wheel-discussion"
+        wheel_search = await active.activity_discussions.search_discussions(DiscussionSearchQuery())
+        assert wheel_search.payload["meta"]["total"] == 0
+        assert (await active.activity_discussions.create_discussion(
+            DiscussionCreateInput(title="t", comment="c", subject={"id": "abc", "class": "Dataset"}),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.create-discussion", target="abc"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )).receipt.operation == "udata/api-v1.create-discussion"
+        assert (await active.activity_discussions.delete_discussion(
+            "wheel-discussion",
+            permissions,
+            MutationPolicy(
+                destructive=True,
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.delete-discussion", target="wheel-discussion"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )).receipt.audit_metadata["status_code"] == 204
         try:
             await active.organizations_memberships.get_organization("")
         except CatalogValidationError:
@@ -534,6 +655,16 @@ assert recorded == [
     "http://127.0.0.1:5640/api/2/datasets/abc/schemas/",
     "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
     "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
+    "http://127.0.0.1:5640/api/1/activity/",
+    "http://127.0.0.1:5640/api/1/discussions/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/2/discussions/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/discussions/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/0/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/1/",
 ], recorded
 async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
 assert set(async_recorded) == {
@@ -552,6 +683,10 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/datasets/suggest/mime/?q=js&size=10",
     "http://127.0.0.1:5640/api/1/datasets/abc/badges/",
     "http://127.0.0.1:5640/api/1/datasets/abc/badges/pivotal-data/",
+    "http://127.0.0.1:5640/api/1/activity/",
+    "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
+    "http://127.0.0.1:5640/api/1/discussions/",
+    "http://127.0.0.1:5640/api/2/discussions/search/?page=1&page_size=20",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

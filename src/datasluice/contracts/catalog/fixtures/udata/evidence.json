@@ -106,8 +106,14 @@
       "test_wheel_import_proves_the_tracer_path_from_installed_content"
     ],
     "route_differential": {
-      "read_modes": ["sync", "async"],
-      "mutation_modes": ["sync", "async"],
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
       "read_operations": [
         "udata/api-v1.available-dataset-badges",
         "udata/api-v1.suggest-formats",
@@ -134,8 +140,8 @@
     "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
-    "controlled_test_sha256": "5ce2790fc54b0e75958be3fab299f027106d5c7a33535727856283b4439f477c",
-    "wheel_test_sha256": "0bc25961b25b140fd649258d20ed992a5700b8b299de409bd7d437812d2365da",
+    "controlled_test_sha256": "d3d989ae31c561f55c4dac22f67dc7a9b2663274113135fcf5e14b61837d2bae",
+    "wheel_test_sha256": "810a98d0c7d114d1d31523e1f59de5231d6f17fe37d988ec51790fe30ca0d371",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
@@ -212,8 +218,8 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "5ce2790fc54b0e75958be3fab299f027106d5c7a33535727856283b4439f477c",
-    "wheel_test_sha256": "0bc25961b25b140fd649258d20ed992a5700b8b299de409bd7d437812d2365da",
+    "controlled_test_sha256": "d3d989ae31c561f55c4dac22f67dc7a9b2663274113135fcf5e14b61837d2bae",
+    "wheel_test_sha256": "810a98d0c7d114d1d31523e1f59de5231d6f17fe37d988ec51790fe30ca0d371",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
@@ -257,8 +263,26 @@
       "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
       "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
     },
-    "controlled_test_sha256": "5ce2790fc54b0e75958be3fab299f027106d5c7a33535727856283b4439f477c",
-    "wheel_test_sha256": "0bc25961b25b140fd649258d20ed992a5700b8b299de409bd7d437812d2365da",
+    "controlled_test_sha256": "d3d989ae31c561f55c4dac22f67dc7a9b2663274113135fcf5e14b61837d2bae",
+    "wheel_test_sha256": "810a98d0c7d114d1d31523e1f59de5231d6f17fe37d988ec51790fe30ca0d371",
     "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
+  },
+  "controlled_activity_discussion_evidence": {
+    "captured_at": "2026-09-26",
+    "stack_version": "17.6.0",
+    "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
+    "controlled_test_sha256": "d3d989ae31c561f55c4dac22f67dc7a9b2663274113135fcf5e14b61837d2bae",
+    "wheel_test_sha256": "810a98d0c7d114d1d31523e1f59de5231d6f17fe37d988ec51790fe30ca0d371",
+    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
+    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "test_ids": [
+      "test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes",
+      "test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "response_shape": "native-envelope-and-status-skeleton",
+    "recaptured": false,
+    "recapture_note": "No stack nonce or admin secret was created for 04-08, so this block records the sanitized shape contract and the current test digests rather than a fresh capture. The prior capture was inspected read-only and the controlled tests run in their normal environment-skipped state without the admin token variable set."
   }
 }
