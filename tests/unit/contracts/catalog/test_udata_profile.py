@@ -150,6 +150,10 @@ _EVIDENCE_CLAIMING_TESTS = {
         "read": "test_controlled_organization_read_matrix_matches_raw_routes",
         "mutation": "test_controlled_organization_mutations_match_raw_routes_in_both_modes",
     },
+    "controlled_taxonomy_evidence": {
+        "read": "test_controlled_taxonomy_reads_match_raw_routes_in_both_modes",
+        "mutation": "test_controlled_taxonomy_badge_lifecycle_matches_raw_in_both_modes",
+    },
 }
 
 _TAXONOMY_ROUTE_OPERATION_IDS = {
@@ -311,6 +315,46 @@ def test_controlled_user_evidence_covers_every_route_in_both_modes() -> None:
     )
 
 
+def test_controlled_taxonomy_evidence_covers_every_route_in_both_modes() -> None:
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_taxonomy_evidence"]
+    evidence = controlled["route_differential"]
+    reads = evidence["read_operations"]
+    mutations = evidence["mutation_operations"]
+
+    assert set(reads) | set(mutations) == _TAXONOMY_ROUTE_OPERATION_IDS
+    assert set(reads).isdisjoint(mutations)
+    assert controlled["captured_at"] == "2026-09-26"
+    assert controlled["stack_version"] == "17.6.0"
+    assert controlled["implementation_sha"] == "a9cdabd3de074d4b2dd44a5ea07357df0335a349"
+    assert (
+        controlled["controlled_test_sha256"]
+        == hashlib.sha256(
+            (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        controlled["wheel_test_sha256"]
+        == hashlib.sha256((_ROOT / "tests/e2e/test_udata_wheel.py").read_bytes()).hexdigest()
+    )
+    assert (
+        controlled["compose_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/compose.yaml").read_bytes()).hexdigest()
+    )
+    assert (
+        controlled["dockerfile_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/Dockerfile").read_bytes()).hexdigest()
+    )
+    assert controlled["udata_image_digest"].startswith("sha256:")
+
+    for test_id in controlled["test_ids"][:2]:
+        assert (
+            f"def {test_id}(" in (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+        )
+    wheel_source = (_ROOT / "tests/e2e/test_udata_wheel.py").read_text()
+    for test_id in controlled["test_ids"][2:]:
+        assert f"def {test_id}(" in wheel_source, test_id
+
+
 def test_deployment_dependent_routes_require_observed_effective_evidence() -> None:
     """Declared plugin/configuration routes never claim universal availability."""
     profile = _read_json(_PROFILE_PATH)
@@ -470,6 +514,28 @@ def test_the_execution_gate_fails_when_a_user_async_mutation_pass_is_removed() -
     assert unexecuted_operations(gutted, test, mutations, modes)
 
 
+def test_the_taxonomy_execution_gate_fails_when_either_mode_pass_is_removed() -> None:
+    """The taxonomy gate rejects loss of required constructed-client passes."""
+    source = controlled_test_source(_ROOT)
+    differential = _read_json(_EVIDENCE_PATH)["controlled_taxonomy_evidence"]["route_differential"]
+    mutations = set(differential["mutation_operations"])
+    modes = differential["mutation_modes"]
+    test = _EVIDENCE_CLAIMING_TESTS["controlled_taxonomy_evidence"]["mutation"]
+    read_test = _EVIDENCE_CLAIMING_TESTS["controlled_taxonomy_evidence"]["read"]
+
+    without_sync = _without_nested_pass(source, test, "exercise")
+    without_async = _without_async_passes(source, test)
+    without_async_reads = _without_async_passes(source, read_test)
+
+    assert not unexecuted_operations(source, test, mutations, modes)
+    assert unexecuted_operations(without_sync, test, mutations, modes) == mutations
+    assert unexecuted_operations(without_async, test, mutations, modes) == mutations
+    assert not unexecuted_operations(source, read_test, set(differential["read_operations"]), modes)
+    assert unexecuted_operations(without_async_reads, read_test, set(differential["read_operations"]), modes) == set(
+        differential["read_operations"]
+    )
+
+
 def test_the_execution_gate_ignores_an_unrelated_method_name() -> None:
     """A matching method on an untyped object must not credit constructed-client coverage."""
     source = """\
@@ -479,3 +545,16 @@ def test_unrelated_name() -> None:
 """
     methods = typed_methods({"udata/oauth.revoke-token"})
     assert executed_modes(source, "test_unrelated_name", methods) == {"revoke_token": set()}
+
+
+def _without_nested_pass(source: str, test_name: str, pass_name: str) -> str:
+    target = next(
+        node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == test_name
+    )
+    target_pass = next(
+        node
+        for node in ast.walk(target)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == pass_name
+    )
+    lines = source.splitlines(keepends=True)
+    return "".join(lines[: target_pass.lineno - 1] + lines[target_pass.end_lineno :])

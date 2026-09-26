@@ -140,7 +140,9 @@ class SyncTaxonomiesService:
             "added",
             wire.ADD_BADGE_OPERATION,
             lambda: wire.add_badge_request(dataset_id, client_input),
-            lambda method, path, headers, body: self._call(method, path, headers, body, permissions, mutation_policy),
+            lambda method, path, headers, body: self._call(
+                method, path, headers, body, permissions, mutation_policy, wire.ADD_BADGE_OPERATION
+            ),
         )
 
     def delete_badge(
@@ -157,7 +159,9 @@ class SyncTaxonomiesService:
             "deleted",
             wire.DELETE_BADGE_OPERATION,
             lambda: wire.delete_badge_request(dataset_id, kind),
-            lambda method, path, headers, body: self._call(method, path, headers, body, permissions, mutation_policy),
+            lambda method, path, headers, body: self._call(
+                method, path, headers, body, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION
+            ),
         )
 
     def suggest_formats(self, query: SuggestQuery) -> tuple[MappingRecord, ...]:
@@ -202,14 +206,13 @@ class SyncTaxonomiesService:
         body: object,
         permissions: Permissions,
         policy: Policy,
+        operation: str,
     ) -> Response:
-        resolved = _require_mutation_permission(
-            self._client._resolved_credential(), wire.ADD_BADGE_OPERATION, permissions
-        )
+        resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
         return self._client._dataset_call(
             method=method,
             path=path,
-            owning_operation=wire.ADD_BADGE_OPERATION,
+            owning_operation=operation,
             headers=headers,
             json_body=body,
             permissions=permissions,
@@ -244,7 +247,9 @@ class AsyncTaxonomiesService:
             "added",
             wire.ADD_BADGE_OPERATION,
             lambda: wire.add_badge_request(dataset_id, client_input),
-            lambda method, path, headers, body: self._call(method, path, headers, body, permissions, mutation_policy),
+            lambda method, path, headers, body: self._call(
+                method, path, headers, body, permissions, mutation_policy, wire.ADD_BADGE_OPERATION
+            ),
         )
 
     async def delete_badge(
@@ -261,7 +266,9 @@ class AsyncTaxonomiesService:
             "deleted",
             wire.DELETE_BADGE_OPERATION,
             lambda: wire.delete_badge_request(dataset_id, kind),
-            lambda method, path, headers, body: self._call(method, path, headers, body, permissions, mutation_policy),
+            lambda method, path, headers, body: self._call(
+                method, path, headers, body, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION
+            ),
         )
 
     async def suggest_formats(self, query: SuggestQuery) -> tuple[MappingRecord, ...]:
@@ -313,16 +320,17 @@ class AsyncTaxonomiesService:
         body: object,
         permissions: Permissions,
         policy: Policy,
+        operation: str,
     ) -> Response:
         resolved = _require_mutation_permission(
             await self._client._resolved_credential_async(),
-            wire.ADD_BADGE_OPERATION,
+            operation,
             permissions,
         )
         return await self._client._dataset_call_async(
             method=method,
             path=path,
-            owning_operation=wire.ADD_BADGE_OPERATION,
+            owning_operation=operation,
             headers=headers,
             json_body=body,
             permissions=permissions,

@@ -9,8 +9,6 @@ from datasluice.domain.catalog.models import MappingRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogValidationError
 
-_SAFE_SEGMENT = frozenset("!$&'()*+,-.=@_~")
-
 
 @dataclass(frozen=True, slots=True)
 class BadgeCreateInput:
@@ -67,4 +65,4 @@ def segment(value: str, operation: str) -> str:
             platform="udata",
             safe_action="Pass a prior typed read identifier.",
         )
-    return quote(value, safe="" if value[0] not in _SAFE_SEGMENT else "")
+    return quote(value, safe="")

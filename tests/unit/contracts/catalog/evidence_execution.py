@@ -5,7 +5,14 @@ from collections.abc import Mapping
 from pathlib import Path
 
 CLIENT_CONSTRUCTORS = {"create_sync_client": "sync", "create_async_client": "async"}
-CLIENT_FAMILIES = {"auth_oauth", "users_tokens", "organizations_memberships"}
+CLIENT_FAMILIES = {"auth_oauth", "taxonomies", "users_tokens", "organizations_memberships"}
+_TYPED_METHOD_ALIASES = {
+    "add_dataset_badge": "add_badge",
+    "available_dataset_badges": "available_badges",
+    "delete_dataset_badge": "delete_badge",
+    "get_dataset_schemas": "dataset_schemas",
+    "list_dataset_schemas": "schemas",
+}
 
 
 def _own_nodes(node: ast.AST) -> list[ast.AST]:
@@ -279,7 +286,10 @@ def executed_modes(source: str, test_name: str, methods: set[str]) -> dict[str, 
 
 def typed_methods(operation_ids: set[str]) -> set[str]:
     """Return the typed method name a profile operation ID is driven through."""
-    return {operation.rsplit(".", 1)[-1].replace("-", "_") for operation in operation_ids}
+    return {
+        _TYPED_METHOD_ALIASES.get(method := operation.rsplit(".", 1)[-1].replace("-", "_"), method)
+        for operation in operation_ids
+    }
 
 
 def unexecuted_operations(source: str, test_name: str, operation_ids: set[str], claimed_modes: list[str]) -> set[str]:
