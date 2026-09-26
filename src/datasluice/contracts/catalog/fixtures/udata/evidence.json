@@ -133,7 +133,7 @@
     "response_shape": "locale-map-record-list-string-list-and-status-skeleton",
     "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
-    "implementation_sha": "a9cdabd3de074d4b2dd44a5ea07357df0335a349",
+    "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
     "controlled_test_sha256": "5ce2790fc54b0e75958be3fab299f027106d5c7a33535727856283b4439f477c",
     "wheel_test_sha256": "0bc25961b25b140fd649258d20ed992a5700b8b299de409bd7d437812d2365da",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",

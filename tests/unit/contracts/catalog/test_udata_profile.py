@@ -325,7 +325,7 @@ def test_controlled_taxonomy_evidence_covers_every_route_in_both_modes() -> None
     assert set(reads).isdisjoint(mutations)
     assert controlled["captured_at"] == "2026-09-26"
     assert controlled["stack_version"] == "17.6.0"
-    assert controlled["implementation_sha"] == "a9cdabd3de074d4b2dd44a5ea07357df0335a349"
+    assert controlled["implementation_sha"] == "c73861d405dd6a4d03542e69bdf1c218e27bbf11"
     assert (
         controlled["controlled_test_sha256"]
         == hashlib.sha256(
