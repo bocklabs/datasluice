@@ -537,3 +537,59 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
             origin=ORIGIN,
         ) as client:
             client.activity_discussions.activity(ActivityQuery())
+
+
+def test_pre_dispatch_rejection_carries_a_redacted_receipt_and_dispatches_nothing() -> None:
+    router = _Router(_routes({}))
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        with pytest.raises(ForbiddenError) as rejected:
+            client.activity_discussions.delete_discussion("discussion-1", PERMISSIONS)
+    receipt = rejected.value.__dict__["mutation_receipt"]
+    assert receipt.operation == wire.DELETE_DISCUSSION_OPERATION
+    assert receipt.target.value == "discussion-1"
+    assert receipt.outcome == "rejected"
+    assert b"secret-key" not in json.dumps(receipt.to_dict()).encode()
+    assert router.requests == []
+
+
+def test_cancelled_discussion_mutation_records_a_cancelled_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancellation stays visible as `cancelled` rather than collapsing to `failed`."""
+
+    async def cancel_async(**kwargs: object) -> tuple[int, object, object]:
+        raise asyncio.CancelledError
+
+    async def run_async() -> None:
+        async with AsyncUDataClient(
+            _AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+        ) as client:
+            monkeypatch.setattr(client, "_dataset_call_async", cancel_async)
+            with pytest.raises(asyncio.CancelledError) as cancelled:
+                await client.activity_discussions.delete_discussion(
+                    "discussion-1",
+                    PERMISSIONS,
+                    _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1"),
+                )
+            receipt = cancelled.value.__dict__["mutation_receipt"]
+            assert receipt.outcome == "cancelled"
+            assert receipt.operation == wire.DELETE_DISCUSSION_OPERATION
+
+    asyncio.run(run_async())
+
+
+def test_interrupted_discussion_mutation_is_not_misreported_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KeyboardInterrupt keeps the interruption outcome instead of the generic `failed`."""
+
+    def interrupt(**kwargs: object) -> tuple[int, object, object]:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt) as stopped:
+        with SyncUDataClient(
+            _Router(_routes({})), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+        ) as client:
+            monkeypatch.setattr(client, "_dataset_call", interrupt)
+            client.activity_discussions.delete_discussion(
+                "discussion-1",
+                PERMISSIONS,
+                _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1"),
+            )
+    assert stopped.value.__dict__["mutation_receipt"].outcome == "cancelled"
