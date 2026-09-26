@@ -83,14 +83,14 @@ def _close_upload(
         raise
 
 
-def _reject_route(
+def _reject_receipt(
     error: BaseException, target: str, policy: Policy, mutation: str, resource_kind: ResourceKind, operation: str
-) -> None:
+) -> MutationReceipt:
     receipt = _receipt(
         policy, target, "rejected", _error_status(error), mutation, resource_kind=resource_kind, operation=operation
     )
     _attach(error, receipt)
-    raise error
+    return receipt
 
 
 def _mutation_result(receipt: MutationReceipt, payload: object, mutation: str) -> Result:
@@ -106,6 +106,18 @@ def _mutation_result(receipt: MutationReceipt, payload: object, mutation: str) -
     if mutation == "deleted" or mutation == "extras_deleted":
         return ResourceMutationResult(receipt=receipt)
     return ResourceMutationResult(receipt=receipt, record=wire.parse_resource(payload))
+
+
+def _upload_operation(replacing: bool, community: bool) -> str:
+    if community:
+        return wire.UPLOAD_COMMUNITY_REPLACE_OPERATION if replacing else wire.UPLOAD_COMMUNITY_NEW_OPERATION
+    return wire.UPLOAD_REPLACE_OPERATION if replacing else wire.UPLOAD_NEW_OPERATION
+
+
+def _community_operation(mutation: str, destructive: bool) -> str:
+    if mutation == "created":
+        return wire.COMMUNITY_CREATE_OPERATION
+    return wire.COMMUNITY_DELETE_OPERATION if destructive else wire.COMMUNITY_UPDATE_OPERATION
 
 
 def _route_operation(mutation: str, resource_kind: ResourceKind, operation: str) -> str:
@@ -243,7 +255,8 @@ class SyncResourcesService:
         try:
             method, path, _, body = wire.create_resource_request(dataset_id, client_input)
         except BaseException as error:
-            _reject_route(error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.CREATE_OPERATION)
+            _reject_receipt(error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.CREATE_OPERATION)
+            raise
         return _resource_mutation(
             dataset_id,
             mutation_policy,
@@ -264,7 +277,10 @@ class SyncResourcesService:
         try:
             method, path, _, body = wire.update_resources_request(dataset_id, values)
         except BaseException as error:
-            _reject_route(error, dataset_id, mutation_policy, "reordered", ResourceKind.DATASET, wire.REORDER_OPERATION)
+            _reject_receipt(
+                error, dataset_id, mutation_policy, "reordered", ResourceKind.DATASET, wire.REORDER_OPERATION
+            )
+            raise
         return _resource_mutation(
             dataset_id,
             mutation_policy,
@@ -286,15 +302,7 @@ class SyncResourcesService:
     ) -> Result:
         target = resource_id if resource_id is not None else dataset_id
         resource_kind = ResourceKind.RESOURCE if resource_id is not None else ResourceKind.DATASET
-        operation = (
-            wire.UPLOAD_COMMUNITY_REPLACE_OPERATION
-            if community and resource_id is not None
-            else wire.UPLOAD_REPLACE_OPERATION
-            if resource_id is not None
-            else wire.UPLOAD_COMMUNITY_NEW_OPERATION
-            if community
-            else wire.UPLOAD_NEW_OPERATION
-        )
+        operation = _upload_operation(resource_id is not None, community)
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
@@ -393,9 +401,10 @@ class SyncResourcesService:
         try:
             method, path, _, body = wire.resource_request("PUT", dataset_id, resource_id, body=client_input.payload())
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, resource_id, mutation_policy, "updated", ResourceKind.RESOURCE, wire.RESOURCE_UPDATE_OPERATION
             )
+            raise
         return _resource_mutation(
             resource_id,
             mutation_policy,
@@ -414,9 +423,10 @@ class SyncResourcesService:
         try:
             method, path, _, _ = wire.resource_request("DELETE", dataset_id, resource_id)
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, resource_id, mutation_policy, "deleted", ResourceKind.RESOURCE, wire.RESOURCE_DELETE_OPERATION
             )
+            raise
         return _resource_mutation(
             resource_id,
             mutation_policy,
@@ -444,9 +454,10 @@ class SyncResourcesService:
                 "POST", client_input.payload() | {"dataset": dataset_id}
             )
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.COMMUNITY_CREATE_OPERATION
             )
+            raise
         return _resource_mutation(
             dataset_id,
             mutation_policy,
@@ -528,7 +539,7 @@ class SyncResourcesService:
         try:
             method, path, _, body = wire.v2_extras_request("PUT", dataset_id, resource_id, dict(values))
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error,
                 resource_id,
                 mutation_policy,
@@ -536,6 +547,7 @@ class SyncResourcesService:
                 ResourceKind.RESOURCE,
                 wire.EXTRAS_UPDATE_OPERATION,
             )
+            raise
         return _resource_mutation(
             resource_id,
             mutation_policy,
@@ -555,7 +567,7 @@ class SyncResourcesService:
         try:
             method, path, _, body = wire.v2_extras_request("DELETE", dataset_id, resource_id, list(keys))
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error,
                 resource_id,
                 mutation_policy,
@@ -563,6 +575,7 @@ class SyncResourcesService:
                 ResourceKind.RESOURCE,
                 wire.EXTRAS_DELETE_OPERATION,
             )
+            raise
         return _resource_mutation(
             resource_id,
             mutation_policy,
@@ -621,31 +634,22 @@ class SyncResourcesService:
         try:
             _, path, _, _ = wire.resource_request(method, "", target, community=True, body=body)
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error,
                 target,
                 policy,
                 mutation,
                 ResourceKind.RESOURCE,
-                wire.COMMUNITY_CREATE_OPERATION
-                if mutation == "created"
-                else wire.COMMUNITY_DELETE_OPERATION
-                if destructive
-                else wire.COMMUNITY_UPDATE_OPERATION,
+                _community_operation(mutation, destructive),
             )
+            raise
         return _resource_mutation(
             target,
             policy,
             mutation,
             destructive,
             lambda: self._call(method, path, body, permissions, policy),
-            operation=(
-                wire.COMMUNITY_CREATE_OPERATION
-                if mutation == "created"
-                else wire.COMMUNITY_DELETE_OPERATION
-                if destructive
-                else wire.COMMUNITY_UPDATE_OPERATION
-            ),
+            operation=_community_operation(mutation, destructive),
         )
 
 
@@ -676,7 +680,8 @@ class AsyncResourcesService:
         try:
             method, path, _, body = wire.create_resource_request(dataset_id, client_input)
         except BaseException as error:
-            _reject_route(error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.CREATE_OPERATION)
+            _reject_receipt(error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.CREATE_OPERATION)
+            raise
         return await _async_resource_mutation(
             dataset_id,
             mutation_policy,
@@ -697,7 +702,10 @@ class AsyncResourcesService:
         try:
             method, path, _, body = wire.update_resources_request(dataset_id, values)
         except BaseException as error:
-            _reject_route(error, dataset_id, mutation_policy, "reordered", ResourceKind.DATASET, wire.REORDER_OPERATION)
+            _reject_receipt(
+                error, dataset_id, mutation_policy, "reordered", ResourceKind.DATASET, wire.REORDER_OPERATION
+            )
+            raise
         return await _async_resource_mutation(
             dataset_id,
             mutation_policy,
@@ -719,15 +727,7 @@ class AsyncResourcesService:
     ) -> Result:
         target = resource_id if resource_id is not None else dataset_id
         resource_kind = ResourceKind.RESOURCE if resource_id is not None else ResourceKind.DATASET
-        operation = (
-            wire.UPLOAD_COMMUNITY_REPLACE_OPERATION
-            if community and resource_id is not None
-            else wire.UPLOAD_REPLACE_OPERATION
-            if resource_id is not None
-            else wire.UPLOAD_COMMUNITY_NEW_OPERATION
-            if community
-            else wire.UPLOAD_NEW_OPERATION
-        )
+        operation = _upload_operation(resource_id is not None, community)
         result: Result | None = None
         primary_error: BaseException | None = None
         try:
@@ -778,9 +778,10 @@ class AsyncResourcesService:
         try:
             method, path, _, _ = wire.resource_request("DELETE", dataset_id, resource_id)
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, resource_id, mutation_policy, "deleted", ResourceKind.RESOURCE, wire.RESOURCE_DELETE_OPERATION
             )
+            raise
         return await _async_resource_mutation(
             resource_id,
             mutation_policy,
@@ -800,9 +801,10 @@ class AsyncResourcesService:
         try:
             method, path, _, body = wire.resource_request("PUT", dataset_id, resource_id, body=client_input.payload())
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, resource_id, mutation_policy, "updated", ResourceKind.RESOURCE, wire.RESOURCE_UPDATE_OPERATION
             )
+            raise
         return await _async_resource_mutation(
             resource_id,
             mutation_policy,
@@ -907,9 +909,10 @@ class AsyncResourcesService:
                 "POST", client_input.payload() | {"dataset": dataset_id}
             )
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, dataset_id, mutation_policy, "created", ResourceKind.DATASET, wire.COMMUNITY_CREATE_OPERATION
             )
+            raise
         return await _async_resource_mutation(
             dataset_id,
             mutation_policy,
@@ -932,9 +935,10 @@ class AsyncResourcesService:
                 "PUT", "", resource_id, community=True, body=client_input.payload()
             )
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, resource_id, mutation_policy, "updated", ResourceKind.RESOURCE, wire.COMMUNITY_UPDATE_OPERATION
             )
+            raise
         return await _async_resource_mutation(
             resource_id,
             mutation_policy,
@@ -953,9 +957,10 @@ class AsyncResourcesService:
         try:
             method, path, _, _ = wire.resource_request("DELETE", "", resource_id, community=True)
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error, resource_id, mutation_policy, "deleted", ResourceKind.RESOURCE, wire.COMMUNITY_DELETE_OPERATION
             )
+            raise
         return await _async_resource_mutation(
             resource_id,
             mutation_policy,
@@ -992,7 +997,7 @@ class AsyncResourcesService:
         try:
             method, path, _, body = wire.v2_extras_request("PUT", dataset_id, resource_id, dict(values))
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error,
                 resource_id,
                 mutation_policy,
@@ -1000,6 +1005,7 @@ class AsyncResourcesService:
                 ResourceKind.RESOURCE,
                 wire.EXTRAS_UPDATE_OPERATION,
             )
+            raise
         return await _async_resource_mutation(
             resource_id,
             mutation_policy,
@@ -1020,7 +1026,7 @@ class AsyncResourcesService:
         try:
             method, path, _, body = wire.v2_extras_request("DELETE", dataset_id, resource_id, list(keys))
         except BaseException as error:
-            _reject_route(
+            _reject_receipt(
                 error,
                 resource_id,
                 mutation_policy,
@@ -1028,6 +1034,7 @@ class AsyncResourcesService:
                 ResourceKind.RESOURCE,
                 wire.EXTRAS_DELETE_OPERATION,
             )
+            raise
         return await _async_resource_mutation(
             resource_id,
             mutation_policy,
