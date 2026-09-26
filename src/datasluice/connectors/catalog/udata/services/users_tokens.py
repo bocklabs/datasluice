@@ -144,6 +144,14 @@ def _receipt_target(name: str, target: str, payload: object) -> str:
     return target
 
 
+def _escalates_privilege(name: str, body: object) -> bool:
+    return (
+        name in {"update_me", "update_user"}
+        and isinstance(body, UserUpdateInput)
+        and bool({"roles", "active"} & set(body.fields))
+    )
+
+
 def _discard_token_plaintext(payload: object, response: RuntimeResponse | None) -> RuntimeResponse | None:
     if isinstance(payload, dict):
         payload.pop("token", None)
@@ -246,9 +254,8 @@ class SyncUsersTokensService:
             credential = _require_mutation_permission(
                 self._client._resolved_credential(), operation, permissions, admin=name in _ADMIN
             )
-            if name in {"update_me", "update_user"} and isinstance(body, UserUpdateInput):
-                if {"roles", "active"} & set(body.fields):
-                    _require_mutation_permission(credential, operation, permissions, admin=True)
+            if _escalates_privilege(name, body):
+                _require_mutation_permission(credential, operation, permissions, admin=True)
             method, path, headers, encoded = wire.build_request(
                 name, identifier=identifier, query=query, body=None if upload else body
             )
@@ -555,9 +562,8 @@ class AsyncUsersTokensService:
             credential = _require_mutation_permission(
                 await self._client._resolved_credential_async(), operation, permissions, admin=name in _ADMIN
             )
-            if name in {"update_me", "update_user"} and isinstance(body, UserUpdateInput):
-                if {"roles", "active"} & set(body.fields):
-                    _require_mutation_permission(credential, operation, permissions, admin=True)
+            if _escalates_privilege(name, body):
+                _require_mutation_permission(credential, operation, permissions, admin=True)
             method, path, headers, encoded = wire.build_request(
                 name, identifier=identifier, query=query, body=None if upload else body
             )

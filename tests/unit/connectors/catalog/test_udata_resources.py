@@ -155,7 +155,8 @@ def test_resource_page_and_type_decoders_keep_typed_data_and_pagination() -> Non
 
     assert page.items[0].id.value == "resource"
     assert page.native_page.total == 11
-    assert page.page is not None and page.page.next_cursor == "2"
+    assert page.page is not None
+    assert page.page.next_cursor == "2"
     assert wire.parse_resource_types([{"id": "file", "label": "File"}]) == ({"id": "file", "label": "File"},)
 
     with pytest.raises(CatalogValidationError, match="resource type"):

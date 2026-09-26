@@ -19,7 +19,7 @@ from datasluice.domain.catalog.safety import (
     IdempotencyPolicy,
     MutationPolicy,
 )
-from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
+from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
 
 
@@ -139,7 +139,7 @@ def test_invalid_upload_id_closes_source_and_attaches_rejection_receipt() -> Non
         destructive=True,
     )
 
-    with client, pytest.raises(Exception) as raised:
+    with client, pytest.raises(CatalogValidationError) as raised:
         client.resources.upload(
             "dataset",
             ResourceUploadInput(source, "data.csv", 3),
@@ -197,7 +197,7 @@ def test_upload_close_failure_preserves_the_primary_rejection_receipt() -> None:
         owns_transport=False,
     )
 
-    with client, pytest.raises(Exception) as raised:
+    with client, pytest.raises(ForbiddenError) as raised:
         client.resources.upload(
             "dataset",
             ResourceUploadInput(_CloseFailingSource(b"abc"), "data.csv", 3),
@@ -238,9 +238,9 @@ def test_upload_malformed_2xx_is_ambiguous_and_307_is_not_replayed() -> None:
         owns_transport=False,
     )
     with client:
-        with pytest.raises(Exception) as raised:
+        with pytest.raises(NativeCatalogError) as raised:
             client.resources.upload("dataset", ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3), permissions, policy)
-        with pytest.raises(Exception) as redirected:
+        with pytest.raises(CatalogValidationError) as redirected:
             client.resources.upload(
                 "dataset",
                 ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3),
