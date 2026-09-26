@@ -133,6 +133,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.root_profile import (
         SyncRootProfileService as _SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.taxonomies import (
+        AsyncTaxonomiesService as _AsyncTaxonomiesService,
+    )
+    from datasluice.connectors.catalog.udata.services.taxonomies import (
+        SyncTaxonomiesService as _SyncTaxonomiesService,
+    )
     from datasluice.connectors.catalog.udata.services.users_tokens import (
         AsyncUsersTokensService as _AsyncUsersTokensService,
     )
@@ -3131,6 +3137,11 @@ class SyncUDataClient(_UDataClientCore):
         return SyncResourcesService(self)
 
     @property
+    def taxonomies(self) -> _SyncTaxonomiesService:
+        """Expose the complete typed taxonomy service."""
+        return SyncTaxonomiesService(self)
+
+    @property
     def organizations_memberships(self) -> _SyncOrganizationsMembershipsService:
         """Expose the complete typed organization and membership service."""
         return SyncOrganizationsMembershipsService(self)
@@ -3579,6 +3590,11 @@ class AsyncUDataClient(_UDataClientCore):
     def resources(self) -> _AsyncResourcesService:
         """Expose the complete typed resource service."""
         return AsyncResourcesService(self)
+
+    @property
+    def taxonomies(self) -> _AsyncTaxonomiesService:
+        """Expose the complete typed taxonomy service."""
+        return AsyncTaxonomiesService(self)
 
     @property
     def organizations_memberships(self) -> _AsyncOrganizationsMembershipsService:
@@ -4098,12 +4114,18 @@ def _load_services():
         AsyncRootProfileService,
         SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.taxonomies import (
+        AsyncTaxonomiesService,
+        SyncTaxonomiesService,
+    )
     from datasluice.connectors.catalog.udata.services.users_tokens import (
         AsyncUsersTokensService,
         SyncUsersTokensService,
     )
 
     return (
+        AsyncTaxonomiesService,
+        SyncTaxonomiesService,
         AsyncDatasetsService,
         SyncDatasetsService,
         AsyncRootProfileService,
@@ -4120,6 +4142,8 @@ def _load_services():
 
 
 (
+    AsyncTaxonomiesService,
+    SyncTaxonomiesService,
     AsyncDatasetsService,
     SyncDatasetsService,
     AsyncRootProfileService,

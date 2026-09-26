@@ -152,6 +152,20 @@ _EVIDENCE_CLAIMING_TESTS = {
     },
 }
 
+_TAXONOMY_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.available-dataset-badges",
+    "udata/api-v1.add-dataset-badge",
+    "udata/api-v1.delete-dataset-badge",
+    "udata/api-v1.suggest-formats",
+    "udata/api-v1.suggest-mime",
+    "udata/api-v1.list-licenses",
+    "udata/api-v1.list-frequencies",
+    "udata/api-v1.allowed-extensions",
+    "udata/api-v1.list-dataset-schemas",
+    "udata/api-v2.get-dataset-schemas",
+}
+
+
 _OAUTH_ROUTE_OPERATION_IDS = {
     "udata/oauth.access-token",
     "udata/oauth.authorize",
@@ -181,6 +195,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _ORGANIZATION_ROUTE_OPERATION_IDS
         | _USER_ROUTE_OPERATION_IDS
         | _OAUTH_ROUTE_OPERATION_IDS
+        | _TAXONOMY_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 

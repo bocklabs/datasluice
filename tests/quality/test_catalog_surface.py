@@ -656,6 +656,20 @@ NATIVE_OPERATION_MEMBERS["udata"].update(
         for operation_id in USER_ROUTE_OPERATION_IDS
     }
 )
+TAXONOMY_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.available-dataset-badges",
+        "udata/api-v1.add-dataset-badge",
+        "udata/api-v1.delete-dataset-badge",
+        "udata/api-v1.suggest-formats",
+        "udata/api-v1.suggest-mime",
+        "udata/api-v1.list-licenses",
+        "udata/api-v1.list-frequencies",
+        "udata/api-v1.allowed-extensions",
+        "udata/api-v1.list-dataset-schemas",
+        "udata/api-v2.get-dataset-schemas",
+    }
+)
 OAUTH_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/oauth.access-token",
@@ -719,7 +733,7 @@ LOCKED_EXTRA_OPERATION_IDS = (
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
-    "udata": LOCKED_DATASET_ROUTE_OPERATIONS | OAUTH_ROUTE_OPERATION_IDS,
+    "udata": LOCKED_DATASET_ROUTE_OPERATIONS | TAXONOMY_ROUTE_OPERATION_IDS | OAUTH_ROUTE_OPERATION_IDS,
 }
 
 
