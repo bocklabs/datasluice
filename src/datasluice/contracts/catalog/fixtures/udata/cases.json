@@ -16,11 +16,19 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.add-reuse-badge",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.authentication-and-oauth-flows",
       "outcome": "optional"
     },
     {
       "operation": "udata/api-v1.available-organization-badges",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.available-reuse-badges",
       "outcome": "core"
     },
     {
@@ -41,6 +49,10 @@
     },
     {
       "operation": "udata/api-v1.create-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-reuse",
       "outcome": "authenticated-success"
     },
     {
@@ -180,6 +192,14 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.delete-reuse",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-reuse-badge",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.delete-user",
       "outcome": "authenticated-success"
     },
@@ -188,7 +208,15 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.feature-reuse",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.follow-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.follow-reuse",
       "outcome": "authenticated-success"
     },
     {
@@ -213,6 +241,10 @@
     },
     {
       "operation": "udata/api-v1.get-organization-contact-point",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.get-reuse",
       "outcome": "core"
     },
     {
@@ -269,6 +301,14 @@
     },
     {
       "operation": "udata/api-v1.list-organizations",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-reuse-followers",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-reuses",
       "outcome": "core"
     },
     {
@@ -352,6 +392,10 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.recent-reuses-atom",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.refuse-membership",
       "outcome": "authenticated-success"
     },
@@ -377,6 +421,26 @@
     },
     {
       "operation": "udata/api-v1.resource-reads",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.reuse-add-dataservice",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.reuse-add-dataset",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.reuse-image",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.reuse-topics",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.reuse-types",
       "outcome": "core"
     },
     {
@@ -420,6 +484,10 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.suggest-reuses",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.suggest-users",
       "outcome": "core"
     },
@@ -436,7 +504,15 @@
       "outcome": "optional"
     },
     {
+      "operation": "udata/api-v1.unfeature-reuse",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.unfollow-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.unfollow-reuse",
       "outcome": "authenticated-success"
     },
     {
@@ -457,6 +533,10 @@
     },
     {
       "operation": "udata/api-v1.update-organization-member",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-reuse",
       "outcome": "authenticated-success"
     },
     {
@@ -484,6 +564,10 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v2.list-reuses",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v2.my-org-topics",
       "outcome": "authenticated-success"
     },
@@ -493,6 +577,10 @@
     },
     {
       "operation": "udata/api-v2.search-organizations",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v2.search-reuses",
       "outcome": "core"
     },
     {

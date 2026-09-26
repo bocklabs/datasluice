@@ -37,6 +37,14 @@ if TYPE_CHECKING:
         ResourceUpdateInput,
         ResourceUploadInput,
     )
+    from datasluice.connectors.catalog.udata.models.reuses import (
+        ReuseCreateInput,
+        ReuseListQuery,
+        ReuseMutationResult,
+        ReuseSearchQuery,
+        ReuseSuggestQuery,
+        ReuseUpdateInput,
+    )
     from datasluice.connectors.catalog.udata.models.taxonomies import (
         BadgeCreateInput,
         SuggestQuery,
@@ -801,6 +809,172 @@ class AsyncUDataActivityDiscussionsService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataReusesService(Protocol):
+    """Typed synchronous reuse and reuse-follower operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_reuses(self, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    def create_reuse(
+        self,
+        client_input: ReuseCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    def recent_reuses_atom_feed(self, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    def get_reuse(self, reuse_id: str) -> MappingRecord: ...
+    def update_reuse(
+        self,
+        reuse_id: str,
+        client_input: ReuseUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    def delete_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    def reuse_add_dataset(
+        self,
+        reuse_id: str,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    def reuse_add_dataservice(
+        self,
+        reuse_id: str,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    def available_reuse_badges(self) -> tuple[MappingRecord, ...]: ...
+    def add_reuse_badge(
+        self,
+        reuse_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    def delete_reuse_badge(
+        self,
+        reuse_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    def feature_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    def unfeature_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    def suggest_reuses(self, query: ReuseSuggestQuery) -> tuple[MappingRecord, ...]: ...
+    def reuse_image(
+        self,
+        reuse_id: str,
+        data: bytes,
+        content_type: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    def reuse_types(self) -> tuple[MappingRecord, ...]: ...
+    def reuse_topics(self) -> tuple[MappingRecord, ...]: ...
+    def search_v2(self, query: ReuseSearchQuery | None = None) -> MappingRecord: ...
+    def list_v2(self, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    def list_reuse_followers(self, reuse_id: str, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    def follow_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    def unfollow_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataReusesService(Protocol):
+    """Typed asynchronous reuse and reuse-follower operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_reuses(self, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    async def create_reuse(
+        self,
+        client_input: ReuseCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    async def recent_reuses_atom_feed(self, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    async def get_reuse(self, reuse_id: str) -> MappingRecord: ...
+    async def update_reuse(
+        self,
+        reuse_id: str,
+        client_input: ReuseUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    async def delete_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    async def reuse_add_dataset(
+        self,
+        reuse_id: str,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    async def reuse_add_dataservice(
+        self,
+        reuse_id: str,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    async def available_reuse_badges(self) -> tuple[MappingRecord, ...]: ...
+    async def add_reuse_badge(
+        self,
+        reuse_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    async def delete_reuse_badge(
+        self,
+        reuse_id: str,
+        badge_kind: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    async def feature_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    async def unfeature_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    async def suggest_reuses(self, query: ReuseSuggestQuery) -> tuple[MappingRecord, ...]: ...
+    async def reuse_image(
+        self,
+        reuse_id: str,
+        data: bytes,
+        content_type: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ReuseMutationResult: ...
+    async def reuse_types(self) -> tuple[MappingRecord, ...]: ...
+    async def reuse_topics(self) -> tuple[MappingRecord, ...]: ...
+    async def search_v2(self, query: ReuseSearchQuery | None = None) -> MappingRecord: ...
+    async def list_v2(self, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    async def list_reuse_followers(self, reuse_id: str, query: ReuseListQuery | None = None) -> MappingRecord: ...
+    async def follow_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+    async def unfollow_reuse(
+        self, reuse_id: str, permissions: EffectivePermissions, mutation_policy: MutationPolicy | None = None
+    ) -> ReuseMutationResult: ...
+
+
+@runtime_checkable
 class SyncUDataTaxonomiesService(Protocol):
     """Typed synchronous taxonomy, schema, format, and badge operations."""
 
@@ -1152,6 +1326,9 @@ class SyncUDataServices(Protocol):
     def resources(self) -> SyncUDataResourcesService: ...
 
     @property
+    def reuses(self) -> SyncUDataReusesService: ...
+
+    @property
     def organizations_memberships(self) -> SyncUDataOrganizationsMembershipsService: ...
 
     @property
@@ -1191,6 +1368,9 @@ class AsyncUDataServices(Protocol):
 
     @property
     def resources(self) -> AsyncUDataResourcesService: ...
+
+    @property
+    def reuses(self) -> AsyncUDataReusesService: ...
 
     @property
     def organizations_memberships(self) -> AsyncUDataOrganizationsMembershipsService: ...

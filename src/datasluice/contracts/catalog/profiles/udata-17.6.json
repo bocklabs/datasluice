@@ -5,7 +5,7 @@
     "platform_api_version": "uData API v1",
     "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
     "source_accessed_at": "2026-08-27",
-    "fixture_fingerprint": "989c5768f1d8b9c3bbf5f091e99fb00d5714757678543674dad0e787cf102cb7",
+    "fixture_fingerprint": "fc4d57b49922b07f92ccfa01c11ba83a22162eed46f4dbb5ac96b0deee688579",
     "operations": [
         {
             "id": "udata/api-v1.accept-membership",
@@ -36,6 +36,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.add-reuse-badge",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.allowed-extensions",
             "capability": "core",
             "authentication": "public",
@@ -58,6 +65,13 @@
         },
         {
             "id": "udata/api-v1.available-organization-badges",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.available-reuse-badges",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -100,6 +114,13 @@
         },
         {
             "id": "udata/api-v1.create-organization",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.create-reuse",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "create",
@@ -337,6 +358,20 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.delete-reuse",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.delete-reuse-badge",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.delete-user",
             "capability": "admin",
             "authentication": "privileged",
@@ -358,7 +393,21 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.feature-reuse",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.follow-organization",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.follow-reuse",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
@@ -408,6 +457,13 @@
         },
         {
             "id": "udata/api-v1.get-organization-contact-point",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.get-reuse",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -534,6 +590,20 @@
         },
         {
             "id": "udata/api-v1.list-organizations",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.list-reuse-followers",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.list-reuses",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -701,6 +771,13 @@
             "evidence_requirement": "anonymous-read"
         },
         {
+            "id": "udata/api-v1.recent-reuses-atom",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
             "id": "udata/api-v1.refuse-membership",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -737,6 +814,41 @@
         },
         {
             "id": "udata/api-v1.resource-reads",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.reuse-add-dataservice",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.reuse-add-dataset",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.reuse-image",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.reuse-topics",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.reuse-types",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -813,6 +925,13 @@
             "evidence_requirement": "anonymous-read"
         },
         {
+            "id": "udata/api-v1.suggest-reuses",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
             "id": "udata/api-v1.suggest-users",
             "capability": "core",
             "authentication": "public",
@@ -848,7 +967,21 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.unfeature-reuse",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.unfollow-organization",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.unfollow-reuse",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "delete",
@@ -891,6 +1024,13 @@
         },
         {
             "id": "udata/api-v1.update-organization-member",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-reuse",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
@@ -974,6 +1114,13 @@
             "evidence_requirement": "anonymous-read"
         },
         {
+            "id": "udata/api-v2.list-reuses",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
             "id": "udata/api-v2.my-org-topics",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -996,6 +1143,13 @@
         },
         {
             "id": "udata/api-v2.search-organizations",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v2.search-reuses",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",

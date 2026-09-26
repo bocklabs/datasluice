@@ -690,6 +690,35 @@ NATIVE_OPERATION_MEMBERS["udata"].update(
         for operation_id in ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
     }
 )
+REUSE_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-reuses",
+        "udata/api-v1.create-reuse",
+        "udata/api-v1.recent-reuses-atom",
+        "udata/api-v1.get-reuse",
+        "udata/api-v1.update-reuse",
+        "udata/api-v1.delete-reuse",
+        "udata/api-v1.reuse-add-dataset",
+        "udata/api-v1.reuse-add-dataservice",
+        "udata/api-v1.available-reuse-badges",
+        "udata/api-v1.add-reuse-badge",
+        "udata/api-v1.delete-reuse-badge",
+        "udata/api-v1.feature-reuse",
+        "udata/api-v1.unfeature-reuse",
+        "udata/api-v1.suggest-reuses",
+        "udata/api-v1.reuse-image",
+        "udata/api-v1.reuse-types",
+        "udata/api-v1.reuse-topics",
+        "udata/api-v2.search-reuses",
+        "udata/api-v2.list-reuses",
+        "udata/api-v1.list-reuse-followers",
+        "udata/api-v1.follow-reuse",
+        "udata/api-v1.unfollow-reuse",
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {operation_id: ("SyncUDataServices", "AsyncUDataServices", "reuses") for operation_id in REUSE_ROUTE_OPERATION_IDS}
+)
 OAUTH_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/oauth.access-token",
@@ -751,6 +780,7 @@ LOCKED_EXTRA_OPERATION_IDS = (
     | USER_ROUTE_OPERATION_IDS
     | OAUTH_ROUTE_OPERATION_IDS
     | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
+    | REUSE_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
@@ -759,6 +789,7 @@ PLATFORM_APPROVED_ROUTE_OPERATIONS = {
         | TAXONOMY_ROUTE_OPERATION_IDS
         | OAUTH_ROUTE_OPERATION_IDS
         | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
+        | REUSE_ROUTE_OPERATION_IDS
     ),
 }
 

@@ -210,6 +210,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _USER_ROUTE_OPERATION_IDS
         | _OAUTH_ROUTE_OPERATION_IDS
         | _TAXONOMY_ROUTE_OPERATION_IDS
+        | _REUSE_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 
@@ -252,6 +253,31 @@ _DATASET_ROUTE_OPERATION_IDS = {
     "udata/api-v2.get-dataset-extras",
     "udata/api-v2.update-dataset-extras",
     "udata/api-v2.delete-dataset-extras",
+}
+
+_REUSE_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-reuses",
+    "udata/api-v1.create-reuse",
+    "udata/api-v1.recent-reuses-atom",
+    "udata/api-v1.get-reuse",
+    "udata/api-v1.update-reuse",
+    "udata/api-v1.delete-reuse",
+    "udata/api-v1.reuse-add-dataset",
+    "udata/api-v1.reuse-add-dataservice",
+    "udata/api-v1.available-reuse-badges",
+    "udata/api-v1.add-reuse-badge",
+    "udata/api-v1.delete-reuse-badge",
+    "udata/api-v1.feature-reuse",
+    "udata/api-v1.unfeature-reuse",
+    "udata/api-v1.suggest-reuses",
+    "udata/api-v1.reuse-image",
+    "udata/api-v1.reuse-types",
+    "udata/api-v1.reuse-topics",
+    "udata/api-v2.search-reuses",
+    "udata/api-v2.list-reuses",
+    "udata/api-v1.list-reuse-followers",
+    "udata/api-v1.follow-reuse",
+    "udata/api-v1.unfollow-reuse",
 }
 
 

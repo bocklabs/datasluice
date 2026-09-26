@@ -133,6 +133,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.resources import (
         SyncResourcesService as _SyncResourcesService,
     )
+    from datasluice.connectors.catalog.udata.services.reuses import (
+        AsyncReusesService as _AsyncReusesService,
+    )
+    from datasluice.connectors.catalog.udata.services.reuses import (
+        SyncReusesService as _SyncReusesService,
+    )
     from datasluice.connectors.catalog.udata.services.root_profile import (
         AsyncRootProfileService as _AsyncRootProfileService,
     )
@@ -3170,6 +3176,11 @@ class SyncUDataClient(_UDataClientCore):
         return SyncResourcesService(self)
 
     @property
+    def reuses(self) -> _SyncReusesService:
+        """Expose the complete typed reuse and reuse-follower service."""
+        return SyncReusesService(self)
+
+    @property
     def taxonomies(self) -> _SyncTaxonomiesService:
         """Expose the complete typed taxonomy service."""
         return SyncTaxonomiesService(self)
@@ -3611,6 +3622,11 @@ class AsyncUDataClient(_UDataClientCore):
     def resources(self) -> _AsyncResourcesService:
         """Expose the complete typed resource service."""
         return AsyncResourcesService(self)
+
+    @property
+    def reuses(self) -> _AsyncReusesService:
+        """Expose the complete typed reuse and reuse-follower service."""
+        return AsyncReusesService(self)
 
     @property
     def taxonomies(self) -> _AsyncTaxonomiesService:
@@ -4123,6 +4139,7 @@ def _load_services():
         SyncOrganizationsMembershipsService,
     )
     from datasluice.connectors.catalog.udata.services.resources import AsyncResourcesService, SyncResourcesService
+    from datasluice.connectors.catalog.udata.services.reuses import AsyncReusesService, SyncReusesService
     from datasluice.connectors.catalog.udata.services.root_profile import (
         AsyncRootProfileService,
         SyncRootProfileService,
@@ -4147,6 +4164,8 @@ def _load_services():
         SyncRootProfileService,
         AsyncResourcesService,
         SyncResourcesService,
+        AsyncReusesService,
+        SyncReusesService,
         AsyncOrganizationsMembershipsService,
         SyncOrganizationsMembershipsService,
         AsyncUsersTokensService,
@@ -4167,6 +4186,8 @@ def _load_services():
     SyncRootProfileService,
     AsyncResourcesService,
     SyncResourcesService,
+    AsyncReusesService,
+    SyncReusesService,
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
     AsyncUsersTokensService,
