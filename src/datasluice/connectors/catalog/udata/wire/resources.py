@@ -42,6 +42,9 @@ V2_RESOURCE_GET_OPERATION = f"{RESOURCE_OPERATION}-v2-resource-get"
 V2_EXTRAS_GET_OPERATION = f"{RESOURCE_OPERATION}-v2-extras-get"
 
 
+RESOURCE_SCHEMA_SAFE_ACTION = "Verify the response against the pinned uData resource schema."
+
+
 def _id(value: object, name: str) -> str:
     if (
         not isinstance(value, str)
@@ -192,7 +195,7 @@ def parse_resource(payload: object) -> NativeRecord:
             "The uData resource response must contain a non-empty id.",
             operation=RESOURCE_OPERATION,
             platform="udata",
-            safe_action="Verify the response against the pinned uData resource schema.",
+            safe_action=RESOURCE_SCHEMA_SAFE_ACTION,
         )
     identifier = cast(str, payload["id"])
     return NativeRecord(
@@ -232,15 +235,10 @@ def parse_resource_page(payload: object) -> UDataPageEnvelope:
         next_page=page.next_page,
         total=page.total,
     )
-    page_info = (
-        PageInfo(
-            cursor=str(page.page),
-            next_cursor=str(page.page + 1) if page.next_page is not None else None,
-            total_items=page.total,
-        )
-        if page.page is not None
-        else None
-    )
+    page_info = None
+    if page.page is not None:
+        next_cursor = str(page.page + 1) if page.next_page is not None else None
+        page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
     return UDataPageEnvelope(
         items=tuple(parse_resource(item) for item in page.items),
         page=page_info,
@@ -255,7 +253,7 @@ def parse_resource_types(payload: object) -> tuple[Mapping[str, str], ...]:
             "The uData resource types response must be a list.",
             operation=RESOURCE_OPERATION,
             platform="udata",
-            safe_action="Verify the response against the pinned uData resource schema.",
+            safe_action=RESOURCE_SCHEMA_SAFE_ACTION,
         )
     rows: list[Mapping[str, str]] = []
     for item in payload:
@@ -266,7 +264,7 @@ def parse_resource_types(payload: object) -> tuple[Mapping[str, str], ...]:
                 "The uData resource type must include a non-empty id and label.",
                 operation=RESOURCE_OPERATION,
                 platform="udata",
-                safe_action="Verify the response against the pinned uData resource schema.",
+                safe_action=RESOURCE_SCHEMA_SAFE_ACTION,
             )
         rows.append(MappingProxyType({"id": item["id"], "label": item["label"]}))
     return tuple(rows)
