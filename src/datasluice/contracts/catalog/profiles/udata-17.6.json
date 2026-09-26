@@ -5,7 +5,7 @@
     "platform_api_version": "uData API v1",
     "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
     "source_accessed_at": "2026-08-27",
-    "fixture_fingerprint": "b992f4c694658cf762ae7a9133ddb1067058c3cf6a79e75235eef147bb9f2977",
+    "fixture_fingerprint": "989c5768f1d8b9c3bbf5f091e99fb00d5714757678543674dad0e787cf102cb7",
     "operations": [
         {
             "id": "udata/api-v1.accept-membership",
@@ -71,6 +71,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.comment-discussion",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.create-api-token",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -79,6 +86,13 @@
         },
         {
             "id": "udata/api-v1.create-dataset",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.create-discussion",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "create",
@@ -281,6 +295,20 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.delete-discussion",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.delete-discussion-comment",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.delete-me",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -316,6 +344,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.edit-discussion-comment",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
             "id": "udata/api-v1.feature-dataset",
             "capability": "admin",
             "authentication": "privileged",
@@ -345,6 +380,13 @@
         },
         {
             "id": "udata/api-v1.get-dataset",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.get-discussion",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -415,6 +457,13 @@
         },
         {
             "id": "udata/api-v1.list-datasets",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.list-discussions",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",
@@ -722,6 +771,13 @@
             "evidence_requirement": "controlled-environment-only"
         },
         {
+            "id": "udata/api-v1.site-activity",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
             "id": "udata/api-v1.suggest-datasets",
             "capability": "core",
             "authentication": "public",
@@ -807,6 +863,13 @@
         },
         {
             "id": "udata/api-v1.update-dataset",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-discussion",
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
@@ -919,6 +982,13 @@
         },
         {
             "id": "udata/api-v2.search-datasets",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v2.search-discussions",
             "capability": "core",
             "authentication": "public",
             "mutation": "read",

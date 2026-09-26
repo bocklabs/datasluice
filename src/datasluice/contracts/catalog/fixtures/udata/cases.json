@@ -8,6 +8,10 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.accept-org-invitation",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.add-organization-badge",
       "outcome": "authenticated-success"
     },
@@ -24,7 +28,23 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.comment-discussion",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-api-token",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-discussion",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.create-organization",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-user",
       "outcome": "authenticated-success"
     },
     {
@@ -136,6 +156,18 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.delete-discussion",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-discussion-comment",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-me",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.delete-organization",
       "outcome": "authenticated-success"
     },
@@ -148,11 +180,31 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.delete-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.edit-discussion-comment",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.follow-organization",
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.follow-user",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.followers-activities-discussions-and-reuses",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.get-discussion",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.get-me",
       "outcome": "authenticated-success"
     },
     {
@@ -164,6 +216,14 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.get-user",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.get-user-contact-point",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.harvest-moderation-and-admin-operations",
       "outcome": "forbidden"
     },
@@ -172,7 +232,19 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.list-api-tokens",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-discussions",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.list-membership-requests",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-org-invitations",
       "outcome": "authenticated-success"
     },
     {
@@ -200,7 +272,47 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.list-user-followers",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-users",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.membership-request",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-avatar",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-datasets",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-metrics",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-community-resources",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-datasets",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-discussions",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-org-reuses",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.my-reuses",
       "outcome": "authenticated-success"
     },
     {
@@ -244,6 +356,10 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.refuse-org-invitation",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.resize-organization-logo",
       "outcome": "authenticated-success"
     },
@@ -264,12 +380,20 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.revoke-api-token",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.root-and-effective-profile-probe",
       "outcome": "core"
     },
     {
       "operation": "udata/api-v1.root-and-effective-profile-probe",
       "outcome": "unavailable"
+    },
+    {
+      "operation": "udata/api-v1.rotate-user-password",
+      "outcome": "authenticated-success"
     },
     {
       "operation": "udata/api-v1.set_site",
@@ -284,11 +408,19 @@
       "outcome": "forbidden"
     },
     {
+      "operation": "udata/api-v1.site-activity",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.suggest-org-contact-points",
       "outcome": "core"
     },
     {
       "operation": "udata/api-v1.suggest-organizations",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.suggest-users",
       "outcome": "core"
     },
     {
@@ -308,12 +440,36 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.unfollow-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-discussion",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-me",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.update-organization",
       "outcome": "authenticated-success"
     },
     {
       "operation": "udata/api-v1.update-organization-member",
       "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.user-avatar",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.user-roles",
+      "outcome": "core"
     },
     {
       "operation": "udata/api-v1.users-me-and-api-token-management",
@@ -325,6 +481,14 @@
     },
     {
       "operation": "udata/api-v2.get-organization-extras",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v2.my-org-topics",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v2.search-discussions",
       "outcome": "core"
     },
     {
@@ -344,144 +508,12 @@
       "outcome": "optional"
     },
     {
-      "operation": "udata/api-v1.accept-org-invitation",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.create-api-token",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.create-user",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.delete-me",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.delete-user",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.follow-user",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.get-me",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.get-user",
-      "outcome": "core"
-    },
-    {
-      "operation": "udata/api-v1.get-user-contact-point",
-      "outcome": "core"
-    },
-    {
-      "operation": "udata/api-v1.list-api-tokens",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.list-org-invitations",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.list-user-followers",
-      "outcome": "core"
-    },
-    {
-      "operation": "udata/api-v1.list-users",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-avatar",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-datasets",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-metrics",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-org-community-resources",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-org-datasets",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-org-discussions",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-org-reuses",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.my-reuses",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.refuse-org-invitation",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.revoke-api-token",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.rotate-user-password",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.suggest-users",
-      "outcome": "core"
-    },
-    {
-      "operation": "udata/api-v1.unfollow-user",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.update-me",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.update-user",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.user-avatar",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/api-v1.user-roles",
-      "outcome": "core"
-    },
-    {
-      "operation": "udata/api-v2.my-org-topics",
-      "outcome": "authenticated-success"
-    },
-    {
       "operation": "udata/oauth.access-token",
       "outcome": "optional"
     },
     {
       "operation": "udata/oauth.access-token",
       "outcome": "invalid-credentials"
-    },
-    {
-      "operation": "udata/oauth.revoke-token",
-      "outcome": "authenticated-success"
-    },
-    {
-      "operation": "udata/oauth.client-info",
-      "outcome": "authenticated-success"
     },
     {
       "operation": "udata/oauth.authorize",
@@ -492,8 +524,16 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/oauth.client-info",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/oauth.oauth-error",
       "outcome": "optional"
+    },
+    {
+      "operation": "udata/oauth.revoke-token",
+      "outcome": "authenticated-success"
     }
   ]
 }

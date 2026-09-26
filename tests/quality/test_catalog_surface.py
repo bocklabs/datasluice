@@ -670,6 +670,26 @@ TAXONOMY_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v2.get-dataset-schemas",
     }
 )
+ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.site-activity",
+        "udata/api-v1.list-discussions",
+        "udata/api-v1.get-discussion",
+        "udata/api-v1.create-discussion",
+        "udata/api-v1.comment-discussion",
+        "udata/api-v1.update-discussion",
+        "udata/api-v1.delete-discussion",
+        "udata/api-v1.edit-discussion-comment",
+        "udata/api-v1.delete-discussion-comment",
+        "udata/api-v2.search-discussions",
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "activity_discussions")
+        for operation_id in ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
+    }
+)
 OAUTH_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/oauth.access-token",
@@ -730,10 +750,16 @@ LOCKED_EXTRA_OPERATION_IDS = (
     | ORGANIZATION_ROUTE_OPERATION_IDS
     | USER_ROUTE_OPERATION_IDS
     | OAUTH_ROUTE_OPERATION_IDS
+    | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
-    "udata": LOCKED_DATASET_ROUTE_OPERATIONS | TAXONOMY_ROUTE_OPERATION_IDS | OAUTH_ROUTE_OPERATION_IDS,
+    "udata": (
+        LOCKED_DATASET_ROUTE_OPERATIONS
+        | TAXONOMY_ROUTE_OPERATION_IDS
+        | OAUTH_ROUTE_OPERATION_IDS
+        | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
+    ),
 }
 
 

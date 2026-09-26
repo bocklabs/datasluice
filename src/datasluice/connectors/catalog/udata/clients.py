@@ -103,6 +103,12 @@ from datasluice.runtime.transport.base import (
 from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
 if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.services.activity_discussions import (
+        AsyncActivityDiscussionsService as _AsyncActivityDiscussionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.activity_discussions import (
+        SyncActivityDiscussionsService as _SyncActivityDiscussionsService,
+    )
     from datasluice.connectors.catalog.udata.services.auth_oauth import (
         AsyncAuthOAuthService as _AsyncAuthOAuthService,
     )
@@ -3169,6 +3175,11 @@ class SyncUDataClient(_UDataClientCore):
         return SyncTaxonomiesService(self)
 
     @property
+    def activity_discussions(self) -> _SyncActivityDiscussionsService:
+        """Expose the complete typed activity and discussion service."""
+        return SyncActivityDiscussionsService(self)
+
+    @property
     def organizations_memberships(self) -> _SyncOrganizationsMembershipsService:
         """Expose the complete typed organization and membership service."""
         return SyncOrganizationsMembershipsService(self)
@@ -3605,6 +3616,11 @@ class AsyncUDataClient(_UDataClientCore):
     def taxonomies(self) -> _AsyncTaxonomiesService:
         """Expose the complete typed taxonomy service."""
         return AsyncTaxonomiesService(self)
+
+    @property
+    def activity_discussions(self) -> _AsyncActivityDiscussionsService:
+        """Expose the complete typed activity and discussion service."""
+        return AsyncActivityDiscussionsService(self)
 
     @property
     def organizations_memberships(self) -> _AsyncOrganizationsMembershipsService:
@@ -4096,6 +4112,10 @@ async def _create_controlled_async_client(settings: UDataClientSettings) -> Asyn
 
 
 def _load_services():
+    from datasluice.connectors.catalog.udata.services.activity_discussions import (
+        AsyncActivityDiscussionsService,
+        SyncActivityDiscussionsService,
+    )
     from datasluice.connectors.catalog.udata.services.auth_oauth import AsyncAuthOAuthService, SyncAuthOAuthService
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
@@ -4117,6 +4137,8 @@ def _load_services():
     )
 
     return (
+        AsyncActivityDiscussionsService,
+        SyncActivityDiscussionsService,
         AsyncTaxonomiesService,
         SyncTaxonomiesService,
         AsyncDatasetsService,
@@ -4135,6 +4157,8 @@ def _load_services():
 
 
 (
+    AsyncActivityDiscussionsService,
+    SyncActivityDiscussionsService,
     AsyncTaxonomiesService,
     SyncTaxonomiesService,
     AsyncDatasetsService,

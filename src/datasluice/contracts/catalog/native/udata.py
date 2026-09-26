@@ -13,6 +13,14 @@ from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+    from datasluice.connectors.catalog.udata.models.activity_discussions import (
+        ActivityQuery,
+        CommentInput,
+        DiscussionCreateInput,
+        DiscussionMutationResult,
+        DiscussionSearchQuery,
+        DiscussionUpdateInput,
+    )
     from datasluice.connectors.catalog.udata.models.oauth import (
         OAuthAuthorizeDecision,
         OAuthClientRequest,
@@ -685,6 +693,114 @@ class AsyncUDataOrganizationsMembershipsService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataActivityDiscussionsService(Protocol):
+    """Typed synchronous activity and discussion operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def activity(self, query: ActivityQuery) -> MappingRecord: ...
+    def list_discussions(self) -> MappingRecord: ...
+    def get_discussion(self, discussion_id: str) -> MappingRecord: ...
+    def search_discussions(self, query: DiscussionSearchQuery) -> MappingRecord: ...
+    def create_discussion(
+        self,
+        client_input: DiscussionCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    def comment_discussion(
+        self,
+        discussion_id: str,
+        client_input: CommentInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    def update_discussion(
+        self,
+        discussion_id: str,
+        client_input: DiscussionUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    def delete_discussion(
+        self,
+        discussion_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    def edit_discussion_comment(
+        self,
+        discussion_id: str,
+        comment_id: str,
+        client_input: CommentInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    def delete_discussion_comment(
+        self,
+        discussion_id: str,
+        comment_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataActivityDiscussionsService(Protocol):
+    """Typed asynchronous activity and discussion operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def activity(self, query: ActivityQuery) -> MappingRecord: ...
+    async def list_discussions(self) -> MappingRecord: ...
+    async def get_discussion(self, discussion_id: str) -> MappingRecord: ...
+    async def search_discussions(self, query: DiscussionSearchQuery) -> MappingRecord: ...
+    async def create_discussion(
+        self,
+        client_input: DiscussionCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    async def comment_discussion(
+        self,
+        discussion_id: str,
+        client_input: CommentInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    async def update_discussion(
+        self,
+        discussion_id: str,
+        client_input: DiscussionUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    async def delete_discussion(
+        self,
+        discussion_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    async def edit_discussion_comment(
+        self,
+        discussion_id: str,
+        comment_id: str,
+        client_input: CommentInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+    async def delete_discussion_comment(
+        self,
+        discussion_id: str,
+        comment_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DiscussionMutationResult: ...
+
+
+@runtime_checkable
 class SyncUDataTaxonomiesService(Protocol):
     """Typed synchronous taxonomy, schema, format, and badge operations."""
 
@@ -1048,6 +1164,9 @@ class SyncUDataServices(Protocol):
     def taxonomies(self) -> SyncUDataTaxonomiesService: ...
 
     @property
+    def activity_discussions(self) -> SyncUDataActivityDiscussionsService: ...
+
+    @property
     def social(self) -> SyncUDataService: ...
 
     @property
@@ -1084,6 +1203,9 @@ class AsyncUDataServices(Protocol):
 
     @property
     def taxonomies(self) -> AsyncUDataTaxonomiesService: ...
+
+    @property
+    def activity_discussions(self) -> AsyncUDataActivityDiscussionsService: ...
 
     @property
     def social(self) -> AsyncUDataService: ...
