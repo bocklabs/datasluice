@@ -306,7 +306,7 @@
   "controlled_posts_report_evidence": {
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
-    "implementation_sha": "73a73d6601fa3d8651f528cf70bf44904bc02449",
+    "implementation_sha": "2373233cee7da7fa4465a1747fd41954b3b31ec2",
     "controlled_test_sha256": "0095f4326e151b3c593697f55bcdb40642788ca42bb194278f73398aaf8f5ca0",
     "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
     "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
@@ -319,6 +319,6 @@
     ],
     "response_shape": "native-envelope-and-status-skeleton",
     "recaptured": true,
-    "recapture_note": "Executed on the controlled loopback stack (uData 17.6.0, AIStor storage) at 73a73d6601fa3d8651f528cf70bf44904bc02449: both-mode reads differential (post list, atom feed, v2 search, report list, report reasons) and the full sync and async lifecycles (create, publish, image, resize, update, report create/get/update, member invitation, notification list/read, cleanup, deletion proof) passed with raw-versus-typed payload equality or matching error status."
+    "recapture_note": "Executed on the controlled loopback stack (uData 17.6.0, AIStor storage) at 2373233cee7da7fa4465a1747fd41954b3b31ec2: both-mode reads differential (post list, atom feed, v2 search, report list, report reasons) and the full sync and async lifecycles (create, publish, image, resize, update, report create/get/update, member invitation, notification list/read, cleanup, deletion proof) passed with raw-versus-typed payload equality or matching error status. An async-only resolver regression test covers the async report-create dispatch seam."
   }
 }
