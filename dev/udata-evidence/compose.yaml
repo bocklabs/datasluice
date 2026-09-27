@@ -18,7 +18,7 @@ services:
       UDATA_SECRET_KEY: ${UDATA_SECRET_KEY:?set a disposable local secret in .env}
       UDATA_API_TOKEN_SECRET: ${UDATA_API_TOKEN_SECRET:?set a disposable local secret in .env}
       UDATA_EVIDENCE_STACK_NONCE: ${UDATA_EVIDENCE_STACK_NONCE:?set a disposable stack nonce in .env}
-      PYTHONWARNINGS: "ignore:invalid escape sequence:SyntaxWarning,ignore::UserWarning"
+      PYTHONWARNINGS: "ignore:invalid escape sequence:SyntaxWarning,ignore:pkg_resources is deprecated as an API:UserWarning"
     healthcheck:
       test:
         - CMD-SHELL

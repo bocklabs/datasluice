@@ -3681,6 +3681,7 @@ def test_controlled_posts_reports_reads_match_raw_routes_in_both_modes() -> None
                 ("/api/1/posts/?page=1&page_size=20", "list_posts", (PostListQuery(),)),
                 ("/api/1/posts/recent.atom", "recent_posts_atom_feed", ()),
                 ("/api/2/posts/search/?page=1&page_size=20", "search_posts", (PostSearchQuery(),)),
+                ("/api/1/reports/?page=1&page_size=20", "list_reports", (ReportQuery(),)),
                 ("/api/1/reports/reasons/", "list_reports_reasons", ()),
             ):
                 status, payload, _ = _direct_request(token, "GET", path, max_bytes=65536)
@@ -3877,23 +3878,134 @@ def test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up() -
     async def run_async() -> None:
         async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
             created = await client.posts_reports.create_post(
-                PostCreateInput(name=f"{title} async", content="Evidence body"),
+                PostCreateInput(
+                    name=f"{title} async", headline="Controlled evidence", content="Evidence body", kind="news"
+                ),
                 permissions,
                 policy("udata/api-v1.create-post", f"{title} async"),
             )
             assert created.record is not None
             post_id = str(created.record.payload["id"])
+            report_id: str | None = None
+            invitation_id: str | None = None
             try:
+                member_id_response = _direct_request(member_token, "GET", "/api/1/me/")
+                assert member_id_response[0] == 200
+                assert isinstance(member_id_response[1], Mapping)
+                member_id = str(member_id_response[1]["id"])
+                status, invitation, _ = _direct_request(
+                    token,
+                    "POST",
+                    "/api/1/organizations/evidence-organization/member/",
+                    body={"user": member_id, "role": "editor"},
+                )
+                assert status == 201
+                assert isinstance(invitation, Mapping)
+                invitation_id = str(invitation["id"])
+                status, raw, _ = _direct_request(token, "GET", f"/api/1/posts/{post_id}/")
+                assert status == 200
+                assert isinstance(raw, Mapping)
+                assert _plain_json((await client.posts_reports.get_post(post_id)).payload) == raw
+
                 published = await client.posts_reports.publish_post(
                     post_id, permissions, policy("udata/api-v1.publish-post", post_id)
                 )
                 assert published.record is not None
-                await client.posts_reports.post_image(
+                uploaded = await client.posts_reports.post_image(
                     post_id, png, "image/png", permissions, policy("udata/api-v1.post-image", post_id)
                 )
+                assert uploaded.record is not None
+                resized = await client.posts_reports.resize_post_image(
+                    post_id, png, "image/png", permissions, policy("udata/api-v1.resize-post-image", post_id)
+                )
+                assert resized.record is not None
+
+                updated = await client.posts_reports.update_post(
+                    post_id,
+                    PostUpdateInput(headline="Controlled evidence renamed"),
+                    permissions,
+                    policy("udata/api-v1.update-post", post_id),
+                )
+                assert updated.record is not None
+                assert updated.record.payload["headline"] == "Controlled evidence renamed"
+
+                dataset_id = (await client.datasets.list(DatasetListQuery(page=1, page_size=1))).items[0].id.value
+                reported = await client.posts_reports.create_report(
+                    ReportCreateInput(
+                        subject={"class": "Dataset", "id": dataset_id}, reason="spam", message="evidence"
+                    ),
+                    permissions,
+                    policy("udata/api-v1.create-report", dataset_id),
+                )
+                assert reported.record is not None
+                report_id = str(reported.record.payload["id"])
+                status, raw_report, _ = _direct_request(token, "GET", f"/api/1/reports/{report_id}/")
+                assert status == 200
+                assert isinstance(raw_report, Mapping)
+                assert _plain_json((await client.posts_reports.get_report(report_id)).payload) == raw_report
+                updated_report = await client.posts_reports.update_report(
+                    report_id,
+                    ReportUpdateInput(message="evidence updated"),
+                    permissions,
+                    policy("udata/api-v1.update-report", report_id),
+                )
+                assert updated_report.record is not None
+                assert updated_report.record.payload["message"] == "evidence updated"
+
+                member_status, member_page, _ = _direct_request(
+                    member_token, "GET", "/api/1/notifications/?page=1&page_size=20&handled=false"
+                )
+                assert member_status == 200
+                assert isinstance(member_page, Mapping)
+                matching = [
+                    item for item in member_page["data"] if isinstance(item, Mapping) and item.get("handled_at") is None
+                ]
+                assert matching
+                notification_id = str(matching[0]["id"])
+                async with create_async_client(
+                    UDataClientSettings(base_url=ORIGIN, credential=member_credential)
+                ) as member_client:
+                    typed_notifications = await member_client.posts_reports.list_notifications(
+                        member_permissions, NotificationQuery(handled=False)
+                    )
+                    assert _plain_json(typed_notifications.payload) == member_page
+
+                    read = await member_client.posts_reports.read_notification(
+                        notification_id, member_permissions, policy("udata/api-v1.read-notification", notification_id)
+                    )
+                assert read.record is not None
+                assert read.record.payload["handled_at"] is not None
             finally:
-                await client.posts_reports.delete_post(
+                if invitation_id is not None:
+                    try:
+                        _direct_request(
+                            token,
+                            "POST",
+                            f"/api/1/organizations/evidence-organization/membership/{invitation_id}/cancel/",
+                        )
+                    except CatalogError:
+                        pass
+                if report_id is not None:
+                    try:
+                        await client.posts_reports.update_report(
+                            report_id,
+                            ReportUpdateInput(dismissed_at="2026-09-27T00:00:00+00:00"),
+                            permissions,
+                            policy("udata/api-v1.update-report", report_id),
+                        )
+                    except CatalogError:
+                        pass
+                try:
+                    await client.posts_reports.unpublish_post(
+                        post_id, permissions, policy("udata/api-v1.unpublish-post", post_id)
+                    )
+                except CatalogError:
+                    pass
+                deleted = await client.posts_reports.delete_post(
                     post_id, permissions, policy("udata/api-v1.delete-post", post_id, destructive=True)
                 )
+                assert deleted.record is None
+        status, _, _ = _direct_request("", "GET", f"/api/1/posts/{post_id}/")
+        assert status in {404, 410}
 
     asyncio.run(run_async())

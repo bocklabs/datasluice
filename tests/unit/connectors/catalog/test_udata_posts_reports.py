@@ -154,7 +154,7 @@ def _policy(operation: str, target: str, destructive: bool = False) -> MutationP
     )
 
 
-def test_posts_reports_contract_exposes_exactly_nineteen_methods_in_both_modes() -> None:
+def test_posts_reports_contract_exposes_exactly_eighteen_methods_in_both_modes() -> None:
     expected = {
         "list_reports",
         "create_report",
@@ -333,6 +333,51 @@ def test_post_mutations_match_exact_wire_and_receipt_targets() -> None:
     ]
     assert json.loads(post_requests[0].body or b"{}") == {"name": "A post", "content": "Content"}
     assert dict(post_requests[5].headers).get("X-API-KEY") == "secret-key"
+
+
+def test_anonymous_report_create_matches_stock_public_contract() -> None:
+    router = _Router(_routes({("POST", f"{ORIGIN}/api/1/reports/"): (201, _report())}))
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN) as client:
+        created = client.posts_reports.create_report(
+            ReportCreateInput(subject={"class": "Dataset", "id": "dataset-1"}, reason="spam"),
+            None,
+            _policy(wire.CREATE_REPORT_OPERATION, "dataset-1"),
+        )
+    assert created.receipt.outcome == "succeeded"
+    assert created.receipt.target.value == "report-1"
+    (request,) = (r for r in router.requests if r.method == "POST")
+    assert "X-API-KEY" not in dict(request.headers)
+    assert json.loads(request.body or b"{}") == {"subject": {"class": "Dataset", "id": "dataset-1"}, "reason": "spam"}
+
+
+def test_attributed_report_create_still_requires_matching_permission_evidence() -> None:
+    router = _Router(_routes({("POST", f"{ORIGIN}/api/1/reports/"): (201, _report())}))
+    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        created = client.posts_reports.create_report(
+            ReportCreateInput(subject={"class": "Dataset", "id": "dataset-1"}, reason="spam"),
+            PERMISSIONS,
+            _policy(wire.CREATE_REPORT_OPERATION, "dataset-1"),
+        )
+    assert created.receipt.outcome == "succeeded"
+    (request,) = (r for r in router.requests if r.method == "POST")
+    assert dict(request.headers).get("X-API-KEY") == "secret-key"
+
+
+def test_anonymous_report_create_matches_stock_public_contract_async() -> None:
+    router = _AsyncRouter(_routes({("POST", f"{ORIGIN}/api/1/reports/"): (201, _report())}))
+
+    async def run() -> PostMutationResult:
+        async with AsyncUDataClient(router, declared_udata_profile(), origin=ORIGIN) as client:
+            return await client.posts_reports.create_report(
+                ReportCreateInput(subject={"class": "Dataset", "id": "dataset-1"}, reason="spam"),
+                None,
+                _policy(wire.CREATE_REPORT_OPERATION, "dataset-1"),
+            )
+
+    created = asyncio.run(run())
+    assert created.receipt.outcome == "succeeded"
+    (request,) = (r for r in router.requests if r.method == "POST")
+    assert "X-API-KEY" not in dict(request.headers)
 
 
 def test_report_and_notification_mutations_match_exact_wire_and_receipt_targets() -> None:

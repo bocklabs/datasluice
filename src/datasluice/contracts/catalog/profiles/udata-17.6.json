@@ -1227,8 +1227,8 @@
         },
         {
             "id": "udata/api-v1.create-report",
-            "capability": "authenticated",
-            "authentication": "authenticated",
+            "capability": "core",
+            "authentication": "public",
             "mutation": "create",
             "evidence_requirement": "controlled-environment-only"
         },

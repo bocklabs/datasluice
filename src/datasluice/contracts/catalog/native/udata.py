@@ -997,7 +997,7 @@ class SyncUDataPostsReportsService(Protocol):
     def create_report(
         self,
         client_input: ReportCreateInput,
-        permissions: EffectivePermissions,
+        permissions: EffectivePermissions | None = None,
         mutation_policy: MutationPolicy | None = None,
     ) -> PostMutationResult: ...
     def get_report(self, report_id: str) -> MappingRecord: ...
@@ -1084,7 +1084,7 @@ class AsyncUDataPostsReportsService(Protocol):
     async def create_report(
         self,
         client_input: ReportCreateInput,
-        permissions: EffectivePermissions,
+        permissions: EffectivePermissions | None = None,
         mutation_policy: MutationPolicy | None = None,
     ) -> PostMutationResult: ...
     async def get_report(self, report_id: str) -> MappingRecord: ...

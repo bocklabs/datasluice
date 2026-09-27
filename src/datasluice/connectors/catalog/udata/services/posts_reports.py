@@ -168,7 +168,7 @@ class SyncPostsReportsService:
     def create_report(
         self,
         client_input: ReportCreateInput,
-        permissions: Permissions,
+        permissions: Permissions | None = None,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
         return _mutation(
@@ -176,10 +176,37 @@ class SyncPostsReportsService:
             mutation_policy,
             wire.CREATE_REPORT_OPERATION,
             lambda: wire.create_report_request(client_input),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.CREATE_REPORT_OPERATION
-            ),
+            lambda method, path, headers, body: self._create_report(method, path, headers, body, permissions),
             success_target=lambda payload: _record_id(payload, "report"),
+        )
+
+    def _create_report(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: object,
+        permissions: Permissions | None,
+    ) -> Response:
+        resolved = self._client._resolved_credential()
+        if permissions is not None:
+            resolved = _require_mutation_permission(resolved, wire.CREATE_REPORT_OPERATION, permissions)
+            return self._client._dataset_call(
+                method=method,
+                path=path,
+                owning_operation=wire.CREATE_REPORT_OPERATION,
+                headers=headers,
+                json_body=body,
+                permissions=permissions,
+                credential=resolved,
+            )
+        return self._client._dataset_call(
+            method=method,
+            path=path,
+            owning_operation=wire.CREATE_REPORT_OPERATION,
+            headers=headers,
+            json_body=body,
+            credential=resolved,
         )
 
     def get_report(self, report_id: str) -> MappingRecord:
@@ -473,7 +500,7 @@ class AsyncPostsReportsService:
     async def create_report(
         self,
         client_input: ReportCreateInput,
-        permissions: Permissions,
+        permissions: Permissions | None = None,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
         return await _mutation_async(
@@ -481,10 +508,37 @@ class AsyncPostsReportsService:
             mutation_policy,
             wire.CREATE_REPORT_OPERATION,
             lambda: wire.create_report_request(client_input),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.CREATE_REPORT_OPERATION
-            ),
+            lambda method, path, headers, body: self._create_report(method, path, headers, body, permissions),
             success_target=lambda payload: _record_id(payload, "report"),
+        )
+
+    async def _create_report(
+        self,
+        method: str,
+        path: str,
+        headers: dict[str, str],
+        body: object,
+        permissions: Permissions | None,
+    ) -> Response:
+        resolved = self._client._resolved_credential()
+        if permissions is not None:
+            resolved = _require_mutation_permission(resolved, wire.CREATE_REPORT_OPERATION, permissions)
+            return await self._client._dataset_call_async(
+                method=method,
+                path=path,
+                owning_operation=wire.CREATE_REPORT_OPERATION,
+                headers=headers,
+                json_body=body,
+                permissions=permissions,
+                credential=resolved,
+            )
+        return await self._client._dataset_call_async(
+            method=method,
+            path=path,
+            owning_operation=wire.CREATE_REPORT_OPERATION,
+            headers=headers,
+            json_body=body,
+            credential=resolved,
         )
 
     async def get_report(self, report_id: str) -> MappingRecord:
