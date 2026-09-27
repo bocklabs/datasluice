@@ -350,6 +350,33 @@ def test_anonymous_report_create_matches_stock_public_contract() -> None:
     assert json.loads(request.body or b"{}") == {"subject": {"class": "Dataset", "id": "dataset-1"}, "reason": "spam"}
 
 
+class _AsyncOnlyResolver:
+    def __init__(self, credential: UDataCredential) -> None:
+        self._credential = credential
+
+    async def resolve_async(self) -> UDataCredential:
+        return self._credential
+
+
+def test_async_report_create_resolves_credentials_through_the_async_resolver() -> None:
+    router = _AsyncRouter(_routes({("POST", f"{ORIGIN}/api/1/reports/"): (201, _report())}))
+
+    async def run() -> PostMutationResult:
+        async with AsyncUDataClient(
+            router, declared_udata_profile(), origin=ORIGIN, credentials=_AsyncOnlyResolver(CREDENTIAL)
+        ) as client:
+            return await client.posts_reports.create_report(
+                ReportCreateInput(subject={"class": "Dataset", "id": "dataset-1"}, reason="spam"),
+                None,
+                _policy(wire.CREATE_REPORT_OPERATION, "dataset-1"),
+            )
+
+    created = asyncio.run(run())
+    assert created.receipt.outcome == "succeeded"
+    (request,) = (r for r in router.requests if r.method == "POST")
+    assert dict(request.headers).get("X-API-KEY") == "secret-key"
+
+
 def test_attributed_report_create_still_requires_matching_permission_evidence() -> None:
     router = _Router(_routes({("POST", f"{ORIGIN}/api/1/reports/"): (201, _report())}))
     with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
