@@ -221,6 +221,11 @@ class PostUpdateInput:
         return body
 
 
+def _image_filename(content_type: str) -> str:
+    suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(content_type, ".bin")
+    return f"post-image{suffix}"
+
+
 @dataclass(frozen=True, slots=True)
 class PostImageInput:
     """Bounded post image upload input; bytes never enter the result record."""
@@ -235,7 +240,7 @@ class PostImageInput:
             raise ValueError("uData post image content type must be a non-empty string.")
 
     def part(self) -> UploadPart:
-        return UploadPart("file", bytes(self.data), "post-image", self.content_type)
+        return UploadPart("file", bytes(self.data), _image_filename(self.content_type), self.content_type)
 
 
 @dataclass(frozen=True, slots=True)

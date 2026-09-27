@@ -3650,7 +3650,8 @@ def test_controlled_posts_reports_reads_match_raw_routes_in_both_modes() -> None
     )
 
     def sync_pass() -> None:
-        with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        credential = UDataCredential(api_key=token)
+        with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
             for path, method, args in (
                 ("/api/1/posts/?page=1&page_size=20", "list_posts", (PostListQuery(),)),
                 ("/api/1/posts/recent.atom", "recent_posts_atom_feed", ()),
@@ -3674,7 +3675,8 @@ def test_controlled_posts_reports_reads_match_raw_routes_in_both_modes() -> None
                     assert _plain_json(typed.payload) == payload, method
 
     async def async_pass() -> None:
-        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        credential = UDataCredential(api_key=token)
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
             for path, method, args in (
                 ("/api/1/posts/?page=1&page_size=20", "list_posts", (PostListQuery(),)),
                 ("/api/1/posts/recent.atom", "recent_posts_atom_feed", ()),
@@ -3719,9 +3721,8 @@ def test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up() -
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
-    member_permissions = EffectivePermissions.for_credential(
-        UDataCredential(api_key=member_token), platform=CatalogPlatform.UDATA
-    )
+    member_credential = UDataCredential(api_key=member_token)
+    member_permissions = EffectivePermissions.for_credential(member_credential, platform=CatalogPlatform.UDATA)
     title = "evidence post"
 
     def policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
@@ -3811,7 +3812,7 @@ def test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up() -
             assert isinstance(invitation, Mapping)
             invitation_id = str(invitation["id"])
             member_status, notifications, _ = _direct_request(
-                member_token, "GET", "/api/1/notifications/?page=1&page_size=20"
+                member_token, "GET", "/api/1/notifications/?page=1&page_size=20&handled=false"
             )
             assert member_status == 200
             assert isinstance(notifications, Mapping)
@@ -3822,14 +3823,17 @@ def test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up() -
             ]
             assert matching
             notification_id = str(matching[0]["id"])
-            typed_notifications = client.posts_reports.list_notifications(
-                member_permissions, NotificationQuery(handled=False)
-            )
-            assert _plain_json(typed_notifications.payload) == notifications
+            with create_sync_client(
+                UDataClientSettings(base_url=ORIGIN, credential=member_credential)
+            ) as member_client:
+                typed_notifications = member_client.posts_reports.list_notifications(
+                    member_permissions, NotificationQuery(handled=False)
+                )
+                assert _plain_json(typed_notifications.payload) == notifications
 
-            read = client.posts_reports.read_notification(
-                notification_id, member_permissions, policy("udata/api-v1.read-notification", notification_id)
-            )
+                read = member_client.posts_reports.read_notification(
+                    notification_id, member_permissions, policy("udata/api-v1.read-notification", notification_id)
+                )
             assert read.record is not None
             assert read.record.payload["handled_at"] is not None
         finally:

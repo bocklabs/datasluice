@@ -231,7 +231,8 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
     assert all("@sha256:" in image for image in images)
     assert "127.0.0.1:" in text
     assert "HOME: /tmp" in text
-    assert "volumes:" not in text
+    assert "MINIO_LICENSE_FILE" in text
+    assert "/run/secrets/minio.license" in text
     assert "mongo" in text
     assert "redis" in text
     assert "elasticsearch" in text

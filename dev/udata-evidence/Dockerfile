@@ -12,7 +12,8 @@ RUN apt-get update \
     && git clone https://github.com/opendatateam/udata.git /opt/udata \
     && git -C /opt/udata checkout --detach "$UDATA_COMMIT" \
     && test "$(git -C /opt/udata rev-parse HEAD)" = "$UDATA_COMMIT" \
-    && uv pip install --system --no-cache 'flask-caching==2.3.1' /opt/udata
+    && uv pip install --system --no-cache 'flask-caching==2.3.1' 'setuptools<81' /opt/udata \
+    && uv pip install --system --no-cache 'flask-security-too==5.6.1' 'bcrypt==4.0.1'
 
 WORKDIR /opt/udata
 

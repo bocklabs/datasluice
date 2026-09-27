@@ -192,8 +192,8 @@ _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
-_CONTROLLED_COMPOSE_SHA256 = "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc"
-_CONTROLLED_DOCKERFILE_SHA256 = "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941"
+_CONTROLLED_COMPOSE_SHA256 = "0294b7bb85c94e7160ea9fca6307f4d11f8164ab2cda560a55fb26cb409a450a"
+_CONTROLLED_DOCKERFILE_SHA256 = "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
 _CONTROLLED_UDATA_IMAGE_SPEC = (
     "udata-evidence-udata",
@@ -221,9 +221,9 @@ _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
     ),
     (
         "storage",
-        "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-        "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-        "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "quay.io/minio/aistor/minio@sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
+        "sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
+        "quay.io/minio/aistor/minio@sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
     ),
     (
         "mailpit",
