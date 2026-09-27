@@ -211,6 +211,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _OAUTH_ROUTE_OPERATION_IDS
         | _TAXONOMY_ROUTE_OPERATION_IDS
         | _REUSE_ROUTE_OPERATION_IDS
+        | _POSTS_REPORTS_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 
@@ -254,6 +255,28 @@ _DATASET_ROUTE_OPERATION_IDS = {
     "udata/api-v2.update-dataset-extras",
     "udata/api-v2.delete-dataset-extras",
 }
+
+_POSTS_REPORTS_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-reports",
+    "udata/api-v1.create-report",
+    "udata/api-v1.get-report",
+    "udata/api-v1.update-report",
+    "udata/api-v1.list-reports-reasons",
+    "udata/api-v1.list-posts",
+    "udata/api-v1.create-post",
+    "udata/api-v1.recent-posts-atom",
+    "udata/api-v1.get-post",
+    "udata/api-v1.update-post",
+    "udata/api-v1.delete-post",
+    "udata/api-v1.publish-post",
+    "udata/api-v1.unpublish-post",
+    "udata/api-v1.post-image",
+    "udata/api-v1.resize-post-image",
+    "udata/api-v2.search-posts",
+    "udata/api-v1.list-notifications",
+    "udata/api-v1.read-notification",
+}
+
 
 _REUSE_ROUTE_OPERATION_IDS = {
     "udata/api-v1.list-reuses",

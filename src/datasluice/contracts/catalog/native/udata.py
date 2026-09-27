@@ -31,6 +31,17 @@ if TYPE_CHECKING:
         OAuthTokenRequest,
         OAuthTokenResult,
     )
+    from datasluice.connectors.catalog.udata.models.posts_reports import (
+        NotificationQuery,
+        PostCreateInput,
+        PostListQuery,
+        PostMutationResult,
+        PostSearchQuery,
+        PostUpdateInput,
+        ReportCreateInput,
+        ReportQuery,
+        ReportUpdateInput,
+    )
     from datasluice.connectors.catalog.udata.models.resources import (
         ResourceCreateInput,
         ResourceMutationResult,
@@ -976,6 +987,180 @@ class AsyncUDataReusesService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataPostsReportsService(Protocol):
+    """Typed synchronous post, report, and notification operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_reports(self, query: ReportQuery | None = None) -> MappingRecord: ...
+    def create_report(
+        self,
+        client_input: ReportCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def get_report(self, report_id: str) -> MappingRecord: ...
+    def update_report(
+        self,
+        report_id: str,
+        client_input: ReportUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def list_reports_reasons(self) -> tuple[MappingRecord, ...]: ...
+    def list_posts(self, query: PostListQuery | None = None) -> MappingRecord: ...
+    def create_post(
+        self,
+        client_input: PostCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def recent_posts_atom_feed(self) -> MappingRecord: ...
+    def get_post(self, post_id: str) -> MappingRecord: ...
+    def update_post(
+        self,
+        post_id: str,
+        client_input: PostUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def delete_post(
+        self,
+        post_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def publish_post(
+        self,
+        post_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def unpublish_post(
+        self,
+        post_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def post_image(
+        self,
+        post_id: str,
+        data: bytes,
+        content_type: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def resize_post_image(
+        self,
+        post_id: str,
+        data: bytes,
+        content_type: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    def search_posts(self, query: PostSearchQuery | None = None) -> MappingRecord: ...
+    def list_notifications(
+        self,
+        permissions: EffectivePermissions,
+        query: NotificationQuery | None = None,
+    ) -> MappingRecord: ...
+    def read_notification(
+        self,
+        notification_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataPostsReportsService(Protocol):
+    """Typed asynchronous post, report, and notification operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_reports(self, query: ReportQuery | None = None) -> MappingRecord: ...
+    async def create_report(
+        self,
+        client_input: ReportCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def get_report(self, report_id: str) -> MappingRecord: ...
+    async def update_report(
+        self,
+        report_id: str,
+        client_input: ReportUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def list_reports_reasons(self) -> tuple[MappingRecord, ...]: ...
+    async def list_posts(self, query: PostListQuery | None = None) -> MappingRecord: ...
+    async def create_post(
+        self,
+        client_input: PostCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def recent_posts_atom_feed(self) -> MappingRecord: ...
+    async def get_post(self, post_id: str) -> MappingRecord: ...
+    async def update_post(
+        self,
+        post_id: str,
+        client_input: PostUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def delete_post(
+        self,
+        post_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def publish_post(
+        self,
+        post_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def unpublish_post(
+        self,
+        post_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def post_image(
+        self,
+        post_id: str,
+        data: bytes,
+        content_type: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def resize_post_image(
+        self,
+        post_id: str,
+        data: bytes,
+        content_type: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+    async def search_posts(self, query: PostSearchQuery | None = None) -> MappingRecord: ...
+    async def list_notifications(
+        self,
+        permissions: EffectivePermissions,
+        query: NotificationQuery | None = None,
+    ) -> MappingRecord: ...
+    async def read_notification(
+        self,
+        notification_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> PostMutationResult: ...
+
+
+@runtime_checkable
 class SyncUDataTaxonomiesService(Protocol):
     """Typed synchronous taxonomy, schema, format, and badge operations."""
 
@@ -1330,6 +1515,9 @@ class SyncUDataServices(Protocol):
     def reuses(self) -> SyncUDataReusesService: ...
 
     @property
+    def posts_reports(self) -> SyncUDataPostsReportsService: ...
+
+    @property
     def organizations_memberships(self) -> SyncUDataOrganizationsMembershipsService: ...
 
     @property
@@ -1372,6 +1560,9 @@ class AsyncUDataServices(Protocol):
 
     @property
     def reuses(self) -> AsyncUDataReusesService: ...
+
+    @property
+    def posts_reports(self) -> AsyncUDataPostsReportsService: ...
 
     @property
     def organizations_memberships(self) -> AsyncUDataOrganizationsMembershipsService: ...

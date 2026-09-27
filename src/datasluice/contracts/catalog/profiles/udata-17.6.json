@@ -5,7 +5,7 @@
     "platform_api_version": "uData API v1",
     "official_source_uri": "https://udata.readthedocs.io/en/17.6/",
     "source_accessed_at": "2026-08-27",
-    "fixture_fingerprint": "fc4d57b49922b07f92ccfa01c11ba83a22162eed46f4dbb5ac96b0deee688579",
+    "fixture_fingerprint": "8d897837c0bd0567bb88c6435775c221208970da501c58cc2ffa99abf8308634",
     "operations": [
         {
             "id": "udata/api-v1.accept-membership",
@@ -1216,6 +1216,132 @@
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.list-reports",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.create-report",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.get-report",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-report",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.list-reports-reasons",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.list-posts",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.create-post",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.recent-posts-atom",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.get-post",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.update-post",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.delete-post",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.publish-post",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.unpublish-post",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.post-image",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.resize-post-image",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.search-posts",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.list-notifications",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.read-notification",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
             "evidence_requirement": "controlled-environment-only"
         }
     ]

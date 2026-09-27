@@ -719,6 +719,34 @@ REUSE_ROUTE_OPERATION_IDS = frozenset(
 NATIVE_OPERATION_MEMBERS["udata"].update(
     {operation_id: ("SyncUDataServices", "AsyncUDataServices", "reuses") for operation_id in REUSE_ROUTE_OPERATION_IDS}
 )
+POSTS_REPORTS_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-reports",
+        "udata/api-v1.create-report",
+        "udata/api-v1.get-report",
+        "udata/api-v1.update-report",
+        "udata/api-v1.list-reports-reasons",
+        "udata/api-v1.list-posts",
+        "udata/api-v1.create-post",
+        "udata/api-v1.recent-posts-atom",
+        "udata/api-v1.get-post",
+        "udata/api-v1.update-post",
+        "udata/api-v1.delete-post",
+        "udata/api-v1.publish-post",
+        "udata/api-v1.unpublish-post",
+        "udata/api-v1.post-image",
+        "udata/api-v1.resize-post-image",
+        "udata/api-v2.search-posts",
+        "udata/api-v1.list-notifications",
+        "udata/api-v1.read-notification",
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "posts_reports")
+        for operation_id in POSTS_REPORTS_ROUTE_OPERATION_IDS
+    }
+)
 OAUTH_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/oauth.access-token",
@@ -781,6 +809,7 @@ LOCKED_EXTRA_OPERATION_IDS = (
     | OAUTH_ROUTE_OPERATION_IDS
     | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
     | REUSE_ROUTE_OPERATION_IDS
+    | POSTS_REPORTS_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
@@ -790,6 +819,7 @@ PLATFORM_APPROVED_ROUTE_OPERATIONS = {
         | OAUTH_ROUTE_OPERATION_IDS
         | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
         | REUSE_ROUTE_OPERATION_IDS
+        | POSTS_REPORTS_ROUTE_OPERATION_IDS
     ),
 }
 

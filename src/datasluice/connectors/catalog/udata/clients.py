@@ -127,6 +127,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
         SyncOrganizationsMembershipsService as _SyncOrganizationsMembershipsService,
     )
+    from datasluice.connectors.catalog.udata.services.posts_reports import (
+        AsyncPostsReportsService as _AsyncPostsReportsService,
+    )
+    from datasluice.connectors.catalog.udata.services.posts_reports import (
+        SyncPostsReportsService as _SyncPostsReportsService,
+    )
     from datasluice.connectors.catalog.udata.services.resources import (
         AsyncResourcesService as _AsyncResourcesService,
     )
@@ -3181,6 +3187,11 @@ class SyncUDataClient(_UDataClientCore):
         return SyncReusesService(self)
 
     @property
+    def posts_reports(self) -> _SyncPostsReportsService:
+        """Expose the complete typed post, report, and notification service."""
+        return SyncPostsReportsService(self)
+
+    @property
     def taxonomies(self) -> _SyncTaxonomiesService:
         """Expose the complete typed taxonomy service."""
         return SyncTaxonomiesService(self)
@@ -3627,6 +3638,11 @@ class AsyncUDataClient(_UDataClientCore):
     def reuses(self) -> _AsyncReusesService:
         """Expose the complete typed reuse and reuse-follower service."""
         return AsyncReusesService(self)
+
+    @property
+    def posts_reports(self) -> _AsyncPostsReportsService:
+        """Expose the complete typed post, report, and notification service."""
+        return AsyncPostsReportsService(self)
 
     @property
     def taxonomies(self) -> _AsyncTaxonomiesService:
@@ -4138,6 +4154,10 @@ def _load_services():
         AsyncOrganizationsMembershipsService,
         SyncOrganizationsMembershipsService,
     )
+    from datasluice.connectors.catalog.udata.services.posts_reports import (
+        AsyncPostsReportsService,
+        SyncPostsReportsService,
+    )
     from datasluice.connectors.catalog.udata.services.resources import AsyncResourcesService, SyncResourcesService
     from datasluice.connectors.catalog.udata.services.reuses import AsyncReusesService, SyncReusesService
     from datasluice.connectors.catalog.udata.services.root_profile import (
@@ -4168,6 +4188,8 @@ def _load_services():
         SyncReusesService,
         AsyncOrganizationsMembershipsService,
         SyncOrganizationsMembershipsService,
+        AsyncPostsReportsService,
+        SyncPostsReportsService,
         AsyncUsersTokensService,
         SyncUsersTokensService,
         AsyncAuthOAuthService,
@@ -4190,6 +4212,8 @@ def _load_services():
     SyncReusesService,
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
+    AsyncPostsReportsService,
+    SyncPostsReportsService,
     AsyncUsersTokensService,
     SyncUsersTokensService,
     AsyncAuthOAuthService,

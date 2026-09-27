@@ -622,6 +622,78 @@
     {
       "operation": "udata/oauth.revoke-token",
       "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-reports",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.create-report",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.get-report",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-report",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-reports-reasons",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-posts",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.create-post",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.recent-posts-atom",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.get-post",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.update-post",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.delete-post",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.publish-post",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.unpublish-post",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.post-image",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.resize-post-image",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v2.search-posts",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-notifications",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.read-notification",
+      "outcome": "authenticated-success"
     }
   ]
 }
