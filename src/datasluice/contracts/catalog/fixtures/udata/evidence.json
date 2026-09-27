@@ -306,7 +306,7 @@
   "controlled_posts_report_evidence": {
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
-    "implementation_sha": "847eafa6c5a2fd6454ca71208c152749b0ac2640",
+    "implementation_sha": "73a73d6601fa3d8651f528cf70bf44904bc02449",
     "controlled_test_sha256": "0095f4326e151b3c593697f55bcdb40642788ca42bb194278f73398aaf8f5ca0",
     "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
     "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
@@ -318,7 +318,7 @@
       "test_wheel_import_proves_the_tracer_path_from_installed_content"
     ],
     "response_shape": "native-envelope-and-status-skeleton",
-    "recaptured": false,
-    "recapture_note": "Post, report, notification reads and lifecycle tests are implemented against the pinned loopback contract. Controlled execution is pending because the pinned dependency image is temporarily unavailable; the installed wheel proof passes without checkout paths."
+    "recaptured": true,
+    "recapture_note": "Executed on the controlled loopback stack (uData 17.6.0, AIStor storage) at 73a73d6601fa3d8651f528cf70bf44904bc02449: both-mode reads differential (post list, atom feed, v2 search, report list, report reasons) and the full sync and async lifecycles (create, publish, image, resize, update, report create/get/update, member invitation, notification list/read, cleanup, deletion proof) passed with raw-versus-typed payload equality or matching error status."
   }
 }
