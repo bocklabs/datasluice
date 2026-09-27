@@ -105,6 +105,29 @@ class ReuseSearchQuery:
         return params
 
 
+def _validate_text(value: object, label: str, *, required: bool = False) -> None:
+    if required and (not isinstance(value, str) or not value):
+        raise ValueError(f"uData reuse {label} must be a non-empty string.")
+    if not required and value is not None and not isinstance(value, str):
+        raise ValueError(f"uData reuse {label} must be a string when supplied.")
+
+
+def _validate_tags(value: object, *, required: bool = False) -> None:
+    if value is None and not required:
+        return
+    if not isinstance(value, tuple):
+        valid = False
+    else:
+        valid = all(isinstance(tag, str) and tag for tag in value)
+    if not valid:
+        raise ValueError("uData reuse tags must be a tuple of non-empty strings when supplied.")
+
+
+def _validate_mapping(value: object, label: str) -> None:
+    if value is not None and not isinstance(value, Mapping):
+        raise ValueError(f"uData reuse {label} must be a mapping when supplied.")
+
+
 @dataclass(frozen=True, slots=True)
 class ReuseCreateInput:
     """Presence-aware create payload for POST /api/1/reuses/."""
@@ -112,47 +135,35 @@ class ReuseCreateInput:
     title: str
     description: str | None = None
     type: str | None = None
-    url: str | None = None
+    url: str = ""
     tags: tuple[str, ...] = ()
-    topic: str | None = None
+    topic: str = ""
     organization: Mapping[str, str] | None = None
     private: bool | None = None
     extras: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.title, str) or not self.title:
-            raise ValueError("uData reuse title must be a non-empty string.")
-        if self.description is not None and not isinstance(self.description, str):
-            raise ValueError("uData reuse description must be a string when supplied.")
-        if self.type is not None and not isinstance(self.type, str):
-            raise ValueError("uData reuse type must be a string when supplied.")
-        if self.url is not None and not isinstance(self.url, str):
-            raise ValueError("uData reuse url must be a string when supplied.")
-        if not isinstance(self.tags, tuple) or not all(isinstance(tag, str) and tag for tag in self.tags):
-            raise ValueError("uData reuse tags must be a tuple of non-empty strings.")
-        if self.topic is not None and not isinstance(self.topic, str):
-            raise ValueError("uData reuse topic must be a string when supplied.")
-        if self.organization is not None and not isinstance(self.organization, Mapping):
-            raise ValueError("uData reuse organization must be a mapping when supplied.")
+        _validate_text(self.title, "title", required=True)
+        _validate_text(self.description, "description")
+        _validate_text(self.type, "type")
+        _validate_text(self.url, "url", required=True)
+        _validate_text(self.topic, "topic", required=True)
+        _validate_tags(self.tags, required=True)
+        _validate_mapping(self.organization, "organization")
         if self.private is not None and type(self.private) is not bool:
             raise ValueError("uData reuse private flag must be a boolean when supplied.")
+        _validate_mapping(self.extras, "extras")
         if self.extras is not None:
-            if not isinstance(self.extras, Mapping):
-                raise ValueError("uData reuse extras must be a mapping when supplied.")
             object.__setattr__(self, "extras", dict(self.extras))
 
     def payload(self) -> dict[str, object]:
-        body: dict[str, object] = {"title": self.title}
+        body: dict[str, object] = {"title": self.title, "url": self.url, "topic": self.topic}
         if self.description is not None:
             body["description"] = self.description
         if self.type is not None:
             body["type"] = self.type
-        if self.url is not None:
-            body["url"] = self.url
         if self.tags:
             body["tags"] = list(self.tags)
-        if self.topic is not None:
-            body["topic"] = self.topic
         if self.organization is not None:
             body["organization"] = dict(self.organization)
         if self.private is not None:
@@ -177,27 +188,17 @@ class ReuseUpdateInput:
     extras: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
-        if self.title is not None and (not isinstance(self.title, str) or not self.title):
-            raise ValueError("uData reuse title must be a non-empty string when supplied.")
-        if self.description is not None and not isinstance(self.description, str):
-            raise ValueError("uData reuse description must be a string when supplied.")
-        if self.type is not None and not isinstance(self.type, str):
-            raise ValueError("uData reuse type must be a string when supplied.")
-        if self.url is not None and not isinstance(self.url, str):
-            raise ValueError("uData reuse url must be a string when supplied.")
-        if self.tags is not None and (
-            not isinstance(self.tags, tuple) or not all(isinstance(tag, str) and tag for tag in self.tags)
-        ):
-            raise ValueError("uData reuse tags must be a tuple of non-empty strings when supplied.")
-        if self.topic is not None and not isinstance(self.topic, str):
-            raise ValueError("uData reuse topic must be a string when supplied.")
-        if self.organization is not None and not isinstance(self.organization, Mapping):
-            raise ValueError("uData reuse organization must be a mapping when supplied.")
+        _validate_text(self.title, "title")
+        _validate_text(self.description, "description")
+        _validate_text(self.type, "type")
+        _validate_text(self.url, "url")
+        _validate_tags(self.tags)
+        _validate_text(self.topic, "topic")
+        _validate_mapping(self.organization, "organization")
         if self.private is not None and type(self.private) is not bool:
             raise ValueError("uData reuse private flag must be a boolean when supplied.")
+        _validate_mapping(self.extras, "extras")
         if self.extras is not None:
-            if not isinstance(self.extras, Mapping):
-                raise ValueError("uData reuse extras must be a mapping when supplied.")
             object.__setattr__(self, "extras", dict(self.extras))
 
     def payload(self) -> dict[str, object]:

@@ -234,8 +234,8 @@ class SyncReusesService:
             ),
         )
 
-    def available_reuse_badges(self) -> tuple[MappingRecord, ...]:
-        return self._read_sequence(wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION)
+    def available_reuse_badges(self) -> MappingRecord:
+        return self._read(wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION)
 
     def add_reuse_badge(
         self,
@@ -556,8 +556,8 @@ class AsyncReusesService:
             ),
         )
 
-    async def available_reuse_badges(self) -> tuple[MappingRecord, ...]:
-        return await self._read_sequence(wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION)
+    async def available_reuse_badges(self) -> MappingRecord:
+        return await self._read(wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION)
 
     async def add_reuse_badge(
         self,

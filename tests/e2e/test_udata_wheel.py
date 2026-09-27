@@ -47,6 +47,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "models/activity_discussions.py",
         "wire/activity_discussions.py",
         "services/activity_discussions.py",
+        "models/reuses.py",
+        "wire/reuses.py",
+        "services/reuses.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
@@ -180,6 +183,12 @@ class Transport:
             headers = {"Content-Type": "application/json"}
         elif "/api/2/discussions/search/" in url:
             body = json.dumps({"data": [], "facets": {}, "links": {}, "meta": {"total": 0}}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/api/1/reuses/" in url or "/api/2/reuses/" in url:
+            body = json.dumps(
+                {"data": [{"id": "wheel-reuse", "title": "Wheel reuse"}], "next_page": None,
+                 "page": 1, "page_size": 20, "previous_page": None, "total": 1}
+            ).encode()
             headers = {"Content-Type": "application/json"}
         elif request.method == "POST":
             body = json.dumps(
@@ -626,7 +635,7 @@ assert organization_created.receipt.operation == "udata/api-v1.create-organizati
 assert organization_created.receipt.outcome == "succeeded"
 assert organization_created.receipt.audit_metadata["status_code"] == 201
 recorded = [getattr(r, "url", r) for r in transport.requests]
-assert recorded == [
+expected = [
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/datasets.csv",
@@ -644,8 +653,8 @@ assert recorded == [
     "http://127.0.0.1:5640/oauth/revoke",
     "http://127.0.0.1:5640/oauth/error",
     "http://127.0.0.1:5640/oauth/authorize?client_id=wheel-client&response_type=code",
-    "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
     "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
     "http://127.0.0.1:5640/api/1/datasets/licenses/",
@@ -665,7 +674,8 @@ assert recorded == [
     "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/0/",
     "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
     "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/1/",
-], recorded
+]
+assert recorded == expected
 async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
 assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/site/",

@@ -328,28 +328,21 @@ def test_oauth_error_route_never_sends_the_api_key() -> None:
     assert "X-API-KEY" not in router.requests[-1].headers
 
 
-def test_session_gated_reads_never_send_the_api_key() -> None:
-    """client_info and authorize are browser-session routes; the key cannot authorize them."""
-    routes = _routes(
-        ("GET", "/oauth/client_info?client_id=client-id", 401, None),
-        ("GET", "/oauth/authorize?client_id=client-id&response_type=code", 401, None),
-    )
+def test_client_info_never_sends_the_api_key() -> None:
+    """client_info is a browser-session route; the key cannot authorize it."""
+    routes = _routes(("GET", "/oauth/client_info?client_id=client-id", 401, None))
     router = _Router(routes)
     with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
-        for name in ("client_info", "authorize"):
-            with pytest.raises(CatalogError):
-                getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+        with pytest.raises(CatalogError):
+            client.auth_oauth.client_info(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
     oauth_requests = [request for request in router.requests if request.url.startswith(f"{ORIGIN}/oauth/")]
-    assert {request.url.split("/oauth/")[1].partition("?")[0] for request in oauth_requests} == {
-        "client_info",
-        "authorize",
-    }
+    assert {request.url.split("/oauth/")[1].partition("?")[0] for request in oauth_requests} == {"client_info"}
     assert all("X-API-KEY" not in request.headers for request in oauth_requests)
 
 
 def test_only_the_browser_consent_post_may_send_the_api_key() -> None:
-    """The family contract: exactly one route authenticates with the uData API key."""
-    assert {name for name in wire.OPERATIONS if wire.sends_credential(name)} == {"authorize_post"}
+    """The family contract: only authorize reads/decisions authenticate with the uData API key."""
+    assert {name for name in wire.OPERATIONS if wire.sends_credential(name)} == {"authorize", "authorize_post"}
 
 
 @pytest.mark.parametrize(

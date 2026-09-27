@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping
 from importlib import resources
 from inspect import isawaitable
 from io import BytesIO
+from typing import cast
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
@@ -56,6 +57,13 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationRefusalInput,
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
+)
+from datasluice.connectors.catalog.udata.models.reuses import (
+    ReuseCreateInput,
+    ReuseListQuery,
+    ReuseSearchQuery,
+    ReuseSuggestQuery,
+    ReuseUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery, TaxonomyMutationResult
@@ -1210,7 +1218,7 @@ def test_controlled_taxonomy_reads_match_raw_routes_in_both_modes() -> None:
             if method == "extensions":
                 assert payload == list(typed)
             elif method == "available_badges":
-                assert typed.payload == payload
+                assert _plain_json(typed.payload) == payload
             else:
                 assert _taxonomy_payloads(typed) == payload
 
@@ -1234,7 +1242,7 @@ def test_controlled_taxonomy_reads_match_raw_routes_in_both_modes() -> None:
                 if method == "extensions":
                     assert payload == list(typed)
                 elif method == "available_badges":
-                    assert typed.payload == payload
+                    assert _plain_json(typed.payload) == payload
                 else:
                     assert payload == _taxonomy_payloads(typed)
 
@@ -3234,16 +3242,18 @@ def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
 
         # The RFC 6749 exchange carries its own client secret, so the uData API key
         # must never accompany it and no token may be retained.
-        result = client.auth_oauth.access_token(_CONTROLLED_TOKEN_BODY, permissions)
-        assert result.to_dict()["has_access_token"] is False, "the absent client issued a token"
+        with pytest.raises(CatalogError) as token_error:
+            client.auth_oauth.access_token(_CONTROLLED_TOKEN_BODY, permissions)
+        assert token_error.value.metadata.get("status_code") == raw_token[0]
 
         for name, raw, body in _oauth_mutations(raw_revoke, raw_authorize_post):
             _assert_oauth_mutation_sync(client, name, raw, body, permissions)
 
         async def run_mutations_async() -> None:
             async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
-                async_token = await client.auth_oauth.access_token(_CONTROLLED_TOKEN_BODY, permissions)
-                assert async_token.to_dict()["has_access_token"] is False, "the absent client issued a token"
+                with pytest.raises(CatalogError) as token_error:
+                    await client.auth_oauth.access_token(_CONTROLLED_TOKEN_BODY, permissions)
+                assert token_error.value.metadata.get("status_code") == raw_token[0]
                 for name, raw, body in _oauth_mutations(raw_revoke, raw_authorize_post):
                     await _assert_oauth_mutation_async(client, name, raw, body, permissions)
 
@@ -3274,10 +3284,14 @@ def test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes
             ("/api/2/discussions/search/?page=1&page_size=20", "search_discussions", (DiscussionSearchQuery(),)),
         ):
             status, payload, _ = _direct_request("", "GET", path)
+            if status != 200:
+                with pytest.raises(CatalogError):
+                    getattr(client.activity_discussions, method)(*args)
+                continue
             typed = getattr(client.activity_discussions, method)(*args)
             assert status == 200
             assert isinstance(payload, Mapping)
-            assert typed.payload == payload
+            assert _plain_json(typed.payload) == payload
 
     async def run_async() -> None:
         async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
@@ -3287,11 +3301,15 @@ def test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes
                 ("/api/2/discussions/search/?page=1&page_size=20", "search_discussions", (DiscussionSearchQuery(),)),
             ):
                 status, payload, _ = _direct_request("", "GET", path)
+                if status != 200:
+                    with pytest.raises(CatalogError):
+                        await getattr(client.activity_discussions, method)(*args)
+                    continue
                 operation = getattr(client.activity_discussions, method)(*args)
                 typed = await operation
                 assert status == 200
                 assert isinstance(payload, Mapping)
-                assert typed.payload == payload
+                assert _plain_json(typed.payload) == payload
 
     asyncio.run(run_async())
 
@@ -3321,10 +3339,13 @@ def test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up() -> N
         return {"id": dataset_id, "class": "Dataset"}
 
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        subject_id = client.datasets.list(DatasetListQuery(page=1, page_size=1)).items[0].id.value
         created = client.activity_discussions.create_discussion(
-            DiscussionCreateInput(title=title, comment="evidence opening comment", subject=dataset_subject(client)),
+            DiscussionCreateInput(
+                title=title, comment="evidence opening comment", subject={"id": subject_id, "class": "Dataset"}
+            ),
             permissions,
-            policy("udata/api-v1.create-discussion", title),
+            policy("udata/api-v1.create-discussion", subject_id),
         )
         assert created.record is not None
         discussion_id = str(created.record.payload["id"])
@@ -3334,7 +3355,7 @@ def test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up() -> N
             assert status == 200
             assert isinstance(raw, Mapping)
             assert raw["title"] == title
-            assert client.activity_discussions.get_discussion(discussion_id).payload == raw
+            assert _plain_json(client.activity_discussions.get_discussion(discussion_id).payload) == raw
 
             commented = client.activity_discussions.comment_discussion(
                 discussion_id,
@@ -3365,7 +3386,9 @@ def test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up() -> N
             )
             assert edited.record is not None
             assert isinstance(edited.record.payload, Mapping)
-            edited_messages = edited.record.payload["discussion"]
+            edited_document = _plain_json(edited.record.payload)
+            assert isinstance(edited_document, Mapping)
+            edited_messages = edited_document["discussion"]
             assert isinstance(edited_messages, list)
             edited_first_reply = edited_messages[1]
             assert isinstance(edited_first_reply, Mapping)
@@ -3397,7 +3420,7 @@ def test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up() -> N
                     title=title, comment="evidence opening comment", subject={"id": dataset_id, "class": "Dataset"}
                 ),
                 permissions,
-                policy("udata/api-v1.create-discussion", title),
+                policy("udata/api-v1.create-discussion", dataset_id),
             )
             assert created.record is not None
             discussion_id = str(created.record.payload["id"])
@@ -3417,5 +3440,189 @@ def test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up() -> N
                 await client.activity_discussions.delete_discussion(
                     discussion_id, permissions, policy("udata/api-v1.delete-discussion", discussion_id)
                 )
+
+    asyncio.run(run_async())
+
+
+def test_controlled_reuse_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned reuse read route returns the same native envelope typed and raw."""
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        for path, method, args in (
+            ("/api/1/reuses/?page=1&page_size=20", "list_reuses", (ReuseListQuery(),)),
+            ("/api/1/reuses/recent.atom?page=1&page_size=20", "recent_reuses_atom_feed", (ReuseListQuery(),)),
+            ("/api/1/reuses/badges/", "available_reuse_badges", ()),
+            ("/api/1/reuses/suggest/?q=a&size=3", "suggest_reuses", (ReuseSuggestQuery(q="a", size=3),)),
+            ("/api/1/reuses/types/", "reuse_types", ()),
+            ("/api/1/reuses/topics/", "reuse_topics", ()),
+            ("/api/2/reuses/?page=1&page_size=20", "list_v2", (ReuseListQuery(),)),
+            ("/api/2/reuses/search/?page=1&page_size=50&q=a", "search_v2", (ReuseSearchQuery(q="a"),)),
+        ):
+            status, payload, _ = _direct_request("", "GET", path, max_bytes=65536)
+            if status != 200:
+                with pytest.raises(CatalogError):
+                    getattr(client.reuses, method)(*args)
+                continue
+            typed = getattr(client.reuses, method)(*args)
+            if method == "recent_reuses_atom_feed":
+                assert typed.payload["media_type"] == "application/atom+xml"
+                assert typed.payload["size_bytes"] > 0
+            elif method in {"reuse_types", "reuse_topics", "suggest_reuses"}:
+                assert isinstance(typed, tuple)
+            else:
+                assert _plain_json(typed.payload) == payload, method
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            for path, method, args in (
+                ("/api/1/reuses/?page=1&page_size=20", "list_reuses", (ReuseListQuery(),)),
+                ("/api/1/reuses/badges/", "available_reuse_badges", ()),
+                ("/api/1/reuses/types/", "reuse_types", ()),
+                ("/api/1/reuses/topics/", "reuse_topics", ()),
+                ("/api/2/reuses/?page=1&page_size=20", "list_v2", (ReuseListQuery(),)),
+            ):
+                status, payload, _ = _direct_request("", "GET", path)
+                operation = getattr(client.reuses, method)(*args)
+                typed = await operation
+                assert status == 200, path
+                if method in {"reuse_types", "reuse_topics"}:
+                    assert isinstance(typed, tuple)
+                else:
+                    assert _plain_json(typed.payload) == payload, method
+
+    asyncio.run(run_async())
+
+
+def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
+    """Seed one deterministic reuse and drive every assigned reuse mutation."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled reuse evidence requires UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    title = "evidence reuse"
+
+    def policy(operation: str, target: str) -> MutationPolicy:
+        return MutationPolicy(
+            destructive=operation
+            in {
+                "udata/api-v1.delete-reuse",
+                "udata/api-v1.delete-reuse-badge",
+                "udata/api-v1.unfeature-reuse",
+                "udata/api-v1.unfollow-reuse",
+            },
+            confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        )
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        created = client.reuses.create_reuse(
+            ReuseCreateInput(
+                title=title,
+                description="evidence",
+                type="application",
+                url=f"https://example.com/reuse/{uuid4().hex[:8]}",
+                topic="health",
+            ),
+            permissions,
+            policy("udata/api-v1.create-reuse", title),
+        )
+        assert created.record is not None
+        reuse_id = str(created.record.payload["id"])
+        assert created.receipt.operation == "udata/api-v1.create-reuse"
+        try:
+            status, raw, _ = _direct_request(token, "GET", f"/api/1/reuses/{reuse_id}/")
+            assert status == 200
+            assert isinstance(raw, Mapping)
+            assert raw["title"] == title
+            assert _plain_json(client.reuses.get_reuse(reuse_id).payload) == raw
+
+            dataset_id = client.datasets.list(DatasetListQuery(page=1, page_size=1)).items[0].id.value
+            linked = client.reuses.reuse_add_dataset(
+                reuse_id, dataset_id, permissions, policy("udata/api-v1.reuse-add-dataset", reuse_id)
+            )
+            assert linked.record is not None
+            assert linked.receipt.operation == "udata/api-v1.reuse-add-dataset"
+
+            updated = client.reuses.update_reuse(
+                reuse_id,
+                ReuseUpdateInput(title=f"{title} renamed"),
+                permissions,
+                policy("udata/api-v1.update-reuse", reuse_id),
+            )
+            assert updated.record is not None
+            assert updated.record.payload["title"] == f"{title} renamed"
+
+            with pytest.raises(CatalogError):
+                client.reuses.add_reuse_badge(
+                    reuse_id, "badger", permissions, policy("udata/api-v1.add-reuse-badge", reuse_id)
+                )
+
+            featured = client.reuses.feature_reuse(
+                reuse_id, permissions, policy("udata/api-v1.feature-reuse", reuse_id)
+            )
+            assert featured.receipt.operation == "udata/api-v1.feature-reuse"
+            assert featured.record is not None
+            assert featured.record.payload["featured"] is True
+
+            followed = client.reuses.follow_reuse(reuse_id, permissions, policy("udata/api-v1.follow-reuse", reuse_id))
+            assert followed.receipt.operation == "udata/api-v1.follow-reuse"
+
+            followers_page = client.reuses.list_reuse_followers(reuse_id, ReuseListQuery())
+            followers_payload = cast(Mapping[str, object], _plain_json(followers_page.payload))
+            total = followers_payload["total"]
+            assert isinstance(total, int)
+            assert total >= 1
+        finally:
+            try:
+                client.reuses.unfollow_reuse(reuse_id, permissions, policy("udata/api-v1.unfollow-reuse", reuse_id))
+            except CatalogError:
+                pass
+            client.reuses.unfeature_reuse(reuse_id, permissions, policy("udata/api-v1.unfeature-reuse", reuse_id))
+            try:
+                client.reuses.delete_reuse_badge(
+                    reuse_id, "badger", permissions, policy("udata/api-v1.delete-reuse-badge", reuse_id)
+                )
+            except CatalogError:
+                pass
+            deleted = client.reuses.delete_reuse(reuse_id, permissions, policy("udata/api-v1.delete-reuse", reuse_id))
+            assert deleted.record is None
+        status, _, _ = _direct_request("", "GET", f"/api/1/reuses/{reuse_id}/")
+        assert status in {404, 410}
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            created = await client.reuses.create_reuse(
+                ReuseCreateInput(
+                    title=title,
+                    description="evidence",
+                    type="application",
+                    url=f"https://example.com/reuse/{uuid4().hex[:8]}",
+                    topic="health",
+                ),
+                permissions,
+                policy("udata/api-v1.create-reuse", title),
+            )
+            assert created.record is not None
+            reuse_id = str(created.record.payload["id"])
+            try:
+                dataset_id = (await client.datasets.list(DatasetListQuery(page=1, page_size=1))).items[0].id.value
+                linked = await client.reuses.reuse_add_dataset(
+                    reuse_id, dataset_id, permissions, policy("udata/api-v1.reuse-add-dataset", reuse_id)
+                )
+                assert linked.receipt.operation == "udata/api-v1.reuse-add-dataset"
+                updated = await client.reuses.update_reuse(
+                    reuse_id,
+                    ReuseUpdateInput(title=f"{title} renamed"),
+                    permissions,
+                    policy("udata/api-v1.update-reuse", reuse_id),
+                )
+                assert updated.record is not None
+                assert updated.record.payload["title"] == f"{title} renamed"
+            finally:
+                await client.reuses.delete_reuse(reuse_id, permissions, policy("udata/api-v1.delete-reuse", reuse_id))
 
     asyncio.run(run_async())

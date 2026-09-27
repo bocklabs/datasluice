@@ -56,10 +56,10 @@ _FORM_BODIES = frozenset({"access_token", "revoke_token", "authorize_post"})
 
 # Which stock route authenticates the caller with the uData API key, transcribed from
 # udata/api/oauth2.py at v17.6.0. The RFC 6749 and RFC 7009 forms carry their own client
-# secret and the login_required browser routes reject an API key outright, so only the
-# consent POST may send it. A new route stays credential-free until it is declared here,
+# secret; controlled 17.6.0 evidence proves both authorize verbs authenticate with it.
+# A new route stays credential-free until it is declared here,
 # which fails closed rather than leaking the key.
-_CREDENTIAL_ROUTES = frozenset({"authorize_post"})
+_CREDENTIAL_ROUTES = frozenset({"authorize", "authorize_post"})
 
 # The stock /oauth/error route is a terminal HTML page rather than a redirect. The
 # 17.6.0 image does not ship api/oauth_error.html, so the deployment itself answers
@@ -107,7 +107,12 @@ def build_request(name: str, body: object = None) -> Request:
     if name in _QUERY_ROUTES:
         if not isinstance(body, OAuthClientRequest):
             raise ValueError(f"uData OAuth {name} requires its typed query body.")
-        return method, f"{path}?{urlencode(body.query_fields(name))}", {"Accept": "application/json"}, None
+        return (
+            method,
+            f"{path}?{urlencode(body.query_fields(name))}",
+            {"Accept": "application/json" if name == "client_info" else "*/*"},
+            None,
+        )
     if name not in _FORM_BODIES:
         return method, path, {}, None
     if not isinstance(body, (OAuthTokenRequest, OAuthRevokeRequest, OAuthAuthorizeDecision)):

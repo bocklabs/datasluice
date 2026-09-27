@@ -204,7 +204,7 @@ def test_reuse_reads_match_exact_wire_and_preserve_native_envelopes() -> None:
                 ("GET", f"{ORIGIN}/api/1/reuses/?page=1&page_size=20&q=x"): (200, _page_body()),
                 ("GET", f"{ORIGIN}/api/1/reuses/reuse-1/"): (200, _reuse()),
                 ("GET", f"{ORIGIN}/api/1/reuses/recent.atom?page=1&page_size=20"): (200, b"<feed/>"),
-                ("GET", f"{ORIGIN}/api/1/reuses/badges/"): (200, [{"id": "badger", "label": "Badger"}]),
+                ("GET", f"{ORIGIN}/api/1/reuses/badges/"): (200, {"badger": "Badger"}),
                 ("GET", f"{ORIGIN}/api/1/reuses/suggest/?q=ab&size=3"): (200, [{"id": "r1", "title": "T"}]),
                 ("GET", f"{ORIGIN}/api/1/reuses/types/"): (200, [{"id": "application", "label": "Application"}]),
                 ("GET", f"{ORIGIN}/api/1/reuses/topics/"): (200, [{"id": "health", "label": "Health"}]),
@@ -232,7 +232,7 @@ def test_reuse_reads_match_exact_wire_and_preserve_native_envelopes() -> None:
         assert atom.payload["media_type"] == "application/atom+xml"
         assert atom.payload["size_bytes"] == len("<feed/>")
         assert atom.payload["sha256"]
-        assert _thawed(client.reuses.available_reuse_badges()[0].payload) == {"id": "badger", "label": "Badger"}
+        assert _thawed(client.reuses.available_reuse_badges().payload) == {"badger": "Badger"}
         assert _thawed(client.reuses.suggest_reuses(ReuseSuggestQuery(q="ab", size=3))[0].payload) == {
             "id": "r1",
             "title": "T",
@@ -259,7 +259,13 @@ def test_reuse_create_and_update_match_exact_wire_and_receipts() -> None:
     )
     with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
         created = client.reuses.create_reuse(
-            ReuseCreateInput(title="A reuse", description="A description", type="application"),
+            ReuseCreateInput(
+                title="A reuse",
+                description="A description",
+                type="application",
+                url="https://example.com",
+                topic="health",
+            ),
             CREATE_ONLY_PERMISSIONS,
             _policy(wire.CREATE_REUSE_OPERATION, "A reuse"),
         )
@@ -272,6 +278,8 @@ def test_reuse_create_and_update_match_exact_wire_and_receipts() -> None:
             "title": "A reuse",
             "description": "A description",
             "type": "application",
+            "url": "https://example.com",
+            "topic": "health",
         }
         updated = client.reuses.update_reuse(
             "reuse-1",
