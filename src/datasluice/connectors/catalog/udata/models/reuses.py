@@ -75,6 +75,29 @@ class ReuseListQuery:
 
 
 @dataclass(frozen=True, slots=True)
+class ReuseFollowersQuery:
+    """Stock follower query: pagination plus the optional user filter."""
+
+    page: int = 1
+    page_size: int = 20
+    user: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("uData reuse follower page must be a positive integer.")
+        if type(self.page_size) is not int or self.page_size < 1:
+            raise ValueError("uData reuse follower page_size must be a positive integer.")
+        if self.user is not None and not self.user:
+            raise ValueError("uData reuse follower user must be a non-empty string when supplied.")
+
+    def query_params(self) -> list[tuple[str, str]]:
+        params = [("page", str(self.page)), ("page_size", str(self.page_size))]
+        if self.user is not None:
+            params.append(("user", self.user))
+        return params
+
+
+@dataclass(frozen=True, slots=True)
 class ReuseSearchQuery:
     """Stock v2 reuse search query surface."""
 
@@ -133,9 +156,9 @@ class ReuseCreateInput:
     """Presence-aware create payload for POST /api/1/reuses/."""
 
     title: str
-    description: str | None = None
-    type: str | None = None
-    url: str = ""
+    description: str
+    type: str
+    url: str
     tags: tuple[str, ...] = ()
     topic: str = ""
     organization: Mapping[str, str] | None = None
@@ -144,8 +167,8 @@ class ReuseCreateInput:
 
     def __post_init__(self) -> None:
         _validate_text(self.title, "title", required=True)
-        _validate_text(self.description, "description")
-        _validate_text(self.type, "type")
+        _validate_text(self.description, "description", required=True)
+        _validate_text(self.type, "type", required=True)
         _validate_text(self.url, "url", required=True)
         _validate_text(self.topic, "topic", required=True)
         _validate_tags(self.tags, required=True)
@@ -157,11 +180,13 @@ class ReuseCreateInput:
             object.__setattr__(self, "extras", dict(self.extras))
 
     def payload(self) -> dict[str, object]:
-        body: dict[str, object] = {"title": self.title, "url": self.url, "topic": self.topic}
-        if self.description is not None:
-            body["description"] = self.description
-        if self.type is not None:
-            body["type"] = self.type
+        body: dict[str, object] = {
+            "title": self.title,
+            "description": self.description,
+            "type": self.type,
+            "url": self.url,
+            "topic": self.topic,
+        }
         if self.tags:
             body["tags"] = list(self.tags)
         if self.organization is not None:

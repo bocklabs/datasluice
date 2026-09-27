@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseCreateInput,
+    ReuseFollowersQuery,
     ReuseImageInput,
     ReuseListQuery,
     ReuseMutationResult,
@@ -336,9 +337,9 @@ class SyncReusesService:
     def list_v2(self, query: ReuseListQuery | None = None) -> MappingRecord:
         return self._read(wire.list_reuses_v2_request(query or ReuseListQuery()), wire.LIST_REUSES_V2_OPERATION)
 
-    def list_reuse_followers(self, reuse_id: str, query: ReuseListQuery | None = None) -> MappingRecord:
+    def list_reuse_followers(self, reuse_id: str, query: ReuseFollowersQuery | None = None) -> MappingRecord:
         return self._read(
-            wire.list_reuse_followers_request(reuse_id, query or ReuseListQuery()),
+            wire.list_reuse_followers_request(reuse_id, query or ReuseFollowersQuery()),
             wire.LIST_REUSE_FOLLOWERS_OPERATION,
         )
 
@@ -660,9 +661,9 @@ class AsyncReusesService:
     async def list_v2(self, query: ReuseListQuery | None = None) -> MappingRecord:
         return await self._read(wire.list_reuses_v2_request(query or ReuseListQuery()), wire.LIST_REUSES_V2_OPERATION)
 
-    async def list_reuse_followers(self, reuse_id: str, query: ReuseListQuery | None = None) -> MappingRecord:
+    async def list_reuse_followers(self, reuse_id: str, query: ReuseFollowersQuery | None = None) -> MappingRecord:
         return await self._read(
-            wire.list_reuse_followers_request(reuse_id, query or ReuseListQuery()),
+            wire.list_reuse_followers_request(reuse_id, query or ReuseFollowersQuery()),
             wire.LIST_REUSE_FOLLOWERS_OPERATION,
         )
 

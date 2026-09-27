@@ -60,6 +60,7 @@ from datasluice.connectors.catalog.udata.models.organizations import (
 )
 from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseCreateInput,
+    ReuseFollowersQuery,
     ReuseListQuery,
     ReuseSearchQuery,
     ReuseSuggestQuery,
@@ -3459,8 +3460,9 @@ def test_controlled_reuse_reads_match_raw_routes_in_both_modes() -> None:
         ):
             status, payload, _ = _direct_request("", "GET", path, max_bytes=65536)
             if status != 200:
-                with pytest.raises(CatalogError):
+                with pytest.raises(CatalogError) as error:
                     getattr(client.reuses, method)(*args)
+                assert error.value.metadata.get("status_code") == status, method
                 continue
             typed = getattr(client.reuses, method)(*args)
             if method == "recent_reuses_atom_feed":
@@ -3481,6 +3483,11 @@ def test_controlled_reuse_reads_match_raw_routes_in_both_modes() -> None:
                 ("/api/2/reuses/?page=1&page_size=20", "list_v2", (ReuseListQuery(),)),
             ):
                 status, payload, _ = _direct_request("", "GET", path)
+                if status != 200:
+                    with pytest.raises(CatalogError) as error:
+                        await getattr(client.reuses, method)(*args)
+                    assert error.value.metadata.get("status_code") == status, method
+                    continue
                 operation = getattr(client.reuses, method)(*args)
                 typed = await operation
                 assert status == 200, path
@@ -3532,8 +3539,8 @@ def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
         )
         assert created.record is not None
         reuse_id = str(created.record.payload["id"])
-        assert created.receipt.operation == "udata/api-v1.create-reuse"
         try:
+            assert created.receipt.operation == "udata/api-v1.create-reuse"
             status, raw, _ = _direct_request(token, "GET", f"/api/1/reuses/{reuse_id}/")
             assert status == 200
             assert isinstance(raw, Mapping)
@@ -3571,7 +3578,7 @@ def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
             followed = client.reuses.follow_reuse(reuse_id, permissions, policy("udata/api-v1.follow-reuse", reuse_id))
             assert followed.receipt.operation == "udata/api-v1.follow-reuse"
 
-            followers_page = client.reuses.list_reuse_followers(reuse_id, ReuseListQuery())
+            followers_page = client.reuses.list_reuse_followers(reuse_id, ReuseFollowersQuery())
             followers_payload = cast(Mapping[str, object], _plain_json(followers_page.payload))
             total = followers_payload["total"]
             assert isinstance(total, int)
@@ -3581,7 +3588,10 @@ def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
                 client.reuses.unfollow_reuse(reuse_id, permissions, policy("udata/api-v1.unfollow-reuse", reuse_id))
             except CatalogError:
                 pass
-            client.reuses.unfeature_reuse(reuse_id, permissions, policy("udata/api-v1.unfeature-reuse", reuse_id))
+            try:
+                client.reuses.unfeature_reuse(reuse_id, permissions, policy("udata/api-v1.unfeature-reuse", reuse_id))
+            except CatalogError:
+                pass
             try:
                 client.reuses.delete_reuse_badge(
                     reuse_id, "badger", permissions, policy("udata/api-v1.delete-reuse-badge", reuse_id)

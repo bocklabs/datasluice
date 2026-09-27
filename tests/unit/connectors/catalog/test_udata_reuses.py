@@ -22,6 +22,7 @@ from datasluice.connectors.catalog.udata.clients import (
 )
 from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseCreateInput,
+    ReuseFollowersQuery,
     ReuseListQuery,
     ReuseSearchQuery,
     ReuseSuggestQuery,
@@ -210,7 +211,7 @@ def test_reuse_reads_match_exact_wire_and_preserve_native_envelopes() -> None:
                 ("GET", f"{ORIGIN}/api/1/reuses/topics/"): (200, [{"id": "health", "label": "Health"}]),
                 ("GET", f"{ORIGIN}/api/2/reuses/?page=1&page_size=20"): (200, _page_body()),
                 ("GET", f"{ORIGIN}/api/2/reuses/search/?page=1&page_size=50&q=x"): (200, _page_body()),
-                ("GET", f"{ORIGIN}/api/1/reuses/reuse-1/followers/?page=1&page_size=20"): (
+                ("GET", f"{ORIGIN}/api/1/reuses/reuse-1/followers/?page=1&page_size=20&user=u1"): (
                     200,
                     {
                         "data": [{"id": "f1", "follower": {"id": "u1"}, "since": "2026-01-01T00:00:00+00:00"}],
@@ -241,7 +242,7 @@ def test_reuse_reads_match_exact_wire_and_preserve_native_envelopes() -> None:
         assert _thawed(client.reuses.reuse_topics()[0].payload) == {"id": "health", "label": "Health"}
         assert _thawed(client.reuses.list_v2().payload) == _page_body()
         assert _thawed(client.reuses.search_v2(ReuseSearchQuery(q="x")).payload) == _page_body()
-        followers = client.reuses.list_reuse_followers("reuse-1")
+        followers = client.reuses.list_reuse_followers("reuse-1", ReuseFollowersQuery(user="u1"))
         assert cast(Mapping[str, object], _thawed(followers.payload))["total"] == 1
     reuse_requests = [r for r in router.requests if "/reuses/" in r.url]
     assert reuse_requests[0].method == "GET"

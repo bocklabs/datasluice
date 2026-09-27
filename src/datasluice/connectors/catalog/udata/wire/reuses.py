@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseCreateInput,
+    ReuseFollowersQuery,
     ReuseListQuery,
     ReuseSearchQuery,
     ReuseSuggestQuery,
@@ -152,7 +153,7 @@ def list_reuses_v2_request(query: ReuseListQuery) -> Request:
     return _request("GET", f"{_REUSE_V2_PATH}?{_query(query.query_params())}")
 
 
-def list_reuse_followers_request(reuse_id: str, query: ReuseListQuery) -> Request:
+def list_reuse_followers_request(reuse_id: str, query: ReuseFollowersQuery) -> Request:
     return _request(
         "GET",
         f"{_REUSE_PATH}{segment(reuse_id, LIST_REUSE_FOLLOWERS_OPERATION)}/followers/?{_query(query.query_params())}",
