@@ -288,7 +288,7 @@
   "controlled_reuse_evidence": {
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
-    "implementation_sha": "898e37dd81676012811834419758634604655117",
+    "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
     "controlled_test_sha256": "4125af4f7926baa4794815aeea094c5df8394d3049e45ea9d9b058b7a09daf37",
     "wheel_test_sha256": "c657b72737c82e0c0bfc2033ea906121bbe7fa661823fbb59a0e25a28fb79d44",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
