@@ -286,9 +286,9 @@
     "recapture_note": "No stack nonce or admin secret was created for 04-08, so this block records the sanitized shape contract and the current test digests rather than a fresh capture. The prior capture was inspected read-only and the controlled tests run in their normal environment-skipped state without the admin token variable set."
   },
   "controlled_reuse_evidence": {
-    "captured_at": "2026-09-26",
+    "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
-    "implementation_sha": "9a09124756ee693e4f018e9c84d64a230d75e561",
+    "implementation_sha": "898e37dd81676012811834419758634604655117",
     "controlled_test_sha256": "4125af4f7926baa4794815aeea094c5df8394d3049e45ea9d9b058b7a09daf37",
     "wheel_test_sha256": "c657b72737c82e0c0bfc2033ea906121bbe7fa661823fbb59a0e25a28fb79d44",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
@@ -300,7 +300,7 @@
       "test_wheel_import_proves_the_tracer_path_from_installed_content"
     ],
     "response_shape": "native-envelope-and-status-skeleton",
-    "recaptured": false,
-    "recapture_note": "Reuse reads and lifecycle were captured against the loopback 17.6.0 stack. The v2 search returns 500 stack-wide (datasets and discussions too), so the differential asserts the typed error mapping. The reuse badge set is empty in the stock profile, so add_reuse_badge asserts the 400 invalid-kind mapping and delete_reuse_badge asserts the 404 absent-badge mapping. Follow cleanup is tolerant of the absent-follow state. All raw responses are sanitized to status and envelope skeletons."
+    "recaptured": true,
+    "recapture_note": "Post-fix reuse reads and lifecycle were recaptured against a fresh loopback 17.6.0 stack. The v2 search returns 500 stack-wide (datasets and discussions too), so the differential asserts the typed error mapping. The reuse badge set is empty in the stock profile, so add_reuse_badge asserts the 400 invalid-kind mapping and delete_reuse_badge asserts the 404 absent-badge mapping. Follow cleanup is tolerant of the absent-follow state. All raw responses are sanitized to status and envelope skeletons."
   }
 }
