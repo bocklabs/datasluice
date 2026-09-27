@@ -477,7 +477,7 @@ class AsyncPostsReportsService:
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
         return await _mutation_async(
-            "report",
+            client_input.subject["id"],
             mutation_policy,
             wire.CREATE_REPORT_OPERATION,
             lambda: wire.create_report_request(client_input),

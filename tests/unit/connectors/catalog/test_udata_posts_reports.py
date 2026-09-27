@@ -394,6 +394,7 @@ def test_async_mode_matches_exact_wire() -> None:
         _routes(
             {
                 ("GET", f"{ORIGIN}/api/2/posts/search/?page=1&page_size=20&q=x"): (200, _page(_post())),
+                ("POST", f"{ORIGIN}/api/1/reports/"): (201, _report()),
                 ("POST", f"{ORIGIN}/api/1/notifications/notification-1/read/"): (200, _report()),
             }
         )
@@ -403,13 +404,20 @@ def test_async_mode_matches_exact_wire() -> None:
         async with AsyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
             page = await client.posts_reports.search_posts(PostSearchQuery(q="x"))
             assert _thawed(page.payload) == _page(_post())
+            created = await client.posts_reports.create_report(
+                ReportCreateInput(subject={"class": "Dataset", "id": "dataset-1"}, reason="spam"),
+                PERMISSIONS,
+                _policy(wire.CREATE_REPORT_OPERATION, "dataset-1"),
+            )
             read = await client.posts_reports.read_notification(
                 "notification-1", PERMISSIONS, _policy(wire.READ_NOTIFICATION_OPERATION, "notification-1")
             )
+            assert created.receipt.target.value == "report-1"
             assert read.receipt.target.value == "notification-1"
 
     asyncio.run(run())
     assert [r.url for r in router.requests if "/site/" not in r.url] == [
         f"{ORIGIN}/api/2/posts/search/?page=1&page_size=20&q=x",
+        f"{ORIGIN}/api/1/reports/",
         f"{ORIGIN}/api/1/notifications/notification-1/read/",
     ]
