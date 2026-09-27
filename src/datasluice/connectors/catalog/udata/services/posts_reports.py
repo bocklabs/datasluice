@@ -520,7 +520,7 @@ class AsyncPostsReportsService:
         body: object,
         permissions: Permissions | None,
     ) -> Response:
-        resolved = self._client._resolved_credential()
+        resolved = await self._client._resolved_credential_async()
         if permissions is not None:
             resolved = _require_mutation_permission(resolved, wire.CREATE_REPORT_OPERATION, permissions)
             return await self._client._dataset_call_async(
