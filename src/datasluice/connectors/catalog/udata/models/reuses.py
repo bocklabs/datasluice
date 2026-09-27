@@ -129,9 +129,9 @@ class ReuseSearchQuery:
 
 
 def _validate_text(value: object, label: str, *, required: bool = False) -> None:
-    if required and (not isinstance(value, str) or not value):
+    if required and (not isinstance(value, str) or not value.strip()):
         raise ValueError(f"uData reuse {label} must be a non-empty string.")
-    if not required and value is not None and not isinstance(value, str):
+    if not required and value is not None and (not isinstance(value, str) or not value.strip()):
         raise ValueError(f"uData reuse {label} must be a string when supplied.")
 
 

@@ -249,6 +249,23 @@ def test_reuse_reads_match_exact_wire_and_preserve_native_envelopes() -> None:
     assert reuse_requests[0].url == f"{ORIGIN}/api/1/reuses/?page=1&page_size=20"
 
 
+def test_reuse_create_required_fields_reject_whitespace() -> None:
+    invalid_inputs = [
+        lambda: ReuseCreateInput(
+            title=" ", description="d", type="application", url="https://example.com", topic="health"
+        ),
+        lambda: ReuseCreateInput(
+            title="A", description=" ", type="application", url="https://example.com", topic="health"
+        ),
+        lambda: ReuseCreateInput(title="A", description="d", type=" ", url="https://example.com", topic="health"),
+        lambda: ReuseCreateInput(title="A", description="d", type="application", url=" ", topic="health"),
+        lambda: ReuseCreateInput(title="A", description="d", type="application", url="https://example.com", topic=" "),
+    ]
+    for create_invalid in invalid_inputs:
+        with pytest.raises(ValueError):
+            create_invalid()
+
+
 def test_reuse_create_and_update_match_exact_wire_and_receipts() -> None:
     router = _Router(
         _routes(
