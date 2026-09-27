@@ -50,6 +50,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "models/reuses.py",
         "wire/reuses.py",
         "services/reuses.py",
+        "models/posts_reports.py",
+        "wire/posts_reports.py",
+        "services/posts_reports.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
@@ -81,6 +84,13 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
     DiscussionCreateInput,
     DiscussionSearchQuery,
     DiscussionUpdateInput,
+)
+from datasluice.connectors.catalog.udata.models.posts_reports import (
+    NotificationQuery,
+    PostListQuery,
+    PostSearchQuery,
+    ReportCreateInput,
+    ReportUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
@@ -184,6 +194,28 @@ class Transport:
         elif "/api/2/discussions/search/" in url:
             body = json.dumps({"data": [], "facets": {}, "links": {}, "meta": {"total": 0}}).encode()
             headers = {"Content-Type": "application/json"}
+        elif "/api/1/notifications/" in url:
+            body = json.dumps({"data": [{"id": "wheel-notification", "handled_at": None}],
+                               "page": 1, "page_size": 20, "total": 1}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/api/1/reports/reasons/" in url:
+            body = json.dumps([{"value": "spam", "label": "Spam"}]).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/api/1/reports/" in url:
+            body = json.dumps({"id": "wheel-report", "reason": "spam", "message": "wheel"}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif url.endswith("/api/1/posts/wheel-post/"):
+            body = json.dumps({"id": "wheel-post", "name": "Wheel post"}).encode()
+            headers = {"Content-Type": "application/json"}
+        elif "/api/1/posts/" in url or "/api/2/posts/" in url:
+            if url.endswith("/api/1/posts/recent.atom"):
+                body = b"<feed/>"
+                headers = {"Content-Type": "application/atom+xml"}
+            else:
+                body = json.dumps({"data": [{"id": "wheel-post", "name": "Wheel post"}],
+                                   "next_page": None, "page": 1, "page_size": 20,
+                                   "previous_page": None, "total": 1}).encode()
+                headers = {"Content-Type": "application/json"}
         elif "/api/1/reuses/" in url or "/api/2/reuses/" in url:
             body = json.dumps(
                 {"data": [{"id": "wheel-reuse", "title": "Wheel reuse"}], "next_page": None,
@@ -257,6 +289,9 @@ else:
     raise AssertionError("invalid organization id was dispatched")
 assert organization.id.value == "abc"
 sync_permissions = EffectivePermissions.for_credential(sync_credential, platform=CatalogPlatform.UDATA)
+sync_admin_permissions = EffectivePermissions.for_credential(
+    sync_credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+)
 sync_resource = client.resources.create(
     "abc",
     ResourceCreateInput(title="Sync wheel resource", url="https://example.test/sync.csv"),
@@ -447,6 +482,40 @@ assert client.activity_discussions.delete_discussion_comment(
         concurrency=ConcurrencyPolicy(overwrite=True),
     ),
 ).receipt.audit_metadata["status_code"] == 204
+assert client.posts_reports.list_posts(PostListQuery(q="wheel")).payload["total"] == 1
+assert client.posts_reports.get_post("wheel-post").payload["name"] == "Wheel post"
+atom = client.posts_reports.recent_posts_atom_feed()
+assert atom.payload["media_type"] == "application/atom+xml"
+assert client.posts_reports.search_posts(PostSearchQuery(q="wheel")).payload["total"] == 1
+created_report = client.posts_reports.create_report(
+    ReportCreateInput(subject={"class": "Dataset", "id": "abc"}, reason="spam", message="wheel"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.create-report", target="abc"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert created_report.record is not None
+assert client.posts_reports.get_report("wheel-report").payload["reason"] == "spam"
+assert client.posts_reports.list_reports_reasons()[0].payload["value"] == "spam"
+updated_report = client.posts_reports.update_report(
+    "wheel-report", ReportUpdateInput(message="updated"), sync_admin_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.update-report", target="wheel-report"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert updated_report.record is not None
+read_notification = client.posts_reports.read_notification(
+    "wheel-notification", sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.read-notification", target="wheel-notification"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert read_notification.record is not None
 client.close()
 
 import asyncio
@@ -580,6 +649,19 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )).receipt.audit_metadata["status_code"] == 204
+        assert (await active.posts_reports.list_posts(PostListQuery())).payload["total"] == 1
+        async_report = await active.posts_reports.create_report(
+            ReportCreateInput(subject={"class": "Dataset", "id": "abc"}, reason="spam", message="wheel"),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.create-report", target="abc"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        assert async_report.record is not None
+        assert (await active.posts_reports.list_notifications(permissions, NotificationQuery())).payload["total"] == 1
         try:
             await active.organizations_memberships.get_organization("")
         except CatalogValidationError:
@@ -674,6 +756,15 @@ expected = [
     "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/0/",
     "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
     "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/comments/1/",
+    "http://127.0.0.1:5640/api/1/posts/?page=1&page_size=20&q=wheel",
+    "http://127.0.0.1:5640/api/1/posts/wheel-post/",
+    "http://127.0.0.1:5640/api/1/posts/recent.atom",
+    "http://127.0.0.1:5640/api/2/posts/search/?page=1&page_size=20&q=wheel",
+    "http://127.0.0.1:5640/api/1/reports/",
+    "http://127.0.0.1:5640/api/1/reports/wheel-report/",
+    "http://127.0.0.1:5640/api/1/reports/reasons/",
+    "http://127.0.0.1:5640/api/1/reports/wheel-report/",
+    "http://127.0.0.1:5640/api/1/notifications/wheel-notification/read/",
 ]
 assert recorded == expected
 async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
@@ -697,6 +788,9 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/discussions/wheel-discussion/",
     "http://127.0.0.1:5640/api/1/discussions/",
     "http://127.0.0.1:5640/api/2/discussions/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/posts/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reports/",
+    "http://127.0.0.1:5640/api/1/notifications/?page=1&page_size=20",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

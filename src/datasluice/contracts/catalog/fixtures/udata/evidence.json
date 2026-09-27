@@ -140,8 +140,8 @@
     "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
-    "controlled_test_sha256": "4125af4f7926baa4794815aeea094c5df8394d3049e45ea9d9b058b7a09daf37",
-    "wheel_test_sha256": "c657b72737c82e0c0bfc2033ea906121bbe7fa661823fbb59a0e25a28fb79d44",
+    "controlled_test_sha256": "8011ec0d020f7cb2b5f459eb5faecfdb8c3f4093465171dad3c459f5c5e1322f",
+    "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
@@ -218,8 +218,8 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "4125af4f7926baa4794815aeea094c5df8394d3049e45ea9d9b058b7a09daf37",
-    "wheel_test_sha256": "c657b72737c82e0c0bfc2033ea906121bbe7fa661823fbb59a0e25a28fb79d44",
+    "controlled_test_sha256": "8011ec0d020f7cb2b5f459eb5faecfdb8c3f4093465171dad3c459f5c5e1322f",
+    "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
@@ -263,16 +263,16 @@
       "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
       "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
     },
-    "controlled_test_sha256": "4125af4f7926baa4794815aeea094c5df8394d3049e45ea9d9b058b7a09daf37",
-    "wheel_test_sha256": "c657b72737c82e0c0bfc2033ea906121bbe7fa661823fbb59a0e25a28fb79d44",
+    "controlled_test_sha256": "8011ec0d020f7cb2b5f459eb5faecfdb8c3f4093465171dad3c459f5c5e1322f",
+    "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
     "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
   },
   "controlled_activity_discussion_evidence": {
     "captured_at": "2026-09-26",
     "stack_version": "17.6.0",
     "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
-    "controlled_test_sha256": "4125af4f7926baa4794815aeea094c5df8394d3049e45ea9d9b058b7a09daf37",
-    "wheel_test_sha256": "c657b72737c82e0c0bfc2033ea906121bbe7fa661823fbb59a0e25a28fb79d44",
+    "controlled_test_sha256": "8011ec0d020f7cb2b5f459eb5faecfdb8c3f4093465171dad3c459f5c5e1322f",
+    "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "test_ids": [
@@ -289,8 +289,8 @@
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
-    "controlled_test_sha256": "4125af4f7926baa4794815aeea094c5df8394d3049e45ea9d9b058b7a09daf37",
-    "wheel_test_sha256": "c657b72737c82e0c0bfc2033ea906121bbe7fa661823fbb59a0e25a28fb79d44",
+    "controlled_test_sha256": "8011ec0d020f7cb2b5f459eb5faecfdb8c3f4093465171dad3c459f5c5e1322f",
+    "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "test_ids": [
@@ -302,5 +302,24 @@
     "response_shape": "native-envelope-and-status-skeleton",
     "recaptured": true,
     "recapture_note": "Post-fix reuse reads and lifecycle were recaptured against a fresh loopback 17.6.0 stack. The v2 search returns 500 stack-wide (datasets and discussions too), so the differential asserts the typed error mapping. The reuse badge set is empty in the stock profile, so add_reuse_badge asserts the 400 invalid-kind mapping and delete_reuse_badge asserts the 404 absent-badge mapping. Follow cleanup is tolerant of the absent-follow state. All raw responses are sanitized to status and envelope skeletons."
+  }
+,
+  "controlled_posts_report_evidence": {
+    "captured_at": "2026-09-27",
+    "stack_version": "17.6.0",
+    "implementation_sha": "847eafa6c5a2fd6454ca71208c152749b0ac2640",
+    "controlled_test_sha256": "8011ec0d020f7cb2b5f459eb5faecfdb8c3f4093465171dad3c459f5c5e1322f",
+    "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
+    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
+    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "test_ids": [
+      "test_controlled_posts_reports_reads_match_raw_routes_in_both_modes",
+      "test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "response_shape": "native-envelope-and-status-skeleton",
+    "recaptured": false,
+    "recapture_note": "Post, report, notification reads and lifecycle tests are implemented against the pinned loopback contract. Controlled execution is pending because the pinned dependency image is temporarily unavailable; the installed wheel proof passes without checkout paths."
   }
 }
