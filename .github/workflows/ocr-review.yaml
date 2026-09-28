@@ -31,7 +31,7 @@ jobs:
         run: npx -y "@alibaba-group/open-code-review@${OCR_VERSION}" config set max_tokens 1000000
 
       - name: Run OpenCodeReview
-        uses: alibaba/open-code-review@2190f11fcd24ed74ed7a1120c5e63f901b1da658 # v1.11.5
+        uses: alibaba/open-code-review@5c7b38381d1fdd36de6cf622a2a1f768243c4704 # v1.12.8
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
