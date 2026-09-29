@@ -19,14 +19,14 @@ def _own_nodes(node: ast.AST) -> list[ast.AST]:
     """Return the nodes of one function body, excluding nested function definitions."""
     collected: list[ast.AST] = []
 
-    def walk(current: ast.AST, is_root: bool) -> None:
+    def walk(current: ast.AST) -> None:
         collected.append(current)
         for child in ast.iter_child_nodes(current):
-            if not is_root and isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
-            walk(child, False)
+            walk(child)
 
-    walk(node, True)
+    walk(node)
     return collected
 
 
@@ -78,7 +78,9 @@ def _expanded_fstrings(node: ast.AST) -> set[str]:
     return names
 
 
-def _dynamic_names(node: ast.AST, functions: Mapping[str, ast.AST] | None = None) -> dict[str, list[str]]:
+def _dynamic_names(
+    node: ast.AST, functions: Mapping[str, ast.AST] | None = None, enclosing: ast.AST | None = None
+) -> dict[str, list[str]]:
     """Return loop variables that enumerate declared strings."""
     names = _loop_literals(node)
     for item in ast.walk(node):
@@ -86,10 +88,12 @@ def _dynamic_names(node: ast.AST, functions: Mapping[str, ast.AST] | None = None
             continue
         iterable = item.iter
         if isinstance(iterable, ast.Name):
+            scopes = (node, enclosing) if enclosing is not None else (node,)
             iterable = next(
                 (
                     assignment.value
-                    for assignment in ast.walk(node)
+                    for scope in scopes
+                    for assignment in ast.walk(scope)
                     if isinstance(assignment, ast.Assign)
                     and any(isinstance(target, ast.Name) and target.id == iterable.id for target in assignment.targets)
                 ),
@@ -186,10 +190,11 @@ def _call_method_names(
     declared: set[str],
     bound_methods: dict[str, set[str]],
     family_parameters: set[str],
+    enclosing: ast.AST | None = None,
 ) -> set[str]:
     """Return methods invoked through a typed family attribute or its dynamic dispatch."""
     names: set[str] = set()
-    dynamic = _dynamic_names(node)
+    dynamic = _dynamic_names(node, enclosing=enclosing)
     for item in ast.walk(node):
         if not isinstance(item, ast.Call):
             continue
@@ -265,7 +270,7 @@ def executed_modes(source: str, test_name: str, methods: set[str]) -> dict[str, 
         }
         if not modes:
             continue
-        reached_nodes = cached_closure(current) | set(nested_functions.values())
+        reached_nodes = cached_closure(current)
         for reached in reached_nodes:
             names = {
                 name.removeprefix("auth_oauth.")
@@ -274,11 +279,11 @@ def executed_modes(source: str, test_name: str, methods: set[str]) -> dict[str, 
             }
             family_parameters = _family_bound_parameters(reached_nodes)
             declared = {value for reached_node in reached_nodes for value in _string_constants(reached_node)}
-            loop_names = set(_dynamic_names(current, callable_functions)) | set(
-                _dynamic_names(reached, callable_functions)
+            loop_names = set(_dynamic_names(current, callable_functions, enclosing=target)) | set(
+                _dynamic_names(reached, callable_functions, enclosing=target)
             )
             bound_methods = _bound_method_parameters(reached_nodes, loop_names)
-            names |= _call_method_names(reached, methods, declared, bound_methods, family_parameters)
+            names |= _call_method_names(reached, methods, declared, bound_methods, family_parameters, enclosing=target)
             for method in methods & names:
                 modes_by_method[method] |= modes
     return modes_by_method

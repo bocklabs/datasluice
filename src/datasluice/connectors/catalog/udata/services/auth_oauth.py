@@ -17,6 +17,7 @@ from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthTokenRequest,
     OAuthTokenResult,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import ResourceKind
@@ -172,7 +173,7 @@ class SyncAuthOAuthService:
                 omit_credential=not wire.sends_credential(name),
             )
             result = decode(status, payload, _media_type(response.headers if response is not None else {}))
-        except BaseException as error:
+        except SETTLEMENT_ERRORS as error:
             self._client._emit(operation, "failed")
             _error_receipt(
                 error, name, mutation_policy, _scrub(response), interrupted=isinstance(error, KeyboardInterrupt)
@@ -322,7 +323,7 @@ class AsyncAuthOAuthService:
                 omit_credential=not wire.sends_credential(name),
             )
             result = decode(status, payload, _media_type(response.headers if response is not None else {}))
-        except BaseException as error:
+        except ASYNC_SETTLEMENT_ERRORS as error:
             self._client._emit(operation, "failed")
             _error_receipt(
                 error, name, mutation_policy, _scrub(response), interrupted=isinstance(error, KeyboardInterrupt)

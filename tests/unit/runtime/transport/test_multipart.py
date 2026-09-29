@@ -140,6 +140,60 @@ def test_async_httpx_sends_multipart_through_the_files_channel() -> None:
     assert b"a,b\n1,2" in wire.content
 
 
+def test_httpx_transmits_stream_part_bytes_exactly_once() -> None:
+    source = BytesIO(b"a,b\n1,2")
+    part = UploadPart(
+        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
+    )
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"stored")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        response = transport.send(
+            RuntimeRequest(
+                "POST", "https://example.test/upload", files=(part,), redirect_policy=RedirectPolicy.NO_FOLLOW
+            )
+        )
+    finally:
+        transport.close()
+
+    assert response.body == b"stored"
+    assert b"a,b\n1,2" in seen[0].content
+    assert source.tell() == len(b"a,b\n1,2")
+
+
+def test_async_httpx_transmits_stream_part_bytes_exactly_once() -> None:
+    source = BytesIO(b"a,b\n1,2")
+    part = UploadPart(
+        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
+    )
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"stored")
+
+    async def send() -> None:
+        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
+        try:
+            await transport.send(
+                RuntimeRequest(
+                    "POST", "https://example.test/upload", files=(part,), redirect_policy=RedirectPolicy.NO_FOLLOW
+                )
+            )
+        finally:
+            await transport.aclose()
+
+    asyncio.run(send())
+
+    assert b"a,b\n1,2" in seen[0].content
+    assert source.tell() == len(b"a,b\n1,2")
+
+
 @pytest.mark.parametrize("status", [301, 302, 303])
 def test_httpx_redirect_downgrade_drops_files(status: int) -> None:
     seen: list[httpx.Request] = []

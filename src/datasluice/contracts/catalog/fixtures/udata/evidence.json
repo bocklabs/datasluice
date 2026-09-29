@@ -90,7 +90,7 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "reviewed_sha": "1cdb7a33c0c9a88578a3b3c6d8438d647b3a896f",
-    "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
   },
@@ -142,7 +142,7 @@
     "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
     "controlled_test_sha256": "0095f4326e151b3c593697f55bcdb40642788ca42bb194278f73398aaf8f5ca0",
     "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
-    "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     "origin_capture_sha256": "eac6abfa3b7cec65b4806d52820579b0e5fc8904af15a86dc67735575d46f714",
@@ -220,7 +220,7 @@
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
     "controlled_test_sha256": "0095f4326e151b3c593697f55bcdb40642788ca42bb194278f73398aaf8f5ca0",
     "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
-    "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e"
@@ -273,7 +273,7 @@
     "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
     "controlled_test_sha256": "0095f4326e151b3c593697f55bcdb40642788ca42bb194278f73398aaf8f5ca0",
     "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
-    "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947",
     "test_ids": [
       "test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes",
@@ -291,7 +291,7 @@
     "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
     "controlled_test_sha256": "0095f4326e151b3c593697f55bcdb40642788ca42bb194278f73398aaf8f5ca0",
     "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
-    "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947",
     "test_ids": [
       "test_controlled_reuse_reads_match_raw_routes_in_both_modes",
@@ -309,7 +309,7 @@
     "implementation_sha": "2373233cee7da7fa4465a1747fd41954b3b31ec2",
     "controlled_test_sha256": "0095f4326e151b3c593697f55bcdb40642788ca42bb194278f73398aaf8f5ca0",
     "wheel_test_sha256": "03b39cfaa58e0f189ab338e5653a0f98be02d238faec6d66a3bc2c26b97a54c5",
-    "compose_sha256": "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947",
     "test_ids": [
       "test_controlled_posts_reports_reads_match_raw_routes_in_both_modes",

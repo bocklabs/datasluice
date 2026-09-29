@@ -21,6 +21,7 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import organizations as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
@@ -90,7 +91,7 @@ def _close_logo(
 ) -> None:
     try:
         client_input.close()
-    except BaseException as close_error:
+    except SETTLEMENT_ERRORS as close_error:
         receipt = result.receipt if result is not None else getattr(primary_error, "mutation_receipt", None)
         if isinstance(receipt, MutationReceipt):
             _attach(close_error, receipt)
@@ -728,7 +729,7 @@ class SyncOrganizationsMembershipsService:
                 kind=ResourceKind("organization"),
             )
             return result
-        except BaseException as error:
+        except SETTLEMENT_ERRORS as error:
             primary_error = error
             raise
         finally:
@@ -1317,7 +1318,7 @@ class AsyncOrganizationsMembershipsService:
                 kind=ResourceKind("organization"),
             )
             return result
-        except BaseException as error:
+        except ASYNC_SETTLEMENT_ERRORS as error:
             primary_error = error
             raise
         finally:

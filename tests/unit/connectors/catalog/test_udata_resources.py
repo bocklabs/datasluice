@@ -246,6 +246,10 @@ def test_all_22_assigned_resource_routes_have_independent_exact_verbs_and_paths(
 
     with pytest.raises(CatalogValidationError):
         wire.resource_request("GET", "..", "resource")
+    with pytest.raises(CatalogValidationError):
+        wire.v2_resource_request("dataset", extras="DELETE")
+    with pytest.raises(CatalogValidationError):
+        wire.v2_resource_request("", "resource", extras="PUT")
 
 
 @pytest.mark.parametrize(
@@ -783,7 +787,7 @@ def test_async_resource_mutations_resolve_the_credential_asynchronously() -> Non
             )
 
     updated = asyncio.run(run())
-    assert provider.async_calls >= 2
+    assert provider.async_calls == 2
     assert transport.requests[-1].headers.get("X-API-KEY") == "secret-key"
     assert updated.extras == {}
     assert updated.receipt.outcome == "succeeded"

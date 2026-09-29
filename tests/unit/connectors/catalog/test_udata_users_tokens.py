@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import importlib
@@ -396,6 +397,58 @@ def test_update_me_role_escalation_requires_admin_before_dispatch() -> None:
     assert receipt.outcome == "rejected"
 
 
+@pytest.mark.parametrize(
+    ("name", "identifier", "client_input"),
+    [
+        ("update_me", None, UserUpdateInput({"active": False})),
+        ("update_user", "user-id", UserUpdateInput({"roles": ["admin"]})),
+        ("update_user", "user-id", UserUpdateInput({"active": False})),
+    ],
+)
+def test_privilege_field_escalation_requires_admin_before_dispatch(
+    name: str, identifier: str | None, client_input: UserUpdateInput
+) -> None:
+    """Every route and field the elevation re-check guards is denied before dispatch."""
+    router = _Router(_routes())
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    target = identifier or "me"
+    with client, pytest.raises(ForbiddenError) as denied:
+        if identifier is None:
+            client.users_tokens.update_me(client_input, PERMISSIONS, _policy(name, target))
+        else:
+            client.users_tokens.update_user(identifier, client_input, PERMISSIONS, _policy(name, target))
+    assert router.requests == []
+    receipt = denied.value.__dict__["mutation_receipt"]
+    assert isinstance(receipt, MutationReceipt)
+    assert receipt.outcome == "rejected"
+    assert receipt.target.value == target
+
+
+def test_async_privilege_field_escalation_requires_admin_before_dispatch() -> None:
+    """The async writer runs the same elevation re-check, so non-admin escalation never dispatches."""
+    router = _AsyncRouter(_routes())
+    client = AsyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+
+    async def run() -> None:
+        async with client:
+            with pytest.raises(ForbiddenError) as denied:
+                await client.users_tokens.update_me(
+                    UserUpdateInput({"roles": ["admin"]}), PERMISSIONS, _policy("update_me", "me")
+                )
+            with pytest.raises(ForbiddenError) as user_denied:
+                await client.users_tokens.update_user(
+                    "user-id", UserUpdateInput({"active": False}), PERMISSIONS, _policy("update_user", "user-id")
+                )
+        for raised, target in ((denied, "me"), (user_denied, "user-id")):
+            receipt = raised.value.__dict__["mutation_receipt"]
+            assert isinstance(receipt, MutationReceipt)
+            assert receipt.outcome == "rejected"
+            assert receipt.target.value == target
+
+    asyncio.run(run())
+    assert router.requests == []
+
+
 def test_sync_interruption_after_dispatch_retains_ambiguous_target_receipt() -> None:
     class _InterruptedRouter(_Router):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
@@ -418,8 +471,6 @@ def test_sync_interruption_after_dispatch_retains_ambiguous_target_receipt() -> 
 
 
 def test_async_token_create_matches_sync_receipt_and_secret_boundary() -> None:
-    import asyncio
-
     plaintext = secrets.token_urlsafe(36)
     router = _AsyncRouter(
         _routes(

@@ -18,6 +18,7 @@ from datasluice.connectors.catalog.udata.models.taxonomies import (
     BadgeCreateInput,
     SuggestQuery,
     TaxonomyMutationResult,
+    segment,
 )
 from datasluice.connectors.catalog.udata.services.taxonomies import (
     AsyncTaxonomiesService,
@@ -112,6 +113,13 @@ def _thawed(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_thawed(item) for item in value]
     return value
+
+
+@pytest.mark.parametrize("identifier", [".", ".."])
+def test_taxonomies_identifiers_reject_dot_segments(identifier: str) -> None:
+    """A bare dot segment is removed by RFC 3986 resolution, retargeting the route."""
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        segment(identifier, "list_taxonomies")
 
 
 def test_taxonomy_contract_exposes_every_assigned_method_in_both_modes() -> None:

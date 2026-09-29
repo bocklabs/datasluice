@@ -24,6 +24,7 @@ from datasluice.connectors.catalog.udata.models.posts_reports import (
     ReportCreateInput,
     ReportQuery,
     ReportUpdateInput,
+    segment,
 )
 from datasluice.connectors.catalog.udata.services.posts_reports import (
     AsyncPostsReportsService,
@@ -34,7 +35,7 @@ from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import MappingRecord
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogNotFoundError
+from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 ORIGIN = "http://127.0.0.1:5640"
@@ -152,6 +153,13 @@ def _policy(operation: str, target: str, destructive: bool = False) -> MutationP
         confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
         concurrency=ConcurrencyPolicy(overwrite=True),
     )
+
+
+@pytest.mark.parametrize("identifier", [".", ".."])
+def test_posts_reports_identifiers_reject_dot_segments(identifier: str) -> None:
+    """A bare dot segment is removed by RFC 3986 resolution, retargeting the route."""
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        segment(identifier, "get_post")
 
 
 def test_posts_reports_contract_exposes_exactly_eighteen_methods_in_both_modes() -> None:

@@ -96,7 +96,12 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set a disposable local secret in .env}
     command: server /data --license /run/secrets/minio.license
     volumes:
-      - ${MINIO_LICENSE_FILE:?set MINIO_LICENSE_FILE in .env}:/run/secrets/minio.license:ro
+      - type: bind
+        source: ${MINIO_LICENSE_FILE:?set MINIO_LICENSE_FILE in .env}
+        target: /run/secrets/minio.license
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /data
     restart: "no"

@@ -7,7 +7,13 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from urllib.parse import quote, urlencode
 
-from datasluice.connectors.catalog.udata.mapping import NativePageMetadata, UDataPageEnvelope, parse_native_page
+from datasluice.connectors.catalog.udata.mapping import (
+    NativePageMetadata,
+    UDataPageEnvelope,
+)
+from datasluice.connectors.catalog.udata.mapping import (
+    parse_native_page as _parse_native_page,
+)
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
     MembershipRequestQuery,
@@ -421,7 +427,7 @@ def parse_records(
 
 
 def parse_organization_page(payload: object, *, operation: str = LIST_ORGANIZATIONS_OPERATION) -> UDataPageEnvelope:
-    page = parse_native_page(payload, operation=operation)
+    page = _parse_native_page(payload, operation=operation)
     records = tuple(parse_organization(item, operation=operation) for item in page.items)
     page_info = None
     if page.page is not None:
@@ -448,7 +454,7 @@ def parse_contact_points(payload: object, *, operation: str) -> tuple[MappingRec
 
 
 def parse_page(payload: object, *, operation: str, kind: ResourceKind) -> UDataPageEnvelope:
-    page = parse_native_page(payload, operation=operation)
+    page = _parse_native_page(payload, operation=operation)
     records = tuple(
         NativeRecord(
             platform=PLATFORM,
@@ -498,10 +504,5 @@ def parse_extras(payload: object, *, operation: str = GET_ORGANIZATION_EXTRAS_OP
 
 
 __all__ = [
-    name
-    for name in globals()
-    if name.endswith("_OPERATION")
-    or name.endswith("_request")
-    or name.startswith("parse_")
-    or name in {"ORGANIZATIONS_OPERATION"}
+    name for name in globals() if name.endswith("_OPERATION") or name.endswith("_request") or name.startswith("parse_")
 ]

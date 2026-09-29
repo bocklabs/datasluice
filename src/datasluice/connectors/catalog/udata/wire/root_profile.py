@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import math
@@ -12,6 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Never
 from urllib.parse import SplitResult, parse_qsl, quote, urlencode, urljoin, urlsplit
 
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.domain.catalog.udata import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
@@ -491,7 +491,7 @@ async def _digest_stream_chunk_async(
 def _report_sync_stream_failure(response: RuntimeStreamResponse, error: BaseException) -> BaseException | None:
     try:
         response.fail(error)
-    except _SETTLEMENT_ERRORS as report_error:
+    except SETTLEMENT_ERRORS as report_error:
         return report_error
     return None
 
@@ -501,7 +501,7 @@ async def _report_async_stream_failure(
 ) -> BaseException | None:
     try:
         await response.fail(error)
-    except _SETTLEMENT_ERRORS as report_error:
+    except ASYNC_SETTLEMENT_ERRORS as report_error:
         return report_error
     return None
 
@@ -511,7 +511,7 @@ def _finish_sync_stream_failure(
 ) -> Never:
     try:
         response.close()
-    except _SETTLEMENT_ERRORS as cleanup_error:
+    except SETTLEMENT_ERRORS as cleanup_error:
         raise error from cleanup_error
     if report_error is not None:
         raise error from report_error
@@ -523,7 +523,7 @@ async def _finish_async_stream_failure(
 ) -> Never:
     try:
         await response.aclose()
-    except _SETTLEMENT_ERRORS as cleanup_error:
+    except ASYNC_SETTLEMENT_ERRORS as cleanup_error:
         raise error from cleanup_error
     if report_error is not None:
         raise error from report_error
@@ -534,7 +534,7 @@ def _finish_sync_stream_success(response: RuntimeStreamResponse) -> None:
     response.close()
     try:
         response.complete()
-    except BaseException as error:
+    except SETTLEMENT_ERRORS as error:
         response.fail(error)
         raise
 
@@ -543,20 +543,9 @@ async def _finish_async_stream_success(response: AsyncRuntimeStreamResponse) -> 
     await response.aclose()
     try:
         await response.complete()
-    except BaseException as error:
+    except ASYNC_SETTLEMENT_ERRORS as error:
         await response.fail(error)
         raise
-
-
-_SETTLEMENT_ERRORS = (
-    BaseException,
-    Exception,
-    BaseExceptionGroup,
-    GeneratorExit,
-    KeyboardInterrupt,
-    SystemExit,
-    asyncio.CancelledError,
-)
 
 
 def digest_stream_document(
@@ -593,7 +582,7 @@ def digest_stream_document(
             platform="udata",
             status_code=response.status_code,
         )
-    except _SETTLEMENT_ERRORS as error:
+    except SETTLEMENT_ERRORS as error:
         failure = error
     if failure is not None:
         report_error = _report_sync_stream_failure(response, failure)
@@ -647,7 +636,7 @@ async def digest_stream_document_async(
             platform="udata",
             status_code=response.status_code,
         )
-    except _SETTLEMENT_ERRORS as error:
+    except ASYNC_SETTLEMENT_ERRORS as error:
         failure = error
     if failure is not None:
         report_error = await _report_async_stream_failure(response, failure)

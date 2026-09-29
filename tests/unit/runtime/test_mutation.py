@@ -16,7 +16,7 @@ from datasluice.domain.catalog.safety import (
 )
 from datasluice.errors.catalog import CatalogConflictError, CatalogUnavailableError, CatalogValidationError
 from datasluice.exceptions import DataSluiceError
-from datasluice.runtime.mutation import MutationDispatchRequest, MutationEnforcer
+from datasluice.runtime.mutation import MutationDispatchRequest, MutationEnforcer, build_mutation_receipt
 from datasluice.runtime.transport.base import RuntimeResponse
 
 
@@ -36,6 +36,18 @@ def _policy(
         dry_run=dry_run or DryRunPolicy(),
         idempotency=idempotency or IdempotencyPolicy(),
     )
+
+
+def test_build_mutation_receipt_matches_enforcer_receipt() -> None:
+    enforcer = MutationEnforcer(lambda request: RuntimeResponse(200, {}, b""))
+    operation = OperationId("ckan", "datasets", "update")
+    policy = _policy()
+    audit = {"dataset": "weather", "attempt": 1}
+
+    receipt = enforcer.execute(operation, _target(), policy, audit_metadata=audit)
+    equivalent = build_mutation_receipt(operation, _target(), policy, "succeeded", audit)
+
+    assert receipt == equivalent
 
 
 def test_mutations_require_confirmed_policy_before_dispatch() -> None:

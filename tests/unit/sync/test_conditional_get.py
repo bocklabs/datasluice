@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,8 +9,6 @@ from datasluice.data import DataPlaneResourceReader
 from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
 from datasluice.sync import sync_resources
 from datasluice.sync._identity import canonical_identity
-
-sync_module = importlib.import_module("datasluice.sync.sync")
 
 
 def _sync(tmp_path, resource, state_store, transport):

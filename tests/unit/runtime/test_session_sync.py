@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Iterator
 from typing import Any
 
 from datasluice.domain import SyncState
 from datasluice.runtime.plugin_manager import PluginManager
 from datasluice.sync import FileStateStore, InMemoryStateStore
-
-session_module = importlib.import_module("datasluice.runtime.session")
 
 
 class _StateStoreSpy:

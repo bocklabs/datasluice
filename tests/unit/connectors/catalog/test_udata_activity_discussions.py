@@ -27,6 +27,7 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
     DiscussionMutationResult,
     DiscussionSearchQuery,
     DiscussionUpdateInput,
+    segment,
 )
 from datasluice.connectors.catalog.udata.services.activity_discussions import (
     AsyncActivityDiscussionsService,
@@ -121,6 +122,13 @@ def _thawed(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_thawed(item) for item in value]
     return value
+
+
+@pytest.mark.parametrize("identifier", [".", ".."])
+def test_activity_discussions_identifiers_reject_dot_segments(identifier: str) -> None:
+    """A bare dot segment is removed by RFC 3986 resolution, retargeting the route."""
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        segment(identifier, "get_discussion")
 
 
 def test_activity_discussion_contract_exposes_every_assigned_method_in_both_modes() -> None:
@@ -508,16 +516,16 @@ def test_every_discussion_mutation_dispatches_under_its_own_operation(monkeypatc
             )
 
     asyncio.run(run_async())
-    sync_operations = [call["owning_operation"] for call in calls]
-    assert sync_operations == [
+    dispatched_operations = [call["owning_operation"] for call in calls]
+    assert dispatched_operations[:5] == [
         wire.COMMENT_DISCUSSION_OPERATION,
         wire.UPDATE_DISCUSSION_OPERATION,
         wire.EDIT_DISCUSSION_COMMENT_OPERATION,
         wire.DELETE_DISCUSSION_OPERATION,
         wire.DELETE_DISCUSSION_COMMENT_OPERATION,
-        wire.COMMENT_DISCUSSION_OPERATION,
     ]
-    assert len(set(sync_operations)) == 5
+    assert dispatched_operations[5:] == [wire.COMMENT_DISCUSSION_OPERATION]
+    assert len(set(dispatched_operations)) == 5
 
 
 def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
@@ -525,7 +533,7 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
         b'{"version": "17.6.0", "id": "site", "title": "uData", "feed_size": 0, '
         b'"keywords": [], "metrics": {"widgets": NaN}}'
     )
-    with pytest.raises(NativeCatalogError):
+    with pytest.raises(NativeCatalogError) as raised:
         with SyncUDataClient(
             _Router(
                 {
@@ -537,6 +545,7 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
             origin=ORIGIN,
         ) as client:
             client.activity_discussions.activity(ActivityQuery())
+    assert "NaN" not in repr(raised.value) + str(raised.value.__dict__)
 
 
 def test_pre_dispatch_rejection_carries_a_redacted_receipt_and_dispatches_nothing() -> None:

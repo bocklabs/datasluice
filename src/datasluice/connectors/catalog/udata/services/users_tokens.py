@@ -20,6 +20,7 @@ from datasluice.connectors.catalog.udata.models.users import (
     UserUpdateInput,
 )
 from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import users as wire
 from datasluice.connectors.catalog.udata.wire.organizations import parse_page
 from datasluice.domain.catalog.auth import EffectivePermissions
@@ -109,7 +110,7 @@ def _shape_mutation(payload: object, receipt: object, name: str) -> Result:
         secret = OneTimeUDataToken(payload.pop("token"))
         try:
             return ApiTokenCreationResult(receipt, wire.parse_token(payload, operation=operation), secret)
-        except BaseException:
+        except SETTLEMENT_ERRORS:
             secret._discard()
             raise
     if name in {"update_me", "create_user", "update_user"}:
@@ -180,7 +181,7 @@ def _close_avatar(upload: UserAvatarInput | None, result: Result | None, primary
         return
     try:
         upload.close()
-    except BaseException as close_error:
+    except SETTLEMENT_ERRORS as close_error:
         receipt = result.receipt if result is not None else getattr(primary_error, "mutation_receipt", None)
         if isinstance(receipt, MutationReceipt):
             _attach(close_error, receipt)
@@ -285,7 +286,7 @@ class SyncUsersTokensService:
             result = _shape_mutation(payload, receipt, name)
             self._client._emit(operation, "succeeded")
             return result
-        except BaseException as error:
+        except SETTLEMENT_ERRORS as error:
             primary_error = error
             if name == "create_api_token":
                 response = _discard_token_plaintext(payload, response)
@@ -593,7 +594,7 @@ class AsyncUsersTokensService:
             result = _shape_mutation(payload, receipt, name)
             self._client._emit(operation, "succeeded")
             return result
-        except BaseException as error:
+        except ASYNC_SETTLEMENT_ERRORS as error:
             primary_error = error
             if name == "create_api_token":
                 response = _discard_token_plaintext(payload, response)

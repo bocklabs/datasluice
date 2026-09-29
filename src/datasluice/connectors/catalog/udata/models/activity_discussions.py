@@ -181,7 +181,13 @@ class DiscussionMutationResult:
 
 
 def segment(value: str, operation: str) -> str:
-    if not isinstance(value, str) or not value or any(c in "/?#\"'" for c in value) or any(ord(c) < 32 for c in value):
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or any(c in "/?#\"'" for c in value)
+        or any(ord(c) < 32 for c in value)
+    ):
         raise CatalogValidationError(
             f"uData discussion identifier for {operation} must be one URL-safe path segment.",
             operation=operation,

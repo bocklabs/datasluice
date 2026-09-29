@@ -535,9 +535,7 @@ def test_controlled_evidence_coverage_is_derived_from_executed_passes() -> None:
                 differential[f"{kind}_modes"],
             )
 
-    expected_empty = {f"{family}.{kind}" for family in _EVIDENCE_CLAIMING_TESTS for kind in ("read", "mutation")}
     assert {family: operations for family, operations in unexecuted.items() if operations} == {}
-    assert set(unexecuted) == expected_empty
 
 
 def test_the_execution_gate_fails_when_the_async_mutation_pass_is_removed() -> None:

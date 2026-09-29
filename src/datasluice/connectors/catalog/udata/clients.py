@@ -35,6 +35,7 @@ from datasluice.connectors.catalog.udata.probes import (
     SiteVersionGate,
 )
 from datasluice.connectors.catalog.udata.settings import LOOPBACK_HOSTS, UDataClientSettings
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, SecretValue, UDataCredential
@@ -192,7 +193,7 @@ _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
-_CONTROLLED_COMPOSE_SHA256 = "488073e1085819a3f9b61d2124594594fb88a478a014e0aa262983547cf63f46"
+_CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
 _CONTROLLED_DOCKERFILE_SHA256 = "fb62777a2d8e93285c12d985cfced566241d37908db2ae6e807b2e2ab21ee947"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
 _CONTROLLED_UDATA_IMAGE_SPEC = (
@@ -851,7 +852,7 @@ def _open_controlled_pipes(input_data: bytes | None, runtime: _ControlledSyncRun
     read_fd, write_fd = runtime.pipe()
     try:
         input_read_fd, input_write_fd = runtime.pipe() if input_data is not None else (-1, -1)
-    except BaseException as error:
+    except SETTLEMENT_ERRORS as error:
         cleanup_errors = _close_controlled_descriptors((read_fd, write_fd), runtime)
         if cleanup_errors:
             raise error from cleanup_errors[0]
@@ -2177,7 +2178,7 @@ def _build_controlled_sync_transport(
             try:
                 cast(Callable[..., None], initializer)(transport, tls_policy=tls_policy, budget=budget)
                 verification = trusted_sync_operations.verify(transport)
-            except BaseException:
+            except SETTLEMENT_ERRORS:
                 cast(Callable[[HttpxCatalogTransport], None], close)(transport)
                 raise
             registry.set(
@@ -2240,7 +2241,7 @@ def _build_controlled_async_transport(
                 return
             try:
                 verification = await state[3].verify(state[0])
-            except BaseException:
+            except ASYNC_SETTLEMENT_ERRORS:
                 await cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], close)(
                     cast(AsyncHttpxCatalogTransport, state[0])
                 )
@@ -2563,7 +2564,7 @@ class _SyncStreamGuard:
             return
         try:
             self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
-        except BaseException as error:
+        except SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         self.settled = True
@@ -2579,7 +2580,7 @@ class _SyncStreamGuard:
                 yield chunk
         except GeneratorExit:
             raise
-        except BaseException as error:
+        except SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         else:
@@ -2651,7 +2652,7 @@ class _AsyncStreamGuard:
             return
         try:
             self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
-        except BaseException as error:
+        except ASYNC_SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         self.settled = True
@@ -2665,7 +2666,7 @@ class _AsyncStreamGuard:
             async for chunk in self.response:
                 self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
                 yield chunk
-        except BaseException as error:
+        except ASYNC_SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         else:
@@ -2913,14 +2914,17 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         credential: object | None,
         idempotency_policy: IdempotencyPolicy | None,
         body: bytes | None,
+        json_media_fallback: bool = False,
     ) -> dict[str, str]:
         request_headers = dict(headers or {})
         request_headers.update(_auth_headers(credential))
         if idempotency_policy is not None and idempotency_policy.key is not None:
             request_headers["Idempotency-Key"] = idempotency_policy.key
-        if body is not None and not any(key.lower() == "content-type" for key in request_headers):
-            # Only a body whose caller declared no media type falls back to JSON, so
-            # a form or multipart body is never silently relabelled as JSON.
+        if (
+            body is not None
+            and json_media_fallback
+            and not any(key.lower() == "content-type" for key in request_headers)
+        ):
             request_headers["Content-Type"] = _JSON_MEDIA_TYPE
         return request_headers
 
@@ -2945,7 +2949,6 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         redirect_mode: bool,
         raw_text: bool,
         max_response_bytes: int | None,
-        json_body: object,
         method: str,
         credential_scope: str,
         accept_status: Callable[[int], bool] | None = None,
@@ -3296,7 +3299,13 @@ class SyncUDataClient(_UDataClientCore):
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
-            headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
+            headers=self._request_headers(
+                headers,
+                resolved_credential,
+                idempotency_policy,
+                body,
+                json_media_fallback=form_body is None and not files,
+            ),
             body=body,
             files=files,
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
@@ -3337,7 +3346,6 @@ class SyncUDataClient(_UDataClientCore):
                 redirect_mode=redirect_mode,
                 raw_text=raw_text,
                 max_response_bytes=max_response_bytes,
-                json_body=json_body,
                 method=method,
                 credential_scope=scope,
                 accept_status=accept_status,
@@ -3450,7 +3458,7 @@ class SyncUDataClient(_UDataClientCore):
                 if response.status_code in {301, 302, 303, 307, 308}:
                     _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
                     return response
-            except BaseException as error:
+            except SETTLEMENT_ERRORS as error:
                 self._emit(owning_id, "failed")
                 try:
                     response.close()
@@ -3840,7 +3848,13 @@ class AsyncUDataClient(_UDataClientCore):
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
-            headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
+            headers=self._request_headers(
+                headers,
+                resolved_credential,
+                idempotency_policy,
+                body,
+                json_media_fallback=form_body is None and not files,
+            ),
             body=body,
             files=files,
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
@@ -3881,7 +3895,6 @@ class AsyncUDataClient(_UDataClientCore):
                 redirect_mode=redirect_mode,
                 raw_text=raw_text,
                 max_response_bytes=max_response_bytes,
-                json_body=json_body,
                 method=method,
                 credential_scope=scope,
                 accept_status=accept_status,
@@ -3996,7 +4009,7 @@ class AsyncUDataClient(_UDataClientCore):
                 if response.status_code in {301, 302, 303, 307, 308}:
                     _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
                     return response
-            except BaseException as error:
+            except ASYNC_SETTLEMENT_ERRORS as error:
                 self._emit(owning_id, "failed")
                 try:
                     await response.aclose()

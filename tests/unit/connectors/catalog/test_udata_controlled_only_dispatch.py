@@ -101,14 +101,14 @@ def test_public_origin_refuses_api_token_creation() -> None:
 
 def test_async_public_origin_refuses_the_same_revocation() -> None:
     router = _AsyncRouter(PUBLIC)
-    client = AsyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL)
 
     async def run() -> None:
-        await client.auth_oauth.revoke_token(
-            OAuthRevokeRequest(token="opaque-access-token"),
-            PERMISSIONS,
-            _confirmed(oauth_wire.OPERATIONS["revoke_token"], "request:revoke_token"),
-        )
+        async with AsyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL) as client:
+            await client.auth_oauth.revoke_token(
+                OAuthRevokeRequest(token="opaque-access-token"),
+                PERMISSIONS,
+                _confirmed(oauth_wire.OPERATIONS["revoke_token"], "request:revoke_token"),
+            )
 
     with pytest.raises(CatalogError, match="controlled local deployment"):
         asyncio.run(run())
@@ -149,7 +149,7 @@ def test_every_non_read_profile_route_is_refused_on_a_public_origin() -> None:
         with pytest.raises(CatalogValidationError, match="controlled local deployment"):
             client._require_dispatchable(operation_id, client._profile)
     assert {"udata/oauth.revoke-token", "udata/api-v1.create-api-token"} <= {str(id_) for id_ in non_read}
-    assert all(request.url.endswith("/api/1/site/") for request in router.requests)
+    assert router.requests == []
 
 
 def test_a_public_origin_is_still_accepted_at_construction_for_reads() -> None:

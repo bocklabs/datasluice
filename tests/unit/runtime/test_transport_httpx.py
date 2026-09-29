@@ -12,7 +12,6 @@ import pytest
 
 httpx = pytest.importorskip("httpx")
 
-from datasluice.connectors.catalog.udata.models.oauth import OAuthRevokeRequest
 from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import (
     RedirectPolicy,
@@ -264,7 +263,7 @@ def test_httpx_redirect_preserves_method_and_body(status: int) -> None:
 
 @pytest.mark.parametrize("status", [307, 308])
 def test_httpx_cross_origin_body_redirect_fails_closed(status: int) -> None:
-    body = urlencode(OAuthRevokeRequest(token="redirect-body-secret").form_fields()).encode()
+    body = urlencode({"token": "redirect-body-secret"}).encode()
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -288,11 +287,41 @@ def test_httpx_cross_origin_body_redirect_fails_closed(status: int) -> None:
         transport.close()
 
     assert len(seen) == 1
-    assert "redirect-body-secret" not in str(seen[0])
+    assert seen[0].content == body
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_httpx_cross_origin_non_post_body_redirect_fails_closed(status: int) -> None:
+    """A 301/302 keeps a non-POST body, so the refusal cannot key off the status alone."""
+    body = urlencode({"token": "redirect-body-secret"}).encode()
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "origin.test":
+            return httpx.Response(status, headers={"Location": "https://other.test/next"})
+        pytest.fail("a cross-origin body-bearing redirect target must not receive the body")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(TransportFailure, match="different redirect origin"):
+            transport.send(
+                RuntimeRequest(
+                    "PUT",
+                    "https://origin.test/resources/1/extras/",
+                    {"Content-Type": "application/x-www-form-urlencoded"},
+                    body,
+                )
+            )
+    finally:
+        transport.close()
+
+    assert len(seen) == 1
+    assert seen[0].content == body
 
 
 def test_async_httpx_cross_origin_body_redirect_fails_closed() -> None:
-    body = urlencode(OAuthRevokeRequest(token="redirect-body-secret").form_fields()).encode()
+    body = urlencode({"token": "redirect-body-secret"}).encode()
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -319,7 +348,7 @@ def test_async_httpx_cross_origin_body_redirect_fails_closed() -> None:
         asyncio.run(send())
 
     assert len(seen) == 1
-    assert "redirect-body-secret" not in str(seen[0])
+    assert seen[0].content == body
 
 
 def test_httpx_exceeding_max_redirects_raises_transport_failure() -> None:

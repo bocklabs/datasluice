@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 import threading
 from dataclasses import asdict
@@ -17,8 +16,6 @@ from datasluice.domain import SyncState
 from datasluice.exceptions import StateStoreError
 from datasluice.ports.state_store import StateStore
 from datasluice.sync.state_store import FileStateStore, InMemoryStateStore
-
-state_store_module = importlib.import_module("datasluice.sync.state_store")
 
 
 def _sha_watermark(character: str = "a") -> str:

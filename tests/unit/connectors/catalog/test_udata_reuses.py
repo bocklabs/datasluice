@@ -27,6 +27,7 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseSearchQuery,
     ReuseSuggestQuery,
     ReuseUpdateInput,
+    segment,
 )
 from datasluice.connectors.catalog.udata.services.reuses import (
     AsyncReusesService,
@@ -36,7 +37,7 @@ from datasluice.connectors.catalog.udata.wire import reuses as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogNotFoundError
+from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 ORIGIN = "http://127.0.0.1:5640"
@@ -157,6 +158,13 @@ def _thawed(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_thawed(item) for item in value]
     return value
+
+
+@pytest.mark.parametrize("identifier", [".", ".."])
+def test_reuses_identifiers_reject_dot_segments(identifier: str) -> None:
+    """A bare dot segment is removed by RFC 3986 resolution, retargeting the route."""
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        segment(identifier, "list_reuses")
 
 
 def test_reuse_contract_exposes_every_assigned_method_in_both_modes() -> None:

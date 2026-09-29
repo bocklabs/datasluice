@@ -32,10 +32,7 @@ from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPoli
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
 from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-from tests.integration.connectors.catalog.test_udata_controlled import (
-    _assert_oauth_mutation_async,
-    _assert_oauth_mutation_sync,
-)
+from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
 
 ORIGIN = "http://127.0.0.1:5640"
 _JSON = "application/json"
@@ -181,12 +178,17 @@ def test_oauth_revoke_route_sends_exact_form_and_records_target() -> None:
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     revoke = OAuthRevokeRequest(token="opaque-access-token", token_type_hint="access_token")
     with client:
-        client.auth_oauth.revoke_token(
+        result = client.auth_oauth.revoke_token(
             revoke, PERMISSIONS, _policy("revoke_token", "request:revoke_token", destructive=True)
         )
     request = router.requests[-1]
     assert (request.method, request.url) == ("POST", f"{ORIGIN}/oauth/revoke")
     assert _form(request) == {"token": "opaque-access-token", "token_type_hint": "access_token"}
+    receipt = result.receipt
+    assert receipt.operation == wire.OPERATIONS["revoke_token"]
+    assert receipt.target.value == "request:revoke_token"
+    assert receipt.outcome == "succeeded"
+    assert "opaque-access-token" not in repr(receipt) + json.dumps(receipt.to_dict())
 
 
 def test_oauth_client_info_reports_the_stock_session_gate_without_fabricating_consent() -> None:
@@ -558,7 +560,7 @@ def test_offline_oauth_mutation_helpers_accept_empty_revocation_success_in_both_
         origin=ORIGIN,
         credentials=CREDENTIAL,
     ) as client:
-        _assert_oauth_mutation_sync(client, "revoke_token", raw, body, PERMISSIONS)
+        assert_oauth_mutation_sync(client, "revoke_token", raw, body, PERMISSIONS)
 
     async def run() -> None:
         async with AsyncUDataClient(
@@ -567,7 +569,7 @@ def test_offline_oauth_mutation_helpers_accept_empty_revocation_success_in_both_
             origin=ORIGIN,
             credentials=CREDENTIAL,
         ) as client:
-            await _assert_oauth_mutation_async(client, "revoke_token", raw, body, PERMISSIONS)
+            await assert_oauth_mutation_async(client, "revoke_token", raw, body, PERMISSIONS)
 
     asyncio.run(run())
 

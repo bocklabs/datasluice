@@ -209,18 +209,14 @@ class UrllibCatalogTransport(CatalogTransport):
         headers_for_next = dict(request.headers)
         if not self._retains_credentials(request.url, next_url):
             headers_for_next = strip_sensitive_redirect_headers(headers_for_next)
-        if (
-            status in {307, 308}
-            and (request.body is not None or request.files)
-            and _origin(request.url) != _origin(next_url)
-        ):
+        next_method, next_body, next_files = redirect_method_and_body(
+            request.method, status, request.body, request.files
+        )
+        if (next_body is not None or next_files) and _origin(request.url) != _origin(next_url):
             raise TransportFailure(
                 "urllib refused to relay a request body to a different redirect origin "
                 f"{_redacted_redirect_url(next_url)!r}."
             )
-        next_method, next_body, next_files = redirect_method_and_body(
-            request.method, status, request.body, request.files
-        )
         if next_body is None and not next_files:
             headers_for_next = drop_body_transfer_headers(headers_for_next)
         return RuntimeRequest(
