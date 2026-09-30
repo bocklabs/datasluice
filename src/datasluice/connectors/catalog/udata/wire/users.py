@@ -21,7 +21,6 @@ from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = CatalogPlatform.UDATA
 _USER = ResourceKind("user")
-_TOKEN = ResourceKind("api-token")
 _TOKEN_SCHEMA_ACTION = "Verify the response against the pinned token schema."
 
 OPERATIONS = {

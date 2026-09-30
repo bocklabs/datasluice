@@ -17,6 +17,7 @@ from datasluice.runtime.transport.base import (
     RedirectPolicy,
     RuntimeRequest,
     TransportFailure,
+    UploadPart,
 )
 from datasluice.runtime.transport.httpx_transport import (
     AsyncHttpxCatalogTransport,
@@ -288,6 +289,40 @@ def test_httpx_cross_origin_body_redirect_fails_closed(status: int) -> None:
 
     assert len(seen) == 1
     assert seen[0].content == body
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_httpx_cross_origin_multipart_redirect_fails_closed(status: int) -> None:
+    """A 307/308 preserves the parts, so a cross-origin relay must be refused before the upload."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "origin.test":
+            return httpx.Response(status, headers={"Location": "https://other.test/next"})
+        pytest.fail("a cross-origin files-bearing redirect target must not receive the parts")
+
+    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(TransportFailure, match="different redirect origin"):
+            transport.send(
+                RuntimeRequest(
+                    "POST",
+                    "https://origin.test/upload",
+                    files=(
+                        UploadPart(
+                            field_name="upload",
+                            file_name="data.csv",
+                            content_type="text/csv",
+                            data=b"a,b\n1,2",
+                        ),
+                    ),
+                )
+            )
+    finally:
+        transport.close()
+
+    assert len(seen) == 1
 
 
 @pytest.mark.parametrize("status", [301, 302, 307, 308])

@@ -252,7 +252,12 @@ def _rewrite_every_key(cache: ContentCache, expected: dict[str, bytes]) -> list[
 
 
 def _torn_read_message(key: str, actual: bytes | None, expected: dict[str, bytes]) -> str | None:
-    """Return a violation message when a read is missing or is not an accepted payload."""
+    """Return a violation message when a read yields an unexpected payload.
+
+    A missing read (``actual is None``) is deliberately tolerated, matching the
+    original ``if actual is None: continue`` behaviour, because a writer may
+    legitimately have deleted the key mid-scan.
+    """
     if actual is None:
         return None
     accepted = (expected[key], expected[key] + b"-rewrite")

@@ -50,7 +50,7 @@ def _probe_import_sweep() -> int:
         importlib.import_module(name)
     loaded = _loaded_optional_distributions()
     if loaded:
-        print(f"public surface pulled optional distributions: {loaded}")
+        print(f"public surface pulled optional distributions: {loaded}", file=sys.stderr)
         return 1
     return 0
 
@@ -62,9 +62,14 @@ def _probe_fixture_sets() -> int:
 
 
 def _probe_no_optional_dependencies() -> int:
-    absent = [importlib.util.find_spec(name) is None for name in ("pyarrow", "httpx", "fsspec")]
+    names = ("pyarrow", "httpx", "fsspec")
+    absent = [importlib.util.find_spec(name) is None for name in names]
     print(*absent)
-    return 0 if all(absent) else 1
+    installed = [name for name, ok in zip(names, absent, strict=True) if not ok]
+    if installed:
+        print(f"optional dependencies still installed: {installed}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _probe_live_gates() -> int:
