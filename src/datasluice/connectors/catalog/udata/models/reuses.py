@@ -14,6 +14,37 @@ from datasluice.runtime.transport.base import UploadPart
 _REUSE_FILTERS = ("q", "dataset", "featured", "topic", "type", "tag", "organization", "organization_badge", "owner")
 _REUSE_BOOLEAN_FILTERS = ("featured",)
 _REUSE_SORTS = ("created", "created_at", "last_modified", "title", "slug", "datasets", "followers", "views")
+_REUSE_SORT_CHOICES = frozenset(_REUSE_SORTS) | frozenset(f"-{name}" for name in _REUSE_SORTS)
+
+
+def _validated_reuse_filters(
+    filters: Mapping[str, str | bool | tuple[str, ...]] | None,
+    *,
+    query: str,
+) -> None:
+    """Reject filters that are not documented reuse filters carrying a usable value.
+
+    Args:
+        filters: The caller-supplied filter mapping, or ``None`` when unset.
+        query: The owning query name, used to build the error messages.
+
+    Raises:
+        ValueError: If the mapping is malformed, holds an undocumented filter, or
+            holds a filter value that is not a string, boolean, or tuple of
+            non-empty strings.
+    """
+    if filters is None:
+        return
+    if not isinstance(filters, Mapping):
+        raise ValueError(f"uData reuse {query} filters must be a mapping.")
+    unknown = set(filters) - set(_REUSE_FILTERS)
+    if unknown:
+        raise ValueError(f"uData reuse {query} filters are not documented choices: {sorted(unknown)}.")
+    for key, value in filters.items():
+        if not _is_filter_value(value):
+            raise ValueError(
+                f"uData reuse {query} filter {key!r} must be a string, boolean, or tuple of non-empty strings."
+            )
 
 
 def segment(value: str, operation: str) -> str:
@@ -53,16 +84,11 @@ class ReuseListQuery:
             raise ValueError("uData reuse list page must be a positive integer.")
         if type(self.page_size) is not int or self.page_size < 1:
             raise ValueError("uData reuse list page_size must be a positive integer.")
-        if self.sort is not None and self.sort not in {*(f"-{name}" for name in _REUSE_SORTS), *_REUSE_SORTS}:
+        if self.sort is not None and self.sort not in _REUSE_SORT_CHOICES:
             raise ValueError("uData reuse list sort is not a documented choice.")
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("uData reuse list q must be a string when supplied.")
-        if self.filters is not None:
-            if not isinstance(self.filters, Mapping):
-                raise ValueError("uData reuse list filters must be a mapping.")
-            unknown = set(self.filters) - set(_REUSE_FILTERS)
-            if unknown:
-                raise ValueError(f"uData reuse list filters are not documented choices: {sorted(unknown)}.")
+        _validated_reuse_filters(self.filters, query="list")
 
     def query_params(self) -> list[tuple[str, str]]:
         params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
@@ -119,6 +145,7 @@ class ReuseSearchQuery:
             raise ValueError("uData reuse search page_size must be a positive integer.")
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("uData reuse search q must be a string when supplied.")
+        _validated_reuse_filters(self.filters, query="search")
 
     def query_params(self) -> list[tuple[str, str]]:
         params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
@@ -132,6 +159,13 @@ class ReuseSearchQuery:
             else:
                 params.append((key, value))
         return params
+
+
+def _is_filter_value(value: object) -> bool:
+    """Return whether one filter value is a string, a boolean, or a tuple of non-empty strings."""
+    return isinstance(value, (str, bool)) or (
+        type(value) is tuple and all(isinstance(item, str) and item for item in value)
+    )
 
 
 def _validate_text(value: object, label: str, *, required: bool = False) -> None:
@@ -165,8 +199,8 @@ class ReuseCreateInput:
     description: str
     type: str
     url: str
+    topic: str
     tags: tuple[str, ...] = ()
-    topic: str = ""
     organization: Mapping[str, str] | None = None
     private: bool | None = None
     extras: Mapping[str, object] | None = None
@@ -231,6 +265,21 @@ class ReuseUpdateInput:
         _validate_mapping(self.extras, "extras")
         if self.extras is not None:
             object.__setattr__(self, "extras", dict(self.extras))
+        if all(
+            value is None
+            for value in (
+                self.title,
+                self.description,
+                self.type,
+                self.url,
+                self.tags,
+                self.topic,
+                self.organization,
+                self.private,
+                self.extras,
+            )
+        ):
+            raise ValueError("uData reuse updates require at least one field.")
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {}

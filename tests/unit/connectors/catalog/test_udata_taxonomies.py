@@ -99,9 +99,9 @@ def _routes(
     return {("GET", f"{ORIGIN}/api/1/site/"): (200, SITE), **routes}
 
 
-def _policy(operation: str, target: str) -> MutationPolicy:
+def _policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
     return MutationPolicy(
-        destructive=False,
+        destructive=destructive,
         confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
         concurrency=ConcurrencyPolicy(overwrite=True),
     )
@@ -300,7 +300,7 @@ def test_badge_mutations_are_permission_guarded_and_return_redacted_receipts() -
         ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"): (204, None),
     }
     add_policy = _policy("udata/api-v1.add-dataset-badge", "dataset-1")
-    delete_policy = _policy("udata/api-v1.delete-dataset-badge", "dataset-1:certified")
+    delete_policy = _policy("udata/api-v1.delete-dataset-badge", "dataset-1:certified", destructive=True)
     with SyncUDataClient(
         _Router(_routes(routes)), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
     ) as client:
@@ -380,7 +380,7 @@ def test_badge_dispatch_uses_exact_operation_in_both_modes(monkeypatch: pytest.M
             "dataset-1",
             "certified",
             DELETE_ONLY_PERMISSIONS,
-            _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified"),
+            _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True),
         )
 
     assert add_calls[0]["owning_operation"] == wire.ADD_BADGE_OPERATION
@@ -401,7 +401,7 @@ def test_badge_dispatch_uses_exact_operation_in_both_modes(monkeypatch: pytest.M
                 "dataset-1",
                 "certified",
                 DELETE_ONLY_PERMISSIONS,
-                _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified"),
+                _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True),
             )
 
         assert deleted.receipt.operation == wire.DELETE_BADGE_OPERATION

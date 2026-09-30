@@ -57,6 +57,8 @@ def _mutation(
     operation: str,
     request: Callable[[], tuple[str, str, dict[str, str], object]],
     dispatch: Callable[[str, str, dict[str, str], object], Response],
+    *,
+    destructive: bool = False,
 ) -> TaxonomyMutationResult:
     try:
         method, path, headers, body = request()
@@ -64,7 +66,7 @@ def _mutation(
         _reject(error, target, policy, mutation, operation)
     response: object | None = None
     try:
-        _enforce_mutation_policy(operation, target, policy, destructive=False)
+        _enforce_mutation_policy(operation, target, policy, destructive=destructive)
         status, payload, response = dispatch(method, path, headers, body)
         result = TaxonomyMutationResult(
             _tax_receipt(target, policy, "succeeded", status, mutation, operation),
@@ -89,6 +91,8 @@ async def _mutation_async(
     operation: str,
     request: Callable[[], tuple[str, str, dict[str, str], object]],
     dispatch: Callable[[str, str, dict[str, str], object], Awaitable[Response]],
+    *,
+    destructive: bool = False,
 ) -> TaxonomyMutationResult:
     try:
         method, path, headers, body = request()
@@ -96,7 +100,7 @@ async def _mutation_async(
         _reject(error, target, policy, mutation, operation)
     response: object | None = None
     try:
-        _enforce_mutation_policy(operation, target, policy, destructive=False)
+        _enforce_mutation_policy(operation, target, policy, destructive=destructive)
         status, payload, response = await dispatch(method, path, headers, body)
         result = TaxonomyMutationResult(
             _tax_receipt(target, policy, "succeeded", status, mutation, operation),
@@ -162,6 +166,7 @@ class SyncTaxonomiesService:
             lambda method, path, headers, body: self._call(
                 method, path, headers, body, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION
             ),
+            destructive=True,
         )
 
     def suggest_formats(self, query: SuggestQuery) -> tuple[MappingRecord, ...]:
@@ -269,6 +274,7 @@ class AsyncTaxonomiesService:
             lambda method, path, headers, body: self._call(
                 method, path, headers, body, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION
             ),
+            destructive=True,
         )
 
     async def suggest_formats(self, query: SuggestQuery) -> tuple[MappingRecord, ...]:

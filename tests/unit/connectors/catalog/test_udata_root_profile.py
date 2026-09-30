@@ -107,6 +107,9 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     ),
 )
 _TEST_CONTROLLED_SERVICE_NAMES = tuple(spec[0] for spec in _TEST_CONTROLLED_IMAGE_SPECS)
+_CONTROLLED_DOCKER_ENDPOINT = "unix:///Users/nitish/.docker/run/docker.sock"
+_CONTROLLED_PROGRAM_SITE_URL = "http://127.0.0.1:7000/api/1/site/"
+_CONTROLLED_PROGRAM_TIMEOUT_SECONDS = 10
 
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
@@ -754,86 +757,252 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
-def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
+class _ControlledProgramResponse:
+    """Stub urllib response handed back by the fake opener of the canned program."""
+
+    def __init__(self, response: RuntimeResponse) -> None:
+        self.status = response.status_code
+        self.headers = dict(response.headers)
+        self._body = response.body
+
+    def read(self, _: int) -> bytes:
+        return self._body
+
+    def close(self) -> None:
+        return None
+
+
+class _ControlledProgramRequest:
+    """Stub urllib request the canned program issues against the site endpoint."""
+
+    def __init__(
+        self,
+        url: str,
+        data: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        method: str | None = None,
+    ) -> None:
+        self.full_url = url
+        self.data = data
+        self.headers = dict(headers or {})
+        self.method = method
+
+
+class _ControlledProgramRedirectHandler:
+    """Redirect handler that refuses every redirect the canned program attempts."""
+
+    def redirect_request(self, *_: object, **__: object) -> None:
+        return None
+
+
+def _assert_controlled_patch_request(request: _ControlledProgramRequest, input_data: bytes) -> None:
+    """Assert the canned program received the exact site PATCH envelope."""
+    expected_headers = {
+        "content-type": "application/json",
+        "x-api-key": "site-key",
+    }
+    assert {key.lower(): value for key, value in request.headers.items()} == expected_headers
+    assert request.data is not None
+    assert json.loads(request.data) == json.loads(input_data)["body"]
+
+
+class _ControlledProgramOpener:
+    """Fake urllib opener that enforces the exact controlled site request contract."""
+
+    def __init__(self, response: RuntimeResponse, input_data: bytes | None) -> None:
+        self._response = response
+        self._input_data = input_data
+        self.opened = False
+
+    def open(self, request: _ControlledProgramRequest, timeout: float) -> _ControlledProgramResponse:
+        self.opened = True
+        assert timeout == _CONTROLLED_PROGRAM_TIMEOUT_SECONDS
+        assert request.full_url == _CONTROLLED_PROGRAM_SITE_URL
+        assert (request.method or "GET") == ("PATCH" if self._input_data is not None else "GET")
+        if self._input_data is not None:
+            _assert_controlled_patch_request(request, self._input_data)
+        return _ControlledProgramResponse(self._response)
+
+
+def _controlled_urllib_modules(opener: _ControlledProgramOpener) -> dict[str, ModuleType]:
+    """Build the fake ``urllib`` module trio the canned program imports."""
+    fake_request = ModuleType("urllib.request")
+    fake_request_module = cast(Any, fake_request)
+    fake_request_module.Request = _ControlledProgramRequest
+    fake_request_module.HTTPRedirectHandler = _ControlledProgramRedirectHandler
+    fake_request_module.build_opener = lambda *_: opener
+    fake_error = ModuleType("urllib.error")
+    cast(Any, fake_error).HTTPError = type("FakeHTTPError", (Exception,), {})
+    fake_urllib = ModuleType("urllib")
+    fake_urllib_module = cast(Any, fake_urllib)
+    fake_urllib_module.__path__ = []
+    fake_urllib_module.request = fake_request
+    fake_urllib_module.error = fake_error
+    return {"urllib": fake_urllib, "urllib.request": fake_request, "urllib.error": fake_error}
+
+
+def _execute_controlled_program(program: str, input_data: bytes | None, response: RuntimeResponse) -> str:
+    """Execute the canned in-container program and return its captured stdout."""
+    opener = _ControlledProgramOpener(response, input_data)
+    output = io.StringIO()
+    with (
+        patch.dict(sys.modules, _controlled_urllib_modules(opener)),
+        patch.object(sys, "stdin", io.StringIO("" if input_data is None else input_data.decode())),
+        redirect_stdout(output),
+    ):
+        exec(program, {"__name__": "__main__"})
+    assert opener.opened is True
+    return output.getvalue().strip()
+
+
+def _controlled_service_indexes() -> tuple[dict[str, str], dict[str, tuple[str, str, str]], dict[str, str]]:
+    """Return the canned container ids, image specs, and image ids keyed by service name."""
     container_ids = {service: f"{index:064x}" for index, service in enumerate(_TEST_CONTROLLED_SERVICE_NAMES, 1)}
     image_specs: dict[str, tuple[str, str, str]] = {
         service: (config_image, image_id, repository_digest)
         for service, config_image, image_id, repository_digest in _TEST_CONTROLLED_IMAGE_SPECS
     }
     image_ids: dict[str, str] = {service: image_id for service, _, image_id, _ in _TEST_CONTROLLED_IMAGE_SPECS}
+    return container_ids, image_specs, image_ids
+
+
+def _controlled_stack_reply(args: tuple[str, ...]) -> str | None:
+    """Return the canned reply for a stack-level docker command, or None when unmatched."""
+    if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
+        return f'"{_CONTROLLED_DOCKER_ENDPOINT}"'
+    if args[-4:] == ("ps", "--status", "running", "--services"):
+        return "\n".join(_TEST_CONTROLLED_SERVICE_NAMES)
+    if args[-3:] == ("port", "udata", "7000"):
+        return "127.0.0.1:5640"
+    return None
+
+
+def _controlled_service_for(index: Mapping[str, str], value: str) -> str:
+    """Return the controlled service name owning the given container or image identity."""
+    return next(service for service, candidate in index.items() if candidate == value)
+
+
+def _controlled_container_reply(
+    args: tuple[str, ...],
+    container_ids: Mapping[str, str],
+    image_specs: Mapping[str, tuple[str, str, str]],
+    image_ids: Mapping[str, str],
+) -> str | None:
+    """Return the canned reply for a container- or image-level docker command, or None when unmatched."""
+    if len(args) == 3 and args[:2] == ("ps", "-q"):
+        return container_ids[args[2]]
+    if args[:2] == ("inspect", "--format"):
+        container_id = args[-1]
+        service = _controlled_service_for(container_ids, container_id)
+        config_image, _image_id, _repository_digest = image_specs[service]
+        return " ".join((json.dumps(container_id), json.dumps(image_ids[service]), json.dumps(config_image)))
+    if args[:3] == ("image", "inspect", "--format"):
+        image_id = args[-1]
+        service = _controlled_service_for(image_ids, image_id)
+        _config_image, _image_id, repository_digest = image_specs[service]
+        return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
+    if args[:3] == ("exec", container_ids["udata"], "git"):
+        return "0546582058d84706812a1c37387576efc4e5ad1f"
+    if args[:3] == ("exec", container_ids["udata"], "printenv"):
+        return "unit-test-stack"
+    return None
+
+
+def _is_controlled_python_program(args: tuple[str, ...]) -> bool:
+    """Report whether the command is the canned in-container Python invocation."""
+    return len(args) >= 3 and args[-3] == "python"
+
+
+def _record_controlled_patch_body(input_data: bytes, patch_bodies: list[dict[str, object]]) -> None:
+    """Record the decoded PATCH body so tests can assert the exact wire envelope."""
+    request_payload = json.loads(input_data)
+    assert isinstance(request_payload, dict)
+    assert set(request_payload) == {"token", "body"}
+    assert request_payload["token"] == "site-key"
+    body = request_payload["body"]
+    assert isinstance(body, dict)
+    patch_bodies.append(cast(dict[str, object], body))
+
+
+def _controlled_site_reply(
+    input_data: bytes | None,
+    transport: RouterTransport | AsyncRouterTransport,
+    patch_bodies: list[dict[str, object]],
+) -> RuntimeResponse:
+    """Return the routed site response the canned program must observe."""
+    if input_data is not None:
+        _record_controlled_patch_body(input_data, patch_bodies)
+    return transport.routes.get(
+        ("PATCH", _SITE_URL) if input_data is not None else ("GET", _SITE_URL),
+        _json_response(200, _site_body(), {"Content-Type": "application/json"}),
+    )
+
+
+def _run_controlled_python_program(
+    args: tuple[str, ...],
+    *,
+    input_data: bytes | None,
+    docker_endpoint: str | None,
+    direct: bool,
+    transport: RouterTransport | AsyncRouterTransport,
+    container_ids: Mapping[str, str],
+    patch_bodies: list[dict[str, object]],
+) -> str:
+    """Run the canned in-container Python program and return its captured stdout."""
+    assert args[:3] == ("exec", "-i", container_ids["udata"])
+    assert docker_endpoint == _CONTROLLED_DOCKER_ENDPOINT
+    assert direct is True
+    response = _controlled_site_reply(input_data, transport, patch_bodies)
+    return _execute_controlled_program(args[-1], input_data, response)
+
+
+def _controlled_command_reply(
+    args: tuple[str, ...],
+    *,
+    container_ids: dict[str, str],
+    image_specs: dict[str, tuple[str, str, str]],
+    image_ids: dict[str, str],
+    input_data: bytes | None,
+    docker_endpoint: str | None,
+    direct: bool,
+    transport: RouterTransport | AsyncRouterTransport,
+    patch_bodies: list[dict[str, object]],
+) -> str:
+    """Return the canned reply for one controlled docker command."""
+    stack_reply = _controlled_stack_reply(args)
+    if stack_reply is not None:
+        return stack_reply
+    container_reply = _controlled_container_reply(args, container_ids, image_specs, image_ids)
+    if container_reply is not None:
+        return container_reply
+    if _is_controlled_python_program(args):
+        return _run_controlled_python_program(
+            args,
+            input_data=input_data,
+            docker_endpoint=docker_endpoint,
+            direct=direct,
+            transport=transport,
+            container_ids=container_ids,
+            patch_bodies=patch_bodies,
+        )
+    raise AssertionError(f"unexpected controlled command {args}")
+
+
+def _replace_closure_cell(function: Callable[..., object], name: str, value: object, stack: ExitStack) -> None:
+    """Swap one closure cell for the duration of the exit stack."""
+    function_type = cast(FunctionType, function)
+    cells = dict(zip(function_type.__code__.co_freevars, function_type.__closure__ or (), strict=True))
+    cell = cells[name]
+    previous = cell.cell_contents
+    cell.cell_contents = value
+    stack.callback(setattr, cell, "cell_contents", previous)
+
+
+def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
+    """Bind the canned controlled-stack docker and program replies onto the real transport types."""
+    container_ids, image_specs, image_ids = _controlled_service_indexes()
     controlled_patch_bodies: list[dict[str, object]] = []
     cast(Any, transport)._controlled_patch_bodies = controlled_patch_bodies
-
-    def execute_program(program: str, input_data: bytes | None, response: RuntimeResponse) -> str:
-        opened = False
-
-        class FakeResponse:
-            status = response.status_code
-            headers = dict(response.headers)
-
-            def read(self, _: int) -> bytes:
-                return response.body
-
-            def close(self) -> None:
-                return None
-
-        class FakeRequest:
-            def __init__(
-                self,
-                url: str,
-                data: bytes | None = None,
-                headers: Mapping[str, str] | None = None,
-                method: str | None = None,
-            ) -> None:
-                self.full_url = url
-                self.data = data
-                self.headers = dict(headers or {})
-                self.method = method
-
-        class FakeRedirectHandler:
-            def redirect_request(self, *_: object, **__: object) -> None:
-                return None
-
-        class FakeOpener:
-            def open(self, request: FakeRequest, timeout: float) -> FakeResponse:
-                nonlocal opened
-                opened = True
-                assert timeout == 10
-                assert request.full_url == "http://127.0.0.1:7000/api/1/site/"
-                assert (request.method or "GET") == ("PATCH" if input_data is not None else "GET")
-                if input_data is not None:
-                    assert {key.lower(): value for key, value in request.headers.items()} == {
-                        "content-type": "application/json",
-                        "x-api-key": "site-key",
-                    }
-                    assert request.data is not None
-                    assert json.loads(request.data) == json.loads(input_data)["body"]
-                return FakeResponse()
-
-        fake_request = ModuleType("urllib.request")
-        fake_request_module = cast(Any, fake_request)
-        fake_request_module.Request = FakeRequest
-        fake_request_module.HTTPRedirectHandler = FakeRedirectHandler
-        fake_request_module.build_opener = lambda *_: FakeOpener()
-        fake_error = ModuleType("urllib.error")
-        cast(Any, fake_error).HTTPError = type("FakeHTTPError", (Exception,), {})
-        fake_urllib = ModuleType("urllib")
-        fake_urllib_module = cast(Any, fake_urllib)
-        fake_urllib_module.__path__ = []
-        fake_urllib_module.request = fake_request
-        fake_urllib_module.error = fake_error
-        output = io.StringIO()
-        with (
-            patch.dict(
-                sys.modules,
-                {"urllib": fake_urllib, "urllib.request": fake_request, "urllib.error": fake_error},
-            ),
-            patch.object(sys, "stdin", io.StringIO("" if input_data is None else input_data.decode())),
-            redirect_stdout(output),
-        ):
-            exec(program, {"__name__": "__main__"})
-        assert opened is True
-        return output.getvalue().strip()
 
     def sync_command(
         args: tuple[str, ...],
@@ -843,46 +1012,17 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
         direct: bool = False,
         **_: object,
     ) -> str:
-        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
-            return '"unix:///Users/nitish/.docker/run/docker.sock"'
-        if args[-4:] == ("ps", "--status", "running", "--services"):
-            return "\n".join(_TEST_CONTROLLED_SERVICE_NAMES)
-        if args[-3:] == ("port", "udata", "7000"):
-            return "127.0.0.1:5640"
-        if len(args) == 3 and args[:2] == ("ps", "-q"):
-            return container_ids[args[2]]
-        if args[:2] == ("inspect", "--format"):
-            container_id = args[-1]
-            service = next(service for service, value in container_ids.items() if value == container_id)
-            config_image, _image_id, _repository_digest = image_specs[service]
-            return " ".join((json.dumps(container_id), json.dumps(image_ids[service]), json.dumps(config_image)))
-        if args[:3] == ("image", "inspect", "--format"):
-            image_id = args[-1]
-            service = next(service for service, value in image_ids.items() if value == image_id)
-            _config_image, _image_id, repository_digest = image_specs[service]
-            return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
-        if args[:3] == ("exec", container_ids["udata"], "git"):
-            return "0546582058d84706812a1c37387576efc4e5ad1f"
-        if args[:3] == ("exec", container_ids["udata"], "printenv"):
-            return "unit-test-stack"
-        if len(args) >= 3 and args[-3] == "python":
-            assert args[:3] == ("exec", "-i", container_ids["udata"])
-            assert docker_endpoint == "unix:///Users/nitish/.docker/run/docker.sock"
-            assert direct is True
-            if input_data is not None:
-                request_payload = json.loads(input_data)
-                assert isinstance(request_payload, dict)
-                assert set(request_payload) == {"token", "body"}
-                assert request_payload["token"] == "site-key"
-                body = request_payload["body"]
-                assert isinstance(body, dict)
-                controlled_patch_bodies.append(cast(dict[str, object], body))
-            response = transport.routes.get(
-                ("PATCH", _SITE_URL) if input_data is not None else ("GET", _SITE_URL),
-                _json_response(200, _site_body(), {"Content-Type": "application/json"}),
-            )
-            return execute_program(args[-1], input_data, response)
-        raise AssertionError(f"unexpected controlled command {args}")
+        return _controlled_command_reply(
+            args,
+            container_ids=container_ids,
+            image_specs=image_specs,
+            image_ids=image_ids,
+            input_data=input_data,
+            docker_endpoint=docker_endpoint,
+            direct=direct,
+            transport=transport,
+            patch_bodies=controlled_patch_bodies,
+        )
 
     async def async_command(
         args: tuple[str, ...],
@@ -899,16 +1039,12 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
     sync_operations = udata_clients._make_controlled_sync_operations(sync_command)
     async_operations = udata_clients._make_controlled_async_operations(async_command)
 
-    def replace_closure_cell(function: Callable[..., object], name: str, value: object) -> None:
-        function_type = cast(FunctionType, function)
-        cells = dict(zip(function_type.__code__.co_freevars, function_type.__closure__ or (), strict=True))
-        cell = cells[name]
-        previous = cell.cell_contents
-        cell.cell_contents = value
-        stack.callback(setattr, cell, "cell_contents", previous)
-
-    replace_closure_cell(cast(Callable[..., object], sync_type.__init__), "trusted_sync_operations", sync_operations)
-    replace_closure_cell(cast(Callable[..., object], async_type.__init__), "trusted_async_operations", async_operations)
+    _replace_closure_cell(
+        cast(Callable[..., object], sync_type.__init__), "trusted_sync_operations", sync_operations, stack
+    )
+    _replace_closure_cell(
+        cast(Callable[..., object], async_type.__init__), "trusted_async_operations", async_operations, stack
+    )
 
 
 def _sync_client(

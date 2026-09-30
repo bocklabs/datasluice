@@ -1535,6 +1535,65 @@ async def _controlled_service_image_identity_async(
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
 
 
+def _controlled_source_commit_args(container_id: str) -> tuple[str, ...]:
+    """Return the compose exec arguments that read the controlled uData source commit."""
+    return ("exec", container_id, "git", "-C", "/opt/udata", "rev-parse", "HEAD")
+
+
+def _controlled_nonce_args(container_id: str) -> tuple[str, ...]:
+    """Return the compose exec arguments that read the controlled uData stack nonce."""
+    return ("exec", container_id, "printenv", "UDATA_EVIDENCE_STACK_NONCE")
+
+
+def _require_controlled_source_commit(
+    observed: str,
+    source_commit: str,
+    error_factory: Callable[[str], CatalogValidationError],
+) -> None:
+    """Reject a controlled uData service whose checked-out source drifted from the approved commit."""
+    if observed != source_commit:
+        raise error_factory("The controlled uData service source does not match the approved commit.")
+
+
+def _require_controlled_nonce(
+    observed: str,
+    nonce: str,
+    error_factory: Callable[[str], CatalogValidationError],
+) -> None:
+    """Reject a controlled uData service whose stack nonce drifted from the local evidence nonce."""
+    if observed != nonce:
+        raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
+
+
+def _controlled_image_identities(
+    read: Callable[..., str],
+    service_names: tuple[str, ...],
+    dependency_images: Mapping[str, tuple[str, str, str]],
+    *,
+    docker_endpoint: str,
+    udata_image_repository: str,
+    udata_image_spec: tuple[str, str, str],
+    error_factory: Callable[[str], CatalogValidationError],
+) -> tuple[list[str], str]:
+    """Return the image identity of every controlled service and the uData container id."""
+    image_identities: list[str] = []
+    udata_container_id = ""
+    for service in service_names:
+        container_id, image_identity = _controlled_service_image_identity(
+            read,
+            service,
+            docker_endpoint,
+            udata_image_spec if service == "udata" else dependency_images.get(service),
+            udata_image_repository,
+            udata_image_spec,
+            error_factory,
+        )
+        image_identities.append(image_identity)
+        if service == "udata":
+            udata_container_id = container_id
+    return image_identities, udata_container_id
+
+
 def _verify_controlled_source_and_nonce(
     *,
     compose_read: Callable[..., str] | None = None,
@@ -1568,48 +1627,33 @@ def _verify_controlled_source_and_nonce(
         service: (config_image, image_id, repository_digest)
         for service, config_image, image_id, repository_digest in dependency_image_specs
     }
-    image_identities: list[str] = []
-    udata_container_id = ""
-    for service in service_names:
-        container_id, image_identity = _controlled_service_image_identity(
-            read,
-            service,
-            docker_endpoint,
-            udata_image_spec if service == "udata" else dependency_images.get(service),
-            udata_image_repository,
-            udata_image_spec,
-            error_factory,
-        )
-        image_identities.append(image_identity)
-        if service == "udata":
-            udata_container_id = container_id
-    if (
+    image_identities, udata_container_id = _controlled_image_identities(
+        read,
+        service_names,
+        dependency_images,
+        docker_endpoint=docker_endpoint,
+        udata_image_repository=udata_image_repository,
+        udata_image_spec=udata_image_spec,
+        error_factory=error_factory,
+    )
+    _require_controlled_source_commit(
         read(
-            "exec",
-            udata_container_id,
-            "git",
-            "-C",
-            "/opt/udata",
-            "rev-parse",
-            "HEAD",
+            *_controlled_source_commit_args(udata_container_id),
             docker_endpoint=docker_endpoint,
             direct=True,
-        )
-        != source_commit
-    ):
-        raise error_factory("The controlled uData service source does not match the approved commit.")
-    if (
+        ),
+        source_commit,
+        error_factory,
+    )
+    _require_controlled_nonce(
         read(
-            "exec",
-            udata_container_id,
-            "printenv",
-            "UDATA_EVIDENCE_STACK_NONCE",
+            *_controlled_nonce_args(udata_container_id),
             docker_endpoint=docker_endpoint,
             direct=True,
-        )
-        != nonce
-    ):
-        raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
+        ),
+        nonce,
+        error_factory,
+    )
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,
@@ -1666,33 +1710,24 @@ async def _verify_controlled_source_and_nonce_async(
         image_identities.append(image_identity)
         if service == "udata":
             udata_container_id = container_id
-    if (
+    _require_controlled_source_commit(
         await read(
-            "exec",
-            udata_container_id,
-            "git",
-            "-C",
-            "/opt/udata",
-            "rev-parse",
-            "HEAD",
+            *_controlled_source_commit_args(udata_container_id),
             docker_endpoint=docker_endpoint,
             direct=True,
-        )
-        != source_commit
-    ):
-        raise error_factory("The controlled uData service source does not match the approved commit.")
-    if (
+        ),
+        source_commit,
+        error_factory,
+    )
+    _require_controlled_nonce(
         await read(
-            "exec",
-            udata_container_id,
-            "printenv",
-            "UDATA_EVIDENCE_STACK_NONCE",
+            *_controlled_nonce_args(udata_container_id),
             docker_endpoint=docker_endpoint,
             direct=True,
-        )
-        != nonce
-    ):
-        raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
+        ),
+        nonce,
+        error_factory,
+    )
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Never, cast
@@ -137,7 +136,7 @@ def _mutation(
         status, payload, response = dispatch()
         receipt = _receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
         return _mutation_result(receipt, payload)
-    except Exception as error:
+    except SETTLEMENT_ERRORS as error:
         outcome = _mutation_outcome(error, response)
         _raise_with_receipt(
             error,
@@ -162,7 +161,7 @@ async def _async_mutation(
         status, payload, response = await dispatch()
         receipt = _receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
         return _mutation_result(receipt, payload)
-    except (Exception, asyncio.CancelledError) as error:
+    except ASYNC_SETTLEMENT_ERRORS as error:
         outcome = _mutation_outcome(error, response)
         _raise_with_receipt(
             error,

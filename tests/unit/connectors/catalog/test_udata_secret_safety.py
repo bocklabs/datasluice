@@ -225,6 +225,20 @@ def test_interruption_after_token_response_redacts_traceback_locals(
         assert router.requests[-1].url == f"{ORIGIN}/api/1/me/api_tokens/token-id/"
 
 
+def _assert_interrupted_frames_are_redacted(error: BaseException, plaintext: str, message: str) -> None:
+    """Assert no connector traceback frame of *error* retains *plaintext* or an unredacted response."""
+    traceback = error.__traceback__
+    while traceback is not None:
+        frame = traceback.tb_frame
+        if str(frame.f_globals.get("__name__", "")).startswith("datasluice"):
+            if plaintext in repr(frame.f_locals):
+                pytest.fail(message)
+            response = frame.f_locals.get("response")
+            if isinstance(response, RuntimeResponse):
+                assert response.body == b""
+        traceback = traceback.tb_next
+
+
 @pytest.mark.parametrize("exception_type", [KeyboardInterrupt, SystemExit], ids=["keyboard-interrupt", "system-exit"])
 def test_async_interruption_after_token_response_redacts_traceback_locals(
     monkeypatch: pytest.MonkeyPatch, exception_type: type[BaseException]
@@ -258,16 +272,11 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
                 await client.users_tokens.create_api_token(
                     ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
                 )
-            traceback = raised.value.__traceback__
-            while traceback is not None:
-                frame = traceback.tb_frame
-                if str(frame.f_globals.get("__name__", "")).startswith("datasluice"):
-                    if plaintext in repr(frame.f_locals):
-                        pytest.fail("Interrupted token plaintext remained in an async connector traceback frame.")
-                    response = frame.f_locals.get("response")
-                    if isinstance(response, RuntimeResponse):
-                        assert response.body == b""
-                traceback = traceback.tb_next
+            _assert_interrupted_frames_are_redacted(
+                raised.value,
+                plaintext,
+                "Interrupted token plaintext remained in an async connector traceback frame.",
+            )
             receipt = raised.value.__dict__["mutation_receipt"]
             assert isinstance(receipt, MutationReceipt)
             assert receipt.outcome == "ambiguous"

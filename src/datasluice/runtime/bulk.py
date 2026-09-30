@@ -588,7 +588,7 @@ class AsyncBulkExecutor:
         """Yield ordered asynchronous receipts followed by a terminal aggregate."""
         _validate_plan(plan, self._checkpoint)
         started_at = self._clock()
-        monitor = DeadlineMonitor(self._whole_run_budget, clock=self._clock) if self._whole_run_budget else None
+        monitor = self._run_monitor()
         progress = _bulk_progress(
             plan, self._checkpoint, monitor, self._cancel_event, self._policy.cancellation_requested
         )
@@ -598,16 +598,8 @@ class AsyncBulkExecutor:
             yield receipt
 
         try:
-            while progress.pending or in_flight:
-                self._dispatch_available(plan, progress, in_flight, monitor)
-                if not in_flight:
-                    break
-                done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = in_flight.pop(task)
-                    await self._record_result(task, index, plan, progress, monitor)
-                    for receipt in progress.ordered_receipts():
-                        yield receipt
+            async for receipt in self._consume_pending(plan, progress, in_flight, monitor):
+                yield receipt
         except asyncio.CancelledError:
             await self._cancel_stream(plan, progress, in_flight)
             raise
@@ -618,7 +610,42 @@ class AsyncBulkExecutor:
         await self._finish_progress(plan, progress, monitor)
         for receipt in progress.ordered_receipts():
             yield receipt
-        yield _summary(
+        yield self._terminal_summary(plan, progress, monitor, started_at)
+
+    async def _consume_pending(
+        self,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        in_flight: dict[asyncio.Future[_ItemResult], int],
+        monitor: DeadlineMonitor | None,
+    ) -> AsyncIterator[BulkItemReceipt]:
+        """Yield each ordered receipt as its item settles until the plan drains or stops."""
+        while progress.pending or in_flight:
+            self._dispatch_available(plan, progress, in_flight, monitor)
+            if not in_flight:
+                break
+            done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                index = in_flight.pop(task)
+                await self._record_result(task, index, plan, progress, monitor)
+                for receipt in progress.ordered_receipts():
+                    yield receipt
+
+    def _run_monitor(self) -> DeadlineMonitor | None:
+        """Return the whole-run deadline monitor when the caller supplied a run budget."""
+        if not self._whole_run_budget:
+            return None
+        return DeadlineMonitor(self._whole_run_budget, clock=self._clock)
+
+    def _terminal_summary(
+        self,
+        plan: BulkPlan,
+        progress: _BulkProgress,
+        monitor: DeadlineMonitor | None,
+        started_at: float,
+    ) -> BulkSummary:
+        """Build the terminal aggregate of one fully drained run."""
+        return _summary(
             progress.completed.values(),
             len(plan.items),
             dispatches=progress.dispatches,

@@ -170,16 +170,26 @@ def _validate_json_value(value: object, *, operation: str, path: str) -> None:
             return
         raise _invalid_field(path, operation, "a finite JSON value")
     if isinstance(value, Mapping):
-        for key, nested in value.items():
-            if not isinstance(key, str) or not key:
-                raise _invalid_field(path, operation, "an object with string keys")
-            _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+        _validate_json_object(value, operation=operation, path=path)
         return
     if isinstance(value, list):
-        for index, nested in enumerate(value):
-            _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
+        _validate_json_array(value, operation=operation, path=path)
         return
     raise _invalid_field(path, operation, "a JSON value")
+
+
+def _validate_json_object(value: Mapping[object, object], *, operation: str, path: str) -> None:
+    """Validate the string keys and nested values of one JSON object."""
+    for key, nested in value.items():
+        if not isinstance(key, str) or not key:
+            raise _invalid_field(path, operation, "an object with string keys")
+        _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+
+
+def _validate_json_array(value: list[object], *, operation: str, path: str) -> None:
+    """Validate the nested values of one JSON array."""
+    for index, nested in enumerate(value):
+        _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
 
 
 def _validate_nested_string_fields(

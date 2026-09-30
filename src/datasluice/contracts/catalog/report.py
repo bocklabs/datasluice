@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -35,19 +35,27 @@ def _freeze_json(value: object, path: str) -> object:
     if isinstance(value, str):
         return _sanitize_text(value, path)
     if isinstance(value, Mapping):
-        if len(value) > 32:
-            raise _report_error(path)
-        frozen: dict[str, object] = {}
-        for key, nested in value.items():
-            if not isinstance(key, str) or len(key) > 64:
-                raise _report_error(path)
-            frozen[key] = _freeze_json(nested, f"{path}.{key}")
-        return MappingProxyType(frozen)
+        return _freeze_json_object(value, path)
     if isinstance(value, (tuple, list)):
-        if len(value) > 32:
-            raise _report_error(path)
-        return tuple(_freeze_json(nested, path) for nested in value)
+        return _freeze_json_sequence(value, path)
     raise _report_error(path)
+
+
+def _freeze_json_object(value: Mapping[object, object], path: str) -> Mapping[str, object]:
+    if len(value) > 32:
+        raise _report_error(path)
+    frozen: dict[str, object] = {}
+    for key, nested in value.items():
+        if not isinstance(key, str) or len(key) > 64:
+            raise _report_error(path)
+        frozen[key] = _freeze_json(nested, f"{path}.{key}")
+    return MappingProxyType(frozen)
+
+
+def _freeze_json_sequence(value: Sequence[object], path: str) -> tuple[object, ...]:
+    if len(value) > 32:
+        raise _report_error(path)
+    return tuple(_freeze_json(nested, path) for nested in value)
 
 
 def _thaw_json(value: object) -> object:

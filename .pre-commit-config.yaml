@@ -3,6 +3,7 @@ repos:
     rev: v3.21.2
     hooks:
       -   id: pyupgrade
+          args: ["--py312-plus"]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -30,6 +31,13 @@ repos:
     hooks:
       - id: gitleaks-docker
         name: gitleaks (hardcoded secrets)
+
+  - repo: https://github.com/rohaquinlop/complexipy-pre-commit
+    rev: v5.1.0
+    hooks:
+      - id: complexipy
+        name: cognitive complexity
+        args: ["--max-complexity-allowed", "15"]
 
   - repo: local
     hooks:

@@ -13,6 +13,11 @@ from datasluice.errors.catalog import CatalogValidationError
 _ACTIVITY_FILTERS = ("organization", "user", "related_to")
 
 
+def _is_json_mapping(value: object) -> bool:
+    """Return whether one value is a mapping with non-empty string keys."""
+    return isinstance(value, Mapping) and all(isinstance(key, str) and key for key in value)
+
+
 @dataclass(frozen=True, slots=True)
 class ActivityQuery:
     """Optional stock activity filters; only supplied keys are sent."""
@@ -50,6 +55,10 @@ class DiscussionCreateInput:
                 raise ValueError(f"uData discussion {name} must be a non-empty string.")
         if not isinstance(self.subject, Mapping) or not self.subject.get("id") or not self.subject.get("class"):
             raise ValueError("uData discussion subject must name both an id and a class.")
+        for name in ("organization", "extras"):
+            value = getattr(self, name)
+            if value is not None and not _is_json_mapping(value):
+                raise ValueError(f"uData discussion {name} must be a JSON mapping when supplied.")
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {
@@ -89,6 +98,8 @@ class CommentInput:
     def __post_init__(self) -> None:
         if not isinstance(self.comment, str):
             raise ValueError("uData discussion comment must be a string.")
+        if self.organization is not None and not _is_json_mapping(self.organization):
+            raise ValueError("uData discussion organization must be a JSON mapping when supplied.")
         if self.close is not None and not isinstance(self.close, bool):
             raise ValueError("uData discussion close flag must be a boolean when supplied.")
         if not self.comment and not self.close and self.organization is None:
@@ -134,7 +145,7 @@ class DiscussionSearchQuery:
     last_update_range: str | None = None
 
     def __post_init__(self) -> None:
-        if self.page < 1 or self.page_size < 1:
+        if type(self.page) is not int or self.page < 1 or type(self.page_size) is not int or self.page_size < 1:
             raise ValueError("uData discussion search paging must be strictly positive.")
         if self.sort is not None and self.sort not in {
             *(f"-{name}" for name in _DISCUSSION_SORTS),

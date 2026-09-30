@@ -229,41 +229,68 @@ def test_concurrent_puts_same_key_one_wins(tmp_path: Path) -> None:
     assert result in payloads, f"corrupted result: {result!r}"
 
 
-def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
-    """N=5 writers + N=5 readers -> readers never observe partial bytes."""
+def _seeded_mixed_cache(tmp_path: Path) -> tuple[ContentCache, list[str], dict[str, bytes]]:
+    """Seed a cache with twenty keys whose payloads each have a distinct length."""
     cache = ContentCache(str(tmp_path / "cache"))
-    keys = [f"mix-key-{i}" for i in range(20)]
-    expected = {key: (b"x" * (i + 1) * 100) for i, key in enumerate(keys)}
+    keys = [f"mix-key-{index}" for index in range(20)]
+    expected = {key: (b"x" * (index + 1) * 100) for index, key in enumerate(keys)}
     for key, data in expected.items():
         cache.put(key, data)
+    return cache, keys, expected
 
-    writer_errors: list[BaseException] = []
-    reader_violations: list[str] = []
 
-    def writer() -> None:
-        try:
-            for _ in range(20):
-                for key, data in expected.items():
-                    cache.put(key, data + b"-rewrite")
-        except BaseException as exc:
-            writer_errors.append(exc)
+def _rewrite_every_key(cache: ContentCache, expected: dict[str, bytes]) -> list[BaseException]:
+    """Rewrite every seeded key twenty times and return any error that escaped the loop."""
+    errors: list[BaseException] = []
+    try:
+        for _ in range(20):
+            for key, data in expected.items():
+                cache.put(key, data + b"-rewrite")
+    except BaseException as exc:
+        errors.append(exc)
+    return errors
 
-    def reader() -> None:
-        try:
-            for _ in range(50):
-                for key in keys:
-                    actual = cache.get(key)
-                    if actual is None:
-                        continue
-                    if actual not in (expected[key], expected[key] + b"-rewrite"):
-                        reader_violations.append(f"torn read for {key}: len={len(actual)}")
-        except BaseException as exc:
-            reader_violations.append(f"reader raised: {exc!r}")
+
+def _torn_read_message(key: str, actual: bytes | None, expected: dict[str, bytes]) -> str | None:
+    """Return a violation message when a read is missing or is not an accepted payload."""
+    if actual is None:
+        return None
+    accepted = (expected[key], expected[key] + b"-rewrite")
+    if actual not in accepted:
+        return f"torn read for {key}: len={len(actual)}"
+    return None
+
+
+def _scan_for_torn_reads(cache: ContentCache, keys: list[str], expected: dict[str, bytes]) -> list[str]:
+    """Read every key fifty times and return one message per torn or failed read."""
+    violations: list[str] = []
+    try:
+        for _ in range(50):
+            for key in keys:
+                message = _torn_read_message(key, cache.get(key), expected)
+                if message is not None:
+                    violations.append(message)
+    except BaseException as exc:
+        violations.append(f"reader raised: {exc!r}")
+    return violations
+
+
+def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
+    """N=5 writers + N=5 readers -> readers never observe partial bytes."""
+    cache, keys, expected = _seeded_mixed_cache(tmp_path)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        writer_futures = [executor.submit(writer) for _ in range(5)]
-        reader_futures = [executor.submit(reader) for _ in range(5)]
-        concurrent.futures.wait(writer_futures + reader_futures)
+        writer_futures = [executor.submit(_rewrite_every_key, cache, expected) for _ in range(5)]
+        reader_futures = [executor.submit(_scan_for_torn_reads, cache, keys, expected) for _ in range(5)]
+        concurrent.futures.wait(writer_futures)
+        concurrent.futures.wait(reader_futures)
+
+    writer_errors: list[BaseException] = []
+    for future in writer_futures:
+        writer_errors.extend(future.result())
+    reader_violations: list[str] = []
+    for future in reader_futures:
+        reader_violations.extend(future.result())
 
     assert writer_errors == [], f"writer errors: {writer_errors}"
     assert reader_violations == [], f"torn-read violations: {reader_violations}"

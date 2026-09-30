@@ -213,6 +213,24 @@ class PostUpdateInput:
         _strings(self.tags, "post tags")
         for name in ("datasets", "reuses", "blocs"):
             _mappings(getattr(self, name), f"post {name}")
+        if all(
+            value is None
+            for value in (
+                self.name,
+                self.content,
+                self.headline,
+                self.body_type,
+                self.kind,
+                self.image_url,
+                self.credit_to,
+                self.credit_url,
+                self.tags,
+                self.datasets,
+                self.reuses,
+                self.blocs,
+            )
+        ):
+            raise ValueError("uData post updates require at least one field.")
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {}
@@ -295,6 +313,7 @@ class ReportCreateInput:
     callbacks: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
+        _text(self.reason, "report reason", required=True)
         _choice(self.reason, _REPORT_REASONS, "report reason")
         _text(self.message, "report message")
         _text(self.dismissed_at, "report dismissed_at")
@@ -342,6 +361,19 @@ class ReportUpdateInput:
                 raise ValueError("uData report subject must name both an id and a class.")
             if self.subject["class"] not in _REPORT_SUBJECT_TYPES:
                 raise ValueError("uData report subject class is not a documented choice.")
+        if all(
+            value is None
+            for value in (
+                self.subject,
+                self.reason,
+                self.message,
+                self.dismissed_at,
+                self.dismissed_by,
+                self.subject_embed_id,
+                self.callbacks,
+            )
+        ):
+            raise ValueError("uData report updates require at least one field.")
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {}

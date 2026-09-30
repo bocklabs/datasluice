@@ -238,14 +238,19 @@ def canonical_compare(observed: object, expected_keys: frozenset[str], ordering:
     if isinstance(observed, Mapping):
         return {str(key) for key in observed} == set(expected_keys)
     if isinstance(observed, Sequence) and not isinstance(observed, str | bytes | bytearray):
-        if observed and all(isinstance(item, Mapping) for item in observed):
-            return all(canonical_compare(item, expected_keys, ordering) for item in observed)
-        names = [str(item) for item in observed]
-        expected = sorted(expected_keys)
-        if ordering == "platform-deterministic":
-            return names == expected
-        return sorted(names) == expected
+        return _canonical_compare_sequence(observed, expected_keys, ordering)
     return False
+
+
+def _canonical_compare_sequence(observed: Sequence[object], expected_keys: frozenset[str], ordering: Ordering) -> bool:
+    """Compare one observed sequence of record mappings or of names under the ordering mode."""
+    if observed and all(isinstance(item, Mapping) for item in observed):
+        return all(canonical_compare(item, expected_keys, ordering) for item in observed)
+    names = [str(item) for item in observed]
+    expected = sorted(expected_keys)
+    if ordering == "platform-deterministic":
+        return names == expected
+    return sorted(names) == expected
 
 
 def _invoke_typed_read(client: _DriftClient, check: DriftCheck) -> ResultEnvelope[CKANResultItem]:

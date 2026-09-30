@@ -105,6 +105,12 @@ _POST = frozenset(
     }
 )
 _DELETE = frozenset({"delete_me", "delete_user", "revoke_api_token", "unfollow_user"})
+_BODY_INPUTS = {
+    "create_user": UserCreateInput,
+    "update_me": UserUpdateInput,
+    "update_user": UserUpdateInput,
+    "create_api_token": ApiTokenCreateInput,
+}
 
 
 def _segment(value: object, operation: str) -> str:
@@ -164,7 +170,13 @@ def build_request(name: str, *, identifier: str | None = None, query: object = N
         )
     elif query is not None:
         raise ValueError("Unsupported uData user query input.")
-    if isinstance(body, (UserCreateInput, UserUpdateInput, ApiTokenCreateInput)):
+    expected = _BODY_INPUTS.get(name)
+    if expected is None:
+        if body is not None:
+            raise ValueError(f"uData user {name} does not accept a JSON body.")
+    elif not isinstance(body, expected):
+        raise ValueError(f"uData user {name} requires its typed {expected.__name__} body.")
+    else:
         body = body.payload()
     return method, path, {}, body
 

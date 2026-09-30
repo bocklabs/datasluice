@@ -51,16 +51,20 @@ def _optional_text(value: object, path: str) -> str | None:
     return value
 
 
+def _require_unaudited_key(key: object, path: str) -> None:
+    """Reject an audit-metadata key that is not a non-sensitive string."""
+    if not isinstance(key, str):
+        raise _contract_error(path)
+    if any(part in key.lower().replace("-", "_") for part in _SENSITIVE_KEY_PARTS):
+        raise _contract_error(path)
+
+
 def _validate_redacted_metadata(value: object, path: str) -> object:
     if isinstance(value, str) and _contains_credential_value(value) and redact_string(value) != value:
         raise _contract_error(path)
     if isinstance(value, Mapping):
         for key, nested in value.items():
-            if not isinstance(key, str):
-                raise _contract_error(path)
-            normalized_key = key.lower().replace("-", "_")
-            if any(part in normalized_key for part in _SENSITIVE_KEY_PARTS):
-                raise _contract_error(path)
+            _require_unaudited_key(key, path)
             _validate_redacted_metadata(nested, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for nested in value:

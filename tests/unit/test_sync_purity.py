@@ -3,21 +3,9 @@
 from __future__ import annotations
 
 import importlib
-import os
-import subprocess
 import sys
-import textwrap
-from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _run_import_check(script: str) -> None:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(_REPO_ROOT / "src")
-    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
-    assert result.returncode == 0, result.stderr
-
+from tests.helpers.import_purity import assert_import_pulls_no_distributions
 
 _FORBIDDEN_OPTIONAL_MODULES = ("pyarrow", "dlt", "duckdb")
 
@@ -34,39 +22,11 @@ def _assert_optional_modules_absent() -> None:
 
 
 def test_sync_imports_zero_optional_deps() -> None:
-    script = textwrap.dedent(
-        """
-        import importlib
-        import sys
-
-        forbidden = %r
-        for name in list(sys.modules):
-            if name.split(".")[0] in forbidden:
-                del sys.modules[name]
-        importlib.import_module("datasluice.sync")
-        present = [name for name in forbidden if name in sys.modules]
-        assert present == [], present
-        """
-    ) % (_FORBIDDEN_OPTIONAL_MODULES,)
-    _run_import_check(script)
+    assert_import_pulls_no_distributions("datasluice.sync", _FORBIDDEN_OPTIONAL_MODULES)
 
 
 def test_import_state_store_no_optional_deps() -> None:
-    script = textwrap.dedent(
-        """
-        import importlib
-        import sys
-
-        forbidden = %r
-        for name in list(sys.modules):
-            if name.split(".")[0] in forbidden:
-                del sys.modules[name]
-        importlib.import_module("datasluice.sync.state_store")
-        present = [name for name in forbidden if name in sys.modules]
-        assert present == [], present
-        """
-    ) % (_FORBIDDEN_OPTIONAL_MODULES,)
-    _run_import_check(script)
+    assert_import_pulls_no_distributions("datasluice.sync.state_store", _FORBIDDEN_OPTIONAL_MODULES)
 
 
 def test_session_sync_composition_imports_no_optional_deps() -> None:

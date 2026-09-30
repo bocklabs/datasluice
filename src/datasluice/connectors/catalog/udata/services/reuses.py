@@ -313,16 +313,21 @@ class SyncReusesService:
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
-        image = ReuseImageInput(data=data, content_type=content_type)
-        method, path, headers = wire.reuse_image_request(reuse_id)
         return _mutation(
             reuse_id,
             mutation_policy,
             "updated",
             wire.REUSE_IMAGE_OPERATION,
             False,
-            lambda: (method, path, headers, None),
-            lambda m, p, h, b: self._mutate_upload(m, p, h, image, permissions, mutation_policy),
+            lambda: (*wire.reuse_image_request(reuse_id), None),
+            lambda m, p, h, b: self._mutate_upload(
+                m,
+                p,
+                h,
+                ReuseImageInput(data=data, content_type=content_type),
+                permissions,
+                mutation_policy,
+            ),
         )
 
     def reuse_types(self) -> tuple[MappingRecord, ...]:
@@ -635,16 +640,21 @@ class AsyncReusesService:
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
-        image = ReuseImageInput(data=data, content_type=content_type)
-        method, path, headers = wire.reuse_image_request(reuse_id)
         return await _mutation_async(
             reuse_id,
             mutation_policy,
             "updated",
             wire.REUSE_IMAGE_OPERATION,
             False,
-            lambda: (method, path, headers, None),
-            lambda m, p, h, b: self._mutate_upload(m, p, h, image, permissions, mutation_policy),
+            lambda: (*wire.reuse_image_request(reuse_id), None),
+            lambda m, p, h, b: self._mutate_upload(
+                m,
+                p,
+                h,
+                ReuseImageInput(data=data, content_type=content_type),
+                permissions,
+                mutation_policy,
+            ),
         )
 
     async def reuse_types(self) -> tuple[MappingRecord, ...]:

@@ -24,6 +24,7 @@ htmlcov/
 coverage.xml
 .hypothesis/
 .pytest_cache/
+.complexipy_cache/
 
 # Environments
 .env

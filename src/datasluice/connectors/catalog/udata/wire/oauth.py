@@ -1,9 +1,3 @@
-"""Exact stock uData /oauth route, form, and error semantics.
-
-Expectations are transcribed from the independent upstream oracle
-``udata/api/oauth2.py`` at tag ``v17.6.0``.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -96,6 +90,11 @@ def _optional_text(name: str, payload: Mapping[str, object], key: str) -> str | 
 
 
 _QUERY_ROUTES = frozenset({"client_info", "authorize"})
+_FORM_BODY_TYPES = {
+    "access_token": OAuthTokenRequest,
+    "revoke_token": OAuthRevokeRequest,
+    "authorize_post": OAuthAuthorizeDecision,
+}
 
 
 def build_request(name: str, body: object = None) -> Request:
@@ -115,8 +114,9 @@ def build_request(name: str, body: object = None) -> Request:
         )
     if name not in _FORM_BODIES:
         return method, path, {}, None
-    if not isinstance(body, (OAuthTokenRequest, OAuthRevokeRequest, OAuthAuthorizeDecision)):
-        raise ValueError(f"uData OAuth {name} requires its typed form body.")
+    expected = _FORM_BODY_TYPES[name]
+    if not isinstance(body, expected):
+        raise ValueError(f"uData OAuth {name} requires its typed {expected.__name__} body.")
     encoded = urlencode(body.form_fields()).encode()
     return method, path, {"Content-Type": FORM_MEDIA_TYPE, "Accept": "application/json"}, encoded
 

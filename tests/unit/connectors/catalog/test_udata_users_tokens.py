@@ -162,11 +162,19 @@ def test_users_tokens_contract_exposes_every_assigned_method_in_both_modes() -> 
     ],
 )
 def test_every_assigned_user_route_has_exact_verb_and_path(name: str, method: str, path: str) -> None:
-    request = wire.build_request(name, identifier="token-id")
+    bodies = {
+        "create_api_token": ApiTokenCreateInput(),
+        "create_user": UserCreateInput("Ada", "Lovelace", "ada@example.org"),
+        "update_me": UserUpdateInput({"website": None}),
+        "update_user": UserUpdateInput({"website": None}),
+    }
+    body = bodies.get(name)
+    request = wire.build_request(name, identifier="token-id", body=body)
     assert request[0] == method
     assert request[1] == path
     assert request[2] == {}
-    assert request[3] is None
+    if body is None:
+        assert request[3] is None
 
 
 def test_user_wire_preserves_query_omission_and_body_presence() -> None:
