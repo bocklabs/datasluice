@@ -6,9 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogValidationError
+from datasluice.exceptions import DataSluiceError
 
 _ACTIVITY_FILTERS = ("organization", "user", "related_to")
 
@@ -16,6 +17,17 @@ _ACTIVITY_FILTERS = ("organization", "user", "related_to")
 def _is_json_mapping(value: object) -> bool:
     """Return whether one value is a mapping with non-empty string keys."""
     return isinstance(value, Mapping) and all(isinstance(key, str) and key for key in value)
+
+
+def _frozen_json_mapping(value: Mapping[str, object], field_name: str) -> Mapping[str, object]:
+    """Return *value* deep-frozen, rejecting anything that is not JSON serializable."""
+    try:
+        frozen = _freeze_json(dict(value), f"udata.discussion.{field_name}")
+    except DataSluiceError as error:
+        raise ValueError(f"uData discussion {field_name} must contain JSON-safe values only.") from error
+    if not isinstance(frozen, Mapping):
+        raise ValueError(f"uData discussion {field_name} must be a JSON mapping.")
+    return frozen
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,17 +71,22 @@ class DiscussionCreateInput:
             value = getattr(self, name)
             if value is not None and not _is_json_mapping(value):
                 raise ValueError(f"uData discussion {name} must be a JSON mapping when supplied.")
+        object.__setattr__(self, "subject", _frozen_json_mapping(self.subject, "subject"))
+        for name in ("organization", "extras"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _frozen_json_mapping(value, name))
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {
             "title": self.title,
             "comment": self.comment,
-            "subject": dict(self.subject),
+            "subject": _thaw_json(self.subject),
         }
         if self.organization is not None:
-            body["organization"] = dict(self.organization)
+            body["organization"] = _thaw_json(self.organization)
         if self.extras is not None:
-            body["extras"] = dict(self.extras)
+            body["extras"] = _thaw_json(self.extras)
         return body
 
 
@@ -110,7 +127,7 @@ class CommentInput:
         if self.comment:
             body["comment"] = self.comment
         if self.organization is not None:
-            body["organization"] = dict(self.organization)
+            body["organization"] = _thaw_json(self.organization)
         if self.close is not None:
             body["close"] = self.close
         return body

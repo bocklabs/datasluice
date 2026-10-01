@@ -6,9 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogValidationError
+from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
 
 _POST_SORTS = ("created_at", "modified", "published", "name", "headline", "content")
@@ -53,14 +54,36 @@ def _text(value: object, label: str, *, required: bool = False) -> None:
         raise ValueError(f"uData {label} must be a string when supplied.")
 
 
+def _frozen(value: Mapping[str, object], label: str) -> Mapping[str, object]:
+    """Return *value* deep-frozen, rejecting anything that is not JSON serializable."""
+    try:
+        frozen = _freeze_json(dict(value), f"udata.{label}")
+    except DataSluiceError as error:
+        raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
+    if not isinstance(frozen, Mapping):
+        raise ValueError(f"uData {label} must be a mapping when supplied.")
+    return frozen
+
+
 def _mapping(value: object, label: str) -> None:
     if value is not None and not isinstance(value, Mapping):
         raise ValueError(f"uData {label} must be a mapping when supplied.")
 
 
-def _mappings(value: object, label: str) -> None:
+def _mappings(value: object, label: str) -> tuple[Mapping[str, object], ...]:
+    """Return *value* as a tuple of deep-frozen JSON mappings, rejecting non JSON-safe values."""
     if value is not None and (not isinstance(value, tuple) or not all(isinstance(item, Mapping) for item in value)):
         raise ValueError(f"uData {label} must be a tuple of mappings when supplied.")
+    frozen: list[Mapping[str, object]] = []
+    for item in value or ():
+        try:
+            candidate = _freeze_json(dict(item), f"udata.{label}")
+        except DataSluiceError as error:
+            raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
+        if not isinstance(candidate, Mapping):
+            raise ValueError(f"uData {label} must be a tuple of mappings when supplied.")
+        frozen.append(candidate)
+    return tuple(frozen)
 
 
 def _strings(value: object, label: str) -> None:
@@ -172,7 +195,9 @@ class PostCreateInput:
         _choice(self.kind, _POST_KINDS, "post kind")
         _strings(self.tags, "post tags")
         for name in ("datasets", "reuses", "blocs"):
-            _mappings(getattr(self, name), f"post {name}")
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _mappings(value, f"post {name}"))
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {"name": self.name}
@@ -183,7 +208,7 @@ class PostCreateInput:
             body["tags"] = list(self.tags)
         for name in ("datasets", "reuses", "blocs"):
             if (value := getattr(self, name)) is not None:
-                body[name] = [dict(item) for item in value]
+                body[name] = [_thaw_json(item) for item in value]
         return body
 
 
@@ -212,7 +237,9 @@ class PostUpdateInput:
         _choice(self.kind, _POST_KINDS, "post kind")
         _strings(self.tags, "post tags")
         for name in ("datasets", "reuses", "blocs"):
-            _mappings(getattr(self, name), f"post {name}")
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _mappings(value, f"post {name}"))
         if all(
             value is None
             for value in (
@@ -241,7 +268,7 @@ class PostUpdateInput:
             body["tags"] = list(self.tags)
         for name in ("datasets", "reuses", "blocs"):
             if (value := getattr(self, name)) is not None:
-                body[name] = [dict(item) for item in value]
+                body[name] = [_thaw_json(item) for item in value]
         return body
 
 
@@ -324,14 +351,19 @@ class ReportCreateInput:
             raise ValueError("uData report subject must name both an id and a class.")
         if self.subject["class"] not in _REPORT_SUBJECT_TYPES:
             raise ValueError("uData report subject class is not a documented choice.")
+        object.__setattr__(self, "subject", _frozen(self.subject, "report subject"))
+        for name in ("dismissed_by", "callbacks"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _frozen(value, f"report {name}"))
 
     def payload(self) -> dict[str, object]:
-        body: dict[str, object] = {"subject": dict(self.subject), "reason": self.reason}
+        body: dict[str, object] = {"subject": _thaw_json(self.subject), "reason": self.reason}
         for name in ("message", "dismissed_at", "subject_embed_id"):
             if (value := getattr(self, name)) is not None:
                 body[name] = value
         if self.dismissed_by is not None:
-            body["dismissed_by"] = dict(self.dismissed_by)
+            body["dismissed_by"] = _thaw_json(self.dismissed_by)
         if self.callbacks is not None:
             body["callbacks"] = dict(self.callbacks)
         return body
@@ -361,6 +393,11 @@ class ReportUpdateInput:
                 raise ValueError("uData report subject must name both an id and a class.")
             if self.subject["class"] not in _REPORT_SUBJECT_TYPES:
                 raise ValueError("uData report subject class is not a documented choice.")
+            object.__setattr__(self, "subject", _frozen(self.subject, "report subject"))
+        for name in ("dismissed_by", "callbacks"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _frozen(value, f"report {name}"))
         if all(
             value is None
             for value in (

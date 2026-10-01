@@ -6,9 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogValidationError
+from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
 
 _REUSE_FILTERS = ("q", "dataset", "featured", "topic", "type", "tag", "organization", "organization_badge", "owner")
@@ -119,7 +120,7 @@ class ReuseFollowersQuery:
             raise ValueError("uData reuse follower page must be a positive integer.")
         if type(self.page_size) is not int or self.page_size < 1:
             raise ValueError("uData reuse follower page_size must be a positive integer.")
-        if self.user is not None and not self.user:
+        if self.user is not None and (not isinstance(self.user, str) or not self.user):
             raise ValueError("uData reuse follower user must be a non-empty string when supplied.")
 
     def query_params(self) -> list[tuple[str, str]]:
@@ -186,6 +187,17 @@ def _validate_tags(value: object, *, required: bool = False) -> None:
         raise ValueError("uData reuse tags must be a tuple of non-empty strings when supplied.")
 
 
+def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
+    """Return *value* deep-frozen, rejecting anything that is not JSON serializable."""
+    try:
+        frozen = _freeze_json(dict(value), f"udata.{label}")
+    except DataSluiceError as error:
+        raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
+    if not isinstance(frozen, Mapping):
+        raise ValueError(f"uData {label} must be a mapping when supplied.")
+    return frozen
+
+
 def _validate_mapping(value: object, label: str) -> None:
     if value is not None and not isinstance(value, Mapping):
         raise ValueError(f"uData reuse {label} must be a mapping when supplied.")
@@ -213,11 +225,13 @@ class ReuseCreateInput:
         _validate_text(self.topic, "topic", required=True)
         _validate_tags(self.tags, required=True)
         _validate_mapping(self.organization, "organization")
+        if self.organization is not None:
+            object.__setattr__(self, "organization", _frozen_mapping(self.organization, "reuse organization"))
         if self.private is not None and type(self.private) is not bool:
             raise ValueError("uData reuse private flag must be a boolean when supplied.")
         _validate_mapping(self.extras, "extras")
         if self.extras is not None:
-            object.__setattr__(self, "extras", dict(self.extras))
+            object.__setattr__(self, "extras", _frozen_mapping(self.extras, "reuse extras"))
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {
@@ -230,11 +244,11 @@ class ReuseCreateInput:
         if self.tags:
             body["tags"] = list(self.tags)
         if self.organization is not None:
-            body["organization"] = dict(self.organization)
+            body["organization"] = _thaw_json(self.organization)
         if self.private is not None:
             body["private"] = self.private
         if self.extras is not None:
-            body["extras"] = dict(self.extras)
+            body["extras"] = _thaw_json(self.extras)
         return body
 
 
@@ -264,7 +278,7 @@ class ReuseUpdateInput:
             raise ValueError("uData reuse private flag must be a boolean when supplied.")
         _validate_mapping(self.extras, "extras")
         if self.extras is not None:
-            object.__setattr__(self, "extras", dict(self.extras))
+            object.__setattr__(self, "extras", _frozen_mapping(self.extras, "reuse extras"))
         if all(
             value is None
             for value in (
@@ -296,11 +310,11 @@ class ReuseUpdateInput:
         if self.topic is not None:
             body["topic"] = self.topic
         if self.organization is not None:
-            body["organization"] = dict(self.organization)
+            body["organization"] = _thaw_json(self.organization)
         if self.private is not None:
             body["private"] = self.private
         if self.extras is not None:
-            body["extras"] = dict(self.extras)
+            body["extras"] = _thaw_json(self.extras)
         return body
 
 
