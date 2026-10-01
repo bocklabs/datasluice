@@ -25,6 +25,7 @@ from datasluice.connectors.catalog.udata.models.posts_reports import (
     ReportCreateInput,
     ReportUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.spatial import SpatialDatasetQuery, SpatialSuggestQuery
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthClientRequest,
@@ -229,6 +230,24 @@ def _reuse_response(url, method):
     return None
 
 
+def _spatial_response(url):
+    """Return the stub for a spatial level, granularity, zone, or coverage route."""
+    path = url.partition("?")[0]
+    if path.endswith("/api/1/spatial/granularities/"):
+        return _json([{"id": "poi", "name": "POI"}])
+    if path.endswith("/api/1/spatial/levels/"):
+        return _json([{"id": "country:fr", "name": "Pays"}])
+    if path.endswith("/api/1/spatial/zones/suggest/"):
+        return _json([{"code": "FR-01", "id": "wheel-zone", "level": "country:fr", "name": "Zone", "uri": "z"}])
+    if path.endswith("/api/1/spatial/zone/wheel-zone/datasets/"):
+        return _json([{"id": "wheel-dataset", "title": "Wheel dataset"}])
+    if path.endswith("/api/1/spatial/zone/wheel-zone/"):
+        return _json({"id": "wheel-zone", "type": "Feature"})
+    if path.endswith("/api/1/spatial/coverage/country%3Afr/"):
+        return _json({"features": [], "type": "FeatureCollection"})
+    return None
+
+
 def _content_response(url, method):
     """Return the stub for a post, post-feed, or reuse route."""
     if url.endswith("/api/1/posts/wheel-post/"):
@@ -268,6 +287,9 @@ class Transport:
         if response is not None:
             return response
         response = _report_response(url, method)
+        if response is not None:
+            return response
+        response = _spatial_response(url)
         if response is not None:
             return response
         response = _content_response(url, method)
@@ -442,6 +464,14 @@ revoked_token = client.users_tokens.revoke_api_token(
     ),
 )
 assert revoked_token.receipt.audit_metadata["status_code"] == 204
+assert client.spatial.spatial_granularities()[0].payload["name"] == "POI"
+assert client.spatial.spatial_levels()[0].payload["id"] == "country:fr"
+assert client.spatial.suggest_zones(SpatialSuggestQuery(q="fr", size=10))[0].payload["code"] == "FR-01"
+assert client.spatial.spatial_zone("wheel-zone").payload["type"] == "Feature"
+assert (
+    client.spatial.spatial_zone_datasets("wheel-zone", SpatialDatasetQuery(size=25))[0].payload["id"] == "wheel-dataset"
+)
+assert client.spatial.spatial_coverage("country:fr").payload["type"] == "FeatureCollection"
 assert client.taxonomies.available_badges().payload["pivotal-data"] == "Pivotal data"
 assert client.taxonomies.extensions() == ("csv",)
 assert client.taxonomies.licenses()[0].payload["id"] == "lov2"
@@ -727,6 +757,14 @@ async def run_async():
         assert token_created.receipt.audit_metadata["status_code"] == 201
         _assert_token_material_absent(token_created, async_transport.token_value, "async api token")
         assert token_revoked.receipt.audit_metadata["status_code"] == 204
+        assert (await active.spatial.spatial_granularities())[0].payload["name"] == "POI"
+        assert (await active.spatial.spatial_levels())[0].payload["id"] == "country:fr"
+        assert (await active.spatial.suggest_zones(SpatialSuggestQuery(q="fr", size=10)))[0].payload["code"] == "FR-01"
+        assert (await active.spatial.spatial_zone("wheel-zone")).payload["type"] == "Feature"
+        assert (await active.spatial.spatial_zone_datasets("wheel-zone", SpatialDatasetQuery(size=25)))[0].payload[
+            "id"
+        ] == "wheel-dataset"
+        assert (await active.spatial.spatial_coverage("country:fr")).payload["type"] == "FeatureCollection"
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
         assert (await active.taxonomies.suggest_mime(SuggestQuery("js")))[0].payload["text"] == "csv"
@@ -904,6 +942,12 @@ expected = [
     "http://127.0.0.1:5640/oauth/authorize?client_id=wheel-client&response_type=code",
     "http://127.0.0.1:5640/api/1/me/api_tokens/wheel-token-id/",
     "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/spatial/granularities/",
+    "http://127.0.0.1:5640/api/1/spatial/levels/",
+    "http://127.0.0.1:5640/api/1/spatial/zones/suggest/?q=fr&size=10",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
+    "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
     "http://127.0.0.1:5640/api/1/datasets/licenses/",
@@ -973,6 +1017,12 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/reuses/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/1/reuses/",
     "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
+    "http://127.0.0.1:5640/api/1/spatial/granularities/",
+    "http://127.0.0.1:5640/api/1/spatial/levels/",
+    "http://127.0.0.1:5640/api/1/spatial/zones/suggest/?q=fr&size=10",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
+    "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
+    "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

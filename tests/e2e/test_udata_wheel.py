@@ -53,6 +53,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "models/posts_reports.py",
         "wire/posts_reports.py",
         "services/posts_reports.py",
+        "models/spatial.py",
+        "wire/spatial.py",
+        "services/spatial.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()

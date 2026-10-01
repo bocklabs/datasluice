@@ -12,7 +12,10 @@ RUN apt-get update \
     && git clone https://github.com/opendatateam/udata.git /opt/udata \
     && git -C /opt/udata checkout --detach "$UDATA_COMMIT" \
     && test "$(git -C /opt/udata rev-parse HEAD)" = "$UDATA_COMMIT" \
-    && uv pip install --system --no-cache 'flask-caching==2.3.1' 'setuptools<81' /opt/udata 'flask-security-too==5.6.1' 'bcrypt==4.0.1'
+    && uv pip install --system --no-cache 'flask-caching==2.3.1' 'setuptools<81' /opt/udata 'flask-security-too==5.6.1' 'bcrypt==4.0.1' \
+    && uv pip uninstall --system 'Flask-Security' \
+    && uv pip install --system --no-cache --no-deps --force-reinstall 'flask-security-too==5.6.1' \
+    && python -c 'from flask_security.utils import get_within_delta'
 
 WORKDIR /opt/udata
 

@@ -66,6 +66,7 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
+from datasluice.connectors.catalog.udata.models.spatial import SpatialSuggestQuery
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery, TaxonomyMutationResult
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
@@ -4559,3 +4560,90 @@ def test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up() -
 
     _exercise_sync_post_lifecycle(token, member_token, permissions, member_permissions, title)
     asyncio.run(_exercise_async_post_lifecycle(token, member_token, permissions, member_permissions, title))
+
+
+def _spatial_read_routes() -> tuple[tuple[str, str, tuple[object, ...]], ...]:
+    """Return every assigned spatial read route as its raw path, method, and typed arguments."""
+    return (
+        ("/api/1/spatial/granularities/", "spatial_granularities", ()),
+        ("/api/1/spatial/levels/", "spatial_levels", ()),
+        ("/api/1/spatial/zones/suggest/?q=fr&size=10", "suggest_zones", (SpatialSuggestQuery(q="fr", size=10),)),
+        ("/api/1/spatial/zone/missing-zone/", "spatial_zone", ("missing-zone",)),
+        ("/api/1/spatial/zone/missing-zone/datasets/?size=25", "spatial_zone_datasets", ("missing-zone",)),
+        ("/api/1/spatial/coverage/missing-level/", "spatial_coverage", ("missing-level",)),
+    )
+
+
+def _spatial_records(typed: Any) -> list[object]:
+    """Return the plain JSON body of one spatial read regardless of record or sequence shape."""
+    records = typed if isinstance(typed, tuple) else (typed,)
+    return [_plain_json(record.payload) for record in records]
+
+
+def _assert_spatial_read_matches_raw(method: str, status: int, payload: object, typed: Any) -> None:
+    """Assert one spatial read reproduces its raw status and native body exactly.
+
+    Args:
+        method: The typed method name, used only to label assertion failures.
+        status: The raw HTTP status the loopback route returned.
+        payload: The decoded raw response body.
+        typed: The value the connector returned, or the typed error it raised.
+    """
+    if status == 200:
+        assert _spatial_records(typed) == payload, method
+    else:
+        assert typed.metadata.get("status_code") == status, method
+
+
+def _spatial_outcome[R](method: Callable[..., R], *args: object) -> object:
+    """Return one spatial read result, or the typed error the connector raised for it."""
+    try:
+        return method(*args)
+    except CatalogError as error:
+        return error
+
+
+def test_controlled_spatial_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned spatial read agrees with its raw loopback route in sync and async modes."""
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        for path, method, args in _spatial_read_routes():
+            status, payload, _ = _direct_request("", "GET", path)
+            typed = _spatial_outcome(getattr(client.spatial, method), *args)
+            _assert_spatial_read_matches_raw(method, status, payload, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            for path, method, args in _spatial_read_routes():
+                status, payload, _ = _direct_request("", "GET", path)
+                typed = await _spatial_async_outcome(client, method, args)
+                _assert_spatial_read_matches_raw(method, status, payload, typed)
+
+    asyncio.run(run_async())
+
+
+async def _spatial_async_outcome(client: AsyncUDataClient, method: str, args: tuple[object, ...]) -> object:
+    """Return one asynchronous spatial read result, or the typed error it raised."""
+    try:
+        return await getattr(client.spatial, method)(*args)
+    except CatalogError as error:
+        return error
+
+
+def test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error() -> None:
+    """The stock zone list raises on an absent zone; the connector surfaces the same typed error."""
+    path = "/api/1/spatial/zones/missing-zone/"
+    status, _, _ = _direct_request("", "GET", path)
+    assert status == 500
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        sync_error = _spatial_outcome(client.spatial.spatial_zones, "missing-zone")
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            async_error = await _spatial_async_outcome(client, "spatial_zones", (("missing-zone",),))
+            assert isinstance(async_error, CatalogError)
+            assert isinstance(sync_error, CatalogError)
+            assert async_error.metadata.get("status_code") == sync_error.metadata.get("status_code")
+            assert async_error.operation == sync_error.operation
+
+    asyncio.run(run_async())

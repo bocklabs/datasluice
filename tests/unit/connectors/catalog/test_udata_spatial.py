@@ -200,6 +200,15 @@ def test_spatial_queries_reject_invalid_input_before_dispatch() -> None:
         SpatialDatasetQuery(size=non_integer)
 
 
+def test_spatial_zone_collection_accepts_the_stock_geometry_less_feature() -> None:
+    """A stock GeoZone carries id, type, and properties only; no geometry member is invented."""
+    collection = wire.parse_feature_collection(
+        {"type": "FeatureCollection", "features": [{"id": "zone-1", "type": "Feature", "properties": {}}]},
+        wire.SPATIAL_ZONES_OPERATION,
+    )
+    assert collection.payload["type"] == "FeatureCollection"
+
+
 def test_spatial_zone_list_rejects_an_empty_id_list() -> None:
     with pytest.raises(CatalogValidationError, match="one or more"):
         wire.spatial_zones_request(())
@@ -210,6 +219,12 @@ def test_spatial_responses_fail_typed_when_the_envelope_is_not_the_documented_sh
         wire.parse_feature_collection(["not-a-collection"], wire.SPATIAL_ZONES_OPERATION)
     with pytest.raises(CatalogValidationError, match="must be a list of objects"):
         wire.parse_mapping_sequence({"not": "a list"}, wire.SPATIAL_LEVELS_OPERATION)
+    with pytest.raises(CatalogValidationError, match="must be a GeoJSON FeatureCollection"):
+        wire.parse_feature_collection({"type": "FeatureCollection"}, wire.SPATIAL_ZONES_OPERATION)
+    with pytest.raises(CatalogValidationError, match="must be a GeoJSON FeatureCollection"):
+        wire.parse_feature_collection(
+            {"type": "FeatureCollection", "features": ["not-a-feature"]}, wire.SPATIAL_ZONES_OPERATION
+        )
 
 
 def test_spatial_missing_zone_maps_to_a_typed_not_found_error() -> None:

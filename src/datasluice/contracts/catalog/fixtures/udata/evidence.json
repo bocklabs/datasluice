@@ -91,7 +91,7 @@
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "reviewed_sha": "1cdb7a33c0c9a88578a3b3c6d8438d647b3a896f",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "4dd859e0c2eeaf58517ed782cdc052fda213ebca16663c33810cc27fbbcee0e0",
+    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
   },
   "controlled_taxonomy_evidence": {
@@ -140,10 +140,10 @@
     "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
-    "controlled_test_sha256": "93884aa5cc68dbf6a878860e203bebb6223d4448c56679e2fb3d94a40657c8f4",
-    "wheel_test_sha256": "1e066eb61d648a5560953d15b0788c6e312098ff8e2ca62a24df07df81be10c7",
+    "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
+    "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "4dd859e0c2eeaf58517ed782cdc052fda213ebca16663c33810cc27fbbcee0e0",
+    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     "origin_capture_sha256": "eac6abfa3b7cec65b4806d52820579b0e5fc8904af15a86dc67735575d46f714",
     "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e",
@@ -218,10 +218,10 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "93884aa5cc68dbf6a878860e203bebb6223d4448c56679e2fb3d94a40657c8f4",
-    "wheel_test_sha256": "1e066eb61d648a5560953d15b0788c6e312098ff8e2ca62a24df07df81be10c7",
+    "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
+    "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "4dd859e0c2eeaf58517ed782cdc052fda213ebca16663c33810cc27fbbcee0e0",
+    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e"
   },
@@ -263,18 +263,18 @@
       "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
       "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
     },
-    "controlled_test_sha256": "93884aa5cc68dbf6a878860e203bebb6223d4448c56679e2fb3d94a40657c8f4",
-    "wheel_test_sha256": "1e066eb61d648a5560953d15b0788c6e312098ff8e2ca62a24df07df81be10c7",
+    "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
+    "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
     "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
   },
   "controlled_activity_discussion_evidence": {
     "captured_at": "2026-09-26",
     "stack_version": "17.6.0",
     "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
-    "controlled_test_sha256": "93884aa5cc68dbf6a878860e203bebb6223d4448c56679e2fb3d94a40657c8f4",
-    "wheel_test_sha256": "1e066eb61d648a5560953d15b0788c6e312098ff8e2ca62a24df07df81be10c7",
+    "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
+    "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "4dd859e0c2eeaf58517ed782cdc052fda213ebca16663c33810cc27fbbcee0e0",
+    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
     "test_ids": [
       "test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes",
       "test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up",
@@ -289,10 +289,10 @@
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
-    "controlled_test_sha256": "93884aa5cc68dbf6a878860e203bebb6223d4448c56679e2fb3d94a40657c8f4",
-    "wheel_test_sha256": "1e066eb61d648a5560953d15b0788c6e312098ff8e2ca62a24df07df81be10c7",
+    "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
+    "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "4dd859e0c2eeaf58517ed782cdc052fda213ebca16663c33810cc27fbbcee0e0",
+    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
     "test_ids": [
       "test_controlled_reuse_reads_match_raw_routes_in_both_modes",
       "test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up",
@@ -303,14 +303,47 @@
     "recaptured": true,
     "recapture_note": "Post-fix reuse reads and lifecycle were recaptured against a fresh loopback 17.6.0 stack. The v2 search returns 500 stack-wide (datasets and discussions too), so the differential asserts the typed error mapping. The reuse badge set is empty in the stock profile, so add_reuse_badge asserts the 400 invalid-kind mapping and delete_reuse_badge asserts the 404 absent-badge mapping. Follow cleanup is tolerant of the absent-follow state. All raw responses are sanitized to status and envelope skeletons."
   },
+  "controlled_spatial_evidence": {
+    "captured_at": "2026-10-01",
+    "stack_version": "17.6.0",
+    "implementation_sha": "2d5038d0b100badd8e4b4a72fe2c39d68b2a9241",
+    "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
+    "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
+    "test_ids": [
+      "test_controlled_spatial_reads_match_raw_routes_in_both_modes",
+      "test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.suggest-zones",
+        "udata/api-v1.spatial-zones",
+        "udata/api-v1.spatial-zone-datasets",
+        "udata/api-v1.spatial-zone",
+        "udata/api-v1.spatial-levels",
+        "udata/api-v1.spatial-granularities",
+        "udata/api-v1.spatial-coverage"
+      ]
+    },
+    "response_shape": "native-envelope-and-status-skeleton",
+    "sanitized": true,
+    "recapture_note": "Captured against a fresh loopback 17.6.0 stack seeded with deterministic local roles. Every assigned row is a public read, so no mutation, upload, or token differential runs for this family. GeoLevel and GeoZone are empty on a fresh stack: levels and granularities answer an empty list, and the four zone/level targets answer 404. The stock zones list converter raises KeyError for an absent zone, so that route answers 500 and the differential asserts the typed error mapping rather than a body. Zone identifiers are percent-encoded once; the loopback container traceback shows the decoded colon form reaching upstream."
+  },
   "controlled_posts_report_evidence": {
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "2373233cee7da7fa4465a1747fd41954b3b31ec2",
-    "controlled_test_sha256": "93884aa5cc68dbf6a878860e203bebb6223d4448c56679e2fb3d94a40657c8f4",
-    "wheel_test_sha256": "1e066eb61d648a5560953d15b0788c6e312098ff8e2ca62a24df07df81be10c7",
+    "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
+    "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "4dd859e0c2eeaf58517ed782cdc052fda213ebca16663c33810cc27fbbcee0e0",
+    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
     "test_ids": [
       "test_controlled_posts_reports_reads_match_raw_routes_in_both_modes",
       "test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up",
