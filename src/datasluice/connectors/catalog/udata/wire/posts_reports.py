@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping
 from urllib.parse import urlencode
 
@@ -17,8 +16,9 @@ from datasluice.connectors.catalog.udata.models.posts_reports import (
     ReportUpdateInput,
     segment,
 )
+from datasluice.connectors.catalog.udata.wire._text_document import bound_text_document
 from datasluice.domain.catalog.models import MappingRecord
-from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = "udata"
 LIST_REPORTS_OPERATION = "udata/api-v1.list-reports"
@@ -183,29 +183,16 @@ def parse_text_document(
     operation: str = RECENT_POSTS_ATOM_FEED_OPERATION,
 ) -> MappingRecord:
     """Bound a non-JSON atom document, retaining only media type, size, and digest."""
-    if not isinstance(body, bytes):
-        raise NativeCatalogError(
-            "The uData post document body must be buffered bytes.",
-            operation=operation,
-            platform=PLATFORM,
-        )
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise NativeCatalogError(
-            "The uData post text document is not valid UTF-8.",
-            operation=operation,
-            platform=PLATFORM,
-        ) from exc
-    negotiated = (response_media_type or media_type).split(";", 1)[0].strip().lower()
-    if negotiated != _ATOM_MEDIA_TYPE:
-        raise NativeCatalogError(
-            f"The uData post document media type {negotiated!r} is not an approved text contract.",
-            operation=operation,
-            platform=PLATFORM,
-        )
-    digest = hashlib.sha256(body).hexdigest()
-    return MappingRecord({"media_type": negotiated, "size_bytes": len(body), "sha256": digest})
+    document = bound_text_document(
+        body,
+        media_type,
+        response_media_type=response_media_type,
+        operation=operation,
+        platform=PLATFORM,
+        approved_media_types=frozenset({_ATOM_MEDIA_TYPE}),
+        subject="post",
+    )
+    return MappingRecord(document.payload())
 
 
 def content_type(headers: Mapping[str, str]) -> str | None:

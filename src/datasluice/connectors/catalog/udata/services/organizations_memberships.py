@@ -57,7 +57,7 @@ def _request_with_body(
     return request[0], request[1], request[2], body
 
 
-def _receipt(
+def _org_receipt(
     operation: str,
     target: object,
     policy: Policy,
@@ -134,13 +134,13 @@ def _mutation(
         policy_target = target if isinstance(target, str) else _safe_target_value(target)
         _enforce_mutation_policy(operation, policy_target, policy, destructive=destructive)
         status, payload, response = dispatch()
-        receipt = _receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
+        receipt = _org_receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
         return _mutation_result(receipt, payload)
     except SETTLEMENT_ERRORS as error:
         outcome = _mutation_outcome(error, response)
         _raise_with_receipt(
             error,
-            _receipt(operation, target, policy, outcome, _error_status(error, response), mutation, kind=kind),
+            _org_receipt(operation, target, policy, outcome, _error_status(error, response), mutation, kind=kind),
         )
 
 
@@ -159,13 +159,13 @@ async def _async_mutation(
         policy_target = target if isinstance(target, str) else _safe_target_value(target)
         _enforce_mutation_policy(operation, policy_target, policy, destructive=destructive)
         status, payload, response = await dispatch()
-        receipt = _receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
+        receipt = _org_receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
         return _mutation_result(receipt, payload)
     except ASYNC_SETTLEMENT_ERRORS as error:
         outcome = _mutation_outcome(error, response)
         _raise_with_receipt(
             error,
-            _receipt(operation, target, policy, outcome, _error_status(error, response), mutation, kind=kind),
+            _org_receipt(operation, target, policy, outcome, _error_status(error, response), mutation, kind=kind),
         )
 
 

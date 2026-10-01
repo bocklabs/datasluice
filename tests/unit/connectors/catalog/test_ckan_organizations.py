@@ -24,7 +24,7 @@ from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, UnauthenticatedError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, success_body
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 ORG_READ_ID = "ckan/action-api-v3.organization-list-show-search"
@@ -57,52 +57,6 @@ MEMBER_RESULT: dict[str, object] = {
     "object_type": "user",
     "capacity": "editor",
 }
-
-
-def _success_body(result: object) -> bytes:
-    return json.dumps({"success": True, "result": result}).encode("utf-8")
-
-
-class SyncCaptureTransport:
-    """A deterministic loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    def close(self) -> None:
-        self.close_count += 1
-
-
-class AsyncCaptureTransport:
-    """A deterministic async loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    async def aclose(self) -> None:
-        self.close_count += 1
 
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
@@ -161,7 +115,7 @@ def test_organization_surfaces_stay_in_structural_lockstep_across_modes() -> Non
 
 def test_organization_list_sends_native_sort_and_offset_verbatim() -> None:
     """D-04 fidelity: documented list parameters cross the wire untranslated."""
-    transport = SyncCaptureTransport(body=_success_body([ORGANIZATION_RESULT]))
+    transport = SyncCaptureTransport(body=success_body([ORGANIZATION_RESULT]))
     client = _client(transport)
 
     envelope = client.organizations.organization_list(sort="name desc", limit=5, offset=10)
@@ -179,7 +133,7 @@ def test_organization_list_sends_native_sort_and_offset_verbatim() -> None:
 
 def test_organization_show_decodes_an_organization_kind_record() -> None:
     """Reads under the core read id decode their own organization kind."""
-    transport = SyncCaptureTransport(body=_success_body(ORGANIZATION_RESULT))
+    transport = SyncCaptureTransport(body=success_body(ORGANIZATION_RESULT))
     client = _client(transport)
 
     envelope = client.organizations.organization_show(id="org-1", include_users=True)
@@ -194,13 +148,13 @@ def test_organization_show_decodes_an_organization_kind_record() -> None:
 
 def test_organization_autocomplete_and_member_reads_decode_their_own_kinds() -> None:
     """Autocomplete yields organization records; member_list preserves triples."""
-    transport = SyncCaptureTransport(body=_success_body([ORGANIZATION_RESULT]))
+    transport = SyncCaptureTransport(body=success_body([ORGANIZATION_RESULT]))
     client = _client(transport)
     envelope = client.organizations.organization_autocomplete(q="hea")
     record = next(item for item in envelope.items if isinstance(item, NativeRecord))
     assert record.resource_kind.value == "organization"
 
-    member_transport = SyncCaptureTransport(body=_success_body([["user-1", "user", "editor"]]))
+    member_transport = SyncCaptureTransport(body=success_body([["user-1", "user", "editor"]]))
     member_client = _client(member_transport)
     member_envelope = member_client.organizations.member_list(id="org-1", object_type="user")
     member_record = next(item for item in member_envelope.items if isinstance(item, MappingRecord))
@@ -208,7 +162,7 @@ def test_organization_autocomplete_and_member_reads_decode_their_own_kinds() -> 
 
 
 def test_normalized_organization_list_uses_the_public_all_fields_action() -> None:
-    transport = SyncCaptureTransport(body=_success_body([ORGANIZATION_RESULT]))
+    transport = SyncCaptureTransport(body=success_body([ORGANIZATION_RESULT]))
     client = _client(transport)
     operation = CatalogOperationRequest(operation_id=OperationId("ckan", "organizations", "list"))
     guard = CatalogOperationGuard(operation_id=operation.operation_id)
@@ -222,7 +176,7 @@ def test_normalized_organization_list_uses_the_public_all_fields_action() -> Non
 
 def test_member_roles_list_returns_value_items_as_a_read() -> None:
     """The role enumeration rides the read id and decodes scalar values."""
-    transport = SyncCaptureTransport(body=_success_body(["admin", "editor", "member"]))
+    transport = SyncCaptureTransport(body=success_body(["admin", "editor", "member"]))
     client = _client(transport)
 
     envelope = client.organizations.member_roles_list()
@@ -233,7 +187,7 @@ def test_member_roles_list_returns_value_items_as_a_read() -> None:
 
 def test_member_create_passes_documented_parameters_verbatim() -> None:
     """The generic member trio crosses the wire with id/object/object_type/capacity."""
-    transport = SyncCaptureTransport(body=_success_body(MEMBER_RESULT))
+    transport = SyncCaptureTransport(body=success_body(MEMBER_RESULT))
     client = _client(transport)
 
     result = client.organizations.member_create(id="org-1", object="user-1", object_type="user", capacity="editor")
@@ -254,7 +208,7 @@ def test_member_create_passes_documented_parameters_verbatim() -> None:
 
 def test_member_delete_passes_object_identity_verbatim_with_receipt() -> None:
     """Member removal keeps the documented parameter names and returns a receipt."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     result = client.organizations.member_delete(id="org-1", object="user-1", object_type="user")
@@ -268,7 +222,7 @@ def test_member_delete_passes_object_identity_verbatim_with_receipt() -> None:
 
 def test_unconfirmed_organization_purge_refuses_at_zero_transport_io() -> None:
     """T-03-08-01 mitigation: the destructive tier gates pre-dispatch with zero wire hits."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     policy = MutationPolicy(destructive=True)
@@ -281,7 +235,7 @@ def test_unconfirmed_organization_purge_refuses_at_zero_transport_io() -> None:
 
 def test_organization_purge_requires_a_policy_at_the_call_boundary() -> None:
     """The destructive tier cannot be engaged without an explicit policy keyword."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     with pytest.raises(TypeError):
@@ -292,7 +246,7 @@ def test_organization_purge_requires_a_policy_at_the_call_boundary() -> None:
 
 def test_confirmed_organization_purge_dispatches_once_with_redacted_receipt() -> None:
     """A confirmed destructive policy dispatches exactly once and redacts its receipt."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     credential = CKANCredential(api_token="secret-token-123")
     client = SyncCKANClient(
         transport,
@@ -316,7 +270,7 @@ def test_confirmed_organization_purge_dispatches_once_with_redacted_receipt() ->
 
 def test_forbidden_authorization_envelope_raises_forbidden_error_with_capability_state() -> None:
     """Server 403 responses map to ForbiddenError carrying capability_state=forbidden."""
-    transport = SyncCaptureTransport(status_code=403, body=_success_body(None))
+    transport = SyncCaptureTransport(status_code=403, body=success_body(None))
     client = _client(transport)
 
     with pytest.raises(ForbiddenError) as excinfo:
@@ -327,7 +281,7 @@ def test_forbidden_authorization_envelope_raises_forbidden_error_with_capability
 
 def test_unauthenticated_authorization_envelope_raises_the_distinct_unauthenticated_error() -> None:
     """Server rejection of bad credentials stays a separate class from forbidden."""
-    transport = SyncCaptureTransport(status_code=401, body=_success_body(None))
+    transport = SyncCaptureTransport(status_code=401, body=success_body(None))
     client = _client(transport)
 
     with pytest.raises(UnauthenticatedError) as unauth_excinfo:
@@ -349,7 +303,7 @@ def test_unauthenticated_authorization_envelope_raises_the_distinct_unauthentica
 
 def test_async_organization_mutations_mirror_the_sync_semantics() -> None:
     """The async twin keeps receipt-bearing mutations and own-kind decoding."""
-    transport = AsyncCaptureTransport(body=_success_body(ORGANIZATION_RESULT))
+    transport = AsyncCaptureTransport(body=success_body(ORGANIZATION_RESULT))
     client = _async_client(transport)
 
     result = asyncio.run(client.organizations.organization_create(name="health-org", title="Health"))
@@ -362,7 +316,7 @@ def test_async_organization_mutations_mirror_the_sync_semantics() -> None:
     assert record.resource_kind.value == "organization"
     assert result.receipt.outcome == "succeeded"
 
-    listing_transport = AsyncCaptureTransport(body=_success_body(ORGANIZATION_RESULT))
+    listing_transport = AsyncCaptureTransport(body=success_body(ORGANIZATION_RESULT))
     listing_client = _async_client(listing_transport)
     envelope = asyncio.run(listing_client.organizations.organization_show(id="org-1"))
     shown = next(item for item in envelope.items if isinstance(item, NativeRecord))
@@ -371,7 +325,7 @@ def test_async_organization_mutations_mirror_the_sync_semantics() -> None:
 
 def test_organization_projection_rejects_foreign_group_actions_before_dispatch() -> None:
     """Guard-first dispatch: org methods refuse actions owned by other groups at zero I/O."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     operation = CatalogOperationRequest(
@@ -390,7 +344,7 @@ def test_normalized_organizations_get_round_trips_through_the_new_projection() -
     """The normalized organization projection keeps decoding its own record kind."""
     from datasluice.domain.catalog.models import OrganizationRecord
 
-    transport = SyncCaptureTransport(body=_success_body({"id": "org-1", "name": "health-org"}))
+    transport = SyncCaptureTransport(body=success_body({"id": "org-1", "name": "health-org"}))
     client = _client(transport)
 
     operation = CatalogOperationRequest(

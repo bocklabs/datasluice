@@ -41,6 +41,17 @@ repos:
 
   - repo: local
     hooks:
+      - id: jscpd
+        name: code duplication
+        entry: npx --yes jscpd@4 --min-lines 10 --min-tokens 70 --threshold 1.5
+          --reporters consoleFull --output /tmp/jscpd-precommit
+          --ignore "**/node_modules/**,**/.venv/**,**/jscpd-report.json"
+          src tests scripts providers
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
       - id: ty
         name: type check (ty)
         entry: uv run --frozen --all-extras ty check .

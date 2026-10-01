@@ -10,16 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
 from typing import cast
 
 import pytest
 
-from datasluice.connectors.catalog.udata.clients import (
-    AsyncUDataClient,
-    SyncUDataClient,
-    declared_udata_profile,
-)
 from datasluice.connectors.catalog.udata.models.activity_discussions import (
     ActivityQuery,
     CommentInput,
@@ -38,90 +32,29 @@ from datasluice.contracts.catalog.native.udata import (
     AsyncUDataActivityDiscussionsService,
     SyncUDataActivityDiscussionsService,
 )
-from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
-from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-
-ORIGIN = "http://127.0.0.1:5640"
-SITE = {"feed_size": 0, "id": "site", "keywords": [], "metrics": {}, "title": "uData", "version": "17.6.0"}
-CREDENTIAL = UDataCredential(api_key="secret-key")
-PERMISSIONS = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA)
-CREATE_ONLY_PERMISSIONS = EffectivePermissions.for_credential(
-    CREDENTIAL,
-    platform=CatalogPlatform.UDATA,
-    scopes=frozenset({"create-discussion"}),
-    operation_scopes={wire.CREATE_DISCUSSION_OPERATION: frozenset({"create-discussion"})},
-)
-DELETE_ONLY_PERMISSIONS = EffectivePermissions.for_credential(
-    CREDENTIAL,
-    platform=CatalogPlatform.UDATA,
-    scopes=frozenset({"delete-discussion"}),
-    operation_scopes={wire.DELETE_DISCUSSION_OPERATION: frozenset({"delete-discussion"})},
+from tests.helpers.udata_test_support import (
+    UDATA_CREDENTIAL,
+    UDATA_ORIGIN,
+    UDATA_PERMISSIONS,
+    RouteTable,
+    async_client,
+    async_route_table,
+    destructive_operations_policy,
+    scoped_permissions,
+    sync_client,
+    sync_route_table,
+    thawed,
+    with_site_route,
 )
 
-
-class _Router:
-    def __init__(self, routes: dict[tuple[str, str], tuple[int, object]]) -> None:
-        self.routes = routes
-        self.requests: list[RuntimeRequest] = []
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        status, payload = self.routes[(request.method, request.url)]
-        if payload is None:
-            body = b""
-        elif isinstance(payload, bytes):
-            body = payload
-        else:
-            body = json.dumps(payload, separators=(",", ":")).encode()
-        return RuntimeResponse(status_code=status, headers={"Content-Type": "application/json"}, body=body)
-
-    def close(self) -> None:
-        return None
-
-
-class _AsyncRouter:
-    def __init__(self, routes: dict[tuple[str, str], tuple[int, object]]) -> None:
-        self.routes = routes
-        self.requests: list[RuntimeRequest] = []
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        status, payload = self.routes[(request.method, request.url)]
-        if payload is None:
-            body = b""
-        elif isinstance(payload, bytes):
-            body = payload
-        else:
-            body = json.dumps(payload, separators=(",", ":")).encode()
-        return RuntimeResponse(status_code=status, headers={"Content-Type": "application/json"}, body=body)
-
-    async def aclose(self) -> None:
-        return None
-
-
-def _routes(routes: dict[tuple[str, str], tuple[int, object]]) -> dict[tuple[str, str], tuple[int, object]]:
-    return {("GET", f"{ORIGIN}/api/1/site/"): (200, SITE), **routes}
-
-
-def _policy(operation: str, target: str) -> MutationPolicy:
-    """Only the two stock delete routes are destructive transitions."""
-
-    return MutationPolicy(
-        destructive=operation in {wire.DELETE_DISCUSSION_OPERATION, wire.DELETE_DISCUSSION_COMMENT_OPERATION},
-        confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
-        concurrency=ConcurrencyPolicy(overwrite=True),
-    )
-
-
-def _thawed(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _thawed(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_thawed(item) for item in value]
-    return value
+ORIGIN = UDATA_ORIGIN
+PERMISSIONS = UDATA_PERMISSIONS
+CREATE_ONLY_PERMISSIONS = scoped_permissions("create-discussion", wire.CREATE_DISCUSSION_OPERATION)
+DELETE_ONLY_PERMISSIONS = scoped_permissions("delete-discussion", wire.DELETE_DISCUSSION_OPERATION)
+_policy = destructive_operations_policy(
+    frozenset({wire.DELETE_DISCUSSION_OPERATION, wire.DELETE_DISCUSSION_COMMENT_OPERATION})
+)
 
 
 @pytest.mark.parametrize("identifier", [".", ".."])
@@ -155,11 +88,11 @@ def test_activity_discussion_contract_exposes_every_assigned_method_in_both_mode
         "delete_discussion_comment",
         "search_discussions",
     }
-    with SyncUDataClient(_Router(_routes({})), declared_udata_profile(), origin=ORIGIN) as client:
+    with sync_client(sync_route_table(with_site_route({})), None) as client:
         assert isinstance(client.activity_discussions, SyncUDataActivityDiscussionsService)
 
     async def run() -> None:
-        async with AsyncUDataClient(_AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN) as client:
+        async with async_client(async_route_table(with_site_route({})), None) as client:
             assert isinstance(client.activity_discussions, AsyncUDataActivityDiscussionsService)
 
     asyncio.run(run())
@@ -244,16 +177,14 @@ def test_update_and_edit_comment_bodies_carry_only_the_documented_key() -> None:
 
 
 def test_activity_discussion_wire_reaches_transport_with_exact_verb_path_and_body() -> None:
-    router = _Router(_routes({("POST", f"{ORIGIN}/api/1/discussions/"): (201, {"id": "discussion-1", "title": "t"})}))
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = sync_route_table(
+        with_site_route({("POST", f"{ORIGIN}/api/1/discussions/"): (201, {"id": "discussion-1", "title": "t"})})
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
         client.activity_discussions.create_discussion(
             DiscussionCreateInput(title="t", comment="c", subject={"id": "d", "class": "Dataset"}),
             CREATE_ONLY_PERMISSIONS,
-            MutationPolicy(
-                destructive=False,
-                confirmation=ConfirmationPolicy(confirmed=True, operation=wire.CREATE_DISCUSSION_OPERATION, target="d"),
-                concurrency=ConcurrencyPolicy(overwrite=True),
-            ),
+            _policy(wire.CREATE_DISCUSSION_OPERATION, "d"),
         )
     request = router.requests[-1]
     assert request.method == "POST"
@@ -309,26 +240,26 @@ def test_activity_and_discussion_reads_preserve_native_envelopes() -> None:
         "links": {"self": "/api/2/discussions/search/?q="},
         "meta": {"total": 1, "page": 1, "page_size": 20},
     }
-    routes: dict[tuple[str, str], tuple[int, object]] = {
+    routes: RouteTable = {
         ("GET", f"{ORIGIN}/api/1/activity/"): (200, activity_page),
         ("GET", f"{ORIGIN}/api/1/activity/?user=u1"): (200, activity_page),
         ("GET", f"{ORIGIN}/api/1/discussions/"): (200, list_page),
         ("GET", f"{ORIGIN}/api/1/discussions/discussion-1/"): (200, discussion),
         ("GET", f"{ORIGIN}/api/2/discussions/search/?page=1&page_size=20"): (200, search_page),
     }
-    with SyncUDataClient(_Router(_routes(routes)), declared_udata_profile(), origin=ORIGIN) as client:
+    with sync_client(sync_route_table(with_site_route(routes)), None) as client:
         service = client.activity_discussions
-        assert _thawed(service.activity(ActivityQuery()).payload) == _thawed(activity_page)
-        assert _thawed(service.list_discussions().payload) == _thawed(list_page)
-        assert _thawed(service.get_discussion("discussion-1").payload) == _thawed(discussion)
-        assert _thawed(service.search_discussions(DiscussionSearchQuery()).payload) == _thawed(search_page)
+        assert thawed(service.activity(ActivityQuery()).payload) == thawed(activity_page)
+        assert thawed(service.list_discussions().payload) == thawed(list_page)
+        assert thawed(service.get_discussion("discussion-1").payload) == thawed(discussion)
+        assert thawed(service.search_discussions(DiscussionSearchQuery()).payload) == thawed(search_page)
 
     async def run() -> None:
-        async with AsyncUDataClient(_AsyncRouter(_routes(routes)), declared_udata_profile(), origin=ORIGIN) as client:
-            assert _thawed((await client.activity_discussions.get_discussion("discussion-1")).payload) == _thawed(
+        async with async_client(async_route_table(with_site_route(routes)), None) as client:
+            assert thawed((await client.activity_discussions.get_discussion("discussion-1")).payload) == thawed(
                 discussion
             )
-            assert _thawed((await client.activity_discussions.activity(ActivityQuery(user="u1"))).payload) is not None
+            assert thawed((await client.activity_discussions.activity(ActivityQuery(user="u1"))).payload) is not None
 
     asyncio.run(run())
 
@@ -370,16 +301,14 @@ def test_invalid_inputs_fail_before_dispatch_without_a_raw_body() -> None:
 
 def test_discussion_mutations_return_redacted_receipts_with_exact_targets() -> None:
     discussion = {"id": "discussion-1", "title": "t", "discussion": ()}
-    routes: dict[tuple[str, str], tuple[int, object]] = {
+    routes: RouteTable = {
         ("POST", f"{ORIGIN}/api/1/discussions/discussion-1/"): (200, discussion),
         ("PUT", f"{ORIGIN}/api/1/discussions/discussion-1/"): (200, {**discussion, "title": "new"}),
         ("PUT", f"{ORIGIN}/api/1/discussions/discussion-1/comments/0/"): (200, discussion),
         ("DELETE", f"{ORIGIN}/api/1/discussions/discussion-1/"): (204, None),
         ("DELETE", f"{ORIGIN}/api/1/discussions/discussion-1/comments/0/"): (204, None),
     }
-    with SyncUDataClient(
-        _Router(_routes(routes)), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-    ) as client:
+    with sync_client(sync_route_table(with_site_route(routes)), UDATA_CREDENTIAL) as client:
         service = client.activity_discussions
         commented = service.comment_discussion(
             "discussion-1",
@@ -427,17 +356,17 @@ def test_discussion_mutations_return_redacted_receipts_with_exact_targets() -> N
 
 
 def test_discussion_permissions_discriminate_create_from_delete_in_both_modes() -> None:
-    routes = _routes(
+    routes = with_site_route(
         {
             ("POST", f"{ORIGIN}/api/1/discussions/"): (201, {"id": "discussion-1"}),
             ("DELETE", f"{ORIGIN}/api/1/discussions/discussion-1/"): (204, None),
         }
     )
-    router = _Router(routes)
+    router = sync_route_table(routes)
     create_input = DiscussionCreateInput(title="t", comment="c", subject={"id": "d", "class": "Dataset"})
 
     def run_sync() -> None:
-        with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        with sync_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_create:
                 client.activity_discussions.create_discussion(create_input, DELETE_ONLY_PERMISSIONS)
             with pytest.raises(ForbiddenError) as denied_delete:
@@ -447,9 +376,7 @@ def test_discussion_permissions_discriminate_create_from_delete_in_both_modes() 
             assert router.requests == []
 
     async def run_async() -> None:
-        async with AsyncUDataClient(
-            _AsyncRouter(routes), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-        ) as client:
+        async with async_client(async_route_table(routes), UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_create:
                 await client.activity_discussions.create_discussion(create_input, DELETE_ONLY_PERMISSIONS)
             with pytest.raises(ForbiddenError) as denied_delete:
@@ -473,8 +400,8 @@ def test_every_discussion_mutation_dispatches_under_its_own_operation(monkeypatc
     async def capture_async(**kwargs: object) -> tuple[int, object, object]:
         return capture(**kwargs)
 
-    router = _Router(_routes({}))
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = sync_route_table(with_site_route({}))
+    with sync_client(router, UDATA_CREDENTIAL) as client:
         monkeypatch.setattr(client, "_dataset_call", capture)
         service = client.activity_discussions
         service.comment_discussion(
@@ -504,9 +431,7 @@ def test_every_discussion_mutation_dispatches_under_its_own_operation(monkeypatc
         )
 
     async def run_async() -> None:
-        async with AsyncUDataClient(
-            _AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-        ) as client:
+        async with async_client(async_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
             monkeypatch.setattr(client, "_dataset_call_async", capture_async)
             await client.activity_discussions.comment_discussion(
                 "discussion-1",
@@ -534,23 +459,22 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
         b'"keywords": [], "metrics": {"widgets": NaN}}'
     )
     with pytest.raises(NativeCatalogError) as raised:
-        with SyncUDataClient(
-            _Router(
+        with sync_client(
+            sync_route_table(
                 {
                     ("GET", f"{ORIGIN}/api/1/site/"): (200, nan_site),
                     ("GET", f"{ORIGIN}/api/1/activity/"): (200, nan_site),
                 }
             ),
-            declared_udata_profile(),
-            origin=ORIGIN,
+            None,
         ) as client:
             client.activity_discussions.activity(ActivityQuery())
     assert "NaN" not in repr(raised.value) + str(raised.value.__dict__)
 
 
 def test_pre_dispatch_rejection_carries_a_redacted_receipt_and_dispatches_nothing() -> None:
-    router = _Router(_routes({}))
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = sync_route_table(with_site_route({}))
+    with sync_client(router, UDATA_CREDENTIAL) as client:
         with pytest.raises(ForbiddenError) as rejected:
             client.activity_discussions.delete_discussion("discussion-1", PERMISSIONS)
     receipt = rejected.value.__dict__["mutation_receipt"]
@@ -568,9 +492,7 @@ def test_cancelled_discussion_mutation_records_a_cancelled_receipt(monkeypatch: 
         raise asyncio.CancelledError
 
     async def run_async() -> None:
-        async with AsyncUDataClient(
-            _AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-        ) as client:
+        async with async_client(async_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
             monkeypatch.setattr(client, "_dataset_call_async", cancel_async)
             with pytest.raises(asyncio.CancelledError) as cancelled:
                 await client.activity_discussions.delete_discussion(
@@ -592,9 +514,7 @@ def test_interrupted_discussion_mutation_is_not_misreported_as_failed(monkeypatc
         raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt) as stopped:
-        with SyncUDataClient(
-            _Router(_routes({})), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-        ) as client:
+        with sync_client(sync_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
             monkeypatch.setattr(client, "_dataset_call", interrupt)
             client.activity_discussions.delete_discussion(
                 "discussion-1",

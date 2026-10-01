@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
+from typing import cast
 from urllib.parse import quote, urlencode
 
+from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenMetadata,
@@ -16,11 +19,12 @@ from datasluice.connectors.catalog.udata.models.users import (
 )
 from datasluice.connectors.catalog.udata.wire.organizations import parse_page, parse_records
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PlatformMetadata
 from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = CatalogPlatform.UDATA
 _USER = ResourceKind("user")
+_REDACTED_USER_FIELDS = frozenset({"token", "token_hash", "password"})
 _TOKEN_SCHEMA_ACTION = "Verify the response against the pinned token schema."
 
 OPERATIONS = {
@@ -180,6 +184,11 @@ def build_request(name: str, *, identifier: str | None = None, query: object = N
     return method, path, {}, body
 
 
+def _redacted_user_payload(payload: Mapping[str, object]) -> dict[str, object]:
+    """Drop credential-bearing keys from one decoded user mapping."""
+    return {key: value for key, value in payload.items() if key not in _REDACTED_USER_FIELDS}
+
+
 def parse_user(payload: object, *, operation: str) -> NativeRecord:
     if not isinstance(payload, Mapping) or not isinstance(payload.get("id"), str) or not payload["id"]:
         raise CatalogValidationError(
@@ -199,7 +208,7 @@ def parse_user(payload: object, *, operation: str) -> NativeRecord:
         platform=PLATFORM,
         resource_kind=_USER,
         id=CatalogId(platform=PLATFORM, resource_kind=_USER, value=payload["id"]),
-        payload={key: value for key, value in payload.items() if key not in {"token", "token_hash", "password"}},
+        payload=_redacted_user_payload(payload),
     )
 
 
@@ -256,8 +265,15 @@ def parse_token_list(payload: object, *, operation: str) -> tuple[ApiTokenMetada
     return tuple(parse_token(item, operation=operation) for item in payload)
 
 
-def parse_user_page(payload: object, *, operation: str):
-    return parse_page(payload, operation=operation, kind=_USER)
+def parse_user_page(payload: object, *, operation: str) -> UDataPageEnvelope:
+    """Decode one user page, redacting the same credential fields as parse_user."""
+    envelope = parse_page(payload, operation=operation, kind=_USER)
+    return UDataPageEnvelope(
+        items=tuple(replace(item, payload=_redacted_user_payload(item.payload)) for item in envelope.items),
+        page=envelope.page,
+        platform=cast(PlatformMetadata, envelope.platform),
+        native_page=envelope.native_page,
+    )
 
 
 def parse_mapping_list(payload: object, *, operation: str, kind: str) -> tuple[MappingRecord, ...]:

@@ -19,64 +19,52 @@ from datasluice.runtime.transport.base import (
     TransportFailure,
     UploadPart,
 )
-from datasluice.runtime.transport.httpx_transport import (
-    AsyncHttpxCatalogTransport,
-    HttpxCatalogTransport,
+from tests.helpers.httpx_probe import (
+    AsyncProbe,
+    SyncProbe,
+    at_host,
+    at_path,
+    fixed,
+    header_view,
+    redirect_loop,
+    redirect_then_fail,
+    redirect_to,
 )
+
+SENSITIVE_HEADERS = {"authorization", "cookie", "x-api-key", "x-auth-token", "x-app-token"}
+REDIRECT_BODY_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
+JSON_HEADERS = {"Content-Type": "application/json"}
 
 
 def test_httpx_transport_maps_injected_response() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, headers={"Retry-After": "2"}, content=b"fixture")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/", {"X-Test": "yes"}))
-    finally:
-        transport.close()
+    with SyncProbe(fixed(200, content=b"fixture", headers={"Retry-After": "2"})) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/", {"X-Test": "yes"}))
 
     assert response.body == b"fixture"
     assert response.retry_after == 2
-    assert seen[0].headers["X-Test"] == "yes"
+    assert probe.requests[0].headers["X-Test"] == "yes"
 
 
 def test_httpx_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
-    seen: list[str] = []
+    responder = redirect_then_fail(
+        "the redirect target must not receive a request", "https://target.test/secret", 302, "origin.test"
+    )
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
-        if request.url.host == "origin.test":
-            return httpx.Response(302, headers={"Location": "https://target.test/secret"})
-        pytest.fail("the redirect target must not receive a request")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(
+    with SyncProbe(responder) as probe:
+        response = probe.send(
             RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW)
         )
-    finally:
-        transport.close()
 
     assert response.status_code == 302
-    assert seen == ["https://origin.test/root"]
+    assert [str(request.url) for request in probe.requests] == ["https://origin.test/root"]
 
 
 def test_httpx_transport_parses_retry_after_http_date_form() -> None:
     """An RFC 9110 HTTP-date Retry-After maps to non-negative seconds from now."""
     retry_at = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(429, headers={"Retry-After": retry_at}, content=b"")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/"))
-    finally:
-        transport.close()
+    with SyncProbe(fixed(429, headers={"Retry-After": retry_at})) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/"))
 
     assert response.retry_after is not None
     assert 0 <= response.retry_after <= 120
@@ -84,46 +72,22 @@ def test_httpx_transport_parses_retry_after_http_date_form() -> None:
 
 def test_httpx_transport_absent_retry_after_header_maps_to_none() -> None:
     """A response without Retry-After carries a None delay."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(200, content=b"no-delay")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/"))
-    finally:
-        transport.close()
+    with SyncProbe(fixed(200, content=b"no-delay")) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/"))
 
     assert response.retry_after is None
 
 
 def test_httpx_transport_maps_transport_failure() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def responder(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectTimeout("timed out", request=request)
 
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        request_2 = RuntimeRequest("GET", "https://example.test/")
-        with pytest.raises(TransportFailure):
-            transport.send(request_2)
-    finally:
-        transport.close()
+    probe = SyncProbe(responder)
+    with probe, pytest.raises(TransportFailure):
+        probe.send(RuntimeRequest("GET", "https://example.test/"))
 
 
 def test_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "example.test":
-            return httpx.Response(
-                302,
-                headers={"Location": "https://other.test/next?token=redirect-secret&keep=value"},
-            )
-        return httpx.Response(200, content=b"redirected")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
     request_headers = {
         "aUtHoRiZaTiOn": "Bearer request-secret",
         "cOoKiE": "session-secret",
@@ -132,43 +96,33 @@ def test_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() 
         "X-App-Token": "app-secret",
         "X-Benign": "preserve-me",
     }
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
-    finally:
-        transport.close()
+    responder = redirect_to("https://other.test/next?token=redirect-secret&keep=value", 302, at_host("example.test"))
+
+    with SyncProbe(responder) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
 
     assert response.body == b"redirected"
-    assert len(seen) == 2
-    first_headers = {key.lower(): value for key, value in seen[0].headers.items()}
-    second_headers = {key.lower(): value for key, value in seen[1].headers.items()}
-    sensitive = {"authorization", "cookie", "x-api-key", "x-auth-token", "x-app-token"}
-    assert all(name in first_headers for name in sensitive)
-    assert all(name not in second_headers for name in sensitive)
+    assert len(probe.requests) == 2
+    first_headers = header_view(probe.requests[0])
+    second_headers = header_view(probe.requests[1])
+    assert all(name in first_headers for name in SENSITIVE_HEADERS)
+    assert all(name not in second_headers for name in SENSITIVE_HEADERS)
     assert second_headers["x-benign"] == "preserve-me"
-    assert "token=redirect-secret" in str(seen[1].url)
-    assert "keep=value" in str(seen[1].url)
+    assert "token=redirect-secret" in str(probe.requests[1].url)
+    assert "keep=value" in str(probe.requests[1].url)
 
 
 def test_httpx_transport_cross_origin_redirect_preserves_presigned_signature() -> None:
-    seen: list[httpx.Request] = []
     location = (
         "https://cdn.test/download?X-Amz-Signature=sig123&X-Amz-Credential=AKIA%2F20260822&X-Amz-Expires=900&keep=value"
     )
+    responder = redirect_to(location, 302, at_host("example.test"))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "example.test":
-            return httpx.Response(302, headers={"Location": location})
-        return httpx.Response(200, content=b"presigned")
+    with SyncProbe(responder) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/file"))
 
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/file"))
-    finally:
-        transport.close()
-
-    forwarded_url = str(seen[1].url)
-    assert response.body == b"presigned"
+    forwarded_url = str(probe.requests[1].url)
+    assert response.body == b"redirected"
     assert "X-Amz-Signature=sig123" in forwarded_url
     assert "X-Amz-Credential=AKIA%2F20260822" in forwarded_url
     assert "X-Amz-Expires=900" in forwarded_url
@@ -176,14 +130,6 @@ def test_httpx_transport_cross_origin_redirect_preserves_presigned_signature() -
 
 
 def test_httpx_transport_same_origin_redirect_preserves_caller_headers() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(302, headers={"Location": "/next?keep=value"})
-        return httpx.Response(200, content=b"redirected")
-
     request_headers = {
         "Authorization": "Bearer request-secret",
         "Cookie": "session-secret",
@@ -191,41 +137,21 @@ def test_httpx_transport_same_origin_redirect_preserves_caller_headers() -> None
         "X-Auth-Token": "token-secret",
         "X-Benign": "preserve-me",
     }
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
-    finally:
-        transport.close()
 
-    forwarded = {key.lower(): value for key, value in seen[1].headers.items()}
+    with SyncProbe(redirect_to("/next?keep=value", 302, at_path("/start"))) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
+
+    forwarded = header_view(probe.requests[1])
     assert response.body == b"redirected"
     assert all(forwarded[key.lower()] == value for key, value in request_headers.items())
 
 
 @pytest.mark.parametrize("status", [301, 302, 303])
 def test_httpx_redirect_rewrites_post_to_bodyless_get(status: int) -> None:
-    seen: list[httpx.Request] = []
+    with SyncProbe(redirect_to("https://example.test/next", status, at_path("/start"))) as probe:
+        response = probe.send(RuntimeRequest("POST", "https://example.test/start", JSON_HEADERS, b'{"key": "value"}'))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(status, headers={"Location": "https://example.test/next"})
-        return httpx.Response(200)
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(
-            RuntimeRequest(
-                "POST",
-                "https://example.test/start",
-                {"Content-Type": "application/json"},
-                b'{"key": "value"}',
-            )
-        )
-    finally:
-        transport.close()
-
-    follow_up = seen[1]
+    follow_up = probe.requests[1]
     assert response.status_code == 200
     assert follow_up.method == "GET"
     assert follow_up.read() == b""
@@ -234,28 +160,10 @@ def test_httpx_redirect_rewrites_post_to_bodyless_get(status: int) -> None:
 
 @pytest.mark.parametrize("status", [307, 308])
 def test_httpx_redirect_preserves_method_and_body(status: int) -> None:
-    seen: list[httpx.Request] = []
+    with SyncProbe(redirect_to("https://example.test/next", status, at_path("/start"))) as probe:
+        response = probe.send(RuntimeRequest("POST", "https://example.test/start", JSON_HEADERS, b'{"key": "value"}'))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(status, headers={"Location": "https://example.test/next"})
-        return httpx.Response(200)
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(
-            RuntimeRequest(
-                "POST",
-                "https://example.test/start",
-                {"Content-Type": "application/json"},
-                b'{"key": "value"}',
-            )
-        )
-    finally:
-        transport.close()
-
-    follow_up = seen[1]
+    follow_up = probe.requests[1]
     assert response.status_code == 200
     assert follow_up.method == "POST"
     assert follow_up.read() == b'{"key": "value"}'
@@ -265,157 +173,106 @@ def test_httpx_redirect_preserves_method_and_body(status: int) -> None:
 @pytest.mark.parametrize("status", [307, 308])
 def test_httpx_cross_origin_body_redirect_fails_closed(status: int) -> None:
     body = urlencode({"token": "redirect-body-secret"}).encode()
-    seen: list[httpx.Request] = []
+    message = "a cross-origin body-bearing redirect target must not receive the body"
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "origin.test":
-            return httpx.Response(status, headers={"Location": "https://other.test/next"})
-        pytest.fail("a cross-origin body-bearing redirect target must not receive the body")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
+    with SyncProbe(redirect_then_fail(message, "https://other.test/next", status, "origin.test")) as probe:
         with pytest.raises(TransportFailure, match="different redirect origin"):
-            transport.send(
-                RuntimeRequest(
-                    "POST",
-                    "https://origin.test/oauth/revoke",
-                    {"Content-Type": "application/x-www-form-urlencoded"},
-                    body,
-                )
-            )
-    finally:
-        transport.close()
+            probe.send(RuntimeRequest("POST", "https://origin.test/oauth/revoke", REDIRECT_BODY_HEADERS, body))
 
-    assert len(seen) == 1
-    assert seen[0].content == body
+    assert len(probe.requests) == 1
+    assert probe.requests[0].content == body
 
 
 @pytest.mark.parametrize("status", [307, 308])
 def test_httpx_cross_origin_multipart_redirect_fails_closed(status: int) -> None:
     """A 307/308 preserves the parts, so a cross-origin relay must be refused before the upload."""
-    seen: list[httpx.Request] = []
+    message = "a cross-origin files-bearing redirect target must not receive the parts"
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "origin.test":
-            return httpx.Response(status, headers={"Location": "https://other.test/next"})
-        pytest.fail("a cross-origin files-bearing redirect target must not receive the parts")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
+    with SyncProbe(redirect_then_fail(message, "https://other.test/next", status, "origin.test")) as probe:
         with pytest.raises(TransportFailure, match="different redirect origin"):
-            transport.send(
+            probe.send(
                 RuntimeRequest(
                     "POST",
                     "https://origin.test/upload",
                     files=(
                         UploadPart(
-                            field_name="upload",
-                            file_name="data.csv",
-                            content_type="text/csv",
-                            data=b"a,b\n1,2",
+                            field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"
                         ),
                     ),
                 )
             )
-    finally:
-        transport.close()
 
-    assert len(seen) == 1
+    assert len(probe.requests) == 1
 
 
 @pytest.mark.parametrize("status", [301, 302, 307, 308])
 def test_httpx_cross_origin_non_post_body_redirect_fails_closed(status: int) -> None:
     """A 301/302 keeps a non-POST body, so the refusal cannot key off the status alone."""
     body = urlencode({"token": "redirect-body-secret"}).encode()
-    seen: list[httpx.Request] = []
+    message = "a cross-origin body-bearing redirect target must not receive the body"
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "origin.test":
-            return httpx.Response(status, headers={"Location": "https://other.test/next"})
-        pytest.fail("a cross-origin body-bearing redirect target must not receive the body")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
+    with SyncProbe(redirect_then_fail(message, "https://other.test/next", status, "origin.test")) as probe:
         with pytest.raises(TransportFailure, match="different redirect origin"):
-            transport.send(
-                RuntimeRequest(
-                    "PUT",
-                    "https://origin.test/resources/1/extras/",
-                    {"Content-Type": "application/x-www-form-urlencoded"},
-                    body,
-                )
-            )
-    finally:
-        transport.close()
+            probe.send(RuntimeRequest("PUT", "https://origin.test/resources/1/extras/", REDIRECT_BODY_HEADERS, body))
 
-    assert len(seen) == 1
-    assert seen[0].content == body
+    assert len(probe.requests) == 1
+    assert probe.requests[0].content == body
 
 
 def test_async_httpx_cross_origin_body_redirect_fails_closed() -> None:
     body = urlencode({"token": "redirect-body-secret"}).encode()
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "origin.test":
-            return httpx.Response(307, headers={"Location": "https://other.test/next"})
-        pytest.fail("a cross-origin body-bearing redirect target must not receive the body")
+    message = "a cross-origin body-bearing redirect target must not receive the body"
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            await transport.send(
-                RuntimeRequest(
-                    "POST",
-                    "https://origin.test/oauth/revoke",
-                    {"Content-Type": "application/x-www-form-urlencoded"},
-                    body,
-                )
-            )
-        finally:
-            await transport.aclose()
+        probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", 307, "origin.test"))
+        async with probe:
+            await probe.send(RuntimeRequest("POST", "https://origin.test/oauth/revoke", REDIRECT_BODY_HEADERS, body))
+        assert len(probe.requests) == 1
+        assert probe.requests[0].content == body
 
     with pytest.raises(TransportFailure, match="different redirect origin"):
         asyncio.run(send())
 
-    assert len(seen) == 1
-    assert seen[0].content == body
+
+def test_async_httpx_cross_origin_multipart_redirect_fails_closed() -> None:
+    message = "a cross-origin files-bearing redirect target must not receive the parts"
+
+    async def send() -> None:
+        probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", 307, "origin.test"))
+        async with probe:
+            await probe.send(
+                RuntimeRequest(
+                    "POST",
+                    "https://origin.test/upload",
+                    files=(
+                        UploadPart(
+                            field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"
+                        ),
+                    ),
+                )
+            )
+        assert len(probe.requests) == 1
+        assert b'name="upload"; filename="data.csv"' in probe.requests[0].content
+        assert b"a,b\n1,2" in probe.requests[0].content
+
+    with pytest.raises(TransportFailure, match="different redirect origin"):
+        asyncio.run(send())
 
 
 def test_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(302, headers={"Location": f"https://example.test/loop/{len(seen)}"})
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler), max_redirects=3)
-    try:
-        request_2 = RuntimeRequest("GET", "https://example.test/start")
+    with SyncProbe(redirect_loop(302, "https://example.test/loop/"), max_redirects=3) as probe:
         with pytest.raises(TransportFailure, match="redirect limit"):
-            transport.send(request_2)
-    finally:
-        transport.close()
+            probe.send(RuntimeRequest("GET", "https://example.test/start"))
 
-    assert len(seen) == 4
+    assert len(probe.requests) == 4
 
 
 def test_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(302, headers={"Location": "file:///etc/passwd?token=topsecret&keep=value"})
+    location = "file:///etc/passwd?token=topsecret&keep=value"
 
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        request_2 = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"})
+    with SyncProbe(fixed(302, headers={"Location": location})) as probe:
         with pytest.raises(TransportFailure, match="file:///etc/passwd") as excinfo:
-            transport.send(request_2)
-    finally:
-        transport.close()
+            probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
 
     assert "topsecret" not in str(excinfo.value)
     assert "keep=value" in str(excinfo.value)
@@ -424,7 +281,7 @@ def test_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() ->
 def test_httpx_malformed_redirect_location_closes_response_before_failing() -> None:
     closed: list[bool] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def responder(request: httpx.Request) -> httpx.Response:
         del request
         response = httpx.Response(302, headers={"Location": "https://example.test:abc/next"})
         original_close = response.close
@@ -436,116 +293,70 @@ def test_httpx_malformed_redirect_location_closes_response_before_failing() -> N
         response.close = tracking_close
         return response
 
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        request_2 = RuntimeRequest("GET", "https://example.test/start")
-        with pytest.raises(TransportFailure):
-            transport.send(request_2)
-    finally:
-        transport.close()
+    probe = SyncProbe(responder)
+    with probe, pytest.raises(TransportFailure):
+        probe.send(RuntimeRequest("GET", "https://example.test/start"))
 
     assert closed == [True]
 
 
 def test_httpx_credential_scope_retains_authorization_on_allowed_hop() -> None:
     scope = CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True)
-    seen: list[httpx.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "example.test":
-            return httpx.Response(302, headers={"Location": "https://other.test/next"})
-        return httpx.Response(200)
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler), credential_scope=scope)
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
-    finally:
-        transport.close()
+    with SyncProbe(
+        redirect_to("https://other.test/next", 302, at_host("example.test")), credential_scope=scope
+    ) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
 
     assert response.status_code == 200
-    assert seen[1].headers["authorization"] == "Bearer s"
+    assert probe.requests[1].headers["authorization"] == "Bearer s"
 
 
 def test_httpx_credential_scope_strips_authorization_without_send_on_redirect() -> None:
     scope = CredentialScope(allowed_hosts=("example.test",), allowed_schemes=("https",))
-    seen: list[httpx.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(302, headers={"Location": "/next"})
-        return httpx.Response(200)
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler), credential_scope=scope)
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
-    finally:
-        transport.close()
+    with SyncProbe(redirect_to("/next", 302, at_path("/start")), credential_scope=scope) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
 
     assert response.status_code == 200
-    assert "authorization" not in seen[1].headers
+    assert "authorization" not in probe.requests[1].headers
 
 
 def test_httpx_credential_scope_follows_downgraded_redirect_and_strips_authorization() -> None:
     """An http-scheme redirect hop is still followed; the scope strips Authorization for it."""
     scope = CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True)
-    seen: list[httpx.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "example.test":
-            return httpx.Response(302, headers={"Location": "http://other.test/insecure"})
-        return httpx.Response(200)
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler), credential_scope=scope)
-    try:
-        response = transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
-    finally:
-        transport.close()
+    with SyncProbe(
+        redirect_to("http://other.test/insecure", 302, at_host("example.test")), credential_scope=scope
+    ) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
 
     assert response.status_code == 200
-    assert len(seen) == 2
-    assert seen[1].url.scheme == "http"
-    assert seen[1].url.host == "other.test"
-    assert "authorization" not in seen[1].headers
+    assert len(probe.requests) == 2
+    assert probe.requests[1].url.scheme == "http"
+    assert probe.requests[1].url.host == "other.test"
+    assert "authorization" not in probe.requests[1].headers
 
 
 def test_async_httpx_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
-    seen: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
-        if request.url.host == "origin.test":
-            return httpx.Response(302, headers={"Location": "https://target.test/secret"})
-        pytest.fail("the redirect target must not receive a request")
+    responder = redirect_then_fail(
+        "the redirect target must not receive a request", "https://target.test/secret", 302, "origin.test"
+    )
+    probe = AsyncProbe(responder)
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            response = await transport.send(
+        async with probe:
+            response = await probe.send(
                 RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW)
             )
-        finally:
-            await transport.aclose()
         assert response.status_code == 302
 
     asyncio.run(send())
-    assert seen == ["https://origin.test/root"]
+
+    assert [str(request.url) for request in probe.requests] == ["https://origin.test/root"]
 
 
 def test_async_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.host == "example.test":
-            return httpx.Response(
-                302,
-                headers={"Location": "https://other.test/next?token=redirect-secret&keep=value"},
-            )
-        return httpx.Response(200, content=b"redirected")
-
     request_headers = {
         "aUtHoRiZaTiOn": "Bearer request-secret",
         "cOoKiE": "session-secret",
@@ -553,36 +364,28 @@ def test_async_httpx_transport_strips_sensitive_headers_and_forwards_query_verba
         "x-AuTh-ToKeN": "token-secret",
         "X-Benign": "preserve-me",
     }
+    responder = redirect_to("https://other.test/next?token=redirect-secret&keep=value", 302, at_host("example.test"))
+
+    probe = AsyncProbe(responder)
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            response = await transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
+        async with probe:
+            response = await probe.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
             assert response.body == b"redirected"
-        finally:
-            await transport.aclose()
 
     asyncio.run(send())
 
-    assert len(seen) == 2
-    first_headers = {key.lower(): value for key, value in seen[0].headers.items()}
-    second_headers = {key.lower(): value for key, value in seen[1].headers.items()}
+    assert len(probe.requests) == 2
+    first_headers = header_view(probe.requests[0])
+    second_headers = header_view(probe.requests[1])
     assert all(name in first_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
     assert all(name not in second_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
     assert second_headers["x-benign"] == "preserve-me"
-    assert "token=redirect-secret" in str(seen[1].url)
-    assert "keep=value" in str(seen[1].url)
+    assert "token=redirect-secret" in str(probe.requests[1].url)
+    assert "keep=value" in str(probe.requests[1].url)
 
 
 def test_async_httpx_transport_same_origin_redirect_preserves_caller_headers() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(302, headers={"Location": "/next?keep=value"})
-        return httpx.Response(200, content=b"redirected")
-
     request_headers = {
         "Authorization": "Bearer request-secret",
         "Cookie": "session-secret",
@@ -591,17 +394,16 @@ def test_async_httpx_transport_same_origin_redirect_preserves_caller_headers() -
         "X-Benign": "preserve-me",
     }
 
+    probe = AsyncProbe(redirect_to("/next?keep=value", 302, at_path("/start")))
+
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            response = await transport.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
+        async with probe:
+            response = await probe.send(RuntimeRequest("GET", "https://example.test/start", request_headers))
             assert response.body == b"redirected"
-        finally:
-            await transport.aclose()
 
     asyncio.run(send())
 
-    forwarded = {key.lower(): value for key, value in seen[1].headers.items()}
+    forwarded = header_view(probe.requests[1])
     assert all(forwarded[key.lower()] == value for key, value in request_headers.items())
 
 
@@ -610,26 +412,16 @@ async def _send_async_redirect(
     body: bytes | None,
     headers: dict[str, str],
 ) -> tuple[str, bytes]:
-    seen: list[httpx.Request] = []
+    probe = AsyncProbe(redirect_to("https://example.test/next", status, at_path("/start")))
+    async with probe:
+        await probe.send(RuntimeRequest("POST", "https://example.test/start", headers, body))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(status, headers={"Location": "https://example.test/next"})
-        return httpx.Response(200)
-
-    transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        await transport.send(RuntimeRequest("POST", "https://example.test/start", headers, body))
-    finally:
-        await transport.aclose()
-
-    return seen[1].method, seen[1].read()
+    return probe.requests[1].method, probe.requests[1].read()
 
 
 @pytest.mark.parametrize("status", [301, 302, 303])
 def test_async_httpx_redirect_rewrites_post_to_bodyless_get(status: int) -> None:
-    method, body = asyncio.run(_send_async_redirect(status, b'{"key": "v"}', {"Content-Type": "application/json"}))
+    method, body = asyncio.run(_send_async_redirect(status, b'{"key": "v"}', JSON_HEADERS))
 
     assert method == "GET"
     assert body == b""
@@ -637,37 +429,29 @@ def test_async_httpx_redirect_rewrites_post_to_bodyless_get(status: int) -> None
 
 @pytest.mark.parametrize("status", [307, 308])
 def test_async_httpx_redirect_preserves_method_and_body(status: int) -> None:
-    method, body = asyncio.run(_send_async_redirect(status, b'{"key": "v"}', {"Content-Type": "application/json"}))
+    method, body = asyncio.run(_send_async_redirect(status, b'{"key": "v"}', JSON_HEADERS))
 
     assert method == "POST"
     assert body == b'{"key": "v"}'
 
 
 def test_async_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(302, headers={"Location": f"https://example.test/loop/{len(seen)}"})
+    probe = AsyncProbe(redirect_loop(302, "https://example.test/loop/"), max_redirects=3)
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler), max_redirects=3)
-        try:
-            request = RuntimeRequest("GET", "https://example.test/start")
+        async with probe:
             with pytest.raises(TransportFailure, match="redirect limit"):
-                await transport.send(request)
-        finally:
-            await transport.aclose()
+                await probe.send(RuntimeRequest("GET", "https://example.test/start"))
 
     asyncio.run(send())
 
-    assert len(seen) == 4
+    assert len(probe.requests) == 4
 
 
 def test_async_httpx_malformed_redirect_location_closes_response_before_failing() -> None:
     closed: list[bool] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def responder(request: httpx.Request) -> httpx.Response:
         del request
         response = httpx.Response(302, headers={"Location": "https://example.test:abc/next"})
         original_aclose = response.aclose
@@ -680,13 +464,10 @@ def test_async_httpx_malformed_redirect_location_closes_response_before_failing(
         return response
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            request = RuntimeRequest("GET", "https://example.test/start")
+        probe = AsyncProbe(responder)
+        async with probe:
             with pytest.raises(TransportFailure):
-                await transport.send(request)
-        finally:
-            await transport.aclose()
+                await probe.send(RuntimeRequest("GET", "https://example.test/start"))
 
     asyncio.run(send())
 
@@ -694,19 +475,14 @@ def test_async_httpx_malformed_redirect_location_closes_response_before_failing(
 
 
 def test_async_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(302, headers={"Location": "file:///etc/passwd?token=topsecret&keep=value"})
+    location = "file:///etc/passwd?token=topsecret&keep=value"
 
     async def send() -> object:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            request = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"})
+        probe = AsyncProbe(fixed(302, headers={"Location": location}))
+        async with probe:
             with pytest.raises(TransportFailure, match="file:///etc/passwd") as excinfo:
-                await transport.send(request)
+                await probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
             return excinfo.value
-        finally:
-            await transport.aclose()
 
     failure = cast("TransportFailure", asyncio.run(send()))
 
@@ -715,81 +491,62 @@ def test_async_httpx_refuses_non_http_redirect_target_and_redacts_failure_surfac
 
 
 def test_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
-    response = httpx.Response(200)
-
-    def failing_bytes(*args: object, **kwargs: object):
-        yield b"ok"
-        raise httpx.ReadError("connection dropped", request=httpx.Request("GET", "https://example.test/"))
-
-    def handler(request: httpx.Request) -> httpx.Response:
+    def responder(request: httpx.Request) -> httpx.Response:
         del request
-        response.iter_bytes = failing_bytes  # ty: ignore[invalid-assignment]: test seam
+        response = httpx.Response(200)
+
+        def failing_bytes(*args: object, **kwargs: object):
+            yield b"ok"
+            raise httpx.ReadError("connection dropped", request=httpx.Request("GET", "https://example.test/"))
+
+        response.iter_bytes = failing_bytes
         return response
 
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send_stream(
+    probe = SyncProbe(responder)
+    with probe:
+        response = probe.stream(
             RuntimeRequest("GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW)
         )
         with pytest.raises(TransportFailure):
             list(response)
-    finally:
-        transport.close()
 
 
 def test_async_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
-    response = httpx.Response(200)
-
-    async def failing_bytes(*args: object, **kwargs: object):
-        yield b"ok"
-        raise httpx.ReadError("connection dropped", request=httpx.Request("GET", "https://example.test/"))
-
-    def handler(request: httpx.Request) -> httpx.Response:
+    def responder(request: httpx.Request) -> httpx.Response:
         del request
+        response = httpx.Response(200)
+
+        async def failing_bytes(*args: object, **kwargs: object):
+            yield b"ok"
+            raise httpx.ReadError("connection dropped", request=httpx.Request("GET", "https://example.test/"))
+
         response.aiter_bytes = failing_bytes
         return response
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            response = await transport.send_stream(
+        probe = AsyncProbe(responder)
+        async with probe:
+            response = await probe.stream(
                 RuntimeRequest("GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW)
             )
             with pytest.raises(TransportFailure):
                 async for _ in response:
                     pass
-        finally:
-            await transport.aclose()
 
     asyncio.run(send())
 
 
 def test_httpx_send_enforces_max_response_bytes() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(200, content=b"abcdef")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        request_2 = RuntimeRequest("GET", "https://example.test/", max_response_bytes=2)
+    with SyncProbe(fixed(200, content=b"abcdef")) as probe:
         with pytest.raises(TransportFailure, match="byte limit"):
-            transport.send(request_2)
-    finally:
-        transport.close()
+            probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
 
 
 def test_async_httpx_send_enforces_max_response_bytes() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        del request
-        return httpx.Response(200, content=b"abcdef")
-
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            request = RuntimeRequest("GET", "https://example.test/", max_response_bytes=2)
+        probe = AsyncProbe(fixed(200, content=b"abcdef"))
+        async with probe:
             with pytest.raises(TransportFailure, match="byte limit"):
-                await transport.send(request)
-        finally:
-            await transport.aclose()
+                await probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
 
     asyncio.run(send())

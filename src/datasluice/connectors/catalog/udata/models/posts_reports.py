@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from urllib.parse import quote
 
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.errors.catalog import CatalogValidationError
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
 
@@ -17,25 +16,13 @@ _POST_SEARCH_SORTS = ("created", "last_modified", "published")
 _POST_KINDS = ("news", "page")
 _POST_BODY_TYPES = ("markdown", "html", "blocs")
 _REPORT_REASONS = ("auto_spam", "explicit_content", "illegal_content", "others", "personal_data", "security", "spam")
+_REASON_FIELD = "report reason"
 _REPORT_SUBJECT_TYPES = ("Dataset", "Reuse", "Discussion", "Organization", "Dataservice", "User")
 _NOTIFICATION_SORTS = ("created_at", "handled_at")
 
 
 def segment(value: str, operation: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value in {".", ".."}
-        or any(c in "/?#\"'" for c in value)
-        or any(ord(c) < 32 for c in value)
-    ):
-        raise CatalogValidationError(
-            f"uData post, report, or notification identifier for {operation} must be one URL-safe path segment.",
-            operation=operation,
-            platform="udata",
-            safe_action="Pass a prior typed read identifier.",
-        )
-    return quote(value, safe="")
+    return path_segment(value, operation, "uData post, report, or notification")
 
 
 def _paging(query: list[tuple[str, str]], page: int, page_size: int) -> list[tuple[str, str]]:
@@ -340,8 +327,8 @@ class ReportCreateInput:
     callbacks: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
-        _text(self.reason, "report reason", required=True)
-        _choice(self.reason, _REPORT_REASONS, "report reason")
+        _text(self.reason, _REASON_FIELD, required=True)
+        _choice(self.reason, _REPORT_REASONS, _REASON_FIELD)
         _text(self.message, "report message")
         _text(self.dismissed_at, "report dismissed_at")
         _text(self.subject_embed_id, "report subject_embed_id")
@@ -382,7 +369,7 @@ class ReportUpdateInput:
     callbacks: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
-        _choice(self.reason, _REPORT_REASONS, "report reason")
+        _choice(self.reason, _REPORT_REASONS, _REASON_FIELD)
         _text(self.message, "report message")
         _text(self.dismissed_at, "report dismissed_at")
         _text(self.subject_embed_id, "report subject_embed_id")

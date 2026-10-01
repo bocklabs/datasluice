@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from urllib.parse import quote
 
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.errors.catalog import CatalogValidationError
 from datasluice.exceptions import DataSluiceError
 
 _ACTIVITY_FILTERS = ("organization", "user", "related_to")
@@ -141,7 +140,32 @@ class CommentInput:
 
 
 _DISCUSSION_SORTS = ("created", "closed")
+_DISCUSSION_SORT_CHOICES = frozenset(_DISCUSSION_SORTS) | frozenset(f"-{name}" for name in _DISCUSSION_SORTS)
 _LAST_UPDATE_RANGES = ("last_30_days", "last_12_months", "last_3_years")
+
+
+def _optional_text(value: object, field_name: str) -> None:
+    """Reject a supplied search value that is not a string."""
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"uData discussion search {field_name} must be a string when supplied.")
+
+
+def _optional_bool(value: object, field_name: str) -> None:
+    """Reject a supplied search value that is not a boolean."""
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"uData discussion search {field_name} must be a boolean when supplied.")
+
+
+def _optional_non_empty_text(value: object, field_name: str) -> None:
+    """Reject a supplied search value that is not a non-empty string."""
+    if value is not None and (not isinstance(value, str) or not value):
+        raise ValueError(f"uData discussion search {field_name} must be a non-empty string when supplied.")
+
+
+def _string_tuple(value: object, field_name: str) -> None:
+    """Reject a search value that is not a tuple of non-empty strings."""
+    if not isinstance(value, tuple) or not all(isinstance(item, str) and item for item in value):
+        raise ValueError(f"uData discussion search {field_name} must be a tuple of non-empty strings.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,13 +190,15 @@ class DiscussionSearchQuery:
     def __post_init__(self) -> None:
         if type(self.page) is not int or self.page < 1 or type(self.page_size) is not int or self.page_size < 1:
             raise ValueError("uData discussion search paging must be strictly positive.")
-        if self.sort is not None and self.sort not in {
-            *(f"-{name}" for name in _DISCUSSION_SORTS),
-            *_DISCUSSION_SORTS,
-        }:
+        if self.sort is not None and self.sort not in _DISCUSSION_SORT_CHOICES:
             raise ValueError("uData discussion search sort is not a documented choice.")
         if self.last_update_range is not None and self.last_update_range not in _LAST_UPDATE_RANGES:
             raise ValueError("uData discussion search last_update_range is not a documented choice.")
+        _optional_text(self.q, "q")
+        _optional_bool(self.closed, "closed")
+        _string_tuple(self.subject_ids, "subject_ids")
+        _optional_non_empty_text(self.org, "org")
+        _optional_non_empty_text(self.user, "user")
 
     def query(self) -> str:
         from urllib.parse import urlencode
@@ -211,17 +237,4 @@ class DiscussionMutationResult:
 
 
 def segment(value: str, operation: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value in {".", ".."}
-        or any(c in "/?#\"'" for c in value)
-        or any(ord(c) < 32 for c in value)
-    ):
-        raise CatalogValidationError(
-            f"uData discussion identifier for {operation} must be one URL-safe path segment.",
-            operation=operation,
-            platform="udata",
-            safe_action="Pass a prior typed read identifier.",
-        )
-    return quote(value, safe="")
+    return path_segment(value, operation, "uData discussion")

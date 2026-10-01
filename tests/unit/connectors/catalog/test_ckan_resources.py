@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,8 @@ from datasluice.domain.catalog.models import NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogValidationError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from datasluice.runtime.transport.base import RuntimeRequest
+from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 
@@ -31,56 +31,6 @@ RESOURCE_SHOW_RESULT: dict[str, object] = {
     "name": "sample",
     "url": "https://example.test/sample.csv",
 }
-
-
-def _success_body(result: object) -> bytes:
-    return json.dumps({"success": True, "result": result}).encode("utf-8")
-
-
-def _failure_body(error: Mapping[str, object]) -> bytes:
-    return json.dumps({"success": False, "error": dict(error)}).encode("utf-8")
-
-
-class SyncCaptureTransport:
-    """A deterministic loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    def close(self) -> None:
-        self.close_count += 1
-
-
-class AsyncCaptureTransport:
-    """A deterministic async loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    async def aclose(self) -> None:
-        self.close_count += 1
 
 
 def _client(
@@ -116,8 +66,8 @@ def test_upload_buffers_path_and_handle_sources_to_identical_wire_bytes(tmp_path
     source = tmp_path / "updated_file.csv"
     source.write_bytes(payload)
 
-    path_transport = SyncCaptureTransport(body=_success_body({"id": "res-1", "package_id": "pkg-1"}))
-    handle_transport = SyncCaptureTransport(body=_success_body({"id": "res-2", "package_id": "pkg-1"}))
+    path_transport = SyncCaptureTransport(body=success_body({"id": "res-1", "package_id": "pkg-1"}))
+    handle_transport = SyncCaptureTransport(body=success_body({"id": "res-2", "package_id": "pkg-1"}))
     path_client = _client(path_transport)
     handle_client = _client(handle_transport)
 
@@ -145,7 +95,7 @@ def test_upload_buffers_path_and_handle_sources_to_identical_wire_bytes(tmp_path
 
 def test_multipart_fields_precede_the_upload_part_in_sorted_order() -> None:
     """Field parts render deterministically ahead of the fixed upload part."""
-    transport = SyncCaptureTransport(body=_success_body({"id": "res-1", "package_id": "pkg-1"}))
+    transport = SyncCaptureTransport(body=success_body({"id": "res-1", "package_id": "pkg-1"}))
     client = _client(transport)
 
     client.resources.resource_create(package_id="pkg-1", name="data", upload=io.BytesIO(b"x"))
@@ -156,7 +106,7 @@ def test_multipart_fields_precede_the_upload_part_in_sorted_order() -> None:
 
 def test_oversized_source_refuses_before_any_transport_io() -> None:
     """T-03-06-02 mitigation: the ceiling refusal names the remedy at zero wire hits."""
-    transport = SyncCaptureTransport(body=_success_body({}))
+    transport = SyncCaptureTransport(body=success_body({}))
     client = _client(transport, max_upload_bytes=8)
 
     bytes_i_o = io.BytesIO(b"x" * 100)
@@ -171,7 +121,7 @@ def test_oversized_source_refuses_before_any_transport_io() -> None:
 def test_server_size_limit_envelope_maps_to_a_size_mentioning_safe_action() -> None:
     """Server-side media/size limits surface as typed validation errors."""
     transport = SyncCaptureTransport(
-        body=_failure_body({"__type": "Validation Error", "message": "File size too large: maximum size exceeded"})
+        body=failure_body({"__type": "Validation Error", "message": "File size too large: maximum size exceeded"})
     )
     client = _client(transport)
 
@@ -185,7 +135,7 @@ def test_server_size_limit_envelope_maps_to_a_size_mentioning_safe_action() -> N
 
 def test_resource_search_decodes_resource_records_with_native_paging() -> None:
     """Reads follow the standard paths and decode their own record kinds (D-19)."""
-    transport = SyncCaptureTransport(body=_success_body([{"id": "res-9", "package_id": "pkg-1"}]))
+    transport = SyncCaptureTransport(body=success_body([{"id": "res-9", "package_id": "pkg-1"}]))
     client = _client(transport)
 
     search = client.resources.resource_search(q="res-9", limit=5, offset=10)
@@ -200,7 +150,7 @@ def test_resource_search_decodes_resource_records_with_native_paging() -> None:
 
 
 def test_resource_show_returns_its_own_record_kind() -> None:
-    transport = SyncCaptureTransport(body=_success_body(RESOURCE_SHOW_RESULT))
+    transport = SyncCaptureTransport(body=success_body(RESOURCE_SHOW_RESULT))
     client = _client(transport)
 
     envelope = client.resources.resource_show(id="res-9")
@@ -212,7 +162,7 @@ def test_resource_show_returns_its_own_record_kind() -> None:
 
 
 def test_resource_delete_returns_mutation_result_with_receipt() -> None:
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     result = client.resources.resource_delete(id="res-9")
@@ -228,7 +178,7 @@ def test_resource_delete_returns_mutation_result_with_receipt() -> None:
 
 def test_filestore_projection_routes_through_the_resource_paths() -> None:
     """The façade carries zero dedicated endpoints and reuses resource actions."""
-    transport = SyncCaptureTransport(body=_success_body({"id": "res-9", "package_id": "pkg-1"}))
+    transport = SyncCaptureTransport(body=success_body({"id": "res-9", "package_id": "pkg-1"}))
     client = _client(transport)
     operation = CatalogOperationRequest(
         operation_id=OperationId(platform="ckan", service="filestore", method="upload-and-resource-file-replacement"),
@@ -262,7 +212,7 @@ def test_services_package_carries_no_streaming_constructs() -> None:
 def test_async_resources_mirror_sync_semantics(tmp_path: Path) -> None:
     source = tmp_path / "async.csv"
     source.write_bytes(b"a,b\n")
-    transport = AsyncCaptureTransport(body=_success_body({"id": "res-2", "package_id": "pkg-1"}))
+    transport = AsyncCaptureTransport(body=success_body({"id": "res-2", "package_id": "pkg-1"}))
     client = _async_client(transport)
 
     result = asyncio.run(client.resources.resource_create(package_id="pkg-1", upload=str(source)))

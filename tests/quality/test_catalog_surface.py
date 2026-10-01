@@ -1152,6 +1152,21 @@ def test_catalog_root_packages_do_not_re_export_platform_apis(package: str) -> N
             assert not hasattr(public_module, factory_name)
 
 
+@pytest.mark.parametrize("package", ["datasluice.connectors", "datasluice.connectors.catalog"])
+def test_connector_namespaces_are_import_light_and_non_reexporting(package: str) -> None:
+    """Test 1: the connector namespaces declare no published API and pull no optional runtime.
+
+    ``__all__ == []`` is the declared contract of both namespaces, so a re-export
+    that forgets to widen it is caught here rather than silently enlarging the
+    surface. Importing either namespace must also stay free of optional
+    distributions, so the contract cannot be met by eagerly loading a connector.
+    """
+    module = importlib.import_module(package)
+
+    assert getattr(module, "__all__", None) == [], f"{package} publishes {getattr(module, '__all__', None)}"
+    assert_import_pulls_no_distributions((package,), _optional_dependency_imports())
+
+
 @pytest.mark.parametrize("removed_module", (*REMOVED_MODULES, *REMOVED_RUNTIME_MODULES))
 def test_removed_modules_fail_to_import(removed_module: str) -> None:
     """Test 2: every legacy module path is gone, not forwarded or aliased."""

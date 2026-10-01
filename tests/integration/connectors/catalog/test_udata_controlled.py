@@ -41,12 +41,10 @@ from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
     OAuthClientRequest,
-    OAuthConsentOutcome,
     OAuthConsentSummary,
     OAuthErrorDocument,
     OAuthRevokeRequest,
     OAuthTokenRequest,
-    OAuthTokenResult,
 )
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
@@ -89,6 +87,7 @@ from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import CatalogError
+from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
 
 if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://127.0.0.1:5640":
     pytest.skip(
@@ -2195,7 +2194,6 @@ async def _exercise_organization_logo(run: _OrganizationMutationRun, org_id: str
     """Upload and resize the logo of one organization with an independent multipart filename."""
     from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 
-    # Each upload uses the same tiny valid PNG bytes with an independent filename.
     boundary = f"udata-org-logo-{run.run_id}-{int(side)}"
     logo_name = f"logo-{run.run_id}-{int(side)}.png"
     raw_logo_body = b"\r\n".join(
@@ -3460,62 +3458,6 @@ def _oauth_mutations(
     )
 
 
-def _oauth_mutation_policy(name: str) -> MutationPolicy:
-    target = "self" if name == "authorize_post" else f"request:{name}"
-    return MutationPolicy(
-        destructive=name == "revoke_token",
-        confirmation=ConfirmationPolicy(
-            confirmed=True, operation=f"udata/oauth.{name.replace('_', '-')}", target=target
-        ),
-        concurrency=ConcurrencyPolicy(overwrite=True),
-    )
-
-
-def _assert_oauth_mutation_sync(
-    client: SyncUDataClient,
-    name: str,
-    raw: tuple[int, object, dict[str, str]],
-    body: object,
-    permissions: EffectivePermissions,
-) -> None:
-    """The disposable stack has no OAuth client, so the stock endpoints reject every
-    form. Either outcome is valid; what matters is that the typed status equals the raw
-    status and that no access token is ever retained."""
-    try:
-        result = getattr(client.auth_oauth, name)(body, permissions, _oauth_mutation_policy(name))
-    except CatalogError as error:
-        assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
-        receipt = error.metadata.get("receipt")
-        if isinstance(receipt, Mapping):
-            assert receipt["audit_metadata"]["status_code"] == raw[0], name
-    else:
-        if isinstance(result, OAuthConsentOutcome):
-            assert result.status_code == raw[0], name
-        else:
-            assert isinstance(result, OAuthTokenResult), name
-            assert result.receipt.audit_metadata["status_code"] == raw[0], name
-
-
-async def _assert_oauth_mutation_async(
-    client: AsyncUDataClient,
-    name: str,
-    raw: tuple[int, object, dict[str, str]],
-    body: object,
-    permissions: EffectivePermissions,
-) -> None:
-    """The async mutation path must reproduce the same status as the sync path."""
-    try:
-        result = await getattr(client.auth_oauth, name)(body, permissions, _oauth_mutation_policy(name))
-    except CatalogError as error:
-        assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
-    else:
-        if isinstance(result, OAuthConsentOutcome):
-            assert result.status_code == raw[0], name
-        else:
-            assert isinstance(result, OAuthTokenResult), name
-            assert result.receipt.audit_metadata["status_code"] == raw[0], name
-
-
 _CONTROLLED_OAUTH_TOKEN_BODY = OAuthTokenRequest(
     grant_type="client_credentials", client_id="absent", client_secret="absent"
 )
@@ -3662,9 +3604,16 @@ async def _check_async_oauth_reads(
 def _check_sync_oauth_mutations(
     client: SyncUDataClient, raw: _ControlledOAuthRaw, permissions: EffectivePermissions
 ) -> None:
-    """Assert every synchronous OAuth mutation agrees with the raw status it must reproduce."""
-    for name, response, body in raw.mutations:
-        _assert_oauth_mutation_sync(client, name, response, body, permissions)
+    """Assert the synchronous token exchange and every OAuth mutation match their raw status.
+
+    The RFC 6749 exchange carries its own client secret, so the uData API key must
+    never accompany it and no token may be retained.
+    """
+    with pytest.raises(CatalogError) as token_error:
+        client.auth_oauth.access_token(_CONTROLLED_OAUTH_TOKEN_BODY, permissions)
+    assert token_error.value.metadata.get("status_code") == raw.token[0]
+    for name, response, body in _oauth_mutations(raw.revoke, raw.authorize_post):
+        assert_oauth_mutation_sync(client, name, response, body, permissions)
 
 
 async def _check_async_oauth_mutations(
@@ -3672,10 +3621,10 @@ async def _check_async_oauth_mutations(
 ) -> None:
     """Assert the asynchronous token exchange fails identically and every mutation agrees."""
     with pytest.raises(CatalogError) as token_error:
-        await client.auth_oauth.access_token(_CONTROLLED_OAUTH_TOKEN_BODY, permissions)
+        await _typed_call(client.auth_oauth, "access_token", _CONTROLLED_OAUTH_TOKEN_BODY, permissions)
     assert token_error.value.metadata.get("status_code") == raw.token[0]
-    for name, response, body in raw.mutations:
-        await _assert_oauth_mutation_async(client, name, response, body, permissions)
+    for name, response, body in _oauth_mutations(raw.revoke, raw.authorize_post):
+        await assert_oauth_mutation_async(client, name, response, body, permissions)
 
 
 def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
@@ -3697,12 +3646,6 @@ def test_controlled_oauth_routes_match_raw_semantics_in_both_modes() -> None:
                 await _check_async_oauth_reads(client, raw, permissions)
 
         asyncio.run(run_reads_async())
-
-        # The RFC 6749 exchange carries its own client secret, so the uData API key
-        # must never accompany it and no token may be retained.
-        with pytest.raises(CatalogError) as token_error:
-            client.auth_oauth.access_token(_CONTROLLED_OAUTH_TOKEN_BODY, permissions)
-        assert token_error.value.metadata.get("status_code") == raw.token[0]
 
         _check_sync_oauth_mutations(client, raw, permissions)
 

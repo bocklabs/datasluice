@@ -6,7 +6,7 @@ import asyncio
 import importlib.util
 import inspect
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Literal
 
 import pytest
@@ -42,7 +42,7 @@ from datasluice.domain.catalog.profiles import (
     RoleClassification,
 )
 from datasluice.errors.catalog import CatalogValidationError, UnauthenticatedError, UnsupportedCapabilityError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 DATASTORE_OPERATION_ID = "ckan/datastore-extension.query-and-record-crud"
@@ -63,35 +63,6 @@ PACKAGE_RESULT: dict[str, object] = {
     "title": "My Dataset",
     "notes": "A seeded dataset",
 }
-
-
-def _success_body(result: Mapping[str, object]) -> bytes:
-    return json.dumps({"success": True, "result": dict(result)}).encode("utf-8")
-
-
-def _failure_body(error: Mapping[str, object]) -> bytes:
-    return json.dumps({"success": False, "error": dict(error)}).encode("utf-8")
-
-
-class SyncCaptureTransport:
-    """A deterministic loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    def close(self) -> None:
-        self.close_count += 1
 
 
 class StubProbeRunner:
@@ -173,7 +144,7 @@ def _datastore_call() -> tuple[CatalogOperationRequest, CatalogOperationGuard]:
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_status_show_flows_end_to_end_through_factory_settings_spine_and_mapping() -> None:
     """One documented read decodes an authentic CKAN envelope into a typed mapping item."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = create_sync_client(_settings(transport))
 
     assert isinstance(client, SyncCatalogClient)
@@ -195,7 +166,7 @@ def test_status_show_flows_end_to_end_through_factory_settings_spine_and_mapping
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_authorization_header_rides_the_real_ckan_credential() -> None:
     """The existing Authorization seam carries a genuine CKANCredential api_token."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     settings = _settings(transport, credential=CKANCredential(api_token="secret-token-123"))
     client = create_sync_client(settings)
 
@@ -208,7 +179,7 @@ def test_authorization_header_rides_the_real_ckan_credential() -> None:
 
 def test_anonymous_dispatch_sends_no_credential_headers() -> None:
     """Anonymous reads attach only content headers."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = _direct_client(transport)
 
     client.action_discovery.status_show()
@@ -219,7 +190,7 @@ def test_anonymous_dispatch_sends_no_credential_headers() -> None:
 
 def test_error_envelope_maps_to_a_typed_error_with_bounded_metadata() -> None:
     """A success:false envelope raises a typed error naming a safe next action."""
-    transport = SyncCaptureTransport(body=_failure_body({"__type": "Authorization Error", "message": "bad token"}))
+    transport = SyncCaptureTransport(body=failure_body({"__type": "Authorization Error", "message": "bad token"}))
     client = _direct_client(transport)
 
     with pytest.raises(UnauthenticatedError) as excinfo:
@@ -231,7 +202,7 @@ def test_error_envelope_maps_to_a_typed_error_with_bounded_metadata() -> None:
 
 def test_umbrella_route_validates_the_payload_action_against_the_registry() -> None:
     """Umbrella methods accept only manifest-registered actions owned by their group."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = _direct_client(transport)
     operation = CatalogOperationRequest(
         operation_id=OperationId(platform="ckan", service="action-api-v3", method="discovery-help-and-status"),
@@ -253,7 +224,7 @@ def test_umbrella_route_validates_the_payload_action_against_the_registry() -> N
 
 def test_optional_capability_refuses_without_probe_runner_at_zero_io() -> None:
     """OPTIONAL-tier dispatch refuses before any wire I/O naming both remedies."""
-    transport = SyncCaptureTransport(body=_success_body({"records": []}))
+    transport = SyncCaptureTransport(body=success_body({"records": []}))
     client = _direct_client(transport, inventory=_datastore_inventory(), probe_policy="auto")
     operation, guard = _datastore_call()
 
@@ -267,7 +238,7 @@ def test_optional_capability_refuses_without_probe_runner_at_zero_io() -> None:
 
 def test_optional_capability_dispatches_with_attached_probe_runner() -> None:
     """An attached probe runner supplies the missing evidence over the demo origin."""
-    transport = SyncCaptureTransport(body=_success_body({"records": [], "count": 0}))
+    transport = SyncCaptureTransport(body=success_body({"records": [], "count": 0}))
     runner = StubProbeRunner()
     client = _direct_client(transport, inventory=_datastore_inventory(), probe_policy="auto", probe_runner=runner)
     operation, guard = _datastore_call()
@@ -283,7 +254,7 @@ def test_optional_capability_dispatches_with_attached_probe_runner() -> None:
 
 def test_optional_capability_dispatches_under_declared_baseline_policy() -> None:
     """Explicit declared-baseline selection consumes the declared profile trustingly."""
-    transport = SyncCaptureTransport(body=_success_body({"records": [], "count": 0}))
+    transport = SyncCaptureTransport(body=success_body({"records": [], "count": 0}))
     client = _direct_client(transport, inventory=_datastore_inventory(), probe_policy="declared-baseline")
     operation, guard = _datastore_call()
 
@@ -294,7 +265,7 @@ def test_optional_capability_dispatches_under_declared_baseline_policy() -> None
 
 def test_borrowed_transport_is_never_closed_by_the_client() -> None:
     """An injected transport instance stays caller-owned across close()."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = _direct_client(transport, owns_transport=False)
 
     client.close()
@@ -309,7 +280,7 @@ def test_owned_factory_transport_closes_exactly_once() -> None:
     holder: dict[str, SyncCaptureTransport] = {}
 
     def factory() -> SyncCaptureTransport:
-        holder["transport"] = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+        holder["transport"] = SyncCaptureTransport(body=success_body(STATUS_RESULT))
         return holder["transport"]
 
     client = create_sync_client(
@@ -325,7 +296,7 @@ def test_owned_factory_transport_closes_exactly_once() -> None:
 
 def test_normalized_datasets_get_round_trips_to_its_own_record_kind() -> None:
     """The normalized dataset projection decodes its own record kind over internal envelopes."""
-    transport = SyncCaptureTransport(body=_success_body(PACKAGE_RESULT))
+    transport = SyncCaptureTransport(body=success_body(PACKAGE_RESULT))
     client = _direct_client(transport)
     operation = CatalogOperationRequest(
         operation_id=OperationId(platform="ckan", service="datasets", method="get"),
@@ -345,27 +316,6 @@ def test_normalized_datasets_get_round_trips_to_its_own_record_kind() -> None:
     assert record.id.value == "abc-123"
 
 
-class AsyncCaptureTransport:
-    """A deterministic async loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    async def aclose(self) -> None:
-        self.close_count += 1
-
-
 def _async_client(transport: AsyncCaptureTransport, *, owns_transport: bool = True) -> AsyncCKANClient:
     return AsyncCKANClient(
         transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=owns_transport
@@ -383,7 +333,7 @@ def _async_settings(transport: AsyncCaptureTransport) -> CKANClientSettings:
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_async_status_show_flows_end_to_end_over_the_loopback_twin() -> None:
     """The async twin decodes the same authentic CKAN envelope through its own pipeline."""
-    transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = AsyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = create_async_client(_async_settings(transport))
 
     envelope = asyncio.run(client.action_discovery.status_show())
@@ -426,8 +376,8 @@ def test_sync_async_clients_maintain_strict_structural_parity() -> None:
         "filestore",
         "extensions",
     )
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
-    async_transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
+    async_transport = AsyncCaptureTransport(body=success_body(STATUS_RESULT))
     sync_client = _direct_client(transport)
     async_client = _async_client(async_transport)
     for family in families:
@@ -440,7 +390,7 @@ def test_sync_async_clients_maintain_strict_structural_parity() -> None:
 
 def test_async_borrowed_transport_is_never_drained_by_the_client() -> None:
     """An injected async transport stays caller-owned across aclose()."""
-    transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = AsyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = _async_client(transport, owns_transport=False)
 
     asyncio.run(client.aclose())
@@ -455,7 +405,7 @@ def test_async_owned_transport_acloses_exactly_once() -> None:
     holder: dict[str, AsyncCaptureTransport] = {}
 
     def factory() -> AsyncCaptureTransport:
-        holder["transport"] = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+        holder["transport"] = AsyncCaptureTransport(body=success_body(STATUS_RESULT))
         return holder["transport"]
 
     client = create_async_client(
@@ -479,7 +429,7 @@ class CallerRatePolicy:
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_default_settings_attach_the_none_documented_unlimited_rate_policy() -> None:
     """Construction attaches the unlimited default for undocumented origins."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = create_sync_client(_settings(transport))
 
     assert isinstance(client.rate_policy, UnlimitedRatePolicy)
@@ -494,7 +444,7 @@ def test_default_settings_attach_the_none_documented_unlimited_rate_policy() -> 
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_explicit_caller_rate_policy_replaces_the_resolution_verbatim() -> None:
     """An explicit caller policy attaches unmodified, overriding table and default."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     policy = CallerRatePolicy()
     explicit = CKANClientSettings(base_url="https://demo.ckan.org", sync_transport=transport, rate_policy=policy)
 
@@ -505,7 +455,7 @@ def test_explicit_caller_rate_policy_replaces_the_resolution_verbatim() -> None:
 
 def test_rate_policy_loopback_dispatch_completes_with_zero_throttle_or_sleep_invocations() -> None:
     """The metadata-only policy never injects waits into loopback dispatches."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     sleeps: list[float] = []
     client = _direct_client(transport, rate_policy=UnlimitedRatePolicy(), retry_sleep=sleeps.append)
 
@@ -532,7 +482,7 @@ def _collaborator_dispatch() -> tuple[CatalogOperationRequest, CatalogOperationG
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_https_origins_attach_default_probe_runners_with_zero_construction_network() -> None:
     """D-07 completion: HTTPS factories probe zero-config after exactly one status read."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
     settings = CKANClientSettings(base_url=DEMO_HTTPS_ORIGIN, sync_transport=transport)
     client = create_sync_client(settings)
     assert len(transport.requests) == 0
@@ -549,7 +499,7 @@ def test_https_origins_attach_default_probe_runners_with_zero_construction_netwo
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_explicit_runner_settings_win_over_the_https_default_attachment() -> None:
     """Override precedence: caller-supplied runners replace the factory default."""
-    transport = SyncCaptureTransport(body=_success_body({"pkg-1": ()}))
+    transport = SyncCaptureTransport(body=success_body({"pkg-1": ()}))
     runner = StubProbeRunner()
     settings = CKANClientSettings(
         base_url=DEMO_HTTPS_ORIGIN,
@@ -571,7 +521,7 @@ def test_explicit_runner_settings_win_over_the_https_default_attachment() -> Non
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None:
     """The controlled-stack posture is an explicit choice, never a silent bypass."""
-    transport = SyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
 
     settings = CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=transport)
     with pytest.raises(UnsupportedCapabilityError) as excinfo:
@@ -580,7 +530,7 @@ def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None
     assert transport.requests == []
     assert "declared-baseline" in excinfo.value.safe_action
 
-    async_transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    async_transport = AsyncCaptureTransport(body=success_body(STATUS_RESULT))
     settings_2 = CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=async_transport)
     with pytest.raises(UnsupportedCapabilityError):
         create_async_client(settings_2)
@@ -590,7 +540,7 @@ def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None
 @pytest.mark.skipif(importlib.util.find_spec("httpx") is None, reason="datasluice[ckan] requires httpx")
 def test_async_https_factories_attach_the_default_async_probe_runner() -> None:
     """The async twin performs its default probe through the injected transport."""
-    transport = AsyncCaptureTransport(body=_success_body(STATUS_RESULT))
+    transport = AsyncCaptureTransport(body=success_body(STATUS_RESULT))
     client = create_async_client(CKANClientSettings(base_url=DEMO_HTTPS_ORIGIN, async_transport=transport))
 
     assert len(transport.requests) == 0

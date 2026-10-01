@@ -261,8 +261,13 @@ def _torn_read_message(key: str, actual: bytes | None, expected: dict[str, bytes
     """Return a violation message when a read yields an unexpected payload.
 
     A missing read (``actual is None``) is deliberately tolerated, matching the
-    original ``if actual is None: continue`` behaviour, because a writer may
-    legitimately have deleted the key mid-scan.
+    original ``if actual is None: continue`` behaviour. Nothing here deletes a
+    key: ``_rewrite_every_key`` only calls ``put``, which never removes rows.
+    The miss comes from the two-phase put, which first stores the row as
+    ``status='writing'``, clobbering the previous ``'ready'`` row, and
+    ``ContentCache.get`` reports ``None`` for ``'writing'``. A reader that
+    interleaves with a writer mid-put therefore sees a transient miss, which is
+    the documented reader-skips-in-flight-writes contract rather than a lost row.
     """
     if actual is None:
         return None

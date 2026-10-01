@@ -9,11 +9,6 @@ from typing import cast
 
 import pytest
 
-from datasluice.connectors.catalog.udata.clients import (
-    AsyncUDataClient,
-    SyncUDataClient,
-    declared_udata_profile,
-)
 from datasluice.connectors.catalog.udata.models.taxonomies import (
     BadgeCreateInput,
     SuggestQuery,
@@ -29,90 +24,26 @@ from datasluice.contracts.catalog.native.udata import (
     AsyncUDataTaxonomiesService,
     SyncUDataTaxonomiesService,
 )
-from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
-from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
-
-ORIGIN = "http://127.0.0.1:5640"
-SITE = {"feed_size": 0, "id": "site", "keywords": [], "metrics": {}, "title": "uData", "version": "17.6.0"}
-CREDENTIAL = UDataCredential(api_key="secret-key")
-PERMISSIONS = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA)
-ADD_ONLY_PERMISSIONS = EffectivePermissions.for_credential(
-    CREDENTIAL,
-    platform=CatalogPlatform.UDATA,
-    scopes=frozenset({"add-badge"}),
-    operation_scopes={wire.ADD_BADGE_OPERATION: frozenset({"add-badge"})},
-)
-DELETE_ONLY_PERMISSIONS = EffectivePermissions.for_credential(
-    CREDENTIAL,
-    platform=CatalogPlatform.UDATA,
-    scopes=frozenset({"delete-badge"}),
-    operation_scopes={wire.DELETE_BADGE_OPERATION: frozenset({"delete-badge"})},
+from tests.helpers.udata_test_support import (
+    UDATA_CREDENTIAL,
+    UDATA_ORIGIN,
+    UDATA_PERMISSIONS,
+    RouteTable,
+    async_client,
+    async_route_table,
+    mutation_policy,
+    scoped_permissions,
+    sync_client,
+    sync_route_table,
+    thawed,
+    with_site_route,
 )
 
-
-class _Router:
-    def __init__(self, routes: dict[tuple[str, str], tuple[int, object]]) -> None:
-        self.routes = routes
-        self.requests: list[RuntimeRequest] = []
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        status, payload = self.routes[(request.method, request.url)]
-        if payload is None:
-            body = b""
-        elif isinstance(payload, bytes):
-            body = payload
-        else:
-            body = json.dumps(payload, separators=(",", ":")).encode()
-        return RuntimeResponse(status_code=status, headers={"Content-Type": "application/json"}, body=body)
-
-    def close(self) -> None:
-        return None
-
-
-class _AsyncRouter:
-    def __init__(self, routes: dict[tuple[str, str], tuple[int, object]]) -> None:
-        self.routes = routes
-        self.requests: list[RuntimeRequest] = []
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        status, payload = self.routes[(request.method, request.url)]
-        if payload is None:
-            body = b""
-        elif isinstance(payload, bytes):
-            body = payload
-        else:
-            body = json.dumps(payload, separators=(",", ":")).encode()
-        return RuntimeResponse(status_code=status, headers={"Content-Type": "application/json"}, body=body)
-
-    async def aclose(self) -> None:
-        return None
-
-
-def _routes(
-    routes: dict[tuple[str, str], tuple[int, object]],
-) -> dict[tuple[str, str], tuple[int, object]]:
-    return {("GET", f"{ORIGIN}/api/1/site/"): (200, SITE), **routes}
-
-
-def _policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
-    return MutationPolicy(
-        destructive=destructive,
-        confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
-        concurrency=ConcurrencyPolicy(overwrite=True),
-    )
-
-
-def _thawed(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _thawed(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_thawed(item) for item in value]
-    return value
+ORIGIN = UDATA_ORIGIN
+PERMISSIONS = UDATA_PERMISSIONS
+ADD_ONLY_PERMISSIONS = scoped_permissions("add-badge", wire.ADD_BADGE_OPERATION)
+DELETE_ONLY_PERMISSIONS = scoped_permissions("delete-badge", wire.DELETE_BADGE_OPERATION)
 
 
 @pytest.mark.parametrize("identifier", [".", ".."])
@@ -146,11 +77,11 @@ def test_taxonomy_contract_exposes_every_assigned_method_in_both_modes() -> None
         "schemas",
         "dataset_schemas",
     }
-    with SyncUDataClient(_Router(_routes({})), declared_udata_profile(), origin=ORIGIN) as client:
+    with sync_client(sync_route_table(with_site_route({})), None) as client:
         assert isinstance(client.taxonomies, SyncUDataTaxonomiesService)
 
     async def run() -> None:
-        async with AsyncUDataClient(_AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN) as client:
+        async with async_client(async_route_table(with_site_route({})), None) as client:
             assert isinstance(client.taxonomies, AsyncUDataTaxonomiesService)
 
     asyncio.run(run())
@@ -194,21 +125,15 @@ def test_add_badge_wire_contract_is_exact_through_transport() -> None:
     assert path == "/api/1/datasets/dataset-1/badges/"
     assert headers == {}
     assert body == {"kind": "certified"}
-    router = _Router(_routes({("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"): (201, {"kind": "certified"})}))
-    with SyncUDataClient(
-        router,
-        declared_udata_profile(),
-        origin=ORIGIN,
-        credentials=CREDENTIAL,
-    ) as client:
+    router = sync_route_table(
+        with_site_route({("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"): (201, {"kind": "certified"})})
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
         client.taxonomies.add_badge(
             "dataset-1",
             BadgeCreateInput("certified"),
             ADD_ONLY_PERMISSIONS,
-            MutationPolicy(
-                confirmation=ConfirmationPolicy(confirmed=True, operation=wire.ADD_BADGE_OPERATION, target="dataset-1"),
-                concurrency=ConcurrencyPolicy(overwrite=True),
-            ),
+            mutation_policy(wire.ADD_BADGE_OPERATION, "dataset-1"),
         )
 
     request = router.requests[-1]
@@ -229,7 +154,7 @@ def test_taxonomy_reads_decode_losslessly_and_fail_typed_in_both_modes() -> None
         "schemas": [{"name": "etalab/schema-irve", "version": "2.0.0"}],
         "dataset_schemas": [{"name": "etalab/schema-irve", "version": None, "url": "https://schema.test"}],
     }
-    routes: dict[tuple[str, str], tuple[int, object]] = {
+    routes: RouteTable = {
         ("GET", f"{ORIGIN}/api/1/datasets/badges/"): (200, responses["available_badges"]),
         ("GET", f"{ORIGIN}/api/1/datasets/suggest/formats/?q=csv&size=10"): (200, responses["suggest_formats"]),
         ("GET", f"{ORIGIN}/api/1/datasets/suggest/mime/?q=json&size=10"): (200, responses["suggest_mime"]),
@@ -239,28 +164,28 @@ def test_taxonomy_reads_decode_losslessly_and_fail_typed_in_both_modes() -> None
         ("GET", f"{ORIGIN}/api/1/datasets/schemas/"): (200, responses["schemas"]),
         ("GET", f"{ORIGIN}/api/2/datasets/dataset-1/schemas/"): (200, responses["dataset_schemas"]),
     }
-    with SyncUDataClient(_Router(_routes(routes)), declared_udata_profile(), origin=ORIGIN) as client:
+    with sync_client(sync_route_table(with_site_route(routes)), None) as client:
         service = client.taxonomies
-        assert service.available_badges().payload == _thawed(responses["available_badges"])
-        assert _thawed([record.payload for record in service.suggest_formats(SuggestQuery("csv"))]) == _thawed(
+        assert service.available_badges().payload == thawed(responses["available_badges"])
+        assert thawed([record.payload for record in service.suggest_formats(SuggestQuery("csv"))]) == thawed(
             responses["suggest_formats"]
         )
-        assert _thawed([record.payload for record in service.suggest_mime(SuggestQuery("json"))]) == _thawed(
+        assert thawed([record.payload for record in service.suggest_mime(SuggestQuery("json"))]) == thawed(
             responses["suggest_mime"]
         )
-        assert _thawed([record.payload for record in service.licenses()]) == _thawed(responses["licenses"])
-        assert _thawed([record.payload for record in service.frequencies()]) == _thawed(responses["frequencies"])
+        assert thawed([record.payload for record in service.licenses()]) == thawed(responses["licenses"])
+        assert thawed([record.payload for record in service.frequencies()]) == thawed(responses["frequencies"])
         assert service.extensions() == ("csv", "tsv")
-        assert _thawed([record.payload for record in service.schemas()]) == _thawed(responses["schemas"])
-        assert _thawed([record.payload for record in service.dataset_schemas("dataset-1")]) == _thawed(
+        assert thawed([record.payload for record in service.schemas()]) == thawed(responses["schemas"])
+        assert thawed([record.payload for record in service.dataset_schemas("dataset-1")]) == thawed(
             responses["dataset_schemas"]
         )
 
     async def run() -> None:
-        async with AsyncUDataClient(_AsyncRouter(_routes(routes)), declared_udata_profile(), origin=ORIGIN) as client:
+        async with async_client(async_route_table(with_site_route(routes)), None) as client:
             assert await client.taxonomies.extensions() == ("csv", "tsv")
             records = await client.taxonomies.dataset_schemas("dataset-1")
-            expected = cast(list[Mapping[str, object]], _thawed(responses["dataset_schemas"]))[0]
+            expected = cast(list[Mapping[str, object]], thawed(responses["dataset_schemas"]))[0]
             assert any(record.payload == expected for record in records)
 
     asyncio.run(run())
@@ -280,30 +205,27 @@ def test_invalid_taxonomy_values_fail_before_or_at_decode_without_raw_body() -> 
         b'"keywords": [], "metrics": {"widgets": NaN}}'
     )
     with pytest.raises(NativeCatalogError):
-        with SyncUDataClient(
-            _Router(
+        with sync_client(
+            sync_route_table(
                 {
                     ("GET", f"{ORIGIN}/api/1/site/"): (200, nan_site),
                     ("GET", f"{ORIGIN}/api/1/datasets/extensions/"): (200, nan_site),
                 }
             ),
-            declared_udata_profile(),
-            origin=ORIGIN,
+            None,
         ) as client:
             client.taxonomies.extensions()
 
 
 def test_badge_mutations_are_permission_guarded_and_return_redacted_receipts() -> None:
     badge = {"kind": "certified", "label": "Certified"}
-    routes: dict[tuple[str, str], tuple[int, object]] = {
+    routes: RouteTable = {
         ("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"): (201, badge),
         ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"): (204, None),
     }
-    add_policy = _policy("udata/api-v1.add-dataset-badge", "dataset-1")
-    delete_policy = _policy("udata/api-v1.delete-dataset-badge", "dataset-1:certified", destructive=True)
-    with SyncUDataClient(
-        _Router(_routes(routes)), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-    ) as client:
+    add_policy = mutation_policy("udata/api-v1.add-dataset-badge", "dataset-1")
+    delete_policy = mutation_policy("udata/api-v1.delete-dataset-badge", "dataset-1:certified", destructive=True)
+    with sync_client(sync_route_table(with_site_route(routes)), UDATA_CREDENTIAL) as client:
         added = client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), PERMISSIONS, add_policy)
         removed = client.taxonomies.delete_badge("dataset-1", "certified", PERMISSIONS, delete_policy)
         assert isinstance(added, TaxonomyMutationResult)
@@ -320,17 +242,17 @@ def test_badge_mutations_are_permission_guarded_and_return_redacted_receipts() -
 
 
 def test_badge_permissions_discriminate_add_from_delete_in_both_modes() -> None:
-    routes = _routes(
+    routes = with_site_route(
         {
             ("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"): (201, {"kind": "certified"}),
             ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"): (204, None),
         }
     )
 
-    router = _Router(routes)
+    router = sync_route_table(routes)
 
     def run_sync() -> None:
-        with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        with sync_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
                 client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS)
             with pytest.raises(ForbiddenError) as denied_add:
@@ -340,9 +262,7 @@ def test_badge_permissions_discriminate_add_from_delete_in_both_modes() -> None:
             assert router.requests == []
 
     async def run_async() -> None:
-        async with AsyncUDataClient(
-            _AsyncRouter(routes), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-        ) as client:
+        async with async_client(async_route_table(routes), UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
                 await client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS)
             with pytest.raises(ForbiddenError) as denied_add:
@@ -366,21 +286,21 @@ def test_badge_dispatch_uses_exact_operation_in_both_modes(monkeypatch: pytest.M
 
         return capture
 
-    router = _Router(_routes({}))
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = sync_route_table(with_site_route({}))
+    with sync_client(router, UDATA_CREDENTIAL) as client:
         monkeypatch.setattr(client, "_dataset_call", record(add_calls, 201))
         added = client.taxonomies.add_badge(
             "dataset-1",
             BadgeCreateInput("certified"),
             ADD_ONLY_PERMISSIONS,
-            _policy(wire.ADD_BADGE_OPERATION, "dataset-1"),
+            mutation_policy(wire.ADD_BADGE_OPERATION, "dataset-1"),
         )
         monkeypatch.setattr(client, "_dataset_call", record(delete_calls, 204))
         deleted = client.taxonomies.delete_badge(
             "dataset-1",
             "certified",
             DELETE_ONLY_PERMISSIONS,
-            _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True),
+            mutation_policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True),
         )
 
     assert add_calls[0]["owning_operation"] == wire.ADD_BADGE_OPERATION
@@ -393,15 +313,13 @@ def test_badge_dispatch_uses_exact_operation_in_both_modes(monkeypatch: pytest.M
             assert kwargs["owning_operation"] == wire.DELETE_BADGE_OPERATION
             return 204, None, object()
 
-        async with AsyncUDataClient(
-            _AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-        ) as client:
+        async with async_client(async_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
             monkeypatch.setattr(client, "_dataset_call_async", capture)
             deleted = await client.taxonomies.delete_badge(
                 "dataset-1",
                 "certified",
                 DELETE_ONLY_PERMISSIONS,
-                _policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True),
+                mutation_policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True),
             )
 
         assert deleted.receipt.operation == wire.DELETE_BADGE_OPERATION

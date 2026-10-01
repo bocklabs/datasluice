@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from urllib.parse import quote
 
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.errors.catalog import CatalogValidationError
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
 
@@ -46,23 +45,12 @@ def _validated_reuse_filters(
             raise ValueError(
                 f"uData reuse {query} filter {key!r} must be a string, boolean, or tuple of non-empty strings."
             )
+        if key in _REUSE_BOOLEAN_FILTERS and type(value) is not bool:
+            raise ValueError(f"uData reuse {query} filter {key!r} must be a boolean.")
 
 
 def segment(value: str, operation: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value in {".", ".."}
-        or any(c in "/?#\"'" for c in value)
-        or any(ord(c) < 32 for c in value)
-    ):
-        raise CatalogValidationError(
-            f"uData reuse identifier for {operation} must be one URL-safe path segment.",
-            operation=operation,
-            platform="udata",
-            safe_action="Pass a prior typed read identifier.",
-        )
-    return quote(value, safe="")
+    return path_segment(value, operation, "uData reuse")
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +78,8 @@ class ReuseListQuery:
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("uData reuse list q must be a string when supplied.")
         _validated_reuse_filters(self.filters, query="list")
+        if self.filters is not None:
+            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "reuse list filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]
@@ -147,6 +137,8 @@ class ReuseSearchQuery:
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("uData reuse search q must be a string when supplied.")
         _validated_reuse_filters(self.filters, query="search")
+        if self.filters is not None:
+            object.__setattr__(self, "filters", _frozen_mapping(self.filters, "reuse search filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         params: list[tuple[str, str]] = [("page", str(self.page)), ("page_size", str(self.page_size))]

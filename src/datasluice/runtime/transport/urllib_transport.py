@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import ssl
 from collections.abc import Iterator, Mapping
-from datetime import UTC, datetime
 from email.message import Message
-from email.utils import parsedate_to_datetime
 from http.client import HTTPException, HTTPMessage
 from typing import IO
 from urllib.error import HTTPError
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.request import (
     HTTPDefaultErrorHandler,
     HTTPErrorProcessor,
@@ -24,6 +22,13 @@ from urllib.request import (
 from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
+from datasluice.runtime.transport._shared import (
+    ALLOWED_REDIRECT_SCHEMES,
+    _enforce_body_limit,
+    _next_redirect_request,
+    _redacted_redirect_url,
+    _retry_after,
+)
 from datasluice.runtime.transport.base import (
     CatalogTransport,
     RedirectPolicy,
@@ -31,64 +36,9 @@ from datasluice.runtime.transport.base import (
     RuntimeResponse,
     RuntimeStreamResponse,
     TransportFailure,
-    drop_body_transfer_headers,
-    redirect_method_and_body,
-    strip_sensitive_redirect_headers,
 )
 
-_CREDENTIAL_PARTS = (
-    "api_key",
-    "apikey",
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "credential",
-    "authorization",
-    "signature",
-)
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
-_ALLOWED_SCHEMES = frozenset({"http", "https"})
-
-
-def _retry_after(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        return max(0.0, float(value))
-    except ValueError:
-        try:
-            parsed = parsedate_to_datetime(value)
-        except (TypeError, ValueError):
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return max(0.0, (parsed - datetime.now(UTC)).total_seconds())
-
-
-def _origin(url: str) -> tuple[str, str, int | None]:
-    try:
-        parsed = urlsplit(url)
-        port = parsed.port
-    except ValueError:
-        return "", "", None
-    return parsed.scheme.lower(), parsed.hostname or "", port or (443 if parsed.scheme == "https" else 80)
-
-
-def _redacted_redirect_url(url: str) -> str:
-    """Render *url* for exception surfaces with credential-shaped query params removed."""
-    try:
-        parsed = urlsplit(url)
-        query = urlencode(
-            [
-                (key, value)
-                for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-                if not any(part in key.lower() for part in _CREDENTIAL_PARTS)
-            ]
-        )
-    except ValueError:
-        return "<unparseable-redirect-target>"
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
 
 
 def _tls_context(policy: TLSPolicy) -> ssl.SSLContext:
@@ -204,30 +154,9 @@ class UrllibCatalogTransport(CatalogTransport):
             raise TransportFailure(
                 f"urllib received an unusable redirect target {_redacted_redirect_url(location)!r}."
             ) from exc
-        if urlsplit(next_url).scheme.lower() not in _ALLOWED_SCHEMES:
+        if urlsplit(next_url).scheme.lower() not in ALLOWED_REDIRECT_SCHEMES:
             raise TransportFailure(f"Refusing to follow non-HTTP redirect to {_redacted_redirect_url(next_url)!r}.")
-        headers_for_next = dict(request.headers)
-        if not self._retains_credentials(request.url, next_url):
-            headers_for_next = strip_sensitive_redirect_headers(headers_for_next)
-        next_method, next_body, next_files = redirect_method_and_body(
-            request.method, status, request.body, request.files
-        )
-        if (next_body is not None or next_files) and _origin(request.url) != _origin(next_url):
-            raise TransportFailure(
-                "urllib refused to relay a request body to a different redirect origin "
-                f"{_redacted_redirect_url(next_url)!r}."
-            )
-        if next_body is None and not next_files:
-            headers_for_next = drop_body_transfer_headers(headers_for_next)
-        return RuntimeRequest(
-            method=next_method,
-            url=next_url,
-            headers=headers_for_next,
-            body=next_body,
-            files=next_files,
-            redirect_policy=request.redirect_policy,
-            max_response_bytes=request.max_response_bytes,
-        )
+        return _next_redirect_request(request, status, next_url, self._credential_scope, "urllib")
 
     def close(self) -> None:
         """Mark the transport closed; urllib has no persistent pool."""
@@ -274,14 +203,6 @@ class UrllibCatalogTransport(CatalogTransport):
             retry_after=_retry_after(_header(headers, "retry-after")),
         )
 
-    def _retains_credentials(self, current_url: str, next_url: str) -> bool:
-        """Decide whether credential-bearing headers survive this hop."""
-        scope = self._credential_scope
-        if scope is None:
-            return _origin(current_url) == _origin(next_url)
-        scheme, host, _ = _origin(next_url)
-        return scope.send_on_redirect and scheme in scope.allowed_schemes and host in scope.allowed_hosts
-
 
 def _header_map(headers: Mapping[str, str] | Message[str, str]) -> dict[str, str]:
     """Preserve duplicate response headers as comma-joined values."""
@@ -314,8 +235,7 @@ def _read_response_body(response: object, max_bytes: int | None) -> bytes:
         if not chunk:
             return b"".join(parts)
         size += len(chunk)
-        if size > max_bytes:
-            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        _enforce_body_limit(size, max_bytes)
         parts.append(chunk)
 
 

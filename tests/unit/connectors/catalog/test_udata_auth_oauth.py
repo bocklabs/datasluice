@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl
 
 import pytest
 
-from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
     OAuthClientRequest,
@@ -28,15 +28,24 @@ from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
+from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
 from datasluice.runtime.events import EventEmitter, ListSink
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from datasluice.runtime.transport.base import RuntimeRequest
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
+from tests.helpers.udata_test_support import (
+    UDATA_ORIGIN,
+    assert_ambiguous_mutation_receipt,
+    async_client,
+    declared_routes,
+    html_async_route_table,
+    html_sync_route_table,
+    mutation_policy,
+    sync_client,
+)
 
-ORIGIN = "http://127.0.0.1:5640"
+ORIGIN = UDATA_ORIGIN
 _JSON = "application/json"
-_HTML = "text/html; charset=utf-8"
 SITE = {"id": "site", "title": "uData", "version": "17.6.0"}
 CREDENTIAL = UDataCredential(api_key="unit-credential")
 PERMISSIONS = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA)
@@ -52,48 +61,8 @@ ASSIGNED_ROUTES = (
 )
 
 
-class _Router:
-    def __init__(self, routes: dict[tuple[str, str], tuple[int, object]]) -> None:
-        self.routes = routes
-        self.requests: list[RuntimeRequest] = []
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        status, payload = self.routes[(request.method, request.url)]
-        # None models the stock RFC 7009 empty 200 body.
-        body = b"" if payload is None else payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-        return RuntimeResponse(
-            status_code=status, headers={"Content-Type": _HTML if payload is None else _JSON}, body=body
-        )
-
-    def close(self) -> None:
-        return None
-
-
-class _AsyncRouter:
-    def __init__(self, routes: dict[tuple[str, str], tuple[int, object]]) -> None:
-        self._sync = _Router(routes)
-        self.requests = self._sync.requests
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        return self._sync.send(request)
-
-    async def aclose(self) -> None:
-        return None
-
-
-def _routes(*items: tuple[str, str, int, object]) -> dict[tuple[str, str], tuple[int, object]]:
-    routes = {("GET", f"{ORIGIN}/api/1/site/"): (200, SITE)}
-    routes.update({(method, f"{ORIGIN}{path}"): (status, body) for method, path, status, body in items})
-    return routes
-
-
 def _policy(name: str, target: str, *, destructive: bool = False) -> MutationPolicy:
-    return MutationPolicy(
-        destructive=destructive,
-        confirmation=ConfirmationPolicy(confirmed=True, operation=wire.OPERATIONS[name], target=target),
-        concurrency=ConcurrencyPolicy(overwrite=True),
-    )
+    return mutation_policy(wire.OPERATIONS[name], target, destructive=destructive)
 
 
 def _form(request: RuntimeRequest) -> dict[str, str]:
@@ -155,8 +124,10 @@ def test_query_routes_refuse_a_request_stock_would_reject() -> None:
 
 
 def test_oauth_token_route_sends_exact_form_without_cookie_or_session_auth() -> None:
-    router = _Router(_routes(("POST", "/oauth/token", 200, {"access_token": "opaque", "token_type": "Bearer"})))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    router = html_sync_route_table(
+        declared_routes(("POST", "/oauth/token", 200, {"access_token": "opaque", "token_type": "Bearer"}), site=SITE)
+    )
+    client = sync_client(router, CREDENTIAL)
     token = OAuthTokenRequest(grant_type="client_credentials", client_id="client-id", client_secret="secret-value")
     with client:
         result = client.auth_oauth.access_token(token, PERMISSIONS)
@@ -174,8 +145,8 @@ def test_oauth_token_route_sends_exact_form_without_cookie_or_session_auth() -> 
 
 
 def test_oauth_revoke_route_sends_exact_form_and_records_target() -> None:
-    router = _Router(_routes(("POST", "/oauth/revoke", 200, None)))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    router = html_sync_route_table(declared_routes(("POST", "/oauth/revoke", 200, None), site=SITE))
+    client = sync_client(router, CREDENTIAL)
     revoke = OAuthRevokeRequest(token="opaque-access-token", token_type_hint="access_token")
     with client:
         result = client.auth_oauth.revoke_token(
@@ -193,8 +164,10 @@ def test_oauth_revoke_route_sends_exact_form_and_records_target() -> None:
 
 def test_oauth_client_info_reports_the_stock_session_gate_without_fabricating_consent() -> None:
     """Stock guards this route with login_required, so an API key gets no consent body."""
-    router = _Router(_routes(("GET", "/oauth/client_info?client_id=client-id", 401, None)))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    router = html_sync_route_table(
+        declared_routes(("GET", "/oauth/client_info?client_id=client-id", 401, None), site=SITE)
+    )
+    client = sync_client(router, CREDENTIAL)
     with client, pytest.raises(CatalogError):
         client.auth_oauth.client_info(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
     assert router.requests[-1].url == f"{ORIGIN}/oauth/client_info?client_id=client-id"
@@ -217,8 +190,10 @@ def test_oauth_consent_summary_keeps_only_status_for_a_session_gated_reply() -> 
 
 
 def test_oauth_authorize_get_sends_the_query_and_no_form_body() -> None:
-    router = _Router(_routes(("GET", "/oauth/authorize?client_id=client-id&response_type=code", 200, None)))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    router = html_sync_route_table(
+        declared_routes(("GET", "/oauth/authorize?client_id=client-id&response_type=code", 200, None), site=SITE)
+    )
+    client = sync_client(router, CREDENTIAL)
     with client:
         summary = client.auth_oauth.authorize(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
     assert router.requests[-1].method == "GET"
@@ -229,8 +204,8 @@ def test_oauth_authorize_get_sends_the_query_and_no_form_body() -> None:
 
 def test_oauth_error_route_is_an_exact_public_html_read() -> None:
     """The stock route answers the public error page, and keeps no body."""
-    router = _Router(_routes(("GET", "/oauth/error", 200, None)))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    router = html_sync_route_table(declared_routes(("GET", "/oauth/error", 200, None), site=SITE))
+    client = sync_client(router, CREDENTIAL)
     with client:
         outcome = client.auth_oauth.oauth_error()
     request = router.requests[-1]
@@ -243,8 +218,8 @@ def test_oauth_error_route_is_an_exact_public_html_read() -> None:
 @pytest.mark.parametrize("accept", [True, False])
 def test_authorize_post_reports_the_observed_outcome_not_a_fabricated_consent(accept: bool) -> None:
     """The consent POST must not report "authorized" for a declined decision."""
-    router = _Router(_routes(("POST", "/oauth/authorize", 200, None)))
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = html_sync_route_table(declared_routes(("POST", "/oauth/authorize", 200, None), site=SITE))
+    with sync_client(router, CREDENTIAL) as client:
         outcome = client.auth_oauth.authorize_post(
             OAuthAuthorizeDecision(accept=accept),
             PERMISSIONS,
@@ -261,8 +236,8 @@ def test_authorize_post_outcomes_stay_distinguishable() -> None:
     """Accept and decline must never collapse into one reported summary."""
 
     def run(accept: bool) -> dict[str, object]:
-        router = _Router(_routes(("POST", "/oauth/authorize", 200, None)))
-        with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        router = html_sync_route_table(declared_routes(("POST", "/oauth/authorize", 200, None), site=SITE))
+        with sync_client(router, CREDENTIAL) as client:
             return client.auth_oauth.authorize_post(
                 OAuthAuthorizeDecision(accept=accept), PERMISSIONS, _policy("authorize_post", "self")
             ).to_dict()
@@ -273,8 +248,10 @@ def test_authorize_post_outcomes_stay_distinguishable() -> None:
 
 def test_form_bodies_keep_their_declared_media_type() -> None:
     """A form body must never be relabelled as JSON by the shared header seam."""
-    router = _Router(_routes(("POST", "/oauth/token", 200, {"access_token": "opaque", "token_type": "Bearer"})))
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = html_sync_route_table(
+        declared_routes(("POST", "/oauth/token", 200, {"access_token": "opaque", "token_type": "Bearer"}), site=SITE)
+    )
+    with sync_client(router, CREDENTIAL) as client:
         client.auth_oauth.access_token(OAuthTokenRequest(grant_type="client_credentials", client_id="c"), PERMISSIONS)
     assert router.requests[-1].headers["Content-Type"] == wire.FORM_MEDIA_TYPE
 
@@ -285,17 +262,14 @@ def test_oauth_error_returns_the_stock_missing_template_status() -> None:
     The typed surface exists to report that page, so the status must be returned
     rather than raised past the model.
     """
-    router = _Router(_routes(("GET", "/oauth/error", 500, None)))
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = html_sync_route_table(declared_routes(("GET", "/oauth/error", 500, None), site=SITE))
+    with sync_client(router, CREDENTIAL) as client:
         outcome = client.auth_oauth.oauth_error()
     assert outcome.to_dict() == {"session_gated": True, "status_code": 500, "media_type": "text/html"}
 
     async def run() -> OAuthErrorDocument:
-        async with AsyncUDataClient(
-            _AsyncRouter(_routes(("GET", "/oauth/error", 500, None))),
-            declared_udata_profile(),
-            origin=ORIGIN,
-            credentials=CREDENTIAL,
+        async with async_client(
+            html_async_route_table(declared_routes(("GET", "/oauth/error", 500, None), site=SITE)), CREDENTIAL
         ) as client:
             return await client.auth_oauth.oauth_error()
 
@@ -304,9 +278,9 @@ def test_oauth_error_returns_the_stock_missing_template_status() -> None:
 
 def test_oauth_error_still_raises_on_a_status_outside_the_modelled_page() -> None:
     """A status the route does not model must not be laundered into a document."""
-    router = _Router(_routes(("GET", "/oauth/error", 502, None)))
+    router = html_sync_route_table(declared_routes(("GET", "/oauth/error", 502, None), site=SITE))
     with (
-        SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client,
+        sync_client(router, CREDENTIAL) as client,
         pytest.raises(CatalogError),
     ):
         client.auth_oauth.oauth_error()
@@ -314,16 +288,16 @@ def test_oauth_error_still_raises_on_a_status_outside_the_modelled_page() -> Non
 
 def test_oauth_error_route_never_sends_the_api_key() -> None:
     """The public error page needs no credential, so the API key must not reach it."""
-    routes = _routes(("GET", "/oauth/error", 200, None))
-    sync_router = _Router(routes)
-    with SyncUDataClient(sync_router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    routes = declared_routes(("GET", "/oauth/error", 200, None), site=SITE)
+    sync_router = html_sync_route_table(routes)
+    with sync_client(sync_router, CREDENTIAL) as client:
         client.auth_oauth.oauth_error()
     assert "X-API-KEY" not in sync_router.requests[-1].headers
 
-    router = _AsyncRouter(routes)
+    router = html_async_route_table(routes)
 
     async def run() -> None:
-        async with AsyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+        async with async_client(router, CREDENTIAL) as client:
             await client.auth_oauth.oauth_error()
 
     asyncio.run(run())
@@ -332,12 +306,13 @@ def test_oauth_error_route_never_sends_the_api_key() -> None:
 
 def test_client_info_and_authorize_never_send_the_api_key() -> None:
     """Login-required browser GETs cannot be authenticated by an API key."""
-    routes = _routes(
+    routes = declared_routes(
         ("GET", "/oauth/client_info?client_id=client-id", 401, None),
         ("GET", "/oauth/authorize?client_id=client-id&response_type=code", 401, None),
+        site=SITE,
     )
-    router = _Router(routes)
-    with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    router = html_sync_route_table(routes)
+    with sync_client(router, CREDENTIAL) as client:
         for name in ("client_info", "authorize"):
             with pytest.raises(CatalogError):
                 getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
@@ -371,8 +346,10 @@ def test_malformed_oauth_documents_fail_with_route_identity(payload: dict[str, o
 
 
 def test_invalid_oauth_inputs_fail_before_any_dispatch() -> None:
-    router = _Router(_routes(("POST", "/oauth/token", 200, {"access_token": "opaque"})))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    router = html_sync_route_table(
+        declared_routes(("POST", "/oauth/token", 200, {"access_token": "opaque"}), site=SITE)
+    )
+    client = sync_client(router, CREDENTIAL)
     with client, pytest.raises(ValueError):
         client.auth_oauth.access_token(OAuthTokenRequest(grant_type="", client_id="c"), PERMISSIONS)
     with client, pytest.raises(ValueError):
@@ -383,22 +360,21 @@ def test_invalid_oauth_inputs_fail_before_any_dispatch() -> None:
 
 
 def test_async_oauth_service_matches_sync_wire_exactly() -> None:
-    routes = _routes(
+    routes = declared_routes(
         ("POST", "/oauth/token", 200, {"access_token": "opaque", "token_type": "Bearer"}),
         ("GET", "/oauth/client_info?client_id=client-id", 200, {"client": {"name": "Portal"}, "scopes": ["default"]}),
+        site=SITE,
     )
     token = OAuthTokenRequest(grant_type="client_credentials", client_id="client-id", client_secret="secret-value")
-    sync_router = _Router(routes)
-    with SyncUDataClient(sync_router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
+    sync_router = html_sync_route_table(routes)
+    with sync_client(sync_router, CREDENTIAL) as client:
         sync_token = client.auth_oauth.access_token(token, PERMISSIONS)
         sync_info = client.auth_oauth.client_info(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
 
-    async_router = _AsyncRouter(routes)
+    async_router = html_async_route_table(routes)
 
     async def run() -> tuple[OAuthTokenResult, OAuthConsentSummary]:
-        async with AsyncUDataClient(
-            async_router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-        ) as client:
+        async with async_client(async_router, CREDENTIAL) as client:
             return await client.auth_oauth.access_token(token, PERMISSIONS), await client.auth_oauth.client_info(
                 OAuthClientRequest(client_id="client-id"), PERMISSIONS
             )
@@ -414,21 +390,18 @@ def test_async_oauth_service_matches_sync_wire_exactly() -> None:
 @pytest.mark.parametrize("name", ["client_info", "authorize"])
 def test_malformed_json_on_query_reads_fails_with_operation_identity(name: str) -> None:
     path = wire.build_request(name, OAuthClientRequest(client_id="client-id"))[1]
-    router = _Router(_routes(("GET", path, 200, b"{")))
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    router = html_sync_route_table(declared_routes(("GET", path, 200, b"{"), site=SITE))
+    client = sync_client(router, CREDENTIAL)
     with client, pytest.raises(CatalogValidationError) as raised:
         getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
     assert raised.value.operation == wire.OPERATIONS[name]
 
     async def run() -> None:
-        async with AsyncUDataClient(
-            _AsyncRouter(_routes(("GET", path, 200, b"{"))),
-            declared_udata_profile(),
-            origin=ORIGIN,
-            credentials=CREDENTIAL,
-        ) as async_client:
+        async with async_client(
+            html_async_route_table(declared_routes(("GET", path, 200, b"{"), site=SITE)), CREDENTIAL
+        ) as async_client_:
             with pytest.raises(CatalogValidationError):
-                await getattr(async_client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+                await getattr(async_client_.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
 
     asyncio.run(run())
 
@@ -461,80 +434,58 @@ def test_token_success_requires_typed_metadata(document: dict[str, object]) -> N
     assert raised.value.operation == wire.OPERATIONS["access_token"]
 
 
-@pytest.mark.parametrize(
-    ("name", "body", "payload"),
-    [
-        pytest.param(
-            "access_token",
-            OAuthTokenRequest(grant_type="client_credentials", client_id="c"),
-            {"token_type": "Bearer"},
-            id="access-token",
-        ),
-        pytest.param(
-            "revoke_token",
-            OAuthRevokeRequest(token="opaque"),
-            {"unexpected": "document"},
-            id="revoke-token",
-        ),
-    ],
+_DECODE_FAILURE_CASES = (
+    pytest.param(
+        "access_token",
+        OAuthTokenRequest(grant_type="client_credentials", client_id="c"),
+        {"token_type": "Bearer"},
+        id="access-token",
+    ),
+    pytest.param(
+        "revoke_token",
+        OAuthRevokeRequest(token="opaque"),
+        {"unexpected": "document"},
+        id="revoke-token",
+    ),
 )
+
+
+@pytest.mark.parametrize(("name", "body", "payload"), _DECODE_FAILURE_CASES)
 def test_post_dispatch_token_decode_failure_keeps_receipt_and_failed_event(
     name: str, body: OAuthTokenRequest | OAuthRevokeRequest, payload: dict[str, object]
 ) -> None:
     path = "/oauth/token" if name == "access_token" else "/oauth/revoke"
     events = ListSink()
-    router = _Router(_routes(("POST", path, 200, payload)))
-    client = SyncUDataClient(
-        router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, emitter=EventEmitter(sinks=(events,))
-    )
+    router = html_sync_route_table(declared_routes(("POST", path, 200, payload), site=SITE))
+    client = sync_client(router, CREDENTIAL, emitter=EventEmitter(sinks=(events,)))
     policy = None if name == "access_token" else _policy(name, f"request:{name}", destructive=True)
     with client, pytest.raises(CatalogValidationError) as raised:
         if isinstance(body, OAuthTokenRequest):
             client.auth_oauth.access_token(body, PERMISSIONS)
         else:
             client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
-    receipt = raised.value.__dict__["mutation_receipt"]
-    assert receipt.operation == wire.OPERATIONS[name]
-    assert receipt.outcome == "ambiguous"
-    assert receipt.target.value == f"request:{name}"
-    assert receipt.audit_metadata["status_code"] == 200
-    assert "unexpected" not in repr(raised.value) + repr(receipt.to_dict())
-    assert [event.outcome for event in events.events if event.operation_id == wire.OPERATIONS[name]] == ["failed"]
+    assert_ambiguous_mutation_receipt(
+        raised.value,
+        raised.value.__dict__["mutation_receipt"],
+        events,
+        operation=wire.OPERATIONS[name],
+        target=f"request:{name}",
+        status_code=200,
+        secret="unexpected",
+    )
 
 
-@pytest.mark.parametrize(
-    ("name", "body", "payload"),
-    [
-        pytest.param(
-            "access_token",
-            OAuthTokenRequest(grant_type="client_credentials", client_id="c"),
-            {"token_type": "Bearer"},
-            id="access-token",
-        ),
-        pytest.param(
-            "revoke_token",
-            OAuthRevokeRequest(token="opaque"),
-            {"unexpected": "document"},
-            id="revoke-token",
-        ),
-    ],
-)
+@pytest.mark.parametrize(("name", "body", "payload"), _DECODE_FAILURE_CASES)
 def test_async_post_dispatch_token_decode_failure_keeps_receipt_and_failed_event(
     name: str, body: OAuthTokenRequest | OAuthRevokeRequest, payload: dict[str, object]
 ) -> None:
     path = "/oauth/token" if name == "access_token" else "/oauth/revoke"
     events = ListSink()
-    router = _AsyncRouter(_routes(("POST", path, 200, payload)))
+    router = html_async_route_table(declared_routes(("POST", path, 200, payload), site=SITE))
     policy = None if name == "access_token" else _policy(name, f"request:{name}", destructive=True)
 
     async def run() -> tuple[CatalogValidationError, MutationReceipt]:
-        async with AsyncUDataClient(
-            router,
-            declared_udata_profile(),
-            origin=ORIGIN,
-            credentials=CREDENTIAL,
-            emitter=EventEmitter(sinks=(events,)),
-        ) as client:
+        async with async_client(router, CREDENTIAL, emitter=EventEmitter(sinks=(events,))) as client:
             with pytest.raises(CatalogValidationError) as raised:
                 if isinstance(body, OAuthTokenRequest):
                     await client.auth_oauth.access_token(body, PERMISSIONS)
@@ -543,31 +494,27 @@ def test_async_post_dispatch_token_decode_failure_keeps_receipt_and_failed_event
             return raised.value, raised.value.__dict__["mutation_receipt"]
 
     error, receipt = asyncio.run(run())
-    assert receipt.operation == wire.OPERATIONS[name]
-    assert receipt.outcome == "ambiguous"
-    assert receipt.target.value == f"request:{name}"
-    assert receipt.audit_metadata["status_code"] == 200
-    assert "unexpected" not in repr(error) + repr(receipt.to_dict())
-    assert [event.outcome for event in events.events if event.operation_id == wire.OPERATIONS[name]] == ["failed"]
+    assert_ambiguous_mutation_receipt(
+        error,
+        receipt,
+        events,
+        operation=wire.OPERATIONS[name],
+        target=f"request:{name}",
+        status_code=200,
+        secret="unexpected",
+    )
 
 
 def test_offline_oauth_mutation_helpers_accept_empty_revocation_success_in_both_modes() -> None:
     raw = (200, None, {"content-type": _JSON})
     body = OAuthRevokeRequest(token="opaque")
-    with SyncUDataClient(
-        _Router(_routes(("POST", "/oauth/revoke", 200, None))),
-        declared_udata_profile(),
-        origin=ORIGIN,
-        credentials=CREDENTIAL,
-    ) as client:
+    revoke_routes = declared_routes(("POST", "/oauth/revoke", 200, None), site=SITE)
+    with sync_client(html_sync_route_table(revoke_routes), CREDENTIAL) as client:
         assert_oauth_mutation_sync(client, "revoke_token", raw, body, PERMISSIONS)
 
     async def run() -> None:
-        async with AsyncUDataClient(
-            _AsyncRouter(_routes(("POST", "/oauth/revoke", 200, None))),
-            declared_udata_profile(),
-            origin=ORIGIN,
-            credentials=CREDENTIAL,
+        async with async_client(
+            html_async_route_table(declared_routes(("POST", "/oauth/revoke", 200, None), site=SITE)), CREDENTIAL
         ) as client:
             await assert_oauth_mutation_async(client, "revoke_token", raw, body, PERMISSIONS)
 
@@ -575,17 +522,18 @@ def test_offline_oauth_mutation_helpers_accept_empty_revocation_success_in_both_
 
 
 def test_oauth_secrets_never_enter_retained_results_or_reprs() -> None:
-    router = _Router(
-        _routes(
+    router = html_sync_route_table(
+        declared_routes(
             (
                 "POST",
                 "/oauth/token",
                 200,
                 {"token_type": "Bearer", "access_token": "opaque-secret-token", "expires_in": 60},
-            )
+            ),
+            site=SITE,
         )
     )
-    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    client = sync_client(router, CREDENTIAL)
     token = OAuthTokenRequest(grant_type="client_credentials", client_id="client-id", client_secret="secret-value")
     with client:
         result = client.auth_oauth.access_token(token, PERMISSIONS)

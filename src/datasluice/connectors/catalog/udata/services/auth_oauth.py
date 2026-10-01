@@ -26,7 +26,7 @@ from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
 
 from .datasets import _enforce_mutation_policy, _error_status, _mutation_outcome, _require_mutation_permission
-from .organizations_memberships import _attach, _receipt
+from .organizations_memberships import _attach, _org_receipt
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -77,7 +77,7 @@ def _media_type(headers: Mapping[str, str]) -> str:
 
 def _success_receipt(operation: str, target: str, policy: Policy, status: int) -> MutationReceipt:
     """Build the redacted receipt for one successful OAuth mutation."""
-    return _receipt(operation, target, policy, "succeeded", status, "oauth", kind=_KIND)
+    return _org_receipt(operation, target, policy, "succeeded", status, "oauth", kind=_KIND)
 
 
 def _token_result(name: str, payload: object, receipt: MutationReceipt) -> OAuthTokenResult:
@@ -106,7 +106,7 @@ def _error_receipt(
     operation = wire.OPERATIONS[name]
     outcome = "ambiguous" if interrupted else _mutation_outcome(error, response)
     _attach(
-        error, _receipt(operation, _target(name), policy, outcome, _error_status(error, response), name, kind=_KIND)
+        error, _org_receipt(operation, _target(name), policy, outcome, _error_status(error, response), name, kind=_KIND)
     )
 
 

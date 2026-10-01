@@ -50,6 +50,10 @@ def _fields(value: Mapping[str, object] | None, field_name: str) -> Mapping[str,
     return None if value is None else _frozen_mapping(value, field_name)
 
 
+def _assignments(assignments: tuple[Mapping[str, object], ...], field_name: str) -> tuple[Mapping[str, object], ...]:
+    return tuple(_frozen_mapping(item, field_name) for item in assignments)
+
+
 def _is_filter_value(value: object) -> bool:
     """Return whether one filter value is a string, a boolean, or a tuple of non-empty strings."""
     return isinstance(value, (str, bool)) or (
@@ -233,6 +237,7 @@ class MembershipRequestInput:
         _role(self.role, "membership role", allow_none=True)
         if not isinstance(self.assignments, tuple) or not all(isinstance(item, Mapping) for item in self.assignments):
             raise ValueError("uData membership assignments must be a tuple of mappings.")
+        object.__setattr__(self, "assignments", _assignments(self.assignments, "membership assignments"))
         if self.assignments and self.role != "partial_editor":
             raise ValueError("uData membership assignments require the partial_editor role.")
 
@@ -264,6 +269,7 @@ class OrganizationInvitationInput:
         _role(self.role, "invitation role", allow_none=True)
         if not isinstance(self.assignments, tuple) or not all(isinstance(item, Mapping) for item in self.assignments):
             raise ValueError("uData invitation assignments must be a tuple of mappings.")
+        object.__setattr__(self, "assignments", _assignments(self.assignments, "invitation assignments"))
         if self.assignments and self.role != "partial_editor":
             raise ValueError("uData invitation assignments require the partial_editor role.")
 

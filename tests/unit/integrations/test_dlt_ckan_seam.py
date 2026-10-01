@@ -168,6 +168,12 @@ def test_ckan_live_client_flows_through_dlt_source_end_to_end(tmp_path: Any) -> 
         server.server_close()
 
 
+def test_client_without_transport_accessor_raises_the_existing_type_error() -> None:
+    """A protocol-compatible client lacking the public accessor is rejected with today's TypeError."""
+    with pytest.raises(TypeError, match="exposing the public transport accessor"):
+        datasluice_source(cast(SyncCatalogClient, _TransportlessCkanLikeConnector()), _ckan_query())
+
+
 def test_non_resources_list_operation_raises_the_existing_value_error() -> None:
     """Any operation other than resources.list is rejected with today's ValueError."""
     query = CatalogOperationRequest(operation_id=OperationId(platform="ckan", service="datasets", method="list"))

@@ -21,7 +21,7 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import attach_catalog_metadata
+from datasluice.errors.catalog import NativeCatalogError, attach_catalog_metadata
 from datasluice.runtime.mutation import build_mutation_receipt
 
 from .datasets import (
@@ -234,6 +234,10 @@ class SyncResourcesService:
 
     def __init__(self, client: SyncUDataClient) -> None:
         self._client = client
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]:
+        return NativeCatalogError
 
     def redirect(self, resource_id: str) -> str:
         method, path, _, _ = wire.redirect_resource_request(resource_id)
@@ -659,6 +663,10 @@ class AsyncResourcesService:
 
     def __init__(self, client: AsyncUDataClient) -> None:
         self._client = client
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]:
+        return NativeCatalogError
 
     async def redirect(self, resource_id: str) -> str:
         method, path, _, _ = wire.redirect_resource_request(resource_id)

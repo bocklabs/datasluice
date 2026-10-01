@@ -10,6 +10,7 @@ from datasluice.connectors.catalog.udata.clients import create_async_client, cre
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
+from datasluice.connectors.catalog.udata.models.reuses import ReuseCreateInput, ReuseSuggestQuery
 from datasluice.connectors.catalog.udata.models.activity_discussions import (
     ActivityQuery,
     CommentInput,
@@ -79,6 +80,26 @@ def _post_page():
     }
 
 
+def _assert_token_material_absent(result, minted, label):
+    """Reveal the one-time token and prove the minted plaintext is retained nowhere.
+
+    The serialized mapping never carried a ``token`` key, so the property worth
+    proving is that the plaintext the transport minted survives in no surface a
+    caller can inspect: the receipt, the audit metadata, or any repr.
+    """
+    revealed = result.secret.reveal_once()
+    assert revealed == minted, label
+    surfaces = {
+        "to_dict": json.dumps(result.to_dict()),
+        "receipt": json.dumps(result.receipt.to_dict()),
+        "audit_metadata": repr(result.receipt.audit_metadata),
+        "result repr": repr(result),
+        "secret repr": repr(result.secret),
+    }
+    leaked = sorted(name for name, surface in surfaces.items() if minted in surface)
+    assert not leaked, f"{label} retained the minted token in {leaked}"
+
+
 def _site_response(transport, url, method):
     """Return the stub for a site, account, or API token route."""
     if url.endswith("/api/1/site/"):
@@ -117,12 +138,10 @@ def _oauth_response(url, method):
     return None
 
 
-def _taxonomy_response(url, method):
+def _taxonomy_response(url):
     """Return the stub for a badge, suggest, licence, frequency, extension, or schema route."""
     if url.endswith("/api/1/datasets/badges/"):
-        if method == "GET":
-            return _json({"pivotal-data": "Pivotal data"})
-        return _json({"kind": "pivotal-data", "label": "Pivotal data"})
+        return _json({"pivotal-data": "Pivotal data"})
     if "/datasets/suggest/formats/" in url or "/datasets/suggest/mime/" in url:
         return _json([{"text": "csv"}])
     if url.endswith("/api/1/datasets/licenses/"):
@@ -171,26 +190,54 @@ def _report_response(url, method):
     return None
 
 
+def _reuse_page():
+    """Return the payload the stubbed reuse collections answer with."""
+    return {
+        "data": [{"id": "wheel-reuse", "title": "Wheel reuse"}],
+        "next_page": None,
+        "page": 1,
+        "page_size": 20,
+        "previous_page": None,
+        "total": 1,
+    }
+
+
+def _reuse_record():
+    """Return the payload the stubbed single-reuse and reuse mutation routes answer with."""
+    return _json({"featured": False, "id": "wheel-reuse", "title": "Wheel reuse"})
+
+
+def _reuse_response(url, method):
+    """Return the stub for a reuse collection, a single reuse, or a reuse taxonomy route."""
+    path = url.partition("?")[0]
+    if path.endswith("/api/1/reuses/recent.atom"):
+        return b"<feed/>", {"Content-Type": "application/atom+xml"}
+    if path.endswith("/api/1/reuses/suggest/"):
+        return _json([{"text": "wheel"}])
+    if path.endswith("/api/1/reuses/badges/"):
+        return _json({"reuses": "Reuses"})
+    if path.endswith("/api/1/reuses/types/"):
+        return _json([{"id": "application", "label": "Application"}])
+    if path.endswith("/api/1/reuses/topics/"):
+        return _json([{"id": "health", "label": "Health"}])
+    if path.endswith("/api/1/reuses/"):
+        return _json(_reuse_page()) if method == "GET" else _reuse_record()
+    if "/api/2/reuses/" in path:
+        return _json(_reuse_page())
+    if "/api/1/reuses/" in path:
+        return _empty() if method == "DELETE" else _reuse_record()
+    return None
+
+
 def _content_response(url, method):
-    """Return the stub for a post, feed, or reuse route."""
+    """Return the stub for a post, post-feed, or reuse route."""
     if url.endswith("/api/1/posts/wheel-post/"):
         return _json({"id": "wheel-post", "name": "Wheel post"})
     if "/api/1/posts/" in url or "/api/2/posts/" in url:
         if url.endswith("/api/1/posts/recent.atom"):
             return b"<feed/>", {"Content-Type": "application/atom+xml"}
         return _json(_post_page())
-    if "/api/1/reuses/" in url or "/api/2/reuses/" in url:
-        return _json(
-            {
-                "data": [{"id": "wheel-reuse", "title": "Wheel reuse"}],
-                "next_page": None,
-                "page": 1,
-                "page_size": 20,
-                "previous_page": None,
-                "total": 1,
-            }
-        )
-    return None
+    return _reuse_response(url, method)
 
 
 class Transport:
@@ -214,7 +261,7 @@ class Transport:
             return b"id\nwheel\n", {"Content-Type": "text/csv"}
         if "/api/1/organizations/abc/" in url:
             return _json({"id": "abc", "name": "Wheel organization", "description": "d"})
-        response = _taxonomy_response(url, method)
+        response = _taxonomy_response(url)
         if response is not None:
             return response
         response = _discussion_response(url, method)
@@ -382,9 +429,7 @@ assert oauth_revoked.receipt.operation == "udata/oauth.revoke-token"
 assert client.auth_oauth.oauth_error().session_gated is True
 assert client.auth_oauth.authorize(OAuthClientRequest(client_id="wheel-client"), sync_permissions).session_gated is True
 assert created_token.receipt.audit_metadata["status_code"] == 201
-assert "token" not in created_token.to_dict()
-if not created_token.secret.reveal_once():
-    raise AssertionError("installed-wheel token reveal failed")
+_assert_token_material_absent(created_token, transport.token_value, "sync api token")
 revoked_token = client.users_tokens.revoke_api_token(
     created_token.metadata.id,
     sync_permissions,
@@ -556,6 +601,53 @@ read_notification = client.posts_reports.read_notification(
     ),
 )
 assert read_notification.record is not None
+assert client.reuses.list_reuses().payload["total"] == 1
+assert client.reuses.recent_reuses_atom_feed().payload["media_type"] == "application/atom+xml"
+assert client.reuses.suggest_reuses(ReuseSuggestQuery("re"))[0].payload["text"] == "wheel"
+assert client.reuses.available_reuse_badges().payload["reuses"] == "Reuses"
+assert client.reuses.reuse_types()[0].payload["label"] == "Application"
+assert client.reuses.reuse_topics()[0].payload["label"] == "Health"
+assert client.reuses.get_reuse("wheel-reuse").payload["title"] == "Wheel reuse"
+assert client.reuses.list_v2().payload["total"] == 1
+assert client.reuses.search_v2().payload["total"] == 1
+created_reuse = client.reuses.create_reuse(
+    ReuseCreateInput(
+        title="Wheel reuse",
+        description="Wheel",
+        type="application",
+        url="https://example.test/reuse",
+        topic="health",
+    ),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.create-reuse", target="Wheel reuse"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+linked_reuse = client.reuses.reuse_add_dataset(
+    "wheel-reuse",
+    "abc",
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.reuse-add-dataset", target="wheel-reuse"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+deleted_reuse = client.reuses.delete_reuse(
+    "wheel-reuse",
+    sync_permissions,
+    MutationPolicy(
+        destructive=True,
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.delete-reuse", target="wheel-reuse"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert created_reuse.record is not None and linked_reuse.record is not None
+assert created_reuse.receipt.audit_metadata["status_code"] == 201
+assert deleted_reuse.record is None
+assert deleted_reuse.receipt.audit_metadata["status_code"] == 204
 client.close()
 
 import asyncio
@@ -619,8 +711,6 @@ async def run_async():
                 concurrency=ConcurrencyPolicy(overwrite=True),
             ),
         )
-        if not token_created.secret.reveal_once():
-            raise AssertionError("async installed-wheel token reveal failed")
         token_revoked = await active.users_tokens.revoke_api_token(
             token_created.metadata.id,
             permissions,
@@ -635,7 +725,7 @@ async def run_async():
         assert user.id.value == "wheel-user"
         assert token_list[0].token_prefix == "wheel-prefix"
         assert token_created.receipt.audit_metadata["status_code"] == 201
-        assert "token" not in token_created.to_dict()
+        _assert_token_material_absent(token_created, async_transport.token_value, "async api token")
         assert token_revoked.receipt.audit_metadata["status_code"] == 204
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
@@ -706,6 +796,37 @@ async def run_async():
         )
         assert async_report.record is not None
         assert (await active.posts_reports.list_notifications(permissions, NotificationQuery())).payload["total"] == 1
+        assert (await active.reuses.list_reuses()).payload["total"] == 1
+        assert (await active.reuses.get_reuse("wheel-reuse")).payload["title"] == "Wheel reuse"
+        async_reuse = await active.reuses.create_reuse(
+            ReuseCreateInput(
+                title="Async wheel reuse",
+                description="Wheel",
+                type="application",
+                url="https://example.test/async-reuse",
+                topic="health",
+            ),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.create-reuse", target="Async wheel reuse"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        async_reuse_deleted = await active.reuses.delete_reuse(
+            "wheel-reuse",
+            permissions,
+            MutationPolicy(
+                destructive=True,
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v1.delete-reuse", target="wheel-reuse"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        assert async_reuse.record is not None
+        assert async_reuse_deleted.record is None
         try:
             await active.organizations_memberships.get_organization("")
         except CatalogValidationError:
@@ -811,6 +932,18 @@ expected = [
     "http://127.0.0.1:5640/api/1/reports/reasons/",
     "http://127.0.0.1:5640/api/1/reports/wheel-report/",
     "http://127.0.0.1:5640/api/1/notifications/wheel-notification/read/",
+    "http://127.0.0.1:5640/api/1/reuses/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reuses/recent.atom?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reuses/suggest/?q=re&size=10",
+    "http://127.0.0.1:5640/api/1/reuses/badges/",
+    "http://127.0.0.1:5640/api/1/reuses/types/",
+    "http://127.0.0.1:5640/api/1/reuses/topics/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
+    "http://127.0.0.1:5640/api/2/reuses/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/reuses/search/?page=1&page_size=50",
+    "http://127.0.0.1:5640/api/1/reuses/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/datasets/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
 ]
 assert recorded == expected
 async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
@@ -837,6 +970,9 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/posts/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/1/reports/",
     "http://127.0.0.1:5640/api/1/notifications/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reuses/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/reuses/",
+    "http://127.0.0.1:5640/api/1/reuses/wheel-reuse/",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

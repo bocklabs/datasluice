@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.udata.models.reuses import (
@@ -16,109 +15,44 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseSuggestQuery,
     ReuseUpdateInput,
 )
-from datasluice.connectors.catalog.udata.services.resources import _attach, _receipt
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import reuses as wire
-from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.domain.catalog.models import MappingRecord
-from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 
-from .datasets import _enforce_mutation_policy, _error_status, _mutation_outcome, _require_mutation_permission
+from .datasets import _header
+from .taxonomies import (
+    AsyncCatalogService,
+    Permissions,
+    Policy,
+    Request,
+    Response,
+    SupportsUpload,
+    SyncCatalogService,
+    _dataset_upload,
+    _run_mutation,
+    _run_mutation_async,
+)
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
 
-type Permissions = EffectivePermissions
-type Policy = MutationPolicy | None
-type Response = tuple[int, object, object]
-type Request = tuple[str, str, dict[str, str], object]
+_mutation = partial(
+    _run_mutation,
+    SETTLEMENT_ERRORS,
+    ReuseMutationResult,
+    ResourceKind.RESOURCE,
+)
+_mutation_async = partial(
+    _run_mutation_async,
+    ASYNC_SETTLEMENT_ERRORS,
+    ReuseMutationResult,
+    ResourceKind.RESOURCE,
+)
 
 
-def _reuse_receipt(target: str, policy: Policy, outcome: str, status: int, mutation: str, operation: str):
-    return _receipt(
-        policy,
-        target,
-        outcome,
-        status,
-        mutation,
-        resource_kind=ResourceKind.RESOURCE,
-        operation=operation,
-    )
-
-
-def _reject(error: BaseException, target: str, policy: Policy, mutation: str, operation: str) -> None:
-    _attach(error, _reuse_receipt(target, policy, "rejected", _error_status(error), mutation, operation))
-    raise error
-
-
-def _mutation(
-    target: str,
-    policy: Policy,
-    mutation: str,
-    operation: str,
-    destructive: bool,
-    request: Callable[[], Request],
-    dispatch: Callable[[str, str, dict[str, str], object], Response],
-) -> ReuseMutationResult:
-    try:
-        method, path, headers, body = request()
-    except (Exception, KeyboardInterrupt, GeneratorExit) as error:
-        _reject(error, target, policy, mutation, operation)
-    response: object | None = None
-    try:
-        _enforce_mutation_policy(operation, target, policy, destructive=destructive)
-        status, payload, response = dispatch(method, path, headers, body)
-        result = ReuseMutationResult(
-            _reuse_receipt(target, policy, "succeeded", status, mutation, operation),
-            MappingRecord(payload) if isinstance(payload, Mapping) and payload else None,
-        )
-    except (Exception, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as error:
-        outcome = (
-            "cancelled"
-            if isinstance(error, (KeyboardInterrupt, GeneratorExit, asyncio.CancelledError))
-            else _mutation_outcome(error, response)
-        )
-        receipt = _reuse_receipt(target, policy, outcome, _error_status(error, response), mutation, operation)
-        _attach(error, receipt)
-        raise
-    return result
-
-
-async def _mutation_async(
-    target: str,
-    policy: Policy,
-    mutation: str,
-    operation: str,
-    destructive: bool,
-    request: Callable[[], Request],
-    dispatch: Callable[[str, str, dict[str, str], object], Awaitable[Response]],
-) -> ReuseMutationResult:
-    try:
-        method, path, headers, body = request()
-    except (Exception, KeyboardInterrupt, GeneratorExit) as error:
-        _reject(error, target, policy, mutation, operation)
-    response: object | None = None
-    try:
-        _enforce_mutation_policy(operation, target, policy, destructive=destructive)
-        status, payload, response = await dispatch(method, path, headers, body)
-        result = ReuseMutationResult(
-            _reuse_receipt(target, policy, "succeeded", status, mutation, operation),
-            MappingRecord(payload) if isinstance(payload, Mapping) and payload else None,
-        )
-    except (Exception, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as error:
-        outcome = (
-            "cancelled"
-            if isinstance(error, (KeyboardInterrupt, GeneratorExit, asyncio.CancelledError))
-            else _mutation_outcome(error, response)
-        )
-        receipt = _reuse_receipt(target, policy, outcome, _error_status(error, response), mutation, operation)
-        _attach(error, receipt)
-        raise
-    return result
-
-
-class SyncReusesService:
+class SyncReusesService(SyncCatalogService):
     """Typed synchronous reuse and reuse-follower operations."""
 
     def __init__(self, client: SyncUDataClient) -> None:
@@ -129,7 +63,9 @@ class SyncReusesService:
         return NativeCatalogError
 
     def list_reuses(self, query: ReuseListQuery | None = None) -> MappingRecord:
-        return self._read(wire.list_reuses_request(query or ReuseListQuery()), wire.LIST_REUSES_OPERATION)
+        return self._read(
+            wire.list_reuses_request(query or ReuseListQuery()), wire.LIST_REUSES_OPERATION, wire.parse_mapping
+        )
 
     def create_reuse(
         self,
@@ -142,11 +78,8 @@ class SyncReusesService:
             mutation_policy,
             "created",
             wire.CREATE_REUSE_OPERATION,
-            False,
             lambda: wire.create_reuse_request(client_input),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.CREATE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.CREATE_REUSE_OPERATION),
         )
 
     def recent_reuses_atom_feed(self, query: ReuseListQuery | None = None) -> MappingRecord:
@@ -155,13 +88,15 @@ class SyncReusesService:
         _, text, response = self._client._dataset_call(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
-        negotiated = _content_type(response.headers)
         return wire.parse_text_document(
-            cast(bytes, text), wire._ATOM_MEDIA_TYPE, response_media_type=negotiated, operation=operation
+            cast(bytes, text),
+            wire._ATOM_MEDIA_TYPE,
+            response_media_type=_header(response.headers, "content-type"),
+            operation=operation,
         )
 
     def get_reuse(self, reuse_id: str) -> MappingRecord:
-        return self._read(wire.get_reuse_request(reuse_id), wire.GET_REUSE_OPERATION)
+        return self._read(wire.get_reuse_request(reuse_id), wire.GET_REUSE_OPERATION, wire.parse_mapping)
 
     def update_reuse(
         self,
@@ -175,11 +110,8 @@ class SyncReusesService:
             mutation_policy,
             "updated",
             wire.UPDATE_REUSE_OPERATION,
-            False,
             lambda: wire.update_reuse_request(reuse_id, client_input),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.UPDATE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.UPDATE_REUSE_OPERATION),
         )
 
     def delete_reuse(
@@ -190,11 +122,9 @@ class SyncReusesService:
             mutation_policy,
             "deleted",
             wire.DELETE_REUSE_OPERATION,
-            True,
             lambda: wire.delete_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.DELETE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.DELETE_REUSE_OPERATION),
+            destructive=True,
         )
 
     def reuse_add_dataset(
@@ -209,11 +139,8 @@ class SyncReusesService:
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
-            False,
             lambda: wire.reuse_add_dataset_request(reuse_id, dataset_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION),
         )
 
     def reuse_add_dataservice(
@@ -228,15 +155,14 @@ class SyncReusesService:
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,
-            False,
             lambda: wire.reuse_add_dataservice_request(reuse_id, dataservice_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION),
         )
 
     def available_reuse_badges(self) -> MappingRecord:
-        return self._read(wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION)
+        return self._read(
+            wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION, wire.parse_mapping
+        )
 
     def add_reuse_badge(
         self,
@@ -250,11 +176,8 @@ class SyncReusesService:
             mutation_policy,
             "updated",
             wire.ADD_REUSE_BADGE_OPERATION,
-            False,
             lambda: wire.add_reuse_badge_request(reuse_id, badge_kind),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.ADD_REUSE_BADGE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.ADD_REUSE_BADGE_OPERATION),
         )
 
     def delete_reuse_badge(
@@ -265,11 +188,9 @@ class SyncReusesService:
             mutation_policy,
             "deleted",
             wire.DELETE_REUSE_BADGE_OPERATION,
-            True,
             lambda: wire.delete_reuse_badge_request(reuse_id, badge_kind),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.DELETE_REUSE_BADGE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.DELETE_REUSE_BADGE_OPERATION),
+            destructive=True,
         )
 
     def feature_reuse(
@@ -280,11 +201,8 @@ class SyncReusesService:
             mutation_policy,
             "updated",
             wire.FEATURE_REUSE_OPERATION,
-            False,
             lambda: wire.feature_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.FEATURE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.FEATURE_REUSE_OPERATION),
         )
 
     def unfeature_reuse(
@@ -295,15 +213,15 @@ class SyncReusesService:
             mutation_policy,
             "deleted",
             wire.UNFEATURE_REUSE_OPERATION,
-            True,
             lambda: wire.unfeature_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.UNFEATURE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.UNFEATURE_REUSE_OPERATION),
+            destructive=True,
         )
 
     def suggest_reuses(self, query: ReuseSuggestQuery) -> tuple[MappingRecord, ...]:
-        return self._read_sequence(wire.suggest_reuses_request(query), wire.SUGGEST_REUSES_OPERATION)
+        return self._read(
+            wire.suggest_reuses_request(query), wire.SUGGEST_REUSES_OPERATION, wire.parse_mapping_sequence
+        )
 
     def reuse_image(
         self,
@@ -318,12 +236,9 @@ class SyncReusesService:
             mutation_policy,
             "updated",
             wire.REUSE_IMAGE_OPERATION,
-            False,
             lambda: (*wire.reuse_image_request(reuse_id), None),
-            lambda m, p, h, b: self._mutate_upload(
-                m,
-                p,
-                h,
+            lambda request: self._mutate_upload(
+                request,
                 ReuseImageInput(data=data, content_type=content_type),
                 permissions,
                 mutation_policy,
@@ -331,21 +246,28 @@ class SyncReusesService:
         )
 
     def reuse_types(self) -> tuple[MappingRecord, ...]:
-        return self._read_sequence(wire.reuse_types_request(), wire.REUSE_TYPES_OPERATION)
+        return self._read(wire.reuse_types_request(), wire.REUSE_TYPES_OPERATION, wire.parse_mapping_sequence)
 
     def reuse_topics(self) -> tuple[MappingRecord, ...]:
-        return self._read_sequence(wire.reuse_topics_request(), wire.REUSE_TOPICS_OPERATION)
+        return self._read(wire.reuse_topics_request(), wire.REUSE_TOPICS_OPERATION, wire.parse_mapping_sequence)
 
     def search_v2(self, query: ReuseSearchQuery | None = None) -> MappingRecord:
-        return self._read(wire.search_reuses_v2_request(query or ReuseSearchQuery()), wire.SEARCH_REUSES_V2_OPERATION)
+        return self._read(
+            wire.search_reuses_v2_request(query or ReuseSearchQuery()),
+            wire.SEARCH_REUSES_V2_OPERATION,
+            wire.parse_mapping,
+        )
 
     def list_v2(self, query: ReuseListQuery | None = None) -> MappingRecord:
-        return self._read(wire.list_reuses_v2_request(query or ReuseListQuery()), wire.LIST_REUSES_V2_OPERATION)
+        return self._read(
+            wire.list_reuses_v2_request(query or ReuseListQuery()), wire.LIST_REUSES_V2_OPERATION, wire.parse_mapping
+        )
 
     def list_reuse_followers(self, reuse_id: str, query: ReuseFollowersQuery | None = None) -> MappingRecord:
         return self._read(
             wire.list_reuse_followers_request(reuse_id, query or ReuseFollowersQuery()),
             wire.LIST_REUSE_FOLLOWERS_OPERATION,
+            wire.parse_mapping,
         )
 
     def follow_reuse(
@@ -356,11 +278,8 @@ class SyncReusesService:
             mutation_policy,
             "updated",
             wire.FOLLOW_REUSE_OPERATION,
-            False,
             lambda: wire.follow_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.FOLLOW_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.FOLLOW_REUSE_OPERATION),
         )
 
     def unfollow_reuse(
@@ -371,81 +290,31 @@ class SyncReusesService:
             mutation_policy,
             "deleted",
             wire.UNFOLLOW_REUSE_OPERATION,
-            True,
             lambda: wire.unfollow_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.UNFOLLOW_REUSE_OPERATION
-            ),
-        )
-
-    def _read(
-        self,
-        request: tuple[str, str, dict[str, str], object],
-        operation: str,
-    ) -> MappingRecord:
-        method, path, headers, body = request
-        _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=operation, headers=headers, json_body=body
-        )
-        return wire.parse_mapping(payload, operation)
-
-    def _read_sequence(
-        self,
-        request: tuple[str, str, dict[str, str], object],
-        operation: str,
-    ) -> tuple[MappingRecord, ...]:
-        method, path, headers, body = request
-        _, payload, _ = self._client._dataset_call(
-            method=method, path=path, owning_operation=operation, headers=headers, json_body=body
-        )
-        return wire.parse_mapping_sequence(payload, operation)
-
-    def _mutate(
-        self,
-        method: str,
-        path: str,
-        headers: dict[str, str],
-        body: object,
-        permissions: Permissions,
-        policy: Policy,
-        operation: str,
-    ) -> Response:
-        resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
-        return self._client._dataset_call(
-            method=method,
-            path=path,
-            owning_operation=operation,
-            headers=headers,
-            json_body=body,
-            permissions=permissions,
-            credential=resolved,
-            idempotency_policy=policy.idempotency if policy else None,
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.UNFOLLOW_REUSE_OPERATION),
+            destructive=True,
         )
 
     def _mutate_upload(
         self,
-        method: str,
-        path: str,
-        headers: dict[str, str],
-        image: ReuseImageInput,
+        request: Request,
+        image: SupportsUpload,
         permissions: Permissions,
         policy: Policy,
     ) -> Response:
-        operation = wire.REUSE_IMAGE_OPERATION
-        resolved = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
-        return self._client._dataset_call(
-            method=method,
-            path=path,
-            owning_operation=operation,
-            headers=headers,
-            permissions=permissions,
-            credential=resolved,
-            idempotency_policy=policy.idempotency if policy else None,
-            files=(image.part(),),
+        method, path, headers, _ = request
+        return _dataset_upload(
+            self._client._dataset_call,
+            self._client._resolved_credential(),
+            permissions,
+            policy,
+            wire.REUSE_IMAGE_OPERATION,
+            (method, path, headers),
+            image,
         )
 
 
-class AsyncReusesService:
+class AsyncReusesService(AsyncCatalogService):
     """Typed asynchronous reuse and reuse-follower operations."""
 
     def __init__(self, client: AsyncUDataClient) -> None:
@@ -456,7 +325,9 @@ class AsyncReusesService:
         return NativeCatalogError
 
     async def list_reuses(self, query: ReuseListQuery | None = None) -> MappingRecord:
-        return await self._read(wire.list_reuses_request(query or ReuseListQuery()), wire.LIST_REUSES_OPERATION)
+        return await self._read(
+            wire.list_reuses_request(query or ReuseListQuery()), wire.LIST_REUSES_OPERATION, wire.parse_mapping
+        )
 
     async def create_reuse(
         self,
@@ -469,11 +340,8 @@ class AsyncReusesService:
             mutation_policy,
             "created",
             wire.CREATE_REUSE_OPERATION,
-            False,
             lambda: wire.create_reuse_request(client_input),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.CREATE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.CREATE_REUSE_OPERATION),
         )
 
     async def recent_reuses_atom_feed(self, query: ReuseListQuery | None = None) -> MappingRecord:
@@ -482,13 +350,15 @@ class AsyncReusesService:
         _, text, response = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
-        negotiated = _content_type(response.headers)
         return wire.parse_text_document(
-            cast(bytes, text), wire._ATOM_MEDIA_TYPE, response_media_type=negotiated, operation=operation
+            cast(bytes, text),
+            wire._ATOM_MEDIA_TYPE,
+            response_media_type=_header(response.headers, "content-type"),
+            operation=operation,
         )
 
     async def get_reuse(self, reuse_id: str) -> MappingRecord:
-        return await self._read(wire.get_reuse_request(reuse_id), wire.GET_REUSE_OPERATION)
+        return await self._read(wire.get_reuse_request(reuse_id), wire.GET_REUSE_OPERATION, wire.parse_mapping)
 
     async def update_reuse(
         self,
@@ -502,11 +372,8 @@ class AsyncReusesService:
             mutation_policy,
             "updated",
             wire.UPDATE_REUSE_OPERATION,
-            False,
             lambda: wire.update_reuse_request(reuse_id, client_input),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.UPDATE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.UPDATE_REUSE_OPERATION),
         )
 
     async def delete_reuse(
@@ -517,11 +384,9 @@ class AsyncReusesService:
             mutation_policy,
             "deleted",
             wire.DELETE_REUSE_OPERATION,
-            True,
             lambda: wire.delete_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.DELETE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.DELETE_REUSE_OPERATION),
+            destructive=True,
         )
 
     async def reuse_add_dataset(
@@ -536,11 +401,8 @@ class AsyncReusesService:
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
-            False,
             lambda: wire.reuse_add_dataset_request(reuse_id, dataset_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION),
         )
 
     async def reuse_add_dataservice(
@@ -555,15 +417,14 @@ class AsyncReusesService:
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,
-            False,
             lambda: wire.reuse_add_dataservice_request(reuse_id, dataservice_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION),
         )
 
     async def available_reuse_badges(self) -> MappingRecord:
-        return await self._read(wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION)
+        return await self._read(
+            wire.available_reuse_badges_request(), wire.AVAILABLE_REUSE_BADGES_OPERATION, wire.parse_mapping
+        )
 
     async def add_reuse_badge(
         self,
@@ -577,11 +438,8 @@ class AsyncReusesService:
             mutation_policy,
             "updated",
             wire.ADD_REUSE_BADGE_OPERATION,
-            False,
             lambda: wire.add_reuse_badge_request(reuse_id, badge_kind),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.ADD_REUSE_BADGE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.ADD_REUSE_BADGE_OPERATION),
         )
 
     async def delete_reuse_badge(
@@ -592,11 +450,9 @@ class AsyncReusesService:
             mutation_policy,
             "deleted",
             wire.DELETE_REUSE_BADGE_OPERATION,
-            True,
             lambda: wire.delete_reuse_badge_request(reuse_id, badge_kind),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.DELETE_REUSE_BADGE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.DELETE_REUSE_BADGE_OPERATION),
+            destructive=True,
         )
 
     async def feature_reuse(
@@ -607,11 +463,8 @@ class AsyncReusesService:
             mutation_policy,
             "updated",
             wire.FEATURE_REUSE_OPERATION,
-            False,
             lambda: wire.feature_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.FEATURE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.FEATURE_REUSE_OPERATION),
         )
 
     async def unfeature_reuse(
@@ -622,15 +475,15 @@ class AsyncReusesService:
             mutation_policy,
             "deleted",
             wire.UNFEATURE_REUSE_OPERATION,
-            True,
             lambda: wire.unfeature_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.UNFEATURE_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.UNFEATURE_REUSE_OPERATION),
+            destructive=True,
         )
 
     async def suggest_reuses(self, query: ReuseSuggestQuery) -> tuple[MappingRecord, ...]:
-        return await self._read_sequence(wire.suggest_reuses_request(query), wire.SUGGEST_REUSES_OPERATION)
+        return await self._read(
+            wire.suggest_reuses_request(query), wire.SUGGEST_REUSES_OPERATION, wire.parse_mapping_sequence
+        )
 
     async def reuse_image(
         self,
@@ -645,12 +498,9 @@ class AsyncReusesService:
             mutation_policy,
             "updated",
             wire.REUSE_IMAGE_OPERATION,
-            False,
             lambda: (*wire.reuse_image_request(reuse_id), None),
-            lambda m, p, h, b: self._mutate_upload(
-                m,
-                p,
-                h,
+            lambda request: self._mutate_upload(
+                request,
                 ReuseImageInput(data=data, content_type=content_type),
                 permissions,
                 mutation_policy,
@@ -658,23 +508,28 @@ class AsyncReusesService:
         )
 
     async def reuse_types(self) -> tuple[MappingRecord, ...]:
-        return await self._read_sequence(wire.reuse_types_request(), wire.REUSE_TYPES_OPERATION)
+        return await self._read(wire.reuse_types_request(), wire.REUSE_TYPES_OPERATION, wire.parse_mapping_sequence)
 
     async def reuse_topics(self) -> tuple[MappingRecord, ...]:
-        return await self._read_sequence(wire.reuse_topics_request(), wire.REUSE_TOPICS_OPERATION)
+        return await self._read(wire.reuse_topics_request(), wire.REUSE_TOPICS_OPERATION, wire.parse_mapping_sequence)
 
     async def search_v2(self, query: ReuseSearchQuery | None = None) -> MappingRecord:
         return await self._read(
-            wire.search_reuses_v2_request(query or ReuseSearchQuery()), wire.SEARCH_REUSES_V2_OPERATION
+            wire.search_reuses_v2_request(query or ReuseSearchQuery()),
+            wire.SEARCH_REUSES_V2_OPERATION,
+            wire.parse_mapping,
         )
 
     async def list_v2(self, query: ReuseListQuery | None = None) -> MappingRecord:
-        return await self._read(wire.list_reuses_v2_request(query or ReuseListQuery()), wire.LIST_REUSES_V2_OPERATION)
+        return await self._read(
+            wire.list_reuses_v2_request(query or ReuseListQuery()), wire.LIST_REUSES_V2_OPERATION, wire.parse_mapping
+        )
 
     async def list_reuse_followers(self, reuse_id: str, query: ReuseFollowersQuery | None = None) -> MappingRecord:
         return await self._read(
             wire.list_reuse_followers_request(reuse_id, query or ReuseFollowersQuery()),
             wire.LIST_REUSE_FOLLOWERS_OPERATION,
+            wire.parse_mapping,
         )
 
     async def follow_reuse(
@@ -685,11 +540,8 @@ class AsyncReusesService:
             mutation_policy,
             "updated",
             wire.FOLLOW_REUSE_OPERATION,
-            False,
             lambda: wire.follow_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.FOLLOW_REUSE_OPERATION
-            ),
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.FOLLOW_REUSE_OPERATION),
         )
 
     async def unfollow_reuse(
@@ -700,82 +552,25 @@ class AsyncReusesService:
             mutation_policy,
             "deleted",
             wire.UNFOLLOW_REUSE_OPERATION,
-            True,
             lambda: wire.unfollow_reuse_request(reuse_id),
-            lambda method, path, headers, body: self._mutate(
-                method, path, headers, body, permissions, mutation_policy, wire.UNFOLLOW_REUSE_OPERATION
-            ),
-        )
-
-    async def _read(
-        self,
-        request: tuple[str, str, dict[str, str], object],
-        operation: str,
-    ) -> MappingRecord:
-        method, path, headers, body = request
-        _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=operation, headers=headers, json_body=body
-        )
-        return wire.parse_mapping(payload, operation)
-
-    async def _read_sequence(
-        self,
-        request: tuple[str, str, dict[str, str], object],
-        operation: str,
-    ) -> tuple[MappingRecord, ...]:
-        method, path, headers, body = request
-        _, payload, _ = await self._client._dataset_call_async(
-            method=method, path=path, owning_operation=operation, headers=headers, json_body=body
-        )
-        return wire.parse_mapping_sequence(payload, operation)
-
-    async def _mutate(
-        self,
-        method: str,
-        path: str,
-        headers: dict[str, str],
-        body: object,
-        permissions: Permissions,
-        policy: Policy,
-        operation: str,
-    ) -> Response:
-        resolved = _require_mutation_permission(await self._client._resolved_credential_async(), operation, permissions)
-        return await self._client._dataset_call_async(
-            method=method,
-            path=path,
-            owning_operation=operation,
-            headers=headers,
-            json_body=body,
-            permissions=permissions,
-            credential=resolved,
-            idempotency_policy=policy.idempotency if policy else None,
+            lambda request: self._mutate(request, permissions, mutation_policy, wire.UNFOLLOW_REUSE_OPERATION),
+            destructive=True,
         )
 
     async def _mutate_upload(
         self,
-        method: str,
-        path: str,
-        headers: dict[str, str],
-        image: ReuseImageInput,
+        request: Request,
+        image: SupportsUpload,
         permissions: Permissions,
         policy: Policy,
     ) -> Response:
-        operation = wire.REUSE_IMAGE_OPERATION
-        resolved = _require_mutation_permission(await self._client._resolved_credential_async(), operation, permissions)
-        return await self._client._dataset_call_async(
-            method=method,
-            path=path,
-            owning_operation=operation,
-            headers=headers,
-            permissions=permissions,
-            credential=resolved,
-            idempotency_policy=policy.idempotency if policy else None,
-            files=(image.part(),),
+        method, path, headers, _ = request
+        return await _dataset_upload(
+            self._client._dataset_call_async,
+            await self._client._resolved_credential_async(),
+            permissions,
+            policy,
+            wire.REUSE_IMAGE_OPERATION,
+            (method, path, headers),
+            image,
         )
-
-
-def _content_type(headers: Mapping[str, str]) -> str | None:
-    for key, value in headers.items():
-        if key.lower() == "content-type":
-            return value
-    return None

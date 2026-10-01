@@ -18,16 +18,25 @@ from datasluice.runtime.transport.base import (
     UploadPart,
     UploadStream,
 )
-from datasluice.runtime.transport.httpx_transport import (
-    AsyncHttpxCatalogTransport,
-    HttpxCatalogTransport,
-)
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
-
-_PARTS = (
-    UploadPart(field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"),
-    UploadPart(field_name="meta", file_name="meta.json", content_type="application/json", data=b'{"ok": true}'),
+from tests.helpers.httpx_probe import (
+    CSV_BYTES,
+    UPLOAD_PARTS,
+    AsyncProbe,
+    SyncProbe,
+    at_path,
+    fixed,
+    redirect_to,
 )
+
+_PARTS = UPLOAD_PARTS
+_STREAMED = BytesIO(b"a,b\n")
+
+
+def stream_part(source: BytesIO) -> UploadPart:
+    return UploadPart(
+        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
+    )
 
 
 def test_runtime_request_accepts_files_with_none_body() -> None:
@@ -43,9 +52,7 @@ def test_runtime_request_rejects_body_and_files_together() -> None:
 
 
 def test_runtime_request_rejects_stream_parts_with_followed_redirects() -> None:
-    part = UploadPart(
-        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, BytesIO(b"a,b\n"))
-    )
+    part = stream_part(_STREAMED)
 
     with pytest.raises(ValueError, match="one-shot streams require RedirectPolicy.NO_FOLLOW"):
         RuntimeRequest("POST", "https://example.test/upload", files=(part,))
@@ -95,122 +102,76 @@ def test_reprs_render_field_names_and_lengths_but_never_part_bytes() -> None:
 
 
 def test_httpx_sends_multipart_through_the_files_channel() -> None:
-    seen: list[httpx.Request] = []
+    with SyncProbe(fixed(200, content=b"stored")) as probe:
+        response = probe.send(RuntimeRequest("POST", "https://example.test/upload", files=_PARTS))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, content=b"stored")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("POST", "https://example.test/upload", files=_PARTS))
-    finally:
-        transport.close()
-
-    wire = seen[0]
+    wire = probe.requests[0]
     assert response.body == b"stored"
     assert wire.headers["content-type"].startswith("multipart/form-data")
     assert "boundary=" in wire.headers["content-type"]
     assert b'name="upload"' in wire.content
     assert b'filename="data.csv"' in wire.content
-    assert b"a,b\n1,2" in wire.content
+    assert CSV_BYTES in wire.content
     assert b'filename="meta.json"' in wire.content
     assert b'{"ok": true}' in wire.content
 
 
 def test_async_httpx_sends_multipart_through_the_files_channel() -> None:
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, content=b"stored")
+    probe = AsyncProbe(fixed(200, content=b"stored"))
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            await transport.send(RuntimeRequest("POST", "https://example.test/upload", files=_PARTS))
-        finally:
-            await transport.aclose()
+        async with probe:
+            await probe.send(RuntimeRequest("POST", "https://example.test/upload", files=_PARTS))
 
     asyncio.run(send())
 
-    wire = seen[0]
+    wire = probe.requests[0]
     assert wire.headers["content-type"].startswith("multipart/form-data")
     assert b'name="upload"' in wire.content
-    assert b"a,b\n1,2" in wire.content
+    assert CSV_BYTES in wire.content
 
 
 def test_httpx_transmits_stream_part_bytes_exactly_once() -> None:
-    source = BytesIO(b"a,b\n1,2")
-    part = UploadPart(
-        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
-    )
-    seen: list[httpx.Request] = []
+    source = BytesIO(CSV_BYTES)
+    part = stream_part(source)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, content=b"stored")
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(
+    with SyncProbe(fixed(200, content=b"stored")) as probe:
+        response = probe.send(
             RuntimeRequest(
                 "POST", "https://example.test/upload", files=(part,), redirect_policy=RedirectPolicy.NO_FOLLOW
             )
         )
-    finally:
-        transport.close()
 
     assert response.body == b"stored"
-    assert b"a,b\n1,2" in seen[0].content
-    assert source.tell() == len(b"a,b\n1,2")
+    assert CSV_BYTES in probe.requests[0].content
+    assert source.tell() == len(CSV_BYTES)
 
 
 def test_async_httpx_transmits_stream_part_bytes_exactly_once() -> None:
-    source = BytesIO(b"a,b\n1,2")
-    part = UploadPart(
-        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
-    )
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, content=b"stored")
+    source = BytesIO(CSV_BYTES)
+    part = stream_part(source)
+    probe = AsyncProbe(fixed(200, content=b"stored"))
 
     async def send() -> None:
-        transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-        try:
-            await transport.send(
+        async with probe:
+            await probe.send(
                 RuntimeRequest(
                     "POST", "https://example.test/upload", files=(part,), redirect_policy=RedirectPolicy.NO_FOLLOW
                 )
             )
-        finally:
-            await transport.aclose()
 
     asyncio.run(send())
 
-    assert b"a,b\n1,2" in seen[0].content
-    assert source.tell() == len(b"a,b\n1,2")
+    assert CSV_BYTES in probe.requests[0].content
+    assert source.tell() == len(CSV_BYTES)
 
 
 @pytest.mark.parametrize("status", [301, 302, 303])
 def test_httpx_redirect_downgrade_drops_files(status: int) -> None:
-    seen: list[httpx.Request] = []
+    with SyncProbe(redirect_to("/next", status, at_path("/start"))) as probe:
+        response = probe.send(RuntimeRequest("POST", "https://example.test/start", files=_PARTS))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(status, headers={"Location": "/next"})
-        return httpx.Response(200)
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("POST", "https://example.test/start", files=_PARTS))
-    finally:
-        transport.close()
-
-    follow_up = seen[1]
+    follow_up = probe.requests[1]
     assert response.status_code == 200
     assert follow_up.method == "GET"
     assert follow_up.read() == b""
@@ -219,43 +180,22 @@ def test_httpx_redirect_downgrade_drops_files(status: int) -> None:
 
 @pytest.mark.parametrize("status", [307, 308])
 def test_httpx_redirect_preserves_files(status: int) -> None:
-    seen: list[httpx.Request] = []
+    with SyncProbe(redirect_to("/next", status, at_path("/start"))) as probe:
+        response = probe.send(RuntimeRequest("POST", "https://example.test/start", files=_PARTS))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(status, headers={"Location": "/next"})
-        return httpx.Response(200)
-
-    transport = HttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        response = transport.send(RuntimeRequest("POST", "https://example.test/start", files=_PARTS))
-    finally:
-        transport.close()
-
-    follow_up = seen[1]
+    follow_up = probe.requests[1]
     assert response.status_code == 200
     assert follow_up.method == "POST"
     assert follow_up.headers["content-type"].startswith("multipart/form-data")
-    assert b"a,b\n1,2" in follow_up.read()
+    assert CSV_BYTES in follow_up.read()
 
 
 async def _async_redirect_follow_up(status: int) -> tuple[str, bytes]:
-    seen: list[httpx.Request] = []
+    probe = AsyncProbe(redirect_to("/next", status, at_path("/start")))
+    async with probe:
+        await probe.send(RuntimeRequest("POST", "https://example.test/start", files=_PARTS))
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.url.path == "/start":
-            return httpx.Response(status, headers={"Location": "/next"})
-        return httpx.Response(200)
-
-    transport = AsyncHttpxCatalogTransport(transport=httpx.MockTransport(handler))
-    try:
-        await transport.send(RuntimeRequest("POST", "https://example.test/start", files=_PARTS))
-    finally:
-        await transport.aclose()
-
-    return seen[1].method, seen[1].read()
+    return probe.requests[1].method, probe.requests[1].read()
 
 
 @pytest.mark.parametrize("status", [301, 302, 303])
@@ -271,7 +211,7 @@ def test_async_httpx_redirect_preserves_files(status: int) -> None:
     method, body = asyncio.run(_async_redirect_follow_up(status))
 
     assert method == "POST"
-    assert b"a,b\n1,2" in body
+    assert CSV_BYTES in body
 
 
 def test_urllib_rejects_multipart_with_actionable_message_naming_the_extra() -> None:

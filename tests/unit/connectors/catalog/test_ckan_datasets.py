@@ -28,7 +28,7 @@ from datasluice.domain.catalog.profiles import (
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, UnsupportedCapabilityError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, success_body
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 
@@ -36,52 +36,6 @@ PACKAGE_CREATE_RESULT: dict[str, object] = {"id": "pkg-1", "name": "created-data
 COLLABORATOR_RESULT: dict[str, object] = {
     "pkg-1": [{"user_id": "u-1", "capacity": "editor"}],
 }
-
-
-def _success_body(result: object) -> bytes:
-    return json.dumps({"success": True, "result": result}).encode("utf-8")
-
-
-class SyncCaptureTransport:
-    """A deterministic loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    def close(self) -> None:
-        self.close_count += 1
-
-
-class AsyncCaptureTransport:
-    """A deterministic async loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    async def aclose(self) -> None:
-        self.close_count += 1
 
 
 class StubProbeRunner:
@@ -132,7 +86,7 @@ def _confirmed_destructive_policy() -> MutationPolicy:
 
 def test_package_search_sends_solr_rows_and_start_verbatim() -> None:
     """D-04 fidelity: Solr paging parameters cross the wire untranslated."""
-    transport = SyncCaptureTransport(body=_success_body({"count": 0, "results": []}))
+    transport = SyncCaptureTransport(body=success_body({"count": 0, "results": []}))
     client = _client(transport)
 
     client.datasets.package_search(q="health", rows=5, start=10)
@@ -152,7 +106,7 @@ def test_package_search_preserves_every_server_sent_record_key_losslessly() -> N
         "title": "Second",
         "facets": {"organization": "health"},
     }
-    transport = SyncCaptureTransport(body=_success_body({"count": 2, "results": [first, second]}))
+    transport = SyncCaptureTransport(body=success_body({"count": 2, "results": [first, second]}))
     client = _client(transport)
 
     envelope = client.datasets.package_search(q="health")
@@ -169,7 +123,7 @@ def test_package_search_preserves_every_server_sent_record_key_losslessly() -> N
 
 def test_current_package_list_uses_native_limit_offset_only() -> None:
     """The documented canonical pagination parameters ride verbatim."""
-    transport = SyncCaptureTransport(body=_success_body([{"id": "one", "name": "first"}]))
+    transport = SyncCaptureTransport(body=success_body([{"id": "one", "name": "first"}]))
     client = _client(transport)
 
     envelope = client.datasets.current_package_list_with_resources(limit=7, offset=14)
@@ -183,7 +137,7 @@ def test_current_package_list_uses_native_limit_offset_only() -> None:
 
 def test_typed_signature_rejects_the_deprecated_page_parameter_with_type_error() -> None:
     """D-01: the deprecated pagination name is unrepresentable on the typed surface."""
-    transport = SyncCaptureTransport(body=_success_body([]))
+    transport = SyncCaptureTransport(body=success_body([]))
     client = _client(transport)
 
     with pytest.raises(TypeError):
@@ -194,7 +148,7 @@ def test_typed_signature_rejects_the_deprecated_page_parameter_with_type_error()
 
 def test_umbrella_payload_with_deprecated_page_raises_validation_error_before_dispatch() -> None:
     """Umbrella payload-dict calls get an explicit typed refusal at zero I/O."""
-    transport = SyncCaptureTransport(body=_success_body([]))
+    transport = SyncCaptureTransport(body=success_body([]))
     client = _client(transport)
     operation = CatalogOperationRequest(
         operation_id=OperationId(platform="ckan", service="action-api-v3", method="dataset-list-show-search"),
@@ -211,7 +165,7 @@ def test_umbrella_payload_with_deprecated_page_raises_validation_error_before_di
 
 def test_normalized_list_rejects_the_deprecated_page_key_before_dispatch() -> None:
     """The normalized list projection enforces the same deprecation discipline."""
-    transport = SyncCaptureTransport(body=_success_body([]))
+    transport = SyncCaptureTransport(body=success_body([]))
     client = _client(transport)
     operation = CatalogOperationRequest(
         operation_id=OperationId(platform="ckan", service="datasets", method="list"),
@@ -227,7 +181,7 @@ def test_normalized_list_rejects_the_deprecated_page_key_before_dispatch() -> No
 
 def test_package_create_returns_mutation_result_with_redacted_receipt() -> None:
     """Standard-tier mutations return decoded results plus a redacted receipt."""
-    transport = SyncCaptureTransport(body=_success_body(PACKAGE_CREATE_RESULT))
+    transport = SyncCaptureTransport(body=success_body(PACKAGE_CREATE_RESULT))
     credential = CKANCredential(api_token="secret-token-123")
     client = _client(transport, credential=credential)
 
@@ -256,7 +210,7 @@ def test_package_create_returns_mutation_result_with_redacted_receipt() -> None:
 
 def test_dataset_purge_refuses_an_unconfirmed_policy_at_zero_transport_io() -> None:
     """T-03-06-01 mitigation: destructive purge gates pre-dispatch with zero wire hits."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     policy = MutationPolicy(destructive=True)
@@ -270,7 +224,7 @@ def test_dataset_purge_refuses_an_unconfirmed_policy_at_zero_transport_io() -> N
 
 def test_dataset_purge_requires_a_policy_at_the_call_boundary() -> None:
     """The destructive tier cannot be engaged without an explicit policy keyword."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     with pytest.raises(TypeError):
@@ -281,7 +235,7 @@ def test_dataset_purge_requires_a_policy_at_the_call_boundary() -> None:
 
 def test_confirmed_dataset_purge_dispatches_once_with_receipt() -> None:
     """A confirmed destructive policy dispatches exactly once and yields a receipt."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     result = client.datasets.dataset_purge(id="pkg-1", policy=_confirmed_destructive_policy())
@@ -295,7 +249,7 @@ def test_confirmed_dataset_purge_dispatches_once_with_receipt() -> None:
 
 def test_collaborator_reads_dispatch_under_attached_probe_runner() -> None:
     """Config-gated collaborator actions stay honest behind optional-tier evidence."""
-    transport = SyncCaptureTransport(body=_success_body(COLLABORATOR_RESULT))
+    transport = SyncCaptureTransport(body=success_body(COLLABORATOR_RESULT))
     runner = StubProbeRunner()
     client = _client(transport, probe_runner=runner)
 
@@ -311,7 +265,7 @@ def test_collaborator_reads_dispatch_under_attached_probe_runner() -> None:
 
 def test_disabled_collaborator_probe_state_surfaces_a_typed_refusal_not_a_silent_noop() -> None:
     """A deployment without collaborators resolves to the typed unsupported path."""
-    transport = SyncCaptureTransport(body=_success_body(COLLABORATOR_RESULT))
+    transport = SyncCaptureTransport(body=success_body(COLLABORATOR_RESULT))
     runner = StubProbeRunner(response_class=ProbeResponseClass.DEPLOYMENT_DISABLED)
     client = _client(transport, probe_runner=runner)
 
@@ -323,10 +277,10 @@ def test_disabled_collaborator_probe_state_surfaces_a_typed_refusal_not_a_silent
 
 def test_async_package_search_and_create_mirror_the_sync_semantics() -> None:
     """The async twin keeps faithful paging and receipt-bearing mutations."""
-    transport = AsyncCaptureTransport(body=_success_body(PACKAGE_CREATE_RESULT))
+    transport = AsyncCaptureTransport(body=success_body(PACKAGE_CREATE_RESULT))
     client = _async_client(transport)
 
-    search_transport = AsyncCaptureTransport(body=_success_body({"count": 0, "results": []}))
+    search_transport = AsyncCaptureTransport(body=success_body({"count": 0, "results": []}))
     search_client = _async_client(search_transport)
     asyncio.run(search_client.datasets.package_search(q="health", rows=5, start=10))
 

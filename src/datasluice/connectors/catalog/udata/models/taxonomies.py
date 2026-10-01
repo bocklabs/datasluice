@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import quote
 
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.errors.catalog import CatalogValidationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,17 +57,4 @@ class TaxonomyMutationResult:
 
 
 def segment(value: str, operation: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value in {".", ".."}
-        or any(c in "/?#\"'" for c in value)
-        or any(ord(c) < 32 for c in value)
-    ):
-        raise CatalogValidationError(
-            f"uData taxonomy identifier for {operation} must be one URL-safe path segment.",
-            operation=operation,
-            platform="udata",
-            safe_action="Pass a prior typed read identifier.",
-        )
-    return quote(value, safe="")
+    return path_segment(value, operation, "uData taxonomy")
