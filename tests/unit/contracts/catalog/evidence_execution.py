@@ -8,10 +8,13 @@ CLIENT_CONSTRUCTORS = {"create_sync_client": "sync", "create_async_client": "asy
 CLIENT_FAMILIES = {"auth_oauth", "taxonomies", "users_tokens", "organizations_memberships"}
 _TYPED_METHOD_ALIASES = {
     "add_dataset_badge": "add_badge",
+    "allowed_extensions": "extensions",
     "available_dataset_badges": "available_badges",
     "delete_dataset_badge": "delete_badge",
     "get_dataset_schemas": "dataset_schemas",
     "list_dataset_schemas": "schemas",
+    "list_frequencies": "frequencies",
+    "list_licenses": "licenses",
 }
 
 Def = ast.FunctionDef | ast.AsyncFunctionDef
@@ -158,10 +161,17 @@ def _getattr_parameters(function: ast.AST) -> set[str]:
     }
 
 
-def _argument_methods(argument: ast.expr, bound: dict[str, set[str]], dynamic: set[str]) -> set[str]:
+def _argument_methods(
+    argument: ast.expr,
+    bound: dict[str, set[str]],
+    dynamic: set[str],
+    literals: Mapping[str, list[str]],
+) -> set[str]:
     """Return the method names one call argument can stand for."""
     if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
         return {argument.value}
+    if isinstance(argument, ast.JoinedStr):
+        return _expanded_literal_names(argument, literals)
     if isinstance(argument, ast.Name):
         return bound.get(argument.id, set()) | (dynamic if argument.id in dynamic else set())
     return set()
@@ -173,13 +183,14 @@ def _bind_call_arguments(
     method_parameters: set[str],
     bound: dict[str, set[str]],
     dynamic: set[str],
+    literals: Mapping[str, list[str]],
 ) -> bool:
     """Fold one call's arguments into the bound method-name parameters, reporting any growth."""
     changed = False
     for parameter, argument in zip(parameters, arguments, strict=False):
         if parameter not in method_parameters:
             continue
-        values = _argument_methods(argument, bound, dynamic)
+        values = _argument_methods(argument, bound, dynamic, literals)
         changed |= bool(values - bound.setdefault(parameter, set()))
         bound[parameter].update(values)
     return changed
@@ -197,8 +208,71 @@ def _propagate_bound_parameters(
     for name, function in functions.items():
         parameters = [argument.arg for argument in function.args.args]
         for node in nodes:
+            literals = _loop_literals(node)
             for arguments in _matching_call_arguments({node}, name):
-                changed |= _bind_call_arguments(parameters, arguments, method_parameters[name], bound, dynamic)
+                changed |= _bind_call_arguments(
+                    parameters, arguments, method_parameters[name], bound, dynamic, literals
+                )
+    return changed
+
+
+def _expanded_literal_names(item: ast.JoinedStr, literals: Mapping[str, list[str]]) -> set[str]:
+    """Return the string names a one-hole f-string produces over its loop literal."""
+    template, hole = _fstring_hole(item, literals)
+    if hole is None:
+        return {template}
+    return {template.replace("\x00", value) for value in literals.get(hole, ())}
+
+
+def _forwarded_calls(function: Def, callee_name: str) -> list[ast.Call]:
+    """Return every *callee_name* call inside *function*'s own body."""
+    return [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == callee_name
+    ]
+
+
+def _callee_names(function: Def) -> set[str]:
+    """Return the names of every plain function *function* calls in its body."""
+    return {
+        node.func.id for node in ast.walk(function) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+
+def _forwarded_parameters(function: Def, callee: Def, forwarded: set[str], own: set[str]) -> set[str]:
+    """Return the parameters of *function* that it forwards into a method-name position of *callee*."""
+    callee_parameters = [argument.arg for argument in callee.args.args]
+    marked: set[str] = set()
+    for call in _forwarded_calls(function, callee.name):
+        for index, argument in enumerate(call.args):
+            if index >= len(callee_parameters):
+                continue
+            if callee_parameters[index] in forwarded and isinstance(argument, ast.Name) and argument.id in own:
+                marked.add(argument.id)
+    return marked
+
+
+def _forwarded_method_parameters(functions: Mapping[str, Def], method_parameters: dict[str, set[str]]) -> bool:
+    """Mark parameters a helper forwards into another helper's method-name position.
+
+    A wrapper such as ``_user_call(run, token, name, *args)`` never calls ``getattr``
+    itself; it forwards ``name`` to ``_typed_call``, which does. Without this the
+    outer call site never seeds the binding and every wrapped method reads as
+    unexecuted.
+    """
+    changed = False
+    for name, function in functions.items():
+        own = {argument.arg for argument in function.args.args}
+        for callee_name in _callee_names(function):
+            callee = functions.get(callee_name)
+            if callee is None:
+                continue
+            fresh = (
+                _forwarded_parameters(function, callee, method_parameters[callee_name], own) - method_parameters[name]
+            )
+            method_parameters[name] |= fresh
+            changed |= bool(fresh)
     return changed
 
 
@@ -206,6 +280,9 @@ def _bound_method_parameters(nodes: set[ast.AST], dynamic: set[str]) -> dict[str
     """Bind helper method-name parameters from call arguments, propagating through wrappers."""
     functions = {function.name: function for function in nodes if isinstance(function, Def)}
     method_parameters = {name: _getattr_parameters(function) for name, function in functions.items()}
+    for _ in range(len(functions) + 1):
+        if not _forwarded_method_parameters(functions, method_parameters):
+            break
     bound: dict[str, set[str]] = {}
     for _ in range(len(functions) + 1):
         if not _propagate_bound_parameters(nodes, functions, method_parameters, bound, dynamic):
@@ -404,7 +481,7 @@ def executed_modes(source: str, test_name: str, methods: set[str]) -> dict[str, 
     target = functions[test_name]
     callable_functions = {**functions, **_function_definitions(ast.walk(target))}
     closures: dict[ast.AST, set[ast.AST]] = {}
-    modes_by_method = dict.fromkeys(methods, set())
+    modes_by_method: dict[str, set[str]] = {method: set() for method in methods}
     for current in _passes(target):
         modes = _client_modes(current)
         if not modes:

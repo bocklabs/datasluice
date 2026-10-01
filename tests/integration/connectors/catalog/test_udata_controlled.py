@@ -3645,16 +3645,18 @@ def _check_sync_oauth_reads(
     client: SyncUDataClient, raw: _ControlledOAuthRaw, permissions: EffectivePermissions
 ) -> None:
     """Compare every synchronous OAuth read route against its raw response."""
-    for name, response in raw.reads:
-        _check_sync_oauth_read(client, response, name, permissions)
+    by_name = dict(raw.reads)
+    for name in ("oauth_error", "client_info", "authorize"):
+        _check_sync_oauth_read(client, by_name[name], name, permissions)
 
 
 async def _check_async_oauth_reads(
     client: AsyncUDataClient, raw: _ControlledOAuthRaw, permissions: EffectivePermissions
 ) -> None:
     """Compare every asynchronous OAuth read route against its raw response."""
-    for name, response in raw.reads:
-        await _check_async_oauth_read(client, response, name, permissions)
+    by_name = dict(raw.reads)
+    for name in ("oauth_error", "client_info", "authorize"):
+        await _check_async_oauth_read(client, by_name[name], name, permissions)
 
 
 def _check_sync_oauth_mutations(
