@@ -365,7 +365,7 @@ class ReportCreateInput:
         if self.dismissed_by is not None:
             body["dismissed_by"] = _thaw_json(self.dismissed_by)
         if self.callbacks is not None:
-            body["callbacks"] = dict(self.callbacks)
+            body["callbacks"] = _thaw_json(self.callbacks)
         return body
 
 
@@ -416,7 +416,7 @@ class ReportUpdateInput:
         body: dict[str, object] = {}
         for name in ("subject", "dismissed_by", "callbacks"):
             if (value := getattr(self, name)) is not None:
-                body[name] = dict(value)
+                body[name] = _thaw_json(value)
         for name in ("reason", "message", "dismissed_at", "subject_embed_id"):
             if (value := getattr(self, name)) is not None:
                 body[name] = value

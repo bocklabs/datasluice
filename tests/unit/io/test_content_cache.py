@@ -77,6 +77,12 @@ def test_key_is_sha256_hexdigest(tmp_path: Path) -> None:
     assert len(sha) == 64
 
 
+def test_key_is_deterministic(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    assert cache._sha("k1") == hashlib.sha256(b"k1").hexdigest()
+    assert cache._sha("k1") != cache._sha("k2")
+
+
 def test_concurrent_writers_configure_busy_timeout_before_database_access(tmp_path: Path) -> None:
     """Connections install busy handling before their first database operation."""
     cache = ContentCache(str(tmp_path / "cache"))

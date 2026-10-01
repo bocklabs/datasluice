@@ -274,6 +274,8 @@ class ReuseUpdateInput:
         _validate_tags(self.tags)
         _validate_text(self.topic, "topic")
         _validate_mapping(self.organization, "organization")
+        if self.organization is not None:
+            object.__setattr__(self, "organization", _frozen_mapping(self.organization, "reuse organization"))
         if self.private is not None and type(self.private) is not bool:
             raise ValueError("uData reuse private flag must be a boolean when supplied.")
         _validate_mapping(self.extras, "extras")

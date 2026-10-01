@@ -62,6 +62,9 @@ async def assert_oauth_mutation_async(
         result = await getattr(client.auth_oauth, name)(body, permissions, oauth_mutation_policy(name))
     except CatalogError as error:
         assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
+        receipt = error.metadata.get("receipt")
+        if isinstance(receipt, Mapping):
+            assert receipt["audit_metadata"]["status_code"] == raw[0], name
     else:
         if isinstance(result, OAuthConsentOutcome):
             assert result.status_code == raw[0], name

@@ -117,6 +117,8 @@ class CommentInput:
             raise ValueError("uData discussion comment must be a string.")
         if self.organization is not None and not _is_json_mapping(self.organization):
             raise ValueError("uData discussion organization must be a JSON mapping when supplied.")
+        if self.organization is not None:
+            object.__setattr__(self, "organization", _frozen_json_mapping(self.organization, "organization"))
         if self.close is not None and not isinstance(self.close, bool):
             raise ValueError("uData discussion close flag must be a boolean when supplied.")
         if not self.comment and not self.close and self.organization is None:

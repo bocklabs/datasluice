@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -15,6 +15,7 @@ from datasluice.connectors.catalog.udata.clients import (
     declared_udata_profile,
 )
 from datasluice.connectors.catalog.udata.models.posts_reports import (
+    _REPORT_REASONS,
     NotificationQuery,
     PostCreateInput,
     PostListQuery,
@@ -41,6 +42,9 @@ from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 ORIGIN = "http://127.0.0.1:5640"
 SITE = {"feed_size": 0, "id": "site", "keywords": [], "metrics": {}, "title": "uData", "version": "17.6.0"}
 CREDENTIAL = UDataCredential(api_key="secret-key")
+_REASON = sorted(_REPORT_REASONS)[0]
+_SUBJECT = {"id": "subject-1", "class": "Dataset"}
+
 PERMISSIONS = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA)
 ADMIN_PERMISSIONS = EffectivePermissions.for_credential(
     CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
@@ -501,3 +505,33 @@ def test_async_mode_matches_exact_wire() -> None:
         f"{ORIGIN}/api/1/reports/",
         f"{ORIGIN}/api/1/notifications/notification-1/read/",
     ]
+
+
+_NESTED = {"on_success": {"retry": {"count": 3}}, "tags": ["a", "b"]}
+
+
+@pytest.mark.parametrize(
+    ("factory", "field"),
+    [
+        (lambda value: ReportCreateInput(reason=_REASON, subject=_SUBJECT, callbacks=value), "callbacks"),
+        (lambda value: ReportUpdateInput(reason=_REASON, callbacks=value), "callbacks"),
+        (lambda value: ReportCreateInput(reason=_REASON, subject=_SUBJECT, dismissed_by=value), "dismissed_by"),
+    ],
+    ids=["create-callbacks", "update-callbacks", "create-dismissed-by"],
+)
+def test_frozen_report_mappings_stay_json_serializable(factory: Any, field: str) -> None:
+    """Frozen mappings must thaw back to plain JSON in payload().
+
+    A nested value raised TypeError from json.dumps once the mapping was frozen
+    without thawing, so the deep case is pinned explicitly rather than only the
+    flat one.
+    """
+    encoded = factory(_NESTED).payload()
+
+    assert json.loads(json.dumps(encoded, allow_nan=False))[field] == _NESTED
+
+
+@pytest.mark.parametrize("bad", [{"when": object()}, {"nested": {"deep": object()}}])
+def test_report_mappings_reject_non_json_safe_values(bad: Mapping[str, object]) -> None:
+    with pytest.raises(ValueError, match="JSON-safe values only"):
+        ReportCreateInput(reason=_REASON, subject=_SUBJECT, callbacks=bad)

@@ -37,8 +37,7 @@ PERMISSIONS = EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPl
 
 
 class _Router:
-    def __init__(self, origin: str) -> None:
-        self._origin = origin
+    def __init__(self) -> None:
         self.requests: list[RuntimeRequest] = []
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
@@ -56,8 +55,8 @@ class _Router:
 
 
 class _AsyncRouter:
-    def __init__(self, origin: str) -> None:
-        self._sync = _Router(origin)
+    def __init__(self) -> None:
+        self._sync = _Router()
         self.requests = self._sync.requests
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
@@ -76,7 +75,7 @@ def _confirmed(operation: str, target: str, *, destructive: bool = True) -> Muta
 
 
 def test_public_origin_refuses_a_confirmed_destructive_oauth_revocation() -> None:
-    router = _Router(PUBLIC)
+    router = _Router()
     client = SyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL)
     with client, pytest.raises(CatalogError, match="controlled local deployment"):
         client.auth_oauth.revoke_token(
@@ -88,7 +87,7 @@ def test_public_origin_refuses_a_confirmed_destructive_oauth_revocation() -> Non
 
 
 def test_public_origin_refuses_api_token_creation() -> None:
-    router = _Router(PUBLIC)
+    router = _Router()
     client = SyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL)
     with client, pytest.raises(CatalogError, match="controlled local deployment"):
         client.users_tokens.create_api_token(
@@ -100,7 +99,7 @@ def test_public_origin_refuses_api_token_creation() -> None:
 
 
 def test_async_public_origin_refuses_the_same_revocation() -> None:
-    router = _AsyncRouter(PUBLIC)
+    router = _AsyncRouter()
 
     async def run() -> None:
         async with AsyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL) as client:
@@ -116,7 +115,7 @@ def test_async_public_origin_refuses_the_same_revocation() -> None:
 
 
 def test_public_origin_still_serves_a_declared_read() -> None:
-    router = _Router(PUBLIC)
+    router = _Router()
     client = SyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL)
     with client:
         client.auth_oauth.client_info(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
@@ -124,7 +123,7 @@ def test_public_origin_still_serves_a_declared_read() -> None:
 
 
 def test_controlled_origin_still_dispatches_the_destructive_revocation() -> None:
-    router = _Router(_LOCAL)
+    router = _Router()
     client = SyncUDataClient(router, declared_udata_profile(), origin=_LOCAL, credentials=CREDENTIAL)
     with client:
         client.auth_oauth.revoke_token(
@@ -137,7 +136,7 @@ def test_controlled_origin_still_dispatches_the_destructive_revocation() -> None
 
 def test_every_non_read_profile_route_is_refused_on_a_public_origin() -> None:
     """The boundary keys off declared metadata, so no route can be forgotten."""
-    router = _Router(PUBLIC)
+    router = _Router()
     client = SyncUDataClient(router, declared_udata_profile(), origin=PUBLIC, credentials=CREDENTIAL)
     non_read = {
         operation_id
