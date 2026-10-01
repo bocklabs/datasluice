@@ -152,6 +152,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.root_profile import (
         SyncRootProfileService as _SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.spatial import (
+        AsyncSpatialService as _AsyncSpatialService,
+    )
+    from datasluice.connectors.catalog.udata.services.spatial import (
+        SyncSpatialService as _SyncSpatialService,
+    )
     from datasluice.connectors.catalog.udata.services.taxonomies import (
         AsyncTaxonomiesService as _AsyncTaxonomiesService,
     )
@@ -3230,6 +3236,11 @@ class SyncUDataClient(_UDataClientCore):
         return SyncPostsReportsService(self)
 
     @property
+    def spatial(self) -> _SyncSpatialService:
+        """Expose the complete typed spatial zone and coverage service."""
+        return SyncSpatialService(self)
+
+    @property
     def taxonomies(self) -> _SyncTaxonomiesService:
         """Expose the complete typed taxonomy service."""
         return SyncTaxonomiesService(self)
@@ -3686,6 +3697,11 @@ class AsyncUDataClient(_UDataClientCore):
     def posts_reports(self) -> _AsyncPostsReportsService:
         """Expose the complete typed post, report, and notification service."""
         return AsyncPostsReportsService(self)
+
+    @property
+    def spatial(self) -> _AsyncSpatialService:
+        """Expose the complete typed spatial zone and coverage service."""
+        return AsyncSpatialService(self)
 
     @property
     def taxonomies(self) -> _AsyncTaxonomiesService:
@@ -4212,6 +4228,10 @@ def _load_services():
         AsyncRootProfileService,
         SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.spatial import (
+        AsyncSpatialService,
+        SyncSpatialService,
+    )
     from datasluice.connectors.catalog.udata.services.taxonomies import (
         AsyncTaxonomiesService,
         SyncTaxonomiesService,
@@ -4240,6 +4260,8 @@ def _load_services():
         SyncPostsReportsService,
         AsyncUsersTokensService,
         SyncUsersTokensService,
+        AsyncSpatialService,
+        SyncSpatialService,
         AsyncAuthOAuthService,
         SyncAuthOAuthService,
     )
@@ -4264,6 +4286,8 @@ def _load_services():
     SyncPostsReportsService,
     AsyncUsersTokensService,
     SyncUsersTokensService,
+    AsyncSpatialService,
+    SyncSpatialService,
     AsyncAuthOAuthService,
     SyncAuthOAuthService,
 ) = _load_services()

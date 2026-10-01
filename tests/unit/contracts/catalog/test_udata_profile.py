@@ -180,6 +180,17 @@ _TAXONOMY_ROUTE_OPERATION_IDS = {
 }
 
 
+_SPATIAL_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.suggest-zones",
+    "udata/api-v1.spatial-zones",
+    "udata/api-v1.spatial-zone-datasets",
+    "udata/api-v1.spatial-zone",
+    "udata/api-v1.spatial-levels",
+    "udata/api-v1.spatial-granularities",
+    "udata/api-v1.spatial-coverage",
+}
+
+
 _OAUTH_ROUTE_OPERATION_IDS = {
     "udata/oauth.access-token",
     "udata/oauth.authorize",
@@ -212,6 +223,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _TAXONOMY_ROUTE_OPERATION_IDS
         | _REUSE_ROUTE_OPERATION_IDS
         | _POSTS_REPORTS_ROUTE_OPERATION_IDS
+        | _SPATIAL_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 

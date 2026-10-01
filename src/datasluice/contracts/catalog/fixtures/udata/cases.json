@@ -484,6 +484,34 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.spatial-coverage",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.spatial-granularities",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.spatial-levels",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.spatial-zone",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.spatial-zone-datasets",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.spatial-zones",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.suggest-zones",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.suggest-reuses",
       "outcome": "core"
     },

@@ -751,6 +751,23 @@ NATIVE_OPERATION_MEMBERS["udata"].update(
         for operation_id in ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
     }
 )
+SPATIAL_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.suggest-zones",
+        "udata/api-v1.spatial-zones",
+        "udata/api-v1.spatial-zone-datasets",
+        "udata/api-v1.spatial-zone",
+        "udata/api-v1.spatial-levels",
+        "udata/api-v1.spatial-granularities",
+        "udata/api-v1.spatial-coverage",
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "spatial")
+        for operation_id in SPATIAL_ROUTE_OPERATION_IDS
+    }
+)
 REUSE_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/api-v1.list-reuses",
@@ -871,6 +888,7 @@ LOCKED_EXTRA_OPERATION_IDS = (
     | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
     | REUSE_ROUTE_OPERATION_IDS
     | POSTS_REPORTS_ROUTE_OPERATION_IDS
+    | SPATIAL_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
@@ -881,6 +899,7 @@ PLATFORM_APPROVED_ROUTE_OPERATIONS = {
         | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
         | REUSE_ROUTE_OPERATION_IDS
         | POSTS_REPORTS_ROUTE_OPERATION_IDS
+        | SPATIAL_ROUTE_OPERATION_IDS
     ),
 }
 

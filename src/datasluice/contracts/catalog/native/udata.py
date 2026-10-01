@@ -68,6 +68,10 @@ if TYPE_CHECKING:
         ReuseSuggestQuery,
         ReuseUpdateInput,
     )
+    from datasluice.connectors.catalog.udata.models.spatial import (
+        SpatialDatasetQuery,
+        SpatialSuggestQuery,
+    )
     from datasluice.connectors.catalog.udata.models.taxonomies import (
         BadgeCreateInput,
         SuggestQuery,
@@ -936,6 +940,54 @@ class AsyncUDataActivityDiscussionsService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataSpatialService(Protocol):
+    """Typed synchronous spatial zone and coverage operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def suggest_zones(self, query: SpatialSuggestQuery) -> tuple[MappingRecord, ...]: ...
+
+    def spatial_zones(self, ids: tuple[str, ...]) -> MappingRecord: ...
+
+    def spatial_zone_datasets(
+        self, zone_id: str, query: SpatialDatasetQuery | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+
+    def spatial_zone(self, zone_id: str) -> MappingRecord: ...
+
+    def spatial_levels(self) -> tuple[MappingRecord, ...]: ...
+
+    def spatial_granularities(self) -> tuple[MappingRecord, ...]: ...
+
+    def spatial_coverage(self, level: str) -> MappingRecord: ...
+
+
+@runtime_checkable
+class AsyncUDataSpatialService(Protocol):
+    """Typed asynchronous spatial zone and coverage operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def suggest_zones(self, query: SpatialSuggestQuery) -> tuple[MappingRecord, ...]: ...
+
+    async def spatial_zones(self, ids: tuple[str, ...]) -> MappingRecord: ...
+
+    async def spatial_zone_datasets(
+        self, zone_id: str, query: SpatialDatasetQuery | None = None
+    ) -> tuple[MappingRecord, ...]: ...
+
+    async def spatial_zone(self, zone_id: str) -> MappingRecord: ...
+
+    async def spatial_levels(self) -> tuple[MappingRecord, ...]: ...
+
+    async def spatial_granularities(self) -> tuple[MappingRecord, ...]: ...
+
+    async def spatial_coverage(self, level: str) -> MappingRecord: ...
+
+
+@runtime_checkable
 class SyncUDataReusesService(Protocol):
     """Typed synchronous reuse and reuse-follower operations."""
 
@@ -1638,6 +1690,9 @@ class SyncUDataServices(Protocol):
     def auth_oauth(self) -> SyncUDataAuthOAuthService: ...
 
     @property
+    def spatial(self) -> SyncUDataSpatialService: ...
+
+    @property
     def taxonomies(self) -> SyncUDataTaxonomiesService: ...
 
     @property
@@ -1683,6 +1738,9 @@ class AsyncUDataServices(Protocol):
 
     @property
     def auth_oauth(self) -> AsyncUDataAuthOAuthService: ...
+
+    @property
+    def spatial(self) -> AsyncUDataSpatialService: ...
 
     @property
     def taxonomies(self) -> AsyncUDataTaxonomiesService: ...
