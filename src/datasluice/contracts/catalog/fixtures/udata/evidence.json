@@ -306,7 +306,7 @@
   "controlled_spatial_evidence": {
     "captured_at": "2026-10-01",
     "stack_version": "17.6.0",
-    "implementation_sha": "2d5038d0b100badd8e4b4a72fe2c39d68b2a9241",
+    "implementation_sha": "496f628b7b164fe7c168e8765d09a477566c985a",
     "controlled_test_sha256": "3f6addbf164bfae7369e3ba4abf5b9e5438bc242e51c2d48ff8d2f5c7acb2edf",
     "wheel_test_sha256": "193c5cdc9e3f4cdd01989cd619dffac6404d279fea1ff8228dfd225fcd8ec3bc",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
