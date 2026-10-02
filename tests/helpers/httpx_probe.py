@@ -23,7 +23,6 @@ Responder = Callable[[httpx.Request], httpx.Response]
 Match = Callable[[httpx.Request], bool]
 
 CSV_BYTES = b"a,b\n1,2"
-CSV_BYTES_LEN = str(len(CSV_BYTES))
 
 UPLOAD_PARTS = (
     UploadPart(field_name="upload", file_name="data.csv", content_type="text/csv", data=CSV_BYTES),

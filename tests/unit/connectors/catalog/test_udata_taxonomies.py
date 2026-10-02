@@ -24,16 +24,20 @@ from datasluice.contracts.catalog.native.udata import (
     AsyncUDataTaxonomiesService,
     SyncUDataTaxonomiesService,
 )
+from datasluice.domain.catalog.auth import EffectivePermissions
+from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from tests.helpers.udata_test_support import (
     UDATA_CREDENTIAL,
     UDATA_ORIGIN,
     UDATA_PERMISSIONS,
+    UDATA_SITE,
+    AsyncRouteRouter,
     RouteTable,
+    SyncRouteRouter,
     async_client,
     async_route_table,
     mutation_policy,
-    scoped_permissions,
     sync_client,
     sync_route_table,
     thawed,
@@ -42,8 +46,28 @@ from tests.helpers.udata_test_support import (
 
 ORIGIN = UDATA_ORIGIN
 PERMISSIONS = UDATA_PERMISSIONS
-ADD_ONLY_PERMISSIONS = scoped_permissions("add-badge", wire.ADD_BADGE_OPERATION)
-DELETE_ONLY_PERMISSIONS = scoped_permissions("delete-badge", wire.DELETE_BADGE_OPERATION)
+_BADGE_REQUIREMENTS = {
+    wire.ADD_BADGE_OPERATION: frozenset({"badge-add"}),
+    wire.DELETE_BADGE_OPERATION: frozenset({"badge-delete"}),
+}
+
+
+def _badge_permissions(*granted: str) -> EffectivePermissions:
+    """Bind both badge requirements to one granted scope set, so the gate can discriminate."""
+    return EffectivePermissions.for_credential(
+        UDATA_CREDENTIAL,
+        platform=CatalogPlatform.UDATA,
+        scopes=frozenset(granted),
+        operation_scopes=_BADGE_REQUIREMENTS,
+    )
+
+
+ADD_ONLY_PERMISSIONS = _badge_permissions("badge-add")
+DELETE_ONLY_PERMISSIONS = _badge_permissions("badge-delete")
+
+
+def _badge_requests(router: SyncRouteRouter | AsyncRouteRouter) -> list[tuple[str, str]]:
+    return [(request.method, request.url) for request in router.requests if "/badges/" in request.url]
 
 
 @pytest.mark.parametrize("identifier", [".", ".."])
@@ -191,6 +215,124 @@ def test_taxonomy_reads_decode_losslessly_and_fail_typed_in_both_modes() -> None
     asyncio.run(run())
 
 
+_MALFORMED_SUGGEST_SIZES = (0, -1, 101, True, False, 1.0, 10.5, "10", None, [10], b"10")
+_MALFORMED_SUGGEST_QUERIES = (5, None, b"csv", ["csv"], {"q": "csv"}, True)
+_MALFORMED_BADGE_KINDS = ("", "a/b", "a?b", "a#b", 'a"b', "a'b", 4, None, True)
+_ROUTE_ONLY_BADGE_KINDS = (".", "..", "a\x00b", "a\nb")
+_MALFORMED_SEGMENTS = (
+    "",
+    ".",
+    "..",
+    "a/b",
+    "a?b",
+    "a#b",
+    'a"b',
+    "a'b",
+    "a\x00b",
+    "a\nb",
+    4,
+    None,
+    True,
+    ["dataset-1"],
+)
+_MALFORMED_OBJECT_LISTS = (
+    ["object", 4],
+    [4, "object"],
+    {},
+    {"id": "lov2"},
+    "lov2",
+    None,
+    [{"nested": []}, "object"],
+)
+_MALFORMED_STRING_LISTS = (["csv", 4], ["csv", ""], ["csv", None], {}, "csv", None, [b"csv"])
+_NON_FINITE_LITERALS = (b"NaN", b"Infinity", b"-Infinity")
+_TAXONOMY_READ_PATHS = (
+    ("available_badges", (), "/api/1/datasets/badges/", b'{"certified": @@}'),
+    ("suggest_formats", (SuggestQuery("csv"),), "/api/1/datasets/suggest/formats/?q=csv&size=10", b'[{"text": @@}]'),
+    ("suggest_mime", (SuggestQuery("csv"),), "/api/1/datasets/suggest/mime/?q=csv&size=10", b'[{"text": @@}]'),
+    ("licenses", (), "/api/1/datasets/licenses/", b'[{"id": "lov2", "title": @@}]'),
+    ("frequencies", (), "/api/1/datasets/frequencies/", b'[{"id": "punctual", "label": @@}]'),
+    ("extensions", (), "/api/1/datasets/extensions/", b'["csv", @@]'),
+    ("schemas", (), "/api/1/datasets/schemas/", b'[{"name": "etalab/schema-irve", "version": @@}]'),
+    (
+        "dataset_schemas",
+        ("dataset-1",),
+        "/api/2/datasets/dataset-1/schemas/",
+        b'[{"name": "etalab/schema-irve", "version": @@}]',
+    ),
+)
+
+
+@pytest.mark.parametrize("size", _MALFORMED_SUGGEST_SIZES)
+def test_malformed_suggest_sizes_are_rejected_before_dispatch(size: object) -> None:
+    """`size` must be a real integer in 1..100; bool, float, and str are all malformed."""
+    with pytest.raises(ValueError, match="size"):
+        SuggestQuery("csv", size=cast(int, size))
+
+
+@pytest.mark.parametrize("query", _MALFORMED_SUGGEST_QUERIES)
+def test_malformed_suggest_queries_are_rejected_before_dispatch(query: object) -> None:
+    """`q` reaches the query string verbatim, so a non-string must never be coerced."""
+    with pytest.raises(ValueError, match="query"):
+        SuggestQuery(cast(str, query))
+
+
+@pytest.mark.parametrize("kind", _MALFORMED_BADGE_KINDS)
+def test_malformed_badge_kinds_are_rejected_before_dispatch(kind: object) -> None:
+    """The badge kind is a path segment on delete and a body value on add."""
+    with pytest.raises(ValueError, match="kind"):
+        BadgeCreateInput(kind=cast(str, kind))
+
+
+@pytest.mark.parametrize("kind", _ROUTE_ONLY_BADGE_KINDS)
+def test_dot_and_control_badge_kinds_are_stopped_at_the_route_boundary(kind: str) -> None:
+    """`BadgeCreateInput` only screens separators; the shared segment guard screens the rest."""
+    assert BadgeCreateInput(kind=kind).payload() == {"kind": kind}
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        wire.delete_badge_request("dataset-1", kind)
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        wire.add_badge_request(kind, BadgeCreateInput("certified"))
+
+
+@pytest.mark.parametrize("identifier", _MALFORMED_SEGMENTS)
+def test_malformed_taxonomy_segments_never_reach_a_route(identifier: object) -> None:
+    """Dot segments, separators, and control characters must be refused, not quoted."""
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        segment(cast(str, identifier), wire.DELETE_BADGE_OPERATION)
+
+
+@pytest.mark.parametrize("payload", _MALFORMED_OBJECT_LISTS)
+def test_malformed_object_lists_fail_the_taxonomy_decoder(payload: object) -> None:
+    with pytest.raises(CatalogValidationError):
+        wire.parse_objects(payload, operation=wire.TAXONOMIES_OPERATION)
+
+
+@pytest.mark.parametrize("payload", _MALFORMED_STRING_LISTS)
+def test_malformed_string_lists_fail_the_taxonomy_decoder(payload: object) -> None:
+    with pytest.raises(CatalogValidationError):
+        wire.parse_strings(payload, operation=wire.EXTENSIONS_OPERATION)
+
+
+@pytest.mark.parametrize("literal", _NON_FINITE_LITERALS)
+@pytest.mark.parametrize(("read", "arguments", "path", "shape"), _TAXONOMY_READ_PATHS)
+def test_non_finite_taxonomy_responses_fail_typed_without_a_raw_body(
+    literal: bytes, read: str, arguments: tuple[object, ...], path: str, shape: bytes
+) -> None:
+    """NaN and the infinities are not JSON and must never reach a native record."""
+    router = sync_route_table(
+        {
+            ("GET", f"{ORIGIN}/api/1/site/"): (200, json.dumps(UDATA_SITE).encode()),
+            ("GET", f"{ORIGIN}{path}"): (200, shape.replace(b"@@", literal)),
+        }
+    )
+    with sync_client(router, None) as client:
+        with pytest.raises(NativeCatalogError) as raised:
+            getattr(client.taxonomies, read)(*arguments)
+    rendered = repr(raised.value) + str(raised.value.__dict__)
+    assert literal.decode() not in rendered
+    assert "secret-key" not in rendered
+
+
 def test_invalid_taxonomy_values_fail_before_or_at_decode_without_raw_body() -> None:
     with pytest.raises(ValueError, match="kind"):
         BadgeCreateInput(kind="")
@@ -248,28 +390,62 @@ def test_badge_permissions_discriminate_add_from_delete_in_both_modes() -> None:
             ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"): (204, None),
         }
     )
-
-    router = sync_route_table(routes)
+    add_policy = mutation_policy(wire.ADD_BADGE_OPERATION, "dataset-1")
+    delete_policy = mutation_policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True)
 
     def run_sync() -> None:
+        router = sync_route_table(routes)
         with sync_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
-                client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS)
+                client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS, delete_policy)
             with pytest.raises(ForbiddenError) as denied_add:
-                client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), DELETE_ONLY_PERMISSIONS)
+                client.taxonomies.add_badge(
+                    "dataset-1", BadgeCreateInput("certified"), DELETE_ONLY_PERMISSIONS, add_policy
+                )
             assert denied_delete.value.operation == wire.DELETE_BADGE_OPERATION
             assert denied_add.value.operation == wire.ADD_BADGE_OPERATION
+            assert denied_delete.value.capability_state == "forbidden"
+            assert denied_add.value.capability_state == "forbidden"
             assert router.requests == []
+            allowed_add = client.taxonomies.add_badge(
+                "dataset-1", BadgeCreateInput("certified"), ADD_ONLY_PERMISSIONS, add_policy
+            )
+            allowed_delete = client.taxonomies.delete_badge(
+                "dataset-1", "certified", DELETE_ONLY_PERMISSIONS, delete_policy
+            )
+        assert allowed_add.receipt.outcome == "succeeded"
+        assert allowed_delete.receipt.outcome == "succeeded"
+        assert _badge_requests(router) == [
+            ("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"),
+            ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"),
+        ]
 
     async def run_async() -> None:
-        async with async_client(async_route_table(routes), UDATA_CREDENTIAL) as client:
+        router = async_route_table(routes)
+        async with async_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
-                await client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS)
+                await client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS, delete_policy)
             with pytest.raises(ForbiddenError) as denied_add:
-                await client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), DELETE_ONLY_PERMISSIONS)
+                await client.taxonomies.add_badge(
+                    "dataset-1", BadgeCreateInput("certified"), DELETE_ONLY_PERMISSIONS, add_policy
+                )
             assert denied_delete.value.operation == wire.DELETE_BADGE_OPERATION
             assert denied_add.value.operation == wire.ADD_BADGE_OPERATION
+            assert denied_delete.value.capability_state == "forbidden"
+            assert denied_add.value.capability_state == "forbidden"
             assert router.requests == []
+            allowed_add = await client.taxonomies.add_badge(
+                "dataset-1", BadgeCreateInput("certified"), ADD_ONLY_PERMISSIONS, add_policy
+            )
+            allowed_delete = await client.taxonomies.delete_badge(
+                "dataset-1", "certified", DELETE_ONLY_PERMISSIONS, delete_policy
+            )
+        assert allowed_add.receipt.outcome == "succeeded"
+        assert allowed_delete.receipt.outcome == "succeeded"
+        assert _badge_requests(router) == [
+            ("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"),
+            ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"),
+        ]
 
     run_sync()
     asyncio.run(run_async())

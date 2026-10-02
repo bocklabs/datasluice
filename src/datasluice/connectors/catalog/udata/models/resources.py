@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from time import monotonic
 from types import MappingProxyType
 from typing import BinaryIO
 
+from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.resilience import TimeBudget
+from datasluice.errors.catalog import BudgetExhaustedError
+from datasluice.runtime.resilience import DeadlineMonitor
 from datasluice.runtime.transport.base import UploadPart
+
+UPLOAD_STREAM_OPERATION = "udata/upload-stream"
 
 
 def _freeze(value: object) -> object:
@@ -47,16 +54,44 @@ class MidStreamUploadError(OSError):
     """A bounded upload source failed after the request already started sending bytes."""
 
 
+class UploadDeadlineExceeded(MidStreamUploadError):
+    """A bounded upload source exhausted its streaming time budget mid-request.
+
+    The byte ceiling alone does not bound how long a source may hold the
+    request open, so the streaming boundary is also time-bounded. The typed
+    budget error is retained as the cause so budget accounting survives the
+    translation into the mid-stream ``OSError`` family.
+    """
+
+    def __init__(self, message: str, *, budget_seconds: float, elapsed_seconds: float) -> None:
+        super().__init__(message)
+        self.budget_seconds = float(budget_seconds)
+        self.elapsed_seconds = float(elapsed_seconds)
+
+
 class _BoundedSource:
-    def __init__(self, source: BinaryIO, limit: int) -> None:
+    def __init__(
+        self,
+        source: BinaryIO,
+        limit: int,
+        deadline: DeadlineMonitor,
+        *,
+        operation: str = UPLOAD_STREAM_OPERATION,
+        platform: str = CatalogPlatform.UDATA.value,
+    ) -> None:
         self._source = source
         self._limit = limit
+        self._deadline = deadline
+        self._operation = operation
+        self._platform = platform
         self._read = 0
         self._closed = False
 
     def read(self, size: int = -1) -> bytes:
         if self._closed:
             raise ValueError("uData upload source is closed.")
+        if self._read < self._limit:
+            self._assert_within_deadline()
         remaining = self._limit - self._read
         request_size = remaining + 1 if size < 0 else min(size, remaining + 1)
         chunk = self._source.read(request_size)
@@ -66,6 +101,16 @@ class _BoundedSource:
         if self._read > self._limit:
             raise MidStreamUploadError("uData upload source exceeds its byte limit.")
         return chunk
+
+    def _assert_within_deadline(self) -> None:
+        try:
+            self._deadline.assert_dispatchable(self._operation, self._platform)
+        except BudgetExhaustedError as exhausted:
+            raise UploadDeadlineExceeded(
+                "uData upload source exceeded its streaming time budget.",
+                budget_seconds=exhausted.budget_seconds,
+                elapsed_seconds=exhausted.elapsed_seconds,
+            ) from exhausted
 
     def close(self) -> None:
         if not self._closed:
@@ -121,12 +166,19 @@ class ResourceUpdateInput:
 
 @dataclass(frozen=True, slots=True)
 class ResourceUploadInput:
-    """One bounded, single-use upload source."""
+    """One bounded, single-use upload source.
+
+    ``max_upload_bytes`` bounds how many bytes the source may ever serve and
+    ``budget`` bounds how long serving them may take, so a source that drips
+    fewer bytes than its ceiling still cannot hold a request open forever.
+    """
 
     source: BinaryIO = field(repr=False)
     file_name: str = field(repr=False)
     max_upload_bytes: int
     content_type: str | None = None
+    budget: TimeBudget | None = None
+    clock: Callable[[], float] = monotonic
     _stream: _BoundedSource = field(init=False, repr=False, compare=False)
     _part_used: bool = field(init=False, default=False, repr=False, compare=False)
 
@@ -138,7 +190,19 @@ class ResourceUploadInput:
             raise ValueError("uData upload byte limits must be positive integers.")
         if self.content_type is not None:
             _text(self.content_type, "content type")
-        object.__setattr__(self, "_stream", _BoundedSource(self.source, self.max_upload_bytes))
+        if self.budget is not None and not isinstance(self.budget, TimeBudget):
+            raise TypeError("uData upload time budgets must use TimeBudget.")
+        if not callable(self.clock):
+            raise TypeError("uData upload sources require a monotonic clock callable.")
+        object.__setattr__(
+            self,
+            "_stream",
+            _BoundedSource(
+                self.source,
+                self.max_upload_bytes,
+                DeadlineMonitor(self.budget or TimeBudget(), clock=self.clock),
+            ),
+        )
 
     def part(self) -> UploadPart:
         if self._part_used or self._stream._closed:

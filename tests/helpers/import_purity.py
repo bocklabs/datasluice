@@ -7,6 +7,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PROBE = Path(__file__).resolve().parent / "import_probe.py"
+_PROBE_TIMEOUT_SECONDS = 60
 
 
 def _run_probe(targets: tuple[str, ...], forbidden: tuple[str, ...], mode: str) -> subprocess.CompletedProcess[str]:
@@ -17,6 +18,7 @@ def _run_probe(targets: tuple[str, ...], forbidden: tuple[str, ...], mode: str) 
         capture_output=True,
         text=True,
         env=env,
+        timeout=_PROBE_TIMEOUT_SECONDS,
     )
 
 

@@ -28,10 +28,13 @@ from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
-from datasluice.errors.catalog import NativeCatalogError, attach_catalog_metadata
+from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import RuntimeResponse
 
+from .datasets import (
+    _attach_receipt as _attach,
+)
 from .datasets import (
     _enforce_mutation_policy,
     _error_status,
@@ -75,12 +78,6 @@ def _org_receipt(
         outcome,
         {"mutation": mutation, "status_code": status, "target_valid": bool(target)},
     )
-
-
-def _attach(error: BaseException, receipt: MutationReceipt) -> None:
-    attach_catalog_metadata(error, {"receipt": receipt.to_dict()})
-    if isinstance(getattr(error, "__dict__", None), dict):
-        error.__dict__["mutation_receipt"] = receipt
 
 
 def _close_logo(

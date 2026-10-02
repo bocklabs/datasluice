@@ -206,7 +206,7 @@ _PAGER_PARAMS = frozenset({"page", "page_size"})
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
-_CONTROLLED_DOCKERFILE_SHA256 = "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407"
+_CONTROLLED_DOCKERFILE_SHA256 = "6d3b4b1fbd47bfc1da08c96d57ef2f402ede125c25839c8323252d10066eba6b"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
 _CONTROLLED_UDATA_IMAGE_SPEC = (
     "udata-evidence-udata",
@@ -2588,7 +2588,7 @@ class _SyncStreamGuard:
     deadline: DeadlineMonitor
     settled: bool = False
     consumed: bool = False
-    stream_chunks: Generator[bytes] | None = None
+    stream_chunks: Generator[bytes, None, None] | None = None
 
     def settle_failure(self, error: BaseException) -> None:
         if self.settled:
@@ -2620,7 +2620,7 @@ class _SyncStreamGuard:
         self.client._emit_breaker_change(self.owning_id, before.open, after.open)
         self.client._emit(self.owning_id, "succeeded")
 
-    def chunks(self) -> Generator[bytes]:
+    def chunks(self) -> Generator[bytes, None, None]:
         try:
             for chunk in self.response:
                 self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
@@ -2676,7 +2676,7 @@ class _AsyncStreamGuard:
     deadline: DeadlineMonitor
     settled: bool = False
     consumed: bool = False
-    stream_chunks: AsyncGenerator[bytes] | None = None
+    stream_chunks: AsyncGenerator[bytes, None] | None = None
 
     def settle_failure(self, error: BaseException) -> None:
         if self.settled:
@@ -2708,7 +2708,7 @@ class _AsyncStreamGuard:
         self.client._emit_breaker_change(self.owning_id, before.open, after.open)
         self.client._emit(self.owning_id, "succeeded")
 
-    async def chunks(self) -> AsyncGenerator[bytes]:
+    async def chunks(self) -> AsyncGenerator[bytes, None]:
         try:
             async for chunk in self.response:
                 self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)

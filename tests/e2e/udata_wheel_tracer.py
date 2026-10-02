@@ -660,7 +660,7 @@ linked_reuse = client.reuses.reuse_add_dataset(
     sync_permissions,
     MutationPolicy(
         confirmation=ConfirmationPolicy(
-            confirmed=True, operation="udata/api-v1.reuse-add-dataset", target="wheel-reuse"
+            confirmed=True, operation="udata/api-v1.reuse-add-dataset", target="wheel-reuse:abc"
         ),
         concurrency=ConcurrencyPolicy(overwrite=True),
     ),

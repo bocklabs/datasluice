@@ -33,12 +33,10 @@ def _fields(value: Mapping[str, object], name: str, *, allow_empty: bool = False
 
 
 def _frozen(value: object, name: str, *, allow_empty: bool = False) -> Mapping[str, object]:
-    if (
-        not isinstance(value, Mapping)
-        or (not allow_empty and not value)
-        or not all(isinstance(key, str) and key for key in value)
-    ):
+    if not isinstance(value, Mapping) or not all(isinstance(key, str) and key for key in value):
         raise ValueError(f"uData user {name} must be a JSON mapping.")
+    if not allow_empty and not value:
+        raise ValueError(f"uData user {name} must supply at least one documented field.")
     try:
         frozen = _freeze_json(dict(value), f"udata.user.{name}")
     except DataSluiceError as error:
@@ -62,11 +60,6 @@ def _website(value: object) -> None:
         raise ValueError(_WEBSITE_REQUIRED) from None
     if parts.scheme not in {"http", "https"} or not parts.netloc or not hostname:
         raise ValueError(_WEBSITE_REQUIRED)
-
-
-def _optional_text(value: object, name: str) -> None:
-    if value is not None and not isinstance(value, str):
-        raise ValueError(f"uData user {name} must be a string or null.")
 
 
 def _email_field(value: object) -> None:

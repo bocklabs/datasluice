@@ -222,23 +222,24 @@ def test_httpx_cross_origin_non_post_body_redirect_fails_closed(status: int) -> 
 def test_async_httpx_cross_origin_body_redirect_fails_closed() -> None:
     body = urlencode({"token": "redirect-body-secret"}).encode()
     message = "a cross-origin body-bearing redirect target must not receive the body"
+    probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", 307, "origin.test"))
 
     async def send() -> None:
-        probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", 307, "origin.test"))
         async with probe:
             await probe.send(RuntimeRequest("POST", "https://origin.test/oauth/revoke", REDIRECT_BODY_HEADERS, body))
-        assert len(probe.requests) == 1
-        assert probe.requests[0].content == body
 
     with pytest.raises(TransportFailure, match="different redirect origin"):
         asyncio.run(send())
 
+    assert len(probe.requests) == 1
+    assert probe.requests[0].content == body
+
 
 def test_async_httpx_cross_origin_multipart_redirect_fails_closed() -> None:
     message = "a cross-origin files-bearing redirect target must not receive the parts"
+    probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", 307, "origin.test"))
 
     async def send() -> None:
-        probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", 307, "origin.test"))
         async with probe:
             await probe.send(
                 RuntimeRequest(
@@ -251,12 +252,13 @@ def test_async_httpx_cross_origin_multipart_redirect_fails_closed() -> None:
                     ),
                 )
             )
-        assert len(probe.requests) == 1
-        assert b'name="upload"; filename="data.csv"' in probe.requests[0].content
-        assert b"a,b\n1,2" in probe.requests[0].content
 
     with pytest.raises(TransportFailure, match="different redirect origin"):
         asyncio.run(send())
+
+    assert len(probe.requests) == 1
+    assert b'name="upload"; filename="data.csv"' in probe.requests[0].content
+    assert b"a,b\n1,2" in probe.requests[0].content
 
 
 def test_httpx_exceeding_max_redirects_raises_transport_failure() -> None:

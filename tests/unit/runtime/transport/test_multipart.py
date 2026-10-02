@@ -33,6 +33,19 @@ _PARTS = UPLOAD_PARTS
 _STREAMED = BytesIO(b"a,b\n")
 
 
+class _ReadCountingStream(BytesIO):
+    """A BytesIO recording how many bytes read() has handed out in total."""
+
+    def __init__(self, initial_bytes: bytes) -> None:
+        super().__init__(initial_bytes)
+        self.bytes_read = 0
+
+    def read(self, size: int | None = -1, /) -> bytes:
+        chunk = super().read(size)
+        self.bytes_read += len(chunk)
+        return chunk
+
+
 def stream_part(source: BytesIO) -> UploadPart:
     return UploadPart(
         field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
@@ -85,6 +98,23 @@ def test_upload_part_is_frozen_and_validates_its_fields() -> None:
         UploadPart(field_name="upload", data=b"x", content_type=[])  # ty: ignore[invalid-argument-type]
 
 
+def test_upload_part_requires_a_stream_to_be_both_readable_and_closeable() -> None:
+    """The duck-typed stream contract needs read AND close, because the transport owns closing it."""
+
+    class _ReadableOnly:
+        def read(self, size: int = -1) -> bytes:
+            return b""
+
+    class _CloseableOnly:
+        def close(self) -> None:
+            return None
+
+    with pytest.raises(ValueError, match="bytes or a closeable byte stream"):
+        UploadPart(field_name="upload", data=cast(UploadStream, _ReadableOnly()))
+    with pytest.raises(ValueError, match="bytes or a closeable byte stream"):
+        UploadPart(field_name="upload", data=cast(UploadStream, _CloseableOnly()))
+
+
 def test_reprs_render_field_names_and_lengths_but_never_part_bytes() -> None:
     secret = b"super-secret-upload-bytes"
     part = UploadPart(field_name="upload", file_name="data.csv", content_type="text/csv", data=secret)
@@ -132,7 +162,7 @@ def test_async_httpx_sends_multipart_through_the_files_channel() -> None:
 
 
 def test_httpx_transmits_stream_part_bytes_exactly_once() -> None:
-    source = BytesIO(CSV_BYTES)
+    source = _ReadCountingStream(CSV_BYTES)
     part = stream_part(source)
 
     with SyncProbe(fixed(200, content=b"stored")) as probe:
@@ -145,10 +175,11 @@ def test_httpx_transmits_stream_part_bytes_exactly_once() -> None:
     assert response.body == b"stored"
     assert CSV_BYTES in probe.requests[0].content
     assert source.tell() == len(CSV_BYTES)
+    assert source.bytes_read == len(CSV_BYTES)
 
 
 def test_async_httpx_transmits_stream_part_bytes_exactly_once() -> None:
-    source = BytesIO(CSV_BYTES)
+    source = _ReadCountingStream(CSV_BYTES)
     part = stream_part(source)
     probe = AsyncProbe(fixed(200, content=b"stored"))
 
@@ -164,6 +195,7 @@ def test_async_httpx_transmits_stream_part_bytes_exactly_once() -> None:
 
     assert CSV_BYTES in probe.requests[0].content
     assert source.tell() == len(CSV_BYTES)
+    assert source.bytes_read == len(CSV_BYTES)
 
 
 @pytest.mark.parametrize("status", [301, 302, 303])

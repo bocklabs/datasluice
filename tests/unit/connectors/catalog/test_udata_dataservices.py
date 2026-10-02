@@ -16,6 +16,11 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from datasluice.connectors.catalog.udata.clients import (
+    AsyncUDataClient,
+    SyncUDataClient,
+    declared_udata_profile,
+)
 from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceCreateInput,
     DataserviceDatasetLinkInput,
@@ -32,13 +37,20 @@ from datasluice.connectors.catalog.udata.services.dataservices import (
 )
 from datasluice.connectors.catalog.udata.wire import dataservices as wire
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError, ForbiddenError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from datasluice.errors.catalog import (
+    CatalogNotFoundError,
+    CatalogUnavailableError,
+    CatalogValidationError,
+    ForbiddenError,
+)
+from datasluice.runtime.events import EventEmitter, ListSink
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
     UDATA_CREDENTIAL,
     UDATA_ORIGIN,
     UDATA_PERMISSIONS,
+    UDATA_SITE,
     SyncRouteRouter,
     anonymous_sync_client,
     async_client,
@@ -293,6 +305,46 @@ def test_dataservice_queries_reject_invalid_input_before_dispatch() -> None:
         DataserviceDatasetLinkInput(("dataset-1", ""))
     with pytest.raises(ValueError):
         DataserviceDeleteOptions(send_legal_notice=cast(bool, "yes"))
+
+
+@pytest.mark.parametrize("oversized", [101, 1_000, 10**9])
+def test_dataservice_paging_is_rejected_above_the_ceiling_before_dispatch(oversized: int) -> None:
+    """An arbitrarily large page_size is refused at construction, so no request can ever carry it."""
+    router = sync_route_table(with_site_route({}))
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        with pytest.raises(ValueError, match="1 through 100"):
+            DataserviceListQuery(page_size=oversized)
+        with pytest.raises(ValueError, match="1 through 100"):
+            DataserviceSearchQuery(page_size=oversized)
+        with pytest.raises(ValueError, match="1 through 100"):
+            DataserviceFollowersQuery(page_size=oversized)
+        with pytest.raises(ValueError, match="1 through 100"):
+            client.dataservices.list_dataservices(DataserviceListQuery(page_size=oversized))
+        with pytest.raises(ValueError, match="1 through 100"):
+            client.dataservices.search_dataservices(DataserviceSearchQuery(page_size=oversized))
+        with pytest.raises(ValueError, match="1 through 100"):
+            client.dataservices.list_dataservice_followers("ds-1", DataserviceFollowersQuery(page_size=oversized))
+    assert [r.url for r in router.requests if "/dataservices" in r.url] == []
+
+
+def test_dataservice_paging_accepts_the_exact_ceiling_boundary() -> None:
+    """The bound is inclusive, so a caller asking for exactly the ceiling still dispatches."""
+    router = sync_route_table(
+        with_site_route(
+            {
+                ("GET", f"{ORIGIN}{DATASERVICES}/?page=1&page_size=100"): (
+                    200,
+                    udata_page(_dataservice(), page_size=100),
+                )
+            }
+        )
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        page = client.dataservices.list_dataservices(DataserviceListQuery(page_size=100))
+        assert cast(Mapping[str, object], thawed(page.payload))["page_size"] == 100
+    assert [r.url for r in router.requests if "/dataservices" in r.url] == [
+        f"{ORIGIN}{DATASERVICES}/?page=1&page_size=100"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -625,3 +677,254 @@ def test_dataservice_async_mode_matches_sync_exact_wire() -> None:
         ("GET", f"{ORIGIN}{DATASERVICES}/?page=1&page_size=20"),
         ("POST", f"{ORIGIN}{DATASERVICES}/ds-1/featured/"),
     ]
+
+
+_LIST_URL = f"{ORIGIN}{DATASERVICES}/?page=1&page_size=20"
+_LIST_BODY = udata_page(_dataservice())
+_DELETE_URL = f"{ORIGIN}{DATASERVICES}/ds-1/"
+
+
+class _InterruptingRoutes:
+    """Answer the site probe, one read route, and one mutation route, raising the interruption while armed."""
+
+    def __init__(self, route: tuple[str, str], interruption: BaseException, *, mutation: tuple[str, str]) -> None:
+        self._route = route
+        self._mutation = mutation
+        self._interruption = interruption
+        self.armed = True
+        self.requests: list[RuntimeRequest] = []
+
+    def _respond(self, request: RuntimeRequest) -> RuntimeResponse:
+        self.requests.append(request)
+        if self.armed and (request.method, request.url) in {self._route, self._mutation}:
+            raise self._interruption
+        if request.url.endswith("/api/1/site/"):
+            payload: object = UDATA_SITE
+        elif (request.method, request.url) == self._route:
+            payload = _LIST_BODY
+        elif request.method == "GET":
+            payload = _dataservice()
+        else:
+            payload = None
+        body = b"" if payload is None else json.dumps(payload).encode()
+        return RuntimeResponse(200, {"Content-Type": "application/json"}, body)
+
+
+class _CancellingSyncTransport(_InterruptingRoutes):
+    """Sync transport that counts `close` so close-once ownership is observable."""
+
+    def __init__(self, route: tuple[str, str], interruption: BaseException, *, mutation: tuple[str, str]) -> None:
+        super().__init__(route, interruption, mutation=mutation)
+        self.close_count = 0
+
+    def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return self._respond(request)
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
+class _CancellingAsyncTransport(_InterruptingRoutes):
+    """Async twin of the interrupting transport that counts `aclose` instead of `close`."""
+
+    def __init__(self, route: tuple[str, str], interruption: BaseException, *, mutation: tuple[str, str]) -> None:
+        super().__init__(route, interruption, mutation=mutation)
+        self.aclose_count = 0
+
+    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        return self._respond(request)
+
+    async def aclose(self) -> None:
+        self.aclose_count += 1
+
+
+def _dataservice_sync_client(
+    interruption: BaseException, *, breaker_failure_threshold: int = 2, emitter: EventEmitter | None = None
+) -> tuple[SyncUDataClient, _CancellingSyncTransport]:
+    transport = _CancellingSyncTransport(("GET", _LIST_URL), interruption, mutation=("DELETE", _DELETE_URL))
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=UDATA_CREDENTIAL,
+        emitter=emitter,
+        breaker_failure_threshold=breaker_failure_threshold,
+        retry_sleep=lambda _: None,
+        owns_transport=True,
+    )
+    return client, transport
+
+
+def _dataservice_async_client(
+    interruption: BaseException, *, breaker_failure_threshold: int = 2, emitter: EventEmitter | None = None
+) -> tuple[AsyncUDataClient, _CancellingAsyncTransport]:
+    transport = _CancellingAsyncTransport(("GET", _LIST_URL), interruption, mutation=("DELETE", _DELETE_URL))
+    client = AsyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=UDATA_CREDENTIAL,
+        emitter=emitter,
+        breaker_failure_threshold=breaker_failure_threshold,
+        owns_transport=True,
+    )
+    return client, transport
+
+
+def test_dataservice_sync_cancellation_leaves_post_state_ready_and_closes_the_owned_transport_once() -> None:
+    """An interrupted read propagates, leaves the client usable, and still honours close-once ownership."""
+    client, transport = _dataservice_sync_client(KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        client.dataservices.list_dataservices()
+    assert transport.close_count == 0
+
+    transport.armed = False
+    assert cast(Mapping[str, object], thawed(client.dataservices.list_dataservices().payload))["total"] == 1
+
+    client.close()
+    client.close()
+    assert transport.close_count == 1
+
+
+def test_dataservice_sync_cancellation_never_closes_a_borrowed_transport() -> None:
+    """A borrowed transport survives the same interrupted read and the context exit untouched."""
+    transport = _CancellingSyncTransport(("GET", _LIST_URL), KeyboardInterrupt(), mutation=("DELETE", _DELETE_URL))
+    with SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=UDATA_CREDENTIAL,
+        owns_transport=False,
+    ) as client:
+        with pytest.raises(KeyboardInterrupt):
+            client.dataservices.list_dataservices()
+    assert transport.close_count == 0
+
+
+def test_dataservice_sync_cancellation_is_never_recorded_as_a_circuit_breaker_failure() -> None:
+    """Cancellations beyond the failure threshold still admit the next read, so a cancel is not an origin failure."""
+    events = ListSink()
+    client, transport = _dataservice_sync_client(KeyboardInterrupt(), emitter=EventEmitter(sinks=(events,)))
+
+    for _ in range(4):
+        with pytest.raises(KeyboardInterrupt):
+            client.dataservices.list_dataservices()
+
+    transport.armed = False
+    assert cast(Mapping[str, object], thawed(client.dataservices.list_dataservices().payload))["total"] == 1
+    assert [event.outcome for event in events.events if "breaker" in event.outcome] == []
+    client.close()
+
+
+def test_dataservice_transport_failures_still_open_the_circuit_before_the_next_read() -> None:
+    """The breaker is live for this family: genuine transport failures still fail the following read closed."""
+    client, transport = _dataservice_sync_client(TransportFailure("no route"))
+
+    with pytest.raises(TransportFailure):
+        client.dataservices.list_dataservices()
+
+    transport.armed = False
+    before = len(transport.requests)
+    with pytest.raises(CatalogUnavailableError, match="circuit is open"):
+        client.dataservices.list_dataservices()
+    assert len(transport.requests) == before
+    client.close()
+
+
+def test_dataservice_sync_cancelled_mutation_records_a_cancelled_receipt_with_the_exact_target() -> None:
+    """A cancelled delete stays visible as `cancelled` against its exact target rather than collapsing to `failed`."""
+    client, _ = _dataservice_sync_client(KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt) as stopped:
+        client.dataservices.delete_dataservice(
+            "ds-1",
+            EDIT_ONLY_PERMISSIONS,
+            _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True),
+        )
+
+    receipt = stopped.value.__dict__["mutation_receipt"]
+    assert receipt.outcome == "cancelled"
+    assert receipt.operation == wire.DELETE_DATASERVICE_OPERATION
+    assert receipt.target.value == "ds-1"
+    assert b"secret-key" not in json.dumps(receipt.to_dict()).encode()
+    client.close()
+
+
+def test_dataservice_async_cancellation_leaves_post_state_ready_and_closes_the_owned_transport_once() -> None:
+    """The async mode matches sync: the cancellation propagates and ownership is still close-once."""
+    client, transport = _dataservice_async_client(asyncio.CancelledError())
+
+    async def run() -> None:
+        with pytest.raises(asyncio.CancelledError):
+            await client.dataservices.list_dataservices()
+        assert transport.aclose_count == 0
+
+        transport.armed = False
+        page = await client.dataservices.list_dataservices()
+        assert cast(Mapping[str, object], thawed(page.payload))["total"] == 1
+
+        await client.aclose()
+        await client.aclose()
+        assert transport.aclose_count == 1
+
+    asyncio.run(run())
+
+
+def test_dataservice_async_cancellation_never_closes_a_borrowed_transport() -> None:
+    """An interrupted async read against a borrowed transport leaves the caller's transport open."""
+    transport = _CancellingAsyncTransport(
+        ("GET", _LIST_URL), asyncio.CancelledError(), mutation=("DELETE", _DELETE_URL)
+    )
+    client = AsyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=UDATA_CREDENTIAL,
+        owns_transport=False,
+    )
+
+    async def run() -> None:
+        async with client:
+            with pytest.raises(asyncio.CancelledError):
+                await client.dataservices.list_dataservices()
+        assert transport.aclose_count == 0
+
+    asyncio.run(run())
+
+
+def test_dataservice_async_cancellation_is_never_recorded_as_a_circuit_breaker_failure() -> None:
+    """Async cancellations also leave the circuit closed, so the next read is admitted rather than refused."""
+    events = ListSink()
+    client, transport = _dataservice_async_client(asyncio.CancelledError(), emitter=EventEmitter(sinks=(events,)))
+
+    async def run() -> None:
+        for _ in range(4):
+            with pytest.raises(asyncio.CancelledError):
+                await client.dataservices.list_dataservices()
+        transport.armed = False
+        page = await client.dataservices.list_dataservices()
+        assert cast(Mapping[str, object], thawed(page.payload))["total"] == 1
+        await client.aclose()
+
+    asyncio.run(run())
+    assert [event.outcome for event in events.events if "breaker" in event.outcome] == []
+
+
+def test_dataservice_async_cancelled_mutation_records_a_cancelled_receipt_with_the_exact_target() -> None:
+    """The async mutation receipt mirrors sync: `cancelled` against the exact target."""
+    client, _ = _dataservice_async_client(asyncio.CancelledError())
+
+    async def run() -> None:
+        with pytest.raises(asyncio.CancelledError) as cancelled:
+            await client.dataservices.delete_dataservice(
+                "ds-1",
+                EDIT_ONLY_PERMISSIONS,
+                _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True),
+            )
+        receipt = cancelled.value.__dict__["mutation_receipt"]
+        assert receipt.outcome == "cancelled"
+        assert receipt.target.value == "ds-1"
+        await client.aclose()
+
+    asyncio.run(run())

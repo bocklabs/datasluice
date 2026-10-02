@@ -108,6 +108,8 @@ def _probe_live_gate_error(platform: str) -> int:
     raise AssertionError(f"{platform} live seam did not report the platform extra")
 
 
+_USAGE = "usage: installed_probe.py <probe> [platform]"
+
 _PROBES = {
     "import-sweep": _probe_import_sweep,
     "fixture-sets": _probe_fixture_sets,
@@ -117,12 +119,15 @@ _PROBES = {
 
 
 def main(argv: list[str]) -> int:
-    mode = argv[1]
+    mode = argv[1] if len(argv) > 1 else ""
     if mode == "live-gate-error":
+        if len(argv) < 3:
+            print(_USAGE)
+            return 2
         return _probe_live_gate_error(argv[2])
     probe = _PROBES.get(mode)
     if probe is None:
-        print(f"unknown probe: {mode}")
+        print(f"unknown probe: {mode or '<none>'}\n{_USAGE}")
         return 2
     return probe()
 

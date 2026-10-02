@@ -14,6 +14,7 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseSearchQuery,
     ReuseSuggestQuery,
     ReuseUpdateInput,
+    linked_identifier,
 )
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import reuses as wire
@@ -22,6 +23,7 @@ from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import NativeCatalogError
 
 from .datasets import _header
+from .posts_reports import _record_id
 from .taxonomies import (
     AsyncCatalogService,
     Permissions,
@@ -80,6 +82,7 @@ class SyncReusesService(SyncCatalogService):
             wire.CREATE_REUSE_OPERATION,
             lambda: wire.create_reuse_request(client_input),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.CREATE_REUSE_OPERATION),
+            success_target=lambda payload: _record_id(payload, client_input.title),
         )
 
     def recent_reuses_atom_feed(self, query: ReuseListQuery | None = None) -> MappingRecord:
@@ -134,12 +137,13 @@ class SyncReusesService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
+        linked = linked_identifier(dataset_id, wire.REUSE_ADD_DATASET_OPERATION, "uData reuse dataset")
         return _mutation(
-            reuse_id,
+            f"{reuse_id}:{linked}",
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
-            lambda: wire.reuse_add_dataset_request(reuse_id, dataset_id),
+            lambda: wire.reuse_add_dataset_request(reuse_id, linked),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION),
         )
 
@@ -150,12 +154,13 @@ class SyncReusesService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
+        linked = linked_identifier(dataservice_id, wire.REUSE_ADD_DATASERVICE_OPERATION, "uData reuse dataservice")
         return _mutation(
-            reuse_id,
+            f"{reuse_id}:{linked}",
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,
-            lambda: wire.reuse_add_dataservice_request(reuse_id, dataservice_id),
+            lambda: wire.reuse_add_dataservice_request(reuse_id, linked),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION),
         )
 
@@ -342,6 +347,7 @@ class AsyncReusesService(AsyncCatalogService):
             wire.CREATE_REUSE_OPERATION,
             lambda: wire.create_reuse_request(client_input),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.CREATE_REUSE_OPERATION),
+            success_target=lambda payload: _record_id(payload, client_input.title),
         )
 
     async def recent_reuses_atom_feed(self, query: ReuseListQuery | None = None) -> MappingRecord:
@@ -396,12 +402,13 @@ class AsyncReusesService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
+        linked = linked_identifier(dataset_id, wire.REUSE_ADD_DATASET_OPERATION, "uData reuse dataset")
         return await _mutation_async(
-            reuse_id,
+            f"{reuse_id}:{linked}",
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
-            lambda: wire.reuse_add_dataset_request(reuse_id, dataset_id),
+            lambda: wire.reuse_add_dataset_request(reuse_id, linked),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION),
         )
 
@@ -412,12 +419,13 @@ class AsyncReusesService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
+        linked = linked_identifier(dataservice_id, wire.REUSE_ADD_DATASERVICE_OPERATION, "uData reuse dataservice")
         return await _mutation_async(
-            reuse_id,
+            f"{reuse_id}:{linked}",
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,
-            lambda: wire.reuse_add_dataservice_request(reuse_id, dataservice_id),
+            lambda: wire.reuse_add_dataservice_request(reuse_id, linked),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION),
         )
 

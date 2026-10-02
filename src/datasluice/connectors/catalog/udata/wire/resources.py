@@ -179,21 +179,22 @@ def v2_dataset_request(dataset_id: str) -> tuple[str, str, dict[str, str], objec
 def v2_resource_request(
     dataset_id: str, resource_id: str | None = None, *, extras: str | None = None
 ) -> tuple[str, str, dict[str, str], object | None]:
-    if extras is not None and (resource_id is None or dataset_id == ""):
-        raise CatalogValidationError(
-            "The uData v2 extras routes require both a dataset and a resource id.",
-            operation=RESOURCE_OPERATION,
-            platform="udata",
-            safe_action="Pass both identifiers before requesting an extras route.",
-        )
+    if extras is not None:
+        if resource_id is None or dataset_id == "":
+            raise CatalogValidationError(
+                "The uData v2 extras routes require both a dataset and a resource id.",
+                operation=RESOURCE_OPERATION,
+                platform="udata",
+                safe_action="Pass both identifiers before requesting an extras route.",
+            )
+        return v2_extras_request(extras, dataset_id, resource_id)
     if resource_id is None:
         path = f"/api/2/datasets/{_id(dataset_id, 'dataset id')}/resources/"
     elif dataset_id == "":
         path = f"/api/2/datasets/resources/{_id(resource_id, 'resource id')}/"
     else:
-        path = f"/api/2/datasets/{_id(dataset_id, 'dataset id')}/resources/{_id(resource_id, 'resource id')}"
-        path += "/extras/" if extras is not None else "/"
-    return _request("GET" if extras is None else extras, path)
+        path = f"/api/2/datasets/{_id(dataset_id, 'dataset id')}/resources/{_id(resource_id, 'resource id')}/"
+    return _request("GET", path)
 
 
 def parse_resource(payload: object) -> NativeRecord:

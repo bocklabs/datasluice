@@ -109,6 +109,30 @@ _SPATIAL_ORACLE_PATH = (
 _SPATIAL_PREFIX = "/api/1/spatial/"
 _SPATIAL_PLACEHOLDER = re.compile(r"<(?:[a-z_]+:)?([a-z_]+)>")
 _SPATIAL_ABSENT_TARGETS = {"id": "missing-zone", "ids": "missing-zone", "level": "missing-level"}
+_DATASERVICE_ORACLE_PATH = (
+    Path(__file__).parents[4] / ".planning/phases/04-udata-connector/oracle/udata-oracle-candidate.json"
+)
+_DATASERVICE_FAMILY_SIGNATURES = frozenset(
+    {
+        "udata.core.dataservices.api:DataservicesAPI",
+        "udata.core.dataservices.api:DataservicesAtomFeedAPI",
+        "udata.core.dataservices.api:DataserviceAPI",
+        "udata.core.dataservices.api:ReuseFeaturedAPI",
+        "udata.core.dataservices.api:DataserviceDatasetsAPI",
+        "udata.core.dataservices.api:DataserviceDatasetAPI",
+        "udata.core.dataservices.api:DataserviceRdfAPI",
+        "udata.core.dataservices.api:DataserviceRdfFormatAPI",
+        "udata.core.dataservices.api:DataserviceFollowersAPI",
+        "udata.core.dataservices.apiv2:DataserviceSearchAPI",
+    }
+)
+_DATASERVICE_PLACEHOLDER = re.compile(r"<(?:[a-z_]+:)?([a-z_]+)>")
+_DATASERVICE_ABSENT_TARGETS = {
+    "dataservice": "missing-ds",
+    "id": "missing-ds",
+    "dataset": "missing-dataset",
+    "_format": "ttl",
+}
 _CONTROLLED_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII="
 )
@@ -3979,7 +4003,7 @@ def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
 
             dataset_id = client.datasets.list(DatasetListQuery(page=1, page_size=1)).items[0].id.value
             linked = client.reuses.reuse_add_dataset(
-                reuse_id, dataset_id, permissions, policy("udata/api-v1.reuse-add-dataset", reuse_id)
+                reuse_id, dataset_id, permissions, policy("udata/api-v1.reuse-add-dataset", f"{reuse_id}:{dataset_id}")
             )
             assert linked.record is not None
             assert linked.receipt.operation == "udata/api-v1.reuse-add-dataset"
@@ -4051,7 +4075,10 @@ def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
             try:
                 dataset_id = (await client.datasets.list(DatasetListQuery(page=1, page_size=1))).items[0].id.value
                 linked = await client.reuses.reuse_add_dataset(
-                    reuse_id, dataset_id, permissions, policy("udata/api-v1.reuse-add-dataset", reuse_id)
+                    reuse_id,
+                    dataset_id,
+                    permissions,
+                    policy("udata/api-v1.reuse-add-dataset", f"{reuse_id}:{dataset_id}"),
                 )
                 assert linked.receipt.operation == "udata/api-v1.reuse-add-dataset"
                 updated = await client.reuses.update_reuse(
@@ -4699,3 +4726,436 @@ def test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error() ->
             assert async_error.operation == sync_error.operation
 
     asyncio.run(run_async())
+
+
+def _dataservice_oracle_routes() -> dict[tuple[str, str], str]:
+    """Return every dataservice path the pinned source oracle records, keyed by method and endpoint.
+
+    The oracle lives under the gitignored planning directory, so a fresh clone has no
+    independent oracle at all and every function that needs one skips loudly instead of
+    falling back to hand-transcribed paths.
+    """
+    if not _DATASERVICE_ORACLE_PATH.exists():
+        pytest.skip(
+            f"no dataservice source oracle at {_DATASERVICE_ORACLE_PATH}; "
+            "reconcile it with scripts/extract_udata_oracle.py to run the dataservice differential"
+        )
+    document = json.loads(_DATASERVICE_ORACLE_PATH.read_text(encoding="utf-8"))
+    routes: dict[tuple[str, str], str] = {}
+    for route in document["routes"]:
+        if route["signature"] not in _DATASERVICE_FAMILY_SIGNATURES:
+            continue
+        endpoint = route["signature"].rsplit(":", 1)[1].removesuffix("API")
+        key = (route["method"], endpoint)
+        assert key not in routes, f"the source oracle records {key} twice"
+        routes[key] = route["path"]
+    assert len(routes) == 16, f"the source oracle must record 16 dataservice routes, found {len(routes)}"
+    return routes
+
+
+def _dataservice_path(method: str, endpoint: str) -> str:
+    """Return the oracle path for one endpoint with its placeholders filled by the scenario targets."""
+    return _DATASERVICE_PLACEHOLDER.sub(
+        lambda placeholder: _DATASERVICE_ABSENT_TARGETS[placeholder.group(1)],
+        _dataservice_oracle_routes()[(method, endpoint)],
+    )
+
+
+def _dataservice_read_routes() -> tuple[tuple[str, str, str, tuple[object, ...]], ...]:
+    """Return every assigned dataservice read as its raw path, method, typed name, and arguments.
+
+    Every base path comes from the pinned source oracle; only the absent-target arguments
+    and the stock query strings belong to the controlled scenario.
+    """
+    return (
+        (f"{_dataservice_path('GET', 'Dataservices')}?page=1&page_size=20", "GET", "list_dataservices", ()),
+        (
+            f"{_dataservice_path('GET', 'Dataservice')}?page=1&page_size=20",
+            "GET",
+            "get_dataservice",
+            ("missing-ds",),
+        ),
+        (
+            f"{_dataservice_path('GET', 'DataservicesAtomFeed')}?page=1&page_size=20",
+            "GET",
+            "recent_dataservices_atom_feed",
+            (),
+        ),
+        (
+            f"{_dataservice_path('GET', 'DataserviceFollowers')}?page=1&page_size=20",
+            "GET",
+            "list_dataservice_followers",
+            ("missing-ds",),
+        ),
+        (_dataservice_path("GET", "DataserviceRdf"), "GET", "rdf_dataservice", ("missing-ds",)),
+        (
+            _dataservice_path("GET", "DataserviceRdfFormat"),
+            "GET",
+            "rdf_dataservice_format",
+            ("missing-ds", "ttl"),
+        ),
+        (
+            f"{_dataservice_path('GET', 'DataserviceSearch')}?page=1&page_size=50",
+            "GET",
+            "search_dataservices",
+            (),
+        ),
+    )
+
+
+def _dataservice_records(typed: Any) -> object:
+    """Return the plain JSON body of one dataservice read regardless of record or sequence shape."""
+    records = typed if isinstance(typed, tuple) else (typed,)
+    return _plain_json(records[0].payload) if len(records) == 1 else [_plain_json(r.payload) for r in records]
+
+
+def _assert_dataservice_read_matches_raw(
+    name: str, status: int, payload: object, headers: Mapping[str, str], typed: Any
+) -> None:
+    """Assert one dataservice read reproduces its raw status, and its body on success.
+
+    A JSON route is compared body for body. A non-JSON route, which the connector bounds to a
+    media type, size, and digest rather than retaining a body, is compared on the negotiated
+    media type and on having a bounded, non-empty, body-free projection. The two requests are
+    not the same request, so the digest is not compared: the stock atom feed carries a live
+    ``<updated>`` timestamp, which changes between any two calls.
+
+    Args:
+        name: The typed method name, used only to label assertion failures.
+        status: The raw HTTP status the loopback route returned.
+        payload: The decoded raw response body, or the raw bytes for a non-JSON route.
+        headers: The raw response headers, used for the negotiated media type.
+        typed: The value the connector returned, or the typed error it raised.
+    """
+    if status != 200:
+        assert typed.metadata.get("status_code") == status, name
+        return
+    if isinstance(payload, bytes):
+        body = _plain_json(typed.payload)
+        assert body["size_bytes"] > 0, name
+        assert len(body["sha256"]) == 64, name
+        expected = headers.get("content-type", "application/octet-stream").split(";")[0].lower()
+        assert body["media_type"] == expected, name
+        assert "body" not in body, name
+    else:
+        assert _dataservice_records(typed) == payload, name
+
+
+def _dataservice_outcome[R](method: Callable[..., R], *args: object) -> object:
+    """Return one dataservice read result, or the typed error the connector raised for it."""
+    try:
+        return method(*args)
+    except CatalogError as error:
+        return error
+
+
+async def _dataservice_async_outcome(client: AsyncUDataClient, method: str, args: tuple[object, ...]) -> object:
+    """Return one asynchronous dataservice read result, or the typed error it raised."""
+    try:
+        return await getattr(client.dataservices, method)(*args)
+    except CatalogError as error:
+        return error
+
+
+def test_controlled_dataservice_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned dataservice read agrees with its raw loopback route in sync and async modes."""
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        for path, method, name, args in _dataservice_read_routes():
+            # A dataservice record is larger than the shared 8 KiB raw bound, so this family
+            # reads up to 256 KiB; the connector applies its own separate ceiling.
+            status, payload, headers = _direct_request("", method, path, include_body=True, max_bytes=262144)
+            typed = _dataservice_outcome(getattr(client.dataservices, name), *args)
+            _assert_dataservice_read_matches_raw(name, status, payload, headers, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            for path, method, name, args in _dataservice_read_routes():
+                status, payload, headers = _direct_request("", method, path, include_body=True, max_bytes=262144)
+                typed = await _dataservice_async_outcome(client, name, args)
+                _assert_dataservice_read_matches_raw(name, status, payload, headers, typed)
+
+    asyncio.run(run_async())
+
+
+def _timestamp_free(value: object) -> object:
+    """Drop the server timestamp fields, which change between any two requests to one record."""
+    volatile = {"created_at", "metadata_modified_at", "deleted_at", "archived_at", "last_used_at"}
+    if isinstance(value, Mapping):
+        return {key: _timestamp_free(item) for key, item in value.items() if key not in volatile}
+    if isinstance(value, (list, tuple)):
+        return [_timestamp_free(item) for item in value]
+    return value
+
+
+def _dataservice_mutation_policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
+    """Return the confirmed overwrite policy the controlled dataservice mutations run under."""
+    return MutationPolicy(
+        destructive=destructive,
+        confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    )
+
+
+def _seeded_dataset_id(token: str) -> str:
+    """Return one seeded dataset id from the controlled evidence stack."""
+    status, payload, _ = _direct_request(token, "GET", "/api/1/datasets/?page=1&page_size=1")
+    assert status == 200
+    assert isinstance(payload, Mapping)
+    items = payload.get("data")
+    assert isinstance(items, list) and items and isinstance(items[0], Mapping)
+    return str(items[0]["id"])
+
+
+def _assert_dataservice_receipt_matches_raw(name: str, raw_status: int, receipt: object) -> None:
+    """Assert one mutation receipt reports the operation and status the raw route returned."""
+    assert str(receipt.operation) == name, name
+    assert receipt.audit_metadata["status_code"] == raw_status, (name, raw_status)
+
+
+def _exercise_sync_dataservice_relationship_and_feature(
+    client: Any, token: str, permissions: EffectivePermissions, dataservice_id: str
+) -> None:
+    """Attach a dataset, patch, transition the featured flag, and unlink the dataset."""
+    from datasluice.connectors.catalog.udata.models.dataservices import (
+        DataserviceDatasetLinkInput,
+        DataserviceUpdateInput,
+    )
+
+    dataset_id = _seeded_dataset_id(token)
+    added = client.dataservices.dataservice_datasets_add(
+        dataservice_id,
+        DataserviceDatasetLinkInput((dataset_id,)),
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.dataservice-datasets-create", dataservice_id),
+    )
+    raw_status, _, _ = _direct_request(
+        token, "POST", f"/api/1/dataservices/{dataservice_id}/datasets/", body=[{"id": dataset_id}]
+    )
+    assert raw_status == 201, raw_status
+    _assert_dataservice_receipt_matches_raw("udata/api-v1.dataservice-datasets-create", raw_status, added.receipt)
+    assert added.record is not None
+    linked = added.record.payload["datasets"]
+    assert isinstance(linked, Mapping), linked
+    assert linked["total"] >= 1, linked
+    raw_after_link = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
+    assert raw_after_link[0] == 200
+    assert _plain_json(added.record.payload)["datasets"] == raw_after_link[1]["datasets"]
+
+    updated = client.dataservices.update_dataservice(
+        dataservice_id,
+        DataserviceUpdateInput(description="Controlled evidence update"),
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.update-dataservice", dataservice_id),
+    )
+    assert updated.record is not None
+    assert _plain_json(updated.record.payload)["description"] == "Controlled evidence update"
+    raw_patch, _, _ = _direct_request(
+        token, "PATCH", f"/api/1/dataservices/{dataservice_id}/", body={"description": "Controlled evidence update"}
+    )
+    assert raw_patch == 200, raw_patch
+    _assert_dataservice_receipt_matches_raw("udata/api-v1.update-dataservice", raw_patch, updated.receipt)
+
+    featured = client.dataservices.feature_dataservice(
+        dataservice_id, permissions, _dataservice_mutation_policy("udata/api-v1.feature-dataservice", dataservice_id)
+    )
+    assert featured.record is not None
+    assert _plain_json(featured.record.payload)["featured"] is True
+    unfeatured = client.dataservices.unfeature_dataservice(
+        dataservice_id,
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", dataservice_id),
+    )
+    assert unfeatured.record is not None
+    assert _plain_json(unfeatured.record.payload)["featured"] is False
+
+    removed = client.dataservices.dataservice_dataset_remove(
+        dataservice_id,
+        dataset_id,
+        permissions,
+        _dataservice_mutation_policy(
+            "udata/api-v1.dataservice-dataset-delete", f"{dataservice_id}:{dataset_id}", destructive=True
+        ),
+    )
+    assert removed.receipt.target.value == f"{dataservice_id}:{dataset_id}"
+    _assert_dataservice_receipt_matches_raw("udata/api-v1.dataservice-dataset-delete", 204, removed.receipt)
+    # The typed call removed the link first, so the stock route now answers its own 404.
+    raw_remove, _, _ = _direct_request(token, "DELETE", f"/api/1/dataservices/{dataservice_id}/datasets/{dataset_id}/")
+    assert raw_remove == 404, raw_remove
+
+
+def _exercise_sync_dataservice_followers(token: str, permissions: EffectivePermissions, dataservice_id: str) -> None:
+    """Follow and unfollow the controlled dataservice, tolerating an absent follow state."""
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))) as client:
+        followed = client.dataservices.follow_dataservice(
+            dataservice_id, permissions, _dataservice_mutation_policy("udata/api-v1.follow-dataservice", dataservice_id)
+        )
+        # Stock follow is 201 when it creates the follow and 200 when it already exists, so the
+        # typed receipt is compared to the status of its own dispatch, not of a second call.
+        assert followed.receipt.audit_metadata["status_code"] in {200, 201}, followed.receipt
+        raw_follow, _, _ = _direct_request(token, "POST", f"/api/1/dataservices/{dataservice_id}/followers/")
+        assert raw_follow == 200, raw_follow
+        unfollowed = client.dataservices.unfollow_dataservice(
+            dataservice_id,
+            permissions,
+            _dataservice_mutation_policy("udata/api-v1.unfollow-dataservice", dataservice_id, destructive=True),
+        )
+        assert unfollowed.receipt.outcome in {"succeeded", "failed"}
+
+
+def _assert_controlled_dataservice_deleted(token: str, dataservice_id: str) -> None:
+    """Assert the stock soft delete no longer serves the controlled dataservice as a live record."""
+    status, _, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
+    assert status in {404, 410}, status
+
+
+def _exercise_sync_dataservice_lifecycle(token: str, permissions: EffectivePermissions, title: str) -> None:
+    """Drive every assigned dataservice mutation over the synchronous client, then clean up."""
+    from datasluice.connectors.catalog.udata.models.dataservices import DataserviceCreateInput
+
+    credential = UDataCredential(api_key=token)
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        created = client.dataservices.create_dataservice(
+            DataserviceCreateInput(title=title, base_api_url="https://example.com/api"),
+            permissions,
+            _dataservice_mutation_policy("udata/api-v1.create-dataservice", title),
+        )
+        assert created.record is not None
+        dataservice_id = str(created.record.payload["id"])
+        assert created.receipt.outcome == "succeeded"
+        assert created.receipt.target.value == dataservice_id
+        # The stock create is 201 and answers the server-assigned id, which the receipt must carry.
+        raw_status, raw_created, _ = _direct_request(
+            token,
+            "POST",
+            "/api/1/dataservices/",
+            body={"title": f"{title} raw", "base_api_url": "https://example.com/api"},
+        )
+        assert raw_status == 201, raw_status
+        _assert_dataservice_receipt_matches_raw("udata/api-v1.create-dataservice", raw_status, created.receipt)
+        # The raw create above makes a second disposable record; remove it so the next pass starts clean.
+        assert isinstance(raw_created, Mapping)
+        raw_status, _, _ = _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_created['id']}/")
+        assert raw_status == 204, raw_status
+        try:
+            raw_read = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
+            assert raw_read[0] == 200
+            # The two responses are two requests, so only the server's millisecond-precision
+            # timestamps can differ; every other documented field must match exactly.
+            assert _timestamp_free(created.record.payload) == _timestamp_free(raw_read[1])
+            _exercise_sync_dataservice_relationship_and_feature(client, token, permissions, dataservice_id)
+            _exercise_sync_dataservice_followers(token, permissions, dataservice_id)
+            deleted = client.dataservices.delete_dataservice(
+                dataservice_id,
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
+            )
+            assert deleted.receipt.outcome == "succeeded"
+            _assert_controlled_dataservice_deleted(token, dataservice_id)
+        finally:
+            # A 404 or 410 is the stock soft-delete state, so the record is already clean; only a
+            # live 200 needs the rollback delete.
+            if _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")[0] == 200:
+                client.dataservices.delete_dataservice(
+                    dataservice_id,
+                    permissions,
+                    _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
+                )
+
+
+async def _exercise_async_dataservice_lifecycle(token: str, permissions: EffectivePermissions, title: str) -> None:
+    """Repeat the full dataservice mutation lifecycle over the asynchronous client."""
+    from datasluice.connectors.catalog.udata.models.dataservices import (
+        DataserviceCreateInput,
+        DataserviceDatasetLinkInput,
+        DataserviceUpdateInput,
+    )
+
+    credential = UDataCredential(api_key=token)
+    async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        created = await client.dataservices.create_dataservice(
+            DataserviceCreateInput(title=title, base_api_url="https://example.com/api"),
+            permissions,
+            _dataservice_mutation_policy("udata/api-v1.create-dataservice", title),
+        )
+        assert created.record is not None
+        dataservice_id = str(created.record.payload["id"])
+        try:
+            dataset_id = _seeded_dataset_id(token)
+            added = await client.dataservices.dataservice_datasets_add(
+                dataservice_id,
+                DataserviceDatasetLinkInput((dataset_id,)),
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.dataservice-datasets-create", dataservice_id),
+            )
+            assert added.receipt.outcome == "succeeded"
+            updated = await client.dataservices.update_dataservice(
+                dataservice_id,
+                DataserviceUpdateInput(description="Controlled evidence update"),
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.update-dataservice", dataservice_id),
+            )
+            assert updated.record is not None
+            featured = await client.dataservices.feature_dataservice(
+                dataservice_id,
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.feature-dataservice", dataservice_id),
+            )
+            assert featured.record is not None
+            assert _plain_json(featured.record.payload)["featured"] is True
+            unfeatured = await client.dataservices.unfeature_dataservice(
+                dataservice_id,
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", dataservice_id),
+            )
+            assert unfeatured.record is not None
+            assert _plain_json(unfeatured.record.payload)["featured"] is False
+            followed = await client.dataservices.follow_dataservice(
+                dataservice_id,
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.follow-dataservice", dataservice_id),
+            )
+            assert followed.receipt.outcome == "succeeded"
+            assert followed.receipt.audit_metadata["status_code"] in {200, 201}, followed.receipt
+            unfollowed_ds = await client.dataservices.unfollow_dataservice(
+                dataservice_id,
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.unfollow-dataservice", dataservice_id, destructive=True),
+            )
+            assert unfollowed_ds.receipt.outcome == "succeeded"
+            removed = await client.dataservices.dataservice_dataset_remove(
+                dataservice_id,
+                dataset_id,
+                permissions,
+                _dataservice_mutation_policy(
+                    "udata/api-v1.dataservice-dataset-delete", f"{dataservice_id}:{dataset_id}", destructive=True
+                ),
+            )
+            assert removed.receipt.outcome == "succeeded"
+            deleted = await client.dataservices.delete_dataservice(
+                dataservice_id,
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
+            )
+            assert deleted.receipt.outcome == "succeeded"
+            _assert_controlled_dataservice_deleted(token, dataservice_id)
+        finally:
+            # A 404 or 410 is the stock soft-delete state, so the record is already clean; only a
+            # live 200 needs the rollback delete.
+            if _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")[0] == 200:
+                await client.dataservices.delete_dataservice(
+                    dataservice_id,
+                    permissions,
+                    _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
+                )
+
+
+def test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up() -> None:
+    """Drive every assigned dataservice mutation in both modes, verifying raw status and cleanup."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled dataservice mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    permissions = EffectivePermissions.for_credential(
+        UDataCredential(api_key=token), platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    _exercise_sync_dataservice_lifecycle(token, permissions, "Controlled evidence dataservice")
+    asyncio.run(_exercise_async_dataservice_lifecycle(token, permissions, "Controlled async dataservice"))

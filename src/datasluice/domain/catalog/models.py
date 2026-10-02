@@ -6,9 +6,16 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.redaction import (
+    MAX_METADATA_DEPTH,
+    REDACTED,
+    SENSITIVE_PARTS,
+    TRUNCATED,
+    redact_string,
+)
 from datasluice.exceptions import DataSluiceError
 
 _VALUE_RECORD_VALUE_PATH = "value_record.value"
@@ -56,6 +63,70 @@ def _thaw_json(value: object) -> object:
     if isinstance(value, tuple):
         return [_thaw_json(nested) for nested in value]
     return value
+
+
+def is_sensitive_record_key(key: str) -> bool:
+    """Return whether one record key names a credential-bearing or raw-body field.
+
+    Args:
+        key: The record key as the platform sent it.
+
+    Returns:
+        Whether the normalized key contains a shared sensitive part.
+    """
+    normalized = key.lower().replace("-", "_")
+    return any(part in normalized for part in SENSITIVE_PARTS)
+
+
+def _redacted_record_value(value: object, *, _depth: int) -> object:
+    if isinstance(value, str):
+        return redact_string(value)
+    if isinstance(value, bytes | bytearray):
+        return redact_string(bytes(value).decode("utf-8", errors="replace"))
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if _depth >= MAX_METADATA_DEPTH:
+        return TRUNCATED
+    if isinstance(value, Mapping):
+        return redact_record_payload(cast(Mapping[str, object], value), _depth=_depth)
+    if isinstance(value, list | tuple):
+        return [_redacted_record_value(nested, _depth=_depth + 1) for nested in value]
+    return redact_string(repr(value))
+
+
+def redact_record_payload(value: Mapping[str, object], *, _depth: int = 0) -> dict[str, object]:
+    """Return a recursively credential-redacted, depth- and length-bounded copy.
+
+    Record payloads preserve every server-sent non-credential field
+    (CON-04/D-05/D-07), so unlike the shared event-metadata gate this copy
+    applies no positional entry cap: every key is inspected so a credential can
+    never hide past a cut. Credential-shaped keys keep their presence with the
+    shared ``REDACTED`` marker, credential-shaped string content is scrubbed with
+    the shared matcher, and nesting plus text length stay bounded by the shared
+    limits. Applying the function twice is a no-op.
+
+    Args:
+        value: The JSON-safe payload mapping to redact.
+        _depth: The internal recursion depth counter.
+
+    Returns:
+        A fresh redacted mapping safe to serialize into a retained artifact.
+    """
+    if _depth >= MAX_METADATA_DEPTH:
+        return {TRUNCATED: TRUNCATED}
+    redacted: dict[str, object] = {}
+    for key, nested in value.items():
+        if not isinstance(key, str) or not key:
+            continue
+        if is_sensitive_record_key(key):
+            redacted[key] = REDACTED
+        else:
+            redacted[key] = _redacted_record_value(nested, _depth=_depth + 1)
+    return redacted
+
+
+def _redacted_thawed(value: Mapping[str, object]) -> dict[str, object]:
+    return redact_record_payload(cast(Mapping[str, object], _thaw_json(value)))
 
 
 def _freeze_extensions(value: object) -> Mapping[str, object]:
@@ -319,15 +390,20 @@ class NativeRecord:
         object.__setattr__(self, "extensions", _freeze_extensions(self.extensions))
 
     def to_dict(self) -> dict[str, object]:
-        """Return a fresh JSON-safe native record envelope."""
+        """Return a fresh JSON-safe redacted native record envelope.
+
+        The retained payload and extensions keep every non-credential field
+        (CON-04/D-07) while credential-shaped keys and credential-shaped string
+        content are redacted and nesting stays bounded.
+        """
         return {
             "schema_version": 1,
             "kind": "native_record",
             "platform": self.platform.value,
             "resource_kind": self.resource_kind.value,
             "id": self.id.to_dict(),
-            "payload": _thaw_json(self.payload),
-            "extensions": _thaw_json(self.extensions),
+            "payload": _redacted_thawed(self.payload),
+            "extensions": _redacted_thawed(self.extensions),
         }
 
     @classmethod
@@ -398,8 +474,13 @@ class MappingRecord:
         object.__setattr__(self, "payload", frozen)
 
     def to_dict(self) -> dict[str, object]:
-        """Return a fresh JSON-safe mapping record envelope."""
-        return {"schema_version": 1, "kind": "mapping_record", "payload": _thaw_json(self.payload)}
+        """Return a fresh JSON-safe redacted mapping record envelope.
+
+        The retained payload keeps every non-credential field (CON-04/D-07)
+        while credential-shaped keys and credential-shaped string content are
+        redacted and nesting stays bounded.
+        """
+        return {"schema_version": 1, "kind": "mapping_record", "payload": _redacted_thawed(self.payload)}
 
     @classmethod
     def from_dict(cls, value: object) -> MappingRecord:

@@ -132,6 +132,10 @@ class EffectiveCapabilityCache:
         return self._resolve_sync_leader(operation_id, credential_scope, cache_key, flight)
 
     def _sync_flight(self, cache_key: tuple[str, str, str, OperationId]) -> tuple[_SyncFlight, bool]:
+        """Return the shared synchronous flight for *cache_key* and whether this caller leads it.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
         with self._lock:
             flight = self._sync_flights.get(cache_key)
             if flight is not None:
@@ -173,7 +177,10 @@ class EffectiveCapabilityCache:
         operation_id: OperationId,
         exc: BaseException,
     ) -> None:
-        """Publish one failed synchronous probe to its waiting followers."""
+        """Publish one failed synchronous probe to its waiting followers.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
         with self._lock:
             flight.error = self._follower_failure(operation_id, exc)
             self._discard_sync_flight(cache_key, flight)
@@ -187,7 +194,11 @@ class EffectiveCapabilityCache:
         effective: EffectiveCapabilityProfile,
         completed_at: float,
     ) -> None:
-        """Cache one successful synchronous probe and release its waiting followers."""
+        """Cache one successful synchronous probe and release its waiting followers.
+
+        The caller must hold ``self._lock``; this helper never acquires it,
+        because ``threading.Lock`` is not reentrant.
+        """
         if flight.cancelled:
             self._discard_sync_flight(cache_key, flight)
             if flight.error is None:
@@ -201,12 +212,18 @@ class EffectiveCapabilityCache:
         flight.event.set()
 
     def _discard_sync_flight(self, cache_key: tuple[str, str, str, OperationId], flight: _SyncFlight) -> None:
-        """Drop the in-flight probe for *cache_key* when *flight* still owns it."""
+        """Drop the in-flight probe for *cache_key* when *flight* still owns it.
+
+        The caller must hold ``self._lock``.
+        """
         if self._sync_flights.get(cache_key) is flight:
             self._sync_flights.pop(cache_key, None)
 
     def _async_flight(self, cache_key: tuple[str, str, str, OperationId]) -> tuple[_AsyncFlight, bool]:
-        """Return the shared asynchronous flight for *cache_key* and whether this caller leads it."""
+        """Return the shared asynchronous flight for *cache_key* and whether this caller leads it.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
         with self._lock:
             flight = self._async_flights.get(cache_key)
             if flight is not None:
@@ -216,7 +233,10 @@ class EffectiveCapabilityCache:
             return created, True
 
     def _discard_async_flight(self, cache_key: tuple[str, str, str, OperationId], flight: _AsyncFlight) -> None:
-        """Drop the in-flight asynchronous probe for *cache_key* when *flight* still owns it."""
+        """Drop the in-flight asynchronous probe for *cache_key* when *flight* still owns it.
+
+        The caller must hold ``self._lock``.
+        """
         if self._async_flights.get(cache_key) is flight:
             self._async_flights.pop(cache_key, None)
 
@@ -227,7 +247,10 @@ class EffectiveCapabilityCache:
         operation_id: OperationId,
         exc: BaseException,
     ) -> None:
-        """Publish one failed asynchronous probe to its waiting followers."""
+        """Publish one failed asynchronous probe to its waiting followers.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
         with self._lock:
             self._discard_async_flight(cache_key, flight)
             if not flight.done():
@@ -242,7 +265,11 @@ class EffectiveCapabilityCache:
         effective: EffectiveCapabilityProfile,
         completed_at: float,
     ) -> None:
-        """Cache one successful asynchronous probe and release its waiting followers."""
+        """Cache one successful asynchronous probe and release its waiting followers.
+
+        The caller must hold ``self._lock``; this helper never acquires it,
+        because ``threading.Lock`` is not reentrant.
+        """
         if flight.cancelled():
             self._discard_async_flight(cache_key, flight)
             raise self._invalidation_error(operation_id)

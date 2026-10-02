@@ -162,7 +162,7 @@ def test_iterable_bytes_io_chunks() -> None:
     reason="file-descriptor accounting is unavailable",
 )
 def test_no_fd_leak_under_repeated_reads(tmp_path) -> None:
-    """Repeated local-file reads close the DataPlaneResourceReader source."""
+    """Alive DataPlaneResourceReader streams hold their source fds; close() releases them all."""
     import gc
     import os
 
@@ -176,10 +176,16 @@ def test_no_fd_leak_under_repeated_reads(tmp_path) -> None:
     before = set(os.listdir(fd_dir))
     reader = DataPlaneResourceReader()
 
-    for _ in range(50):
-        with reader.open(resource) as stream:
-            assert sum(batch.num_rows for batch in stream.iter_batches()) == 3
+    streams = [reader.open(resource) for _ in range(50)]
+    for stream in streams:
+        assert sum(batch.num_rows for batch in stream.iter_batches()) == 3
 
+    gc.collect()
+    held = set(os.listdir(fd_dir)) - before
+    assert len(held) >= len(streams), f"open() did not take ownership of its source fds: held={sorted(held)}"
+
+    for stream in streams:
+        stream.close()
     gc.collect()
     after = set(os.listdir(fd_dir))
     leaked = after - before

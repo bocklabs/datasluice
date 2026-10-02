@@ -23,7 +23,7 @@ from datasluice.connectors.catalog.udata.wire._text_document import (
     bound_text_document,
 )
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, _freeze_json
+from datasluice.domain.catalog.models import NativeRecord, _freeze_json, redact_record_payload
 from datasluice.errors.catalog import CatalogValidationError
 
 _PINNED_SOURCE_ORACLE_ACTION = "Verify the response against the pinned source oracle."
@@ -303,13 +303,13 @@ def _validate_dataset_list(field: str, value: object, *, operation: str) -> None
 def _native_dataset(payload: Mapping[str, object]) -> NativeRecord:
     identifier = cast(str, payload["id"])
     known = {key: value for key, value in payload.items() if key in _DATASET_DETAIL_FIELDS}
-    extensions = {"udata.dataset": {key: value for key, value in payload.items() if key not in _DATASET_DETAIL_FIELDS}}
+    unknown = {key: value for key, value in payload.items() if key not in _DATASET_DETAIL_FIELDS}
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
         id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=identifier),
-        payload=known,
-        extensions=extensions,
+        payload=redact_record_payload(known),
+        extensions={"udata.dataset": redact_record_payload(unknown)},
     )
 
 
@@ -457,9 +457,13 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
                     resource_kind=ResourceKind.DATASET,
                     value=_required_id(item.get("id"), operation=operation),
                 ),
-                payload={key: value for key, value in item.items() if key in _DATASET_DETAIL_FIELDS},
+                payload=redact_record_payload(
+                    {key: value for key, value in item.items() if key in _DATASET_DETAIL_FIELDS}
+                ),
                 extensions={
-                    "udata.dataset": {key: value for key, value in item.items() if key not in _DATASET_DETAIL_FIELDS}
+                    "udata.dataset": redact_record_payload(
+                        {key: value for key, value in item.items() if key not in _DATASET_DETAIL_FIELDS}
+                    )
                 },
             )
         )
@@ -467,7 +471,14 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
 
 
 def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> Mapping[str, object]:
-    """Decode a v2 extras document with typed value validation."""
+    """Decode a v2 extras document with typed validation and redaction.
+
+    Extras are caller-authored free-form JSON, so they are the widest
+    credential surface in the dataset family. Validation runs first so a
+    malformed document still fails with its typed error; the retained mapping is
+    then redacted, keeping every non-credential extra while credential-shaped
+    keys and credential-shaped string content are replaced by the shared marker.
+    """
     if not isinstance(payload, Mapping):
         raise CatalogValidationError(
             "The uData extras response must be a JSON object.",
@@ -477,7 +488,7 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
         )
     for key, value in payload.items():
         _validate_json_value(value, operation=operation, path=key)
-    frozen = _freeze_json(payload, "udata.dataset_extras")
+    frozen = _freeze_json(redact_record_payload(payload), "udata.dataset_extras")
     if not isinstance(frozen, Mapping):
         raise CatalogValidationError(
             "The uData extras response must be a JSON object.",

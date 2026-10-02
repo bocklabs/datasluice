@@ -11,10 +11,12 @@ import pickle
 import secrets
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from threading import Event, Lock, Thread
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     UserCreateInput,
@@ -310,6 +312,174 @@ def test_one_time_token_cannot_enter_ordinary_retained_sinks() -> None:
     assert hmac.compare_digest(secret.reveal_once(), plaintext)
     with pytest.raises(RuntimeError):
         secret.reveal_once()
+
+
+class _PausingRevealToken(OneTimeUDataToken):
+    """Holder whose first plaintext read stalls, so a racing caller lands inside the read-then-clear window."""
+
+    __slots__ = ("_guard", "_first_read", "_release", "_second_read", "_reads")
+
+    def __init__(self, value: str) -> None:
+        super().__init__(value)
+        self._reads = 0
+        self._guard = Lock()
+        self._first_read = Event()
+        self._second_read = Event()
+        self._release = Event()
+
+    def __getattribute__(self, name: str) -> object:
+        value = object.__getattribute__(self, name)
+        if name == "_value":
+            guard: Lock = object.__getattribute__(self, "_guard")
+            with guard:
+                reads: int = object.__getattribute__(self, "_reads") + 1
+                object.__setattr__(self, "_reads", reads)
+            if reads == 1:
+                object.__getattribute__(self, "_first_read").set()
+                object.__getattribute__(self, "_release").wait(timeout=1.0)
+            elif reads == 2:
+                object.__getattribute__(self, "_second_read").set()
+        return value
+
+
+def test_concurrent_reveal_hands_the_plaintext_to_exactly_one_caller() -> None:
+    """The reveal-once invariant must hold when two threads share one holder."""
+    holder = _PausingRevealToken("race-plaintext")
+    revealed: list[str] = []
+    refused: list[BaseException] = []
+    collected = Lock()
+
+    def reveal(after_first_read: bool) -> None:
+        if after_first_read:
+            assert holder._first_read.wait(timeout=1.0)
+        try:
+            value = holder.reveal_once()
+        except RuntimeError as error:
+            with collected:
+                refused.append(error)
+            return
+        with collected:
+            revealed.append(value)
+
+    threads = [Thread(target=reveal, args=(index == 1,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    assert holder._first_read.wait(timeout=1.0)
+    holder._second_read.wait(timeout=0.5)
+    holder._release.set()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert revealed == ["race-plaintext"]
+    assert len(refused) == 1
+    with pytest.raises(RuntimeError):
+        holder.reveal_once()
+
+
+def test_concurrent_discard_beats_a_revealing_thread_at_most_once() -> None:
+    """A discard racing a reveal can only withhold the plaintext from every caller."""
+    holder = _PausingRevealToken("race-plaintext")
+    revealed: list[str] = []
+    collected = Lock()
+
+    def reveal() -> None:
+        try:
+            value = holder.reveal_once()
+        except RuntimeError:
+            return
+        with collected:
+            revealed.append(value)
+
+    def discard() -> None:
+        assert holder._first_read.wait(timeout=1.0)
+        holder.discard()
+
+    threads = [Thread(target=reveal), Thread(target=discard)]
+    for thread in threads:
+        thread.start()
+    assert holder._first_read.wait(timeout=1.0)
+    holder._release.set()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(revealed) <= 1
+    with pytest.raises(RuntimeError):
+        holder.reveal_once()
+
+
+def test_discard_is_public_and_leaves_no_private_alias() -> None:
+    """Destroy-without-revealing is an explicit part of the holder's contract."""
+    secret = OneTimeUDataToken("opaque-only")
+    secret.discard()
+    with pytest.raises(RuntimeError):
+        secret.reveal_once()
+    assert not hasattr(OneTimeUDataToken, "_discard")
+
+
+_REDACTED_USER_KEYS = ("token", "token_hash", "password")
+
+
+def _user_page_payload() -> dict[str, object]:
+    return {
+        "data": [
+            {
+                "id": "user-id",
+                "first_name": "Ada",
+                "last_name": "Lovelace",
+                "slug": "ada-lovelace",
+                "token": "page-token-plaintext",
+                "token_hash": "page-token-hash",
+                "password": "page-password",
+            }
+        ],
+        "page": 1,
+        "page_size": 20,
+        "total": 1,
+        "next_page": None,
+        "previous_page": None,
+    }
+
+
+def _admin_permissions() -> EffectivePermissions:
+    return EffectivePermissions.for_credential(CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"}))
+
+
+@pytest.mark.parametrize("async_mode", [False, True], ids=["sync", "async"])
+def test_paginated_user_reads_redact_the_same_credential_fields_as_single_reads(async_mode: bool) -> None:
+    """The admin list page must not reintroduce the fields parse_user strips."""
+    routes = _routes(("GET", "/api/1/users/?page=1&page_size=20", 200, _user_page_payload()))
+    if async_mode:
+        async_client = AsyncUDataClient(
+            _AsyncRouter(routes), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+        )
+
+        async def read_async() -> UDataPageEnvelope:
+            async with async_client:
+                return await async_client.users_tokens.list_users(_admin_permissions())
+
+        page = asyncio.run(read_async())
+    else:
+        sync_client = SyncUDataClient(_Router(routes), declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+        with sync_client:
+            page = sync_client.users_tokens.list_users(_admin_permissions())
+
+    single = wire.parse_user(
+        {
+            "id": "user-id",
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "slug": "ada-lovelace",
+            "token": "page-token-plaintext",
+        },
+        operation=wire.OPERATIONS["get_user"],
+    )
+    assert [record.resource_kind for record in page.items] == [single.resource_kind]
+    assert [dict(record.payload) for record in page.items] == [dict(single.payload)]
+    for record in page.items:
+        assert not set(record.payload) & set(_REDACTED_USER_KEYS)
+    assert "page-token-plaintext" not in repr(page.items)
 
 
 def test_token_create_returns_only_allowlisted_metadata_and_reveal_once_secret() -> None:

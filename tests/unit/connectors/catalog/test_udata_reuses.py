@@ -29,7 +29,7 @@ from datasluice.connectors.catalog.udata.services.reuses import (
     SyncReusesService,
 )
 from datasluice.connectors.catalog.udata.wire import reuses as wire
-from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError
+from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError, ForbiddenError
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
     UDATA_CREDENTIAL,
@@ -211,7 +211,7 @@ def test_reuse_create_and_update_match_exact_wire_and_receipts() -> None:
             CREATE_ONLY_PERMISSIONS,
             _policy(wire.CREATE_REUSE_OPERATION, "A reuse"),
         )
-        assert created.receipt.target.value == "A reuse"
+        assert created.receipt.target.value == "reuse-1"
         assert created.receipt.outcome == "succeeded"
         assert router.requests[-1].method == "POST"
         assert router.requests[-1].url == f"{ORIGIN}/api/1/reuses/"
@@ -256,10 +256,13 @@ def test_reuse_add_dataset_and_dataservice_match_exact_wire() -> None:
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
         client.reuses.reuse_add_dataset(
-            "reuse-1", "dataset-1", PERMISSIONS, _policy(wire.REUSE_ADD_DATASET_OPERATION, "reuse-1")
+            "reuse-1", "dataset-1", PERMISSIONS, _policy(wire.REUSE_ADD_DATASET_OPERATION, "reuse-1:dataset-1")
         )
         client.reuses.reuse_add_dataservice(
-            "reuse-1", "dataservice-1", PERMISSIONS, _policy(wire.REUSE_ADD_DATASERVICE_OPERATION, "reuse-1")
+            "reuse-1",
+            "dataservice-1",
+            PERMISSIONS,
+            _policy(wire.REUSE_ADD_DATASERVICE_OPERATION, "reuse-1:dataservice-1"),
         )
     reuse_requests = [r for r in router.requests if "/reuses/" in r.url]
     assert reuse_requests[0].method == "POST"
@@ -268,6 +271,220 @@ def test_reuse_add_dataset_and_dataservice_match_exact_wire() -> None:
     assert reuse_requests[1].method == "POST"
     assert reuse_requests[1].url == f"{ORIGIN}/api/1/reuses/reuse-1/dataservices/"
     assert json.loads(reuse_requests[1].body or b"{}") == {"id": "dataservice-1"}
+
+
+_MALFORMED_LINKED_IDENTIFIERS = ["", ".", "..", "a/b", "a?b", "a#b", 'a"b', "a'b", "a\nb", 1, None]
+
+
+@pytest.mark.parametrize("linked_id", _MALFORMED_LINKED_IDENTIFIERS)
+def test_reuse_linked_identifiers_fail_closed_before_any_dispatch(linked_id: object) -> None:
+    """A linked body identifier that is not one safe identifier never reaches the wire.
+
+    The primary reuse identifier is validated by the wire segment helper, but the
+    linked dataset/dataservice identifier travels in a JSON body, so the service
+    must apply the same shared validator before building the request. A ``..``
+    body identifier is the tamper case: the relationship write must not be sent.
+    """
+    router = atom_sync_route_table(
+        with_site_route(
+            {
+                ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/datasets/"): (201, _reuse()),
+                ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/dataservices/"): (201, _reuse()),
+            }
+        )
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+            client.reuses.reuse_add_dataset("reuse-1", cast("str", linked_id), PERMISSIONS, None)
+        with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+            client.reuses.reuse_add_dataservice("reuse-1", cast("str", linked_id), PERMISSIONS, None)
+    assert [r for r in router.requests if "/reuses/" in r.url] == []
+
+
+@pytest.mark.parametrize("linked_id", _MALFORMED_LINKED_IDENTIFIERS)
+def test_reuse_linked_identifiers_fail_closed_in_async_mode(linked_id: object) -> None:
+    """The async relationship surface applies the same linked-identifier policy."""
+    router = atom_async_route_table(
+        with_site_route(
+            {
+                ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/datasets/"): (201, _reuse()),
+                ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/dataservices/"): (201, _reuse()),
+            }
+        )
+    )
+
+    async def run() -> None:
+        async with async_client(router, UDATA_CREDENTIAL) as client:
+            with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+                await client.reuses.reuse_add_dataset("reuse-1", cast("str", linked_id), PERMISSIONS, None)
+            with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+                await client.reuses.reuse_add_dataservice("reuse-1", cast("str", linked_id), PERMISSIONS, None)
+
+    asyncio.run(run())
+    assert [r for r in router.requests if "/reuses/" in r.url] == []
+
+
+@pytest.mark.parametrize(
+    ("method_name", "linked_id", "operation", "target"),
+    [
+        ("reuse_add_dataset", "dataset-1", wire.REUSE_ADD_DATASET_OPERATION, "reuse-1:dataset-1"),
+        ("reuse_add_dataservice", "ds-1", wire.REUSE_ADD_DATASERVICE_OPERATION, "reuse-1:ds-1"),
+    ],
+)
+def test_reuse_link_mutations_bind_the_relationship_target(
+    method_name: str, linked_id: str, operation: str, target: str
+) -> None:
+    """Both relationship mutations confirm and receipt against the whole relationship.
+
+    Binding only the reuse identifier lets a confirmation approved for one
+    dataset be replayed against another. The target must carry the linked
+    identifier so a mismatched confirmation is refused before dispatch.
+    """
+    router = atom_sync_route_table(
+        with_site_route(
+            {
+                ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/datasets/"): (201, _reuse()),
+                ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/dataservices/"): (201, _reuse()),
+            }
+        )
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        result = getattr(client.reuses, method_name)("reuse-1", linked_id, PERMISSIONS, _policy(operation, target))
+        assert result.receipt.target.value == target
+        assert result.receipt.outcome == "succeeded"
+        with pytest.raises(ForbiddenError):
+            getattr(client.reuses, method_name)("reuse-1", linked_id, PERMISSIONS, _policy(operation, "reuse-1"))
+        with pytest.raises(ForbiddenError):
+            getattr(client.reuses, method_name)(
+                "reuse-1", linked_id, PERMISSIONS, _policy(operation, f"reuse-1:{linked_id}x")
+            )
+    assert len([r for r in router.requests if "/reuses/" in r.url]) == 1
+
+
+@pytest.mark.parametrize(
+    ("method_name", "linked_id", "operation", "target", "path"),
+    [
+        (
+            "reuse_add_dataset",
+            "dataset-1",
+            wire.REUSE_ADD_DATASET_OPERATION,
+            "reuse-1:dataset-1",
+            f"{ORIGIN}/api/1/reuses/reuse-1/datasets/",
+        ),
+        (
+            "reuse_add_dataservice",
+            "ds-1",
+            wire.REUSE_ADD_DATASERVICE_OPERATION,
+            "reuse-1:ds-1",
+            f"{ORIGIN}/api/1/reuses/reuse-1/dataservices/",
+        ),
+    ],
+)
+def test_reuse_link_mutations_bind_the_relationship_target_in_async_mode(
+    method_name: str, linked_id: str, operation: str, target: str, path: str
+) -> None:
+    """The async relationship surface binds and enforces the composite target."""
+    router = atom_async_route_table(with_site_route({("POST", path): (201, _reuse())}))
+
+    async def run() -> None:
+        async with async_client(router, UDATA_CREDENTIAL) as client:
+            result = await getattr(client.reuses, method_name)(
+                "reuse-1", linked_id, PERMISSIONS, _policy(operation, target)
+            )
+            assert result.receipt.target.value == target
+            with pytest.raises(ForbiddenError):
+                await getattr(client.reuses, method_name)(
+                    "reuse-1", linked_id, PERMISSIONS, _policy(operation, "reuse-1")
+                )
+
+    asyncio.run(run())
+    assert len([r for r in router.requests if "/reuses/" in r.url]) == 1
+
+
+def test_reuse_create_retargets_the_success_receipt_to_the_assigned_reuse_id() -> None:
+    """A created reuse is receipted against its assigned id, not the submitted title.
+
+    Without the re-target the receipt stays bound to the caller-supplied title
+    for its whole lifetime, so the redacted audit trail cannot be joined to the
+    created record by identifier.
+    """
+    router = atom_sync_route_table(with_site_route({("POST", f"{ORIGIN}/api/1/reuses/"): (201, _reuse("assigned-1"))}))
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        created = client.reuses.create_reuse(
+            ReuseCreateInput(
+                title="A reuse",
+                description="A description",
+                type="application",
+                url="https://example.com",
+                topic="health",
+            ),
+            CREATE_ONLY_PERMISSIONS,
+            _policy(wire.CREATE_REUSE_OPERATION, "A reuse"),
+        )
+    assert created.receipt.target.value == "assigned-1"
+    assert created.receipt.outcome == "succeeded"
+
+
+def test_reuse_create_receipt_falls_back_to_the_title_when_no_id_is_returned() -> None:
+    """An id-less success payload keeps the confirmed title as the receipt target."""
+    router = atom_sync_route_table(
+        with_site_route({("POST", f"{ORIGIN}/api/1/reuses/"): (201, {"id": "", "title": "A reuse"})})
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        created = client.reuses.create_reuse(
+            ReuseCreateInput(
+                title="A reuse",
+                description="A description",
+                type="application",
+                url="https://example.com",
+                topic="health",
+            ),
+            CREATE_ONLY_PERMISSIONS,
+            _policy(wire.CREATE_REUSE_OPERATION, "A reuse"),
+        )
+    assert created.receipt.target.value == "A reuse"
+
+
+def test_reuse_create_retargets_the_success_receipt_in_async_mode() -> None:
+    """The async create surface applies the same success re-target."""
+    router = atom_async_route_table(with_site_route({("POST", f"{ORIGIN}/api/1/reuses/"): (201, _reuse("assigned-1"))}))
+
+    async def run() -> None:
+        async with async_client(router, UDATA_CREDENTIAL) as client:
+            created = await client.reuses.create_reuse(
+                ReuseCreateInput(
+                    title="A reuse",
+                    description="A description",
+                    type="application",
+                    url="https://example.com",
+                    topic="health",
+                ),
+                CREATE_ONLY_PERMISSIONS,
+                _policy(wire.CREATE_REUSE_OPERATION, "A reuse"),
+            )
+            assert created.receipt.target.value == "assigned-1"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("boolean_filter", ["yes", "true", ("true",), ()])
+def test_reuse_documented_boolean_filters_reject_non_boolean_values(boolean_filter: object) -> None:
+    """``featured`` is documented as a boolean filter, so a non-boolean must be rejected."""
+    with pytest.raises(ValueError, match="must be a boolean"):
+        ReuseListQuery(filters={"featured": cast("str | bool | tuple[str, ...]", boolean_filter)})
+
+
+@pytest.mark.parametrize("query_type", [ReuseListQuery, ReuseSearchQuery])
+def test_reuse_filters_are_deep_frozen(query_type: type[ReuseListQuery] | type[ReuseSearchQuery]) -> None:
+    """A frozen query must not keep the caller's mutable filter mapping."""
+    filters = {"organization": "orga"}
+    query = query_type(filters=filters)
+    filters["organization"] = "other"
+    assert query.query_params() == [
+        ("page", str(query.page)),
+        ("page_size", str(query.page_size)),
+        ("organization", "orga"),
+    ]
 
 
 def test_reuse_badge_and_feature_mutations_match_exact_wire() -> None:

@@ -626,6 +626,11 @@ def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
     )
 
 
+def _definition_start(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
+    """Return the first source line of a definition, decorators included."""
+    return min([decorator.lineno for decorator in node.decorator_list] + [node.lineno])
+
+
 def _without_async_passes(source: str, test_name: str) -> str:
     """Return the controlled source with every async pass of one test removed."""
     target = next(
@@ -634,7 +639,7 @@ def _without_async_passes(source: str, test_name: str) -> str:
     async_passes = [node for node in ast.walk(target) if isinstance(node, ast.AsyncFunctionDef)]
     assert async_passes, f"{test_name} must drive an async pass"
     lines = source.splitlines(keepends=True)
-    first = min(pass_.lineno for pass_ in async_passes)
+    first = min(_definition_start(pass_) for pass_ in async_passes)
     last = max((pass_.end_lineno or pass_.lineno) for pass_ in async_passes)
     return "".join(lines[: first - 1] + lines[last:])
 
@@ -741,4 +746,42 @@ def _without_nested_pass(source: str, test_name: str, pass_name: str) -> str:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == pass_name
     )
     lines = source.splitlines(keepends=True)
-    return "".join(lines[: target_pass.lineno - 1] + lines[target_pass.end_lineno :])
+    return "".join(lines[: _definition_start(target_pass) - 1] + lines[target_pass.end_lineno :])
+
+
+def test_the_gutting_helpers_remove_decorators_with_the_pass() -> None:
+    """A decorated pass must leave parseable source, or the falsification gates crash.
+
+    ``AsyncFunctionDef.lineno`` and ``FunctionDef.lineno`` point at the ``def``
+    line, so slicing from there orphans any decorator and the gutted module no
+    longer parses. A ``SyntaxError`` inside ``unexecuted_operations`` would turn
+    the falsification gates into crashes instead of assertions.
+    """
+    decorated_async = """\
+def test_pass() -> None:
+    @mark
+    async def run_async() -> None:
+        client.auth_oauth.revoke_token()
+
+    asyncio.run(run_async())
+"""
+    decorated_nested = """\
+def test_pass() -> None:
+    @mark
+    def exercise() -> None:
+        client.taxonomies.add_badge()
+
+    exercise("sync")
+"""
+
+    gutted = _without_async_passes(decorated_async, "test_pass")
+
+    ast.parse(gutted)
+    assert "async def run_async" not in gutted
+    assert "@mark" not in gutted
+
+    gutted = _without_nested_pass(decorated_nested, "test_pass", "exercise")
+
+    ast.parse(gutted)
+    assert "def exercise" not in gutted
+    assert "@mark" not in gutted

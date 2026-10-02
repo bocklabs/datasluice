@@ -36,10 +36,6 @@ class OneTimeUDataToken:
         with self._lock:
             self._value = None
 
-    def _discard(self) -> None:
-        """Alias of :meth:`discard` retained for callers not yet migrated."""
-        self.discard()
-
     def __repr__(self) -> str:
         return "OneTimeUDataToken(***)"
 

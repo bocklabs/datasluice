@@ -8,11 +8,13 @@ from types import MappingProxyType
 from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import (
-    NativePageMetadata,
     UDataPageEnvelope,
 )
 from datasluice.connectors.catalog.udata.mapping import (
     parse_native_page as _parse_native_page,
+)
+from datasluice.connectors.catalog.udata.mapping import (
+    shape_native_page as _shape_native_page,
 )
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
@@ -24,7 +26,7 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationUpdateInput,
 )
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PageInfo, PlatformMetadata
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = CatalogPlatform.UDATA
@@ -429,24 +431,7 @@ def parse_records(
 def parse_organization_page(payload: object, *, operation: str = LIST_ORGANIZATIONS_OPERATION) -> UDataPageEnvelope:
     page = _parse_native_page(payload, operation=operation)
     records = tuple(parse_organization(item, operation=operation) for item in page.items)
-    page_info = None
-    if page.page is not None:
-        next_cursor = str(page.page + 1) if page.next_page else None
-        page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
-    native_page = NativePageMetadata(
-        present_fields=page.present_fields,
-        page=page.page,
-        page_size=page.page_size,
-        previous_page=page.previous_page,
-        next_page=page.next_page,
-        total=page.total,
-    )
-    return UDataPageEnvelope(
-        items=records,
-        page=page_info,
-        platform=PlatformMetadata(platform=PLATFORM, extensions={"udata.page": native_page.to_dict()}),
-        native_page=native_page,
-    )
+    return _shape_native_page(page, records)
 
 
 def parse_contact_points(payload: object, *, operation: str) -> tuple[MappingRecord, ...]:
@@ -464,24 +449,7 @@ def parse_page(payload: object, *, operation: str, kind: ResourceKind) -> UDataP
         )
         for item in page.items
     )
-    page_info = None
-    if page.page is not None:
-        next_cursor = str(page.page + 1) if page.next_page else None
-        page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
-    native_page = NativePageMetadata(
-        present_fields=page.present_fields,
-        page=page.page,
-        page_size=page.page_size,
-        previous_page=page.previous_page,
-        next_page=page.next_page,
-        total=page.total,
-    )
-    return UDataPageEnvelope(
-        items=records,
-        page=page_info,
-        platform=PlatformMetadata(platform=PLATFORM, extensions={"udata.page": native_page.to_dict()}),
-        native_page=native_page,
-    )
+    return _shape_native_page(page, records)
 
 
 def parse_organization_search(payload: object, *, operation: str = SEARCH_ORGANIZATIONS_OPERATION) -> UDataPageEnvelope:

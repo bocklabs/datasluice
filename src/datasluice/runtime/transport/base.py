@@ -46,11 +46,15 @@ def drop_body_transfer_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class UploadPart:
-    """One immutable multipart form part buffered for upload.
+    """One immutable multipart form part.
 
-    Part data is excluded from ``repr`` so debugging or logging a part can
-    never surface uploaded file contents; only field name, file name,
-    content type, and the data byte length render.
+    ``data`` is either fully buffered ``bytes`` or a one-shot closeable
+    stream, which the request consumes in place exactly once instead of
+    buffering; the caller owns that stream's read position and must close
+    it, because transports never close it. Part data is excluded from
+    ``repr`` so debugging or logging a part can never surface uploaded
+    file contents; only field name, file name, content type, and the data
+    byte length render.
     """
 
     field_name: str

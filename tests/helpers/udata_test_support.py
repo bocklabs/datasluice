@@ -200,10 +200,6 @@ def anonymous_sync_client(router: SyncRouteRouter) -> SyncUDataClient:
     return sync_client(router, None)
 
 
-def anonymous_async_client(router: AsyncRouteRouter) -> AsyncUDataClient:
-    return async_client(router, None)
-
-
 def assert_ambiguous_mutation_receipt(
     raised: BaseException,
     receipt: MutationReceipt,

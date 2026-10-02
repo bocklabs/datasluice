@@ -6,14 +6,16 @@ from dataclasses import dataclass
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 
+_MAX_SPATIAL_SIZE = 100
+
 
 def segment(value: str, operation: str) -> str:
     return path_segment(value, operation, "uData spatial")
 
 
-def _positive_int(value: object, label: str) -> None:
-    if type(value) is not int or value < 1:
-        raise ValueError(f"uData spatial {label} must be a positive integer.")
+def _bounded_size(value: object, label: str) -> None:
+    if type(value) is not int or not 1 <= value <= _MAX_SPATIAL_SIZE:
+        raise ValueError(f"uData spatial {label} must be an integer from 1 through {_MAX_SPATIAL_SIZE}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +28,7 @@ class SpatialSuggestQuery:
     def __post_init__(self) -> None:
         if not isinstance(self.q, str) or not self.q:
             raise ValueError("uData spatial suggest q must be a non-empty string.")
-        _positive_int(self.size, "suggest size")
+        _bounded_size(self.size, "suggest size")
 
     def query_params(self) -> list[tuple[str, str]]:
         return [("q", self.q), ("size", str(self.size))]
@@ -39,7 +41,7 @@ class SpatialDatasetQuery:
     size: int = 25
 
     def __post_init__(self) -> None:
-        _positive_int(self.size, "dataset size")
+        _bounded_size(self.size, "dataset size")
 
     def query_params(self) -> list[tuple[str, str]]:
         return [("size", str(self.size))]

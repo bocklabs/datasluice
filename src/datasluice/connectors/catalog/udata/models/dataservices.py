@@ -42,6 +42,7 @@ _SEARCH_FILTERS = (
 _SEARCH_BOOLEAN_FILTERS = ("archived", "featured", "is_restricted")
 _SEARCH_SORTS = ("created", "views", "followers")
 _SEARCH_SORT_CHOICES = frozenset(_SEARCH_SORTS) | frozenset(f"-{name}" for name in _SEARCH_SORTS)
+_MAX_PAGE_SIZE = 100
 
 
 def segment(value: str, operation: str) -> str:
@@ -116,8 +117,8 @@ def cast_str(value: object) -> str:
 def _paging(page: int, page_size: int, label: str) -> None:
     if type(page) is not int or page < 1:
         raise ValueError(f"uData dataservice {label} page must be a positive integer.")
-    if type(page_size) is not int or page_size < 1:
-        raise ValueError(f"uData dataservice {label} page_size must be a positive integer.")
+    if type(page_size) is not int or not 1 <= page_size <= _MAX_PAGE_SIZE:
+        raise ValueError(f"uData dataservice {label} page_size must be an integer from 1 through {_MAX_PAGE_SIZE}.")
 
 
 def _optional_text(value: object, label: str, *, required: bool = False) -> None:

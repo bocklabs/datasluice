@@ -53,6 +53,28 @@ def segment(value: str, operation: str) -> str:
     return path_segment(value, operation, "uData reuse")
 
 
+def linked_identifier(value: str, operation: str, label: str) -> str:
+    """Return *value* after checking it is one documented relationship identifier.
+
+    Linked dataset and dataservice identifiers travel in JSON relationship
+    bodies rather than in a URL path, so the shared segment validator is applied
+    for its identifier policy and the value itself is returned unencoded.
+
+    Args:
+        value: The caller-supplied identifier destined for a relationship body.
+        operation: The owning operation name, used to build the error details.
+        label: The owning linked resource label used in the error message.
+
+    Returns:
+        The unchanged identifier, ready to send as a body value.
+
+    Raises:
+        CatalogValidationError: If the identifier is not one safe identifier.
+    """
+    path_segment(value, operation, label)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ReuseListQuery:
     """Stock v1 reuse collection query surface.

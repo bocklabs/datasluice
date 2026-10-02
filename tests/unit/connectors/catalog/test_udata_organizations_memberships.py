@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
+from datetime import datetime
 from io import BytesIO
 from typing import cast
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.mapping import NativePage, UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
     OrganizationCreateInput,
@@ -22,6 +24,8 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
+from datasluice.connectors.catalog.udata.services import datasets as dataset_service
+from datasluice.connectors.catalog.udata.services import organizations_memberships as organization_service
 from datasluice.connectors.catalog.udata.services.organizations_memberships import (
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
@@ -32,11 +36,13 @@ from datasluice.contracts.catalog.native.udata import (
     SyncUDataOrganizationsMembershipsService,
 )
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
-from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+SHAPED_PAGE_SENTINEL = cast("UDataPageEnvelope", object())
 
 
 class _Router:
@@ -318,6 +324,37 @@ def test_organization_inputs_reject_non_json_field_values_with_value_error() -> 
         OrganizationUpdateInput(acronym="E", fields={"broken": object()})
 
 
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        pytest.param({"dataset": datetime(2026, 1, 1)}, id="datetime"),
+        pytest.param({"dataset": object()}, id="bare-object"),
+        pytest.param({1: "dataset"}, id="non-string-key"),
+    ],
+)
+def test_organization_assignments_reject_non_json_values_at_construction(assignment: object) -> None:
+    accepted = cast("tuple[Mapping[str, str], ...]", (assignment,))
+
+    with pytest.raises(ValueError, match="assignments"):
+        MembershipRequestInput("please", role="partial_editor", assignments=accepted)
+    with pytest.raises(ValueError, match="assignments"):
+        OrganizationInvitationInput(email="member@example.test", role="partial_editor", assignments=accepted)
+
+
+def test_organization_assignments_survive_caller_mutation_after_construction() -> None:
+    caller_assignment: dict[str, str] = {"dataset": "dataset-1"}
+    client_input = MembershipRequestInput("please", role="partial_editor", assignments=(caller_assignment,))
+    frozen = client_input.payload()
+    frozen_json = json.dumps(frozen)
+
+    caller_assignment["dataset"] = "dataset-tampered"
+    caller_assignment["injected"] = "dataset-injected"
+
+    assert client_input.payload() == frozen
+    assert json.dumps(client_input.payload()) == frozen_json
+    assert client_input.payload()["assignments"] == [{"dataset": "dataset-1"}]
+
+
 def test_contact_points_are_typed_as_contact_points_in_both_modes() -> None:
     contacts_url = f"{ORIGIN}/api/1/organizations/org-1/contacts/?page=1&page_size=20"
     payload = {"data": [{"id": "contact-1", "name": "Contact"}], "page": 1, "page_size": 20, "total": 1}
@@ -421,3 +458,107 @@ def test_async_organization_get_matches_sync_wire() -> None:
             return await async_client.organizations_memberships.get_organization("org-1")
 
     assert asyncio.run(run()) == sync_value
+
+
+def test_organization_family_reuses_the_shared_receipt_attachment_helper() -> None:
+    assert organization_service._attach is dataset_service._attach_receipt
+
+
+def test_organization_page_decoders_delegate_to_the_shared_page_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[NativePage, tuple[NativeRecord, ...]]] = []
+
+    def spy(page: NativePage, records: tuple[NativeRecord, ...]) -> UDataPageEnvelope:
+        calls.append((page, records))
+        return SHAPED_PAGE_SENTINEL
+
+    monkeypatch.setattr(wire, "_shape_native_page", spy)
+    payload: dict[str, object] = {
+        "data": [{"id": "org-1", "name": "Evidence"}],
+        "page": 1,
+        "page_size": 20,
+        "total": 1,
+    }
+
+    assert wire.parse_organization_page(payload) is SHAPED_PAGE_SENTINEL
+    assert (
+        wire.parse_page(payload, operation=wire.LIST_ORGANIZATIONS_OPERATION, kind=ResourceKind("badge"))
+        is SHAPED_PAGE_SENTINEL
+    )
+    assert [(page.page, tuple(record.id.value for record in records)) for page, records in calls] == [
+        (1, ("org-1",)),
+        (1, ("org-1",)),
+    ]
+
+
+def _both_organization_page_decoders(payload: Mapping[str, object]) -> tuple[UDataPageEnvelope, UDataPageEnvelope]:
+    return (
+        wire.parse_organization_page(payload),
+        wire.parse_page(payload, operation=wire.LIST_ORGANIZATIONS_OPERATION, kind=ResourceKind("badge")),
+    )
+
+
+def test_organization_page_decoders_share_one_cursor_shape() -> None:
+    organization, generic = _both_organization_page_decoders(
+        {
+            "data": [{"id": "org-1", "name": "Evidence"}],
+            "page": 2,
+            "page_size": 20,
+            "previous_page": f"{ORIGIN}/api/1/organizations/?page=1",
+            "next_page": f"{ORIGIN}/api/1/organizations/?page=3",
+            "total": 41,
+        }
+    )
+    assert organization.page == generic.page
+    assert organization.page is not None
+    assert (organization.page.cursor, organization.page.next_cursor, organization.page.total_items) == ("2", "3", 41)
+    assert organization.native_page.to_dict() == generic.native_page.to_dict()
+    assert organization.native_page.to_dict() == {
+        "present_fields": ["data", "next_page", "page", "page_size", "previous_page", "total"],
+        "page": 2,
+        "page_size": 20,
+        "previous_page": f"{ORIGIN}/api/1/organizations/?page=1",
+        "next_page": f"{ORIGIN}/api/1/organizations/?page=3",
+        "total": 41,
+    }
+    assert organization.platform == generic.platform
+    assert organization.platform is not None
+    assert (organization.platform.platform, organization.platform.api_version, organization.platform.deployment) == (
+        CatalogPlatform.UDATA,
+        None,
+        None,
+    )
+    extensions = organization.platform.to_dict()["extensions"]
+    assert json.loads(json.dumps(extensions)) == {"udata.page": organization.native_page.to_dict()}
+
+
+def test_organization_page_decoders_drop_the_next_cursor_without_a_next_page() -> None:
+    organization, generic = _both_organization_page_decoders(
+        {
+            "data": [{"id": "org-1", "name": "Evidence"}],
+            "page": 2,
+            "page_size": 20,
+            "total": 41,
+        }
+    )
+    assert organization.page == generic.page
+    assert organization.page is not None
+    assert (organization.page.cursor, organization.page.next_cursor, organization.page.total_items) == ("2", None, 41)
+    assert organization.native_page.to_dict() == generic.native_page.to_dict()
+    assert "next_page" not in organization.native_page.present_fields
+    assert organization.native_page.to_dict() == {
+        "present_fields": ["data", "page", "page_size", "total"],
+        "page": 2,
+        "page_size": 20,
+        "previous_page": None,
+        "next_page": None,
+        "total": 41,
+    }
+    assert organization.platform == generic.platform
+    assert organization.platform is not None
+    assert (organization.platform.platform, organization.platform.api_version, organization.platform.deployment) == (
+        CatalogPlatform.UDATA,
+        None,
+        None,
+    )
+    extensions = organization.platform.to_dict()["extensions"]
+    assert json.loads(json.dumps(extensions)) == {"udata.page": organization.native_page.to_dict()}

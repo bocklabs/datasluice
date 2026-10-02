@@ -9,6 +9,7 @@ from typing import cast
 
 import pytest
 
+from datasluice.connectors.catalog.udata import mapping
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetCreateInput,
@@ -28,6 +29,7 @@ from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     CatalogConflictError,
@@ -1359,3 +1361,110 @@ def transport_requests(client: SyncUDataClient) -> list[RuntimeRequest]:
     transport = client._transport
     assert isinstance(transport, RouterTransport)
     return transport.requests
+
+
+_CREDENTIAL_DATASET_ITEM: dict[str, object] = {
+    "id": "5f4d2c8e9a1b",
+    "title": "Weather",
+    "slug": "weather",
+    "description": "Daily observations",
+    "token": "live-token-plaintext",
+    "api_key": "live-api-key-plaintext",
+    "body": '{"raw": "live-raw-body-plaintext"}',
+    "nested": {"password": "live-password-plaintext", "safe": "kept"},
+}
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw(nested) for key, nested in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw(nested) for nested in value]
+    return value
+
+
+def test_dataset_summary_record_construction_redacts_credential_shaped_item_fields() -> None:
+    record = mapping.parse_dataset_summary(_CREDENTIAL_DATASET_ITEM)
+
+    payload = _thaw(record.payload)
+    assert isinstance(payload, dict)
+    assert payload["token"] == REDACTED
+    assert payload["api_key"] == REDACTED
+    assert payload["body"] == REDACTED
+    assert payload["nested"] == {"password": REDACTED, "safe": "kept"}
+    for plaintext in ("live-token-plaintext", "live-api-key-plaintext", "live-password-plaintext"):
+        assert plaintext not in str(record.payload), f"{plaintext} must not enter the typed record"
+        assert plaintext not in json.dumps(record.to_dict())
+
+
+def test_dataset_summary_record_construction_keeps_every_non_credential_field() -> None:
+    item = {f"field_{index}": index for index in range(64)} | {"id": "5f4d2c8e9a1b"}
+    record = mapping.parse_dataset_summary(item)
+
+    payload = _thaw(record.payload)
+    assert isinstance(payload, dict)
+    assert payload == item
+
+
+def test_dataset_page_serialization_redacts_credentials_for_every_listed_record() -> None:
+    page = mapping.parse_native_page({"data": [_CREDENTIAL_DATASET_ITEM], "page": 1, "total": 1})
+    envelope = mapping.shape_dataset_page(page)
+
+    serialized = json.dumps(envelope.to_dict())
+    for plaintext in ("live-token-plaintext", "live-api-key-plaintext", "live-password-plaintext"):
+        assert plaintext not in serialized
+    assert REDACTED in serialized
+
+
+def test_dataset_detail_unknown_fields_are_redacted_but_retained_in_extensions() -> None:
+    detail = {**_CREDENTIAL_DATASET_ITEM, "portal_extra": "kept", "unknown_token": "live-unknown-plaintext"}
+
+    record = wire.parse_dataset_detail(detail)
+    extensions = _thaw(record.extensions)
+    assert isinstance(extensions, dict)
+    unknown = extensions["udata.dataset"]
+    assert isinstance(unknown, dict)
+    assert unknown["portal_extra"] == "kept"
+    assert unknown["unknown_token"] == REDACTED
+    assert unknown["token"] == REDACTED
+    assert unknown["api_key"] == REDACTED
+    assert unknown["body"] == REDACTED
+    assert unknown["nested"] == {"password": REDACTED, "safe": "kept"}
+    assert record.payload["title"] == "Weather"
+    assert "live-unknown-plaintext" not in json.dumps(record.to_dict())
+    assert "live-token-plaintext" not in json.dumps(record.to_dict())
+
+
+def test_dataset_extras_are_validated_and_redacted_rather_than_passed_through() -> None:
+    extras = wire.parse_extras(
+        {
+            "unit": "mm",
+            "api_key": "live-extras-key-plaintext",
+            "nested": {"secret": "live-extras-secret-plaintext", "kept": 1},
+        }
+    )
+
+    assert extras["unit"] == "mm"
+    assert extras["api_key"] == REDACTED
+    assert _thaw(extras["nested"]) == {"secret": REDACTED, "kept": 1}
+    assert "live-extras-key-plaintext" not in str(extras)
+    assert "live-extras-secret-plaintext" not in str(extras)
+
+
+def test_dataset_extras_validation_still_fails_typed_before_redaction() -> None:
+    with pytest.raises(CatalogValidationError) as raised:
+        wire.parse_extras({"not-finite": float("nan")})
+
+    assert raised.value.operation == "udata/api-v1.dataset-list-search-show-create-update-delete"
+    with pytest.raises(CatalogValidationError):
+        wire.parse_extras(["not", "an", "object"])
+
+
+def test_suggestion_records_redact_credential_shaped_fields() -> None:
+    records = wire.parse_suggestions([_CREDENTIAL_DATASET_ITEM], operation="udata/api-v1.suggest-datasets")
+
+    assert records[0].payload["title"] == "Weather"
+    unknown = _thaw(records[0].extensions)
+    assert isinstance(unknown, dict)
+    assert unknown["udata.dataset"]["token"] == REDACTED
+    assert "live-token-plaintext" not in json.dumps([record.to_dict() for record in records])

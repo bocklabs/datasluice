@@ -699,24 +699,6 @@ USER_ROUTE_OPERATION_IDS = frozenset(
     }
 )
 
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "resources")
-        for operation_id in RESOURCE_ROUTE_OPERATION_IDS
-    }
-)
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "organizations_memberships")
-        for operation_id in ORGANIZATION_ROUTE_OPERATION_IDS
-    }
-)
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "users_tokens")
-        for operation_id in USER_ROUTE_OPERATION_IDS
-    }
-)
 TAXONOMY_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/api-v1.available-dataset-badges",
@@ -745,12 +727,6 @@ ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v2.search-discussions",
     }
 )
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "activity_discussions")
-        for operation_id in ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
-    }
-)
 SPATIAL_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/api-v1.suggest-zones",
@@ -760,12 +736,6 @@ SPATIAL_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v1.spatial-levels",
         "udata/api-v1.spatial-granularities",
         "udata/api-v1.spatial-coverage",
-    }
-)
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "spatial")
-        for operation_id in SPATIAL_ROUTE_OPERATION_IDS
     }
 )
 DATASERVICE_ROUTE_OPERATION_IDS = frozenset(
@@ -786,12 +756,6 @@ DATASERVICE_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v1.list-dataservice-followers",
         "udata/api-v1.follow-dataservice",
         "udata/api-v1.unfollow-dataservice",
-    }
-)
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "dataservices")
-        for operation_id in DATASERVICE_ROUTE_OPERATION_IDS
     }
 )
 REUSE_ROUTE_OPERATION_IDS = frozenset(
@@ -820,9 +784,6 @@ REUSE_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v1.unfollow-reuse",
     }
 )
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {operation_id: ("SyncUDataServices", "AsyncUDataServices", "reuses") for operation_id in REUSE_ROUTE_OPERATION_IDS}
-)
 POSTS_REPORTS_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/api-v1.list-reports",
@@ -845,12 +806,6 @@ POSTS_REPORTS_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v1.read-notification",
     }
 )
-NATIVE_OPERATION_MEMBERS["udata"].update(
-    {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "posts_reports")
-        for operation_id in POSTS_REPORTS_ROUTE_OPERATION_IDS
-    }
-)
 OAUTH_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/oauth.access-token",
@@ -861,10 +816,26 @@ OAUTH_ROUTE_OPERATION_IDS = frozenset(
         "udata/oauth.revoke-token",
     }
 )
+
+# TAXONOMY_ROUTE_OPERATION_IDS is deliberately absent below: taxonomy operations are
+# approved routes only, so they carry no locked INTEGRATE row and no native Protocol
+# member. Merging them would break the mapped_ids == integrate_ids equality asserted by
+# test_every_integrate_operation_has_both_native_protocol_modes.
 NATIVE_OPERATION_MEMBERS["udata"].update(
     {
-        operation_id: ("SyncUDataServices", "AsyncUDataServices", "auth_oauth")
-        for operation_id in OAUTH_ROUTE_OPERATION_IDS
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", member)
+        for route_ids, member in (
+            (RESOURCE_ROUTE_OPERATION_IDS, "resources"),
+            (ORGANIZATION_ROUTE_OPERATION_IDS, "organizations_memberships"),
+            (USER_ROUTE_OPERATION_IDS, "users_tokens"),
+            (ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS, "activity_discussions"),
+            (SPATIAL_ROUTE_OPERATION_IDS, "spatial"),
+            (DATASERVICE_ROUTE_OPERATION_IDS, "dataservices"),
+            (REUSE_ROUTE_OPERATION_IDS, "reuses"),
+            (POSTS_REPORTS_ROUTE_OPERATION_IDS, "posts_reports"),
+            (OAUTH_ROUTE_OPERATION_IDS, "auth_oauth"),
+        )
+        for operation_id in route_ids
     }
 )
 
@@ -900,13 +871,15 @@ LOCKED_DATASET_ROUTE_OPERATIONS = (
 )
 
 LOCKED_EXTRA_OPERATION_IDS = (
-    LOCKED_DATASET_ROUTE_OPERATIONS
-    & {
-        "udata/api-v1.set_site",
-        "udata/api-v1.resource-reads",
-        "udata/api-v1.resource-mutations",
-        "udata/api-v1.resource-destructive-mutations",
-    }
+    (
+        LOCKED_DATASET_ROUTE_OPERATIONS
+        & {
+            "udata/api-v1.set_site",
+            "udata/api-v1.resource-reads",
+            "udata/api-v1.resource-mutations",
+            "udata/api-v1.resource-destructive-mutations",
+        }
+    )
     | RESOURCE_ROUTE_OPERATION_IDS
     | ORGANIZATION_ROUTE_OPERATION_IDS
     | USER_ROUTE_OPERATION_IDS
@@ -1025,18 +998,24 @@ def _fixture_case_coverage_violations(platform: str, expected: set[str]) -> list
     return [f"{platform} fixture cases miss: {sorted(expected - covered)}"]
 
 
-def _platform_fixture_linkage_violations(platform: str, expected: set[str]) -> list[str]:
+def _required_profile_operations(integrate_ids: frozenset[str], platform: str) -> set[str]:
+    """Return the operation ids one platform's profile is required to declare."""
+    return _platform_operation_ids(integrate_ids, platform) | PLATFORM_APPROVED_ROUTE_OPERATIONS.get(
+        platform, frozenset()
+    )
+
+
+def _platform_fixture_linkage_violations(platform: str, integrate_ids: frozenset[str]) -> list[str]:
     """Return profile-operation and fixture-case linkage violations for one platform."""
+    locked = _platform_operation_ids(integrate_ids, platform)
     try:
         profile = _profile(platform)
     except (AssertionError, OSError, json.JSONDecodeError) as error:
         return [f"{platform} profile unreadable: {error}"]
     operations = {operation["id"] for operation in profile["operations"]}
-    approved_routes = PLATFORM_APPROVED_ROUTE_OPERATIONS.get(platform, frozenset())
-    violations = (
-        [] if operations == expected | approved_routes else [f"{platform} profile diverges from the locked matrix"]
-    )
-    return violations + _fixture_case_coverage_violations(platform, expected)
+    required = _required_profile_operations(integrate_ids, platform)
+    violations = [] if operations == required else [f"{platform} profile diverges from the locked matrix"]
+    return violations + _fixture_case_coverage_violations(platform, locked)
 
 
 def _fixture_linkage_violations() -> list[str]:
@@ -1044,9 +1023,7 @@ def _fixture_linkage_violations() -> list[str]:
     integrate_ids = _locked_integrate_ids()
     violations: list[str] = []
     for platform in PLATFORMS:
-        violations.extend(
-            _platform_fixture_linkage_violations(platform, _platform_operation_ids(integrate_ids, platform))
-        )
+        violations.extend(_platform_fixture_linkage_violations(platform, integrate_ids))
     return violations
 
 
@@ -1445,10 +1422,7 @@ def _platform_matrix_violations(platform: str, integrate_ids: frozenset[str]) ->
     operations = set(declared)
     if len(declared) != len(operations):
         return [f"{platform} declares duplicate operations"]
-    expected = _platform_operation_ids(integrate_ids, platform) | PLATFORM_APPROVED_ROUTE_OPERATIONS.get(
-        platform, frozenset()
-    )
-    if operations != expected:
+    if operations != _required_profile_operations(integrate_ids, platform):
         return [f"{platform} profile diverges from the locked matrix"]
     return _profile_opt_out_violations(platform, profile, operations)
 

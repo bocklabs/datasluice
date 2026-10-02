@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from io import BytesIO
+from typing import cast
 
 import pytest
 
-from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
+from datasluice.connectors.catalog.udata.clients import (
+    AsyncUDataClient,
+    SyncUDataClient,
+    _AsyncStreamGuard,
+    _SyncStreamGuard,
+    declared_udata_profile,
+)
 from datasluice.connectors.catalog.udata.models.resources import (
     MidStreamUploadError,
     ResourceCreateInput,
@@ -16,13 +24,18 @@ from datasluice.connectors.catalog.udata.models.resources import (
     ResourceUpdateInput,
     ResourceUploadInput,
 )
+from datasluice.connectors.catalog.udata.models.users import UserUpdateInput
 from datasluice.connectors.catalog.udata.services.resources import AsyncResourcesService, SyncResourcesService
 from datasluice.connectors.catalog.udata.wire import resources as wire
+from datasluice.connectors.catalog.udata.wire._text_document import (
+    APPROVED_TEXT_MEDIA_TYPES,
+    bound_text_document,
+)
 from datasluice.contracts.catalog.native.udata import AsyncUDataResourcesService, SyncUDataResourcesService
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
+from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 
@@ -830,3 +843,59 @@ def test_preflight_upload_reuse_is_not_marked_ambiguous() -> None:
 
     assert raised.value.__dict__["mutation_receipt"].outcome == "failed"
     assert not transport.requests
+
+
+def test_v2_extras_flag_delegates_to_the_single_extras_route_builder() -> None:
+    """`v2_resource_request(extras=...)` must not keep a second copy of the extras route."""
+    for verb in ("GET", "PUT", "DELETE"):
+        assert wire.v2_resource_request("dataset", "resource", extras=verb) == wire.v2_extras_request(
+            verb, "dataset", "resource"
+        )
+    assert wire.v2_resource_request("dataset", "resource", extras="GET") == (
+        "GET",
+        "/api/2/datasets/dataset/resources/resource/extras/",
+        {},
+        None,
+    )
+    with pytest.raises(CatalogValidationError):
+        wire.v2_resource_request("dataset", extras="GET")
+    with pytest.raises(CatalogValidationError):
+        wire.v2_resource_request("", "resource", extras="PUT")
+
+
+def test_approved_text_media_type_remediation_lists_the_approved_set() -> None:
+    """The remediation hint must name the approved types, never the rejected one."""
+    with pytest.raises(NativeCatalogError) as raised:
+        bound_text_document(
+            b"{}",
+            "text/html",
+            response_media_type=None,
+            operation="text-contract",
+            platform=CatalogPlatform.UDATA,
+            approved_media_types=APPROVED_TEXT_MEDIA_TYPES,
+            list_approved_action=True,
+        )
+    safe_action = cast(dict[str, object], raised.value.metadata)["safe_action"]
+    assert cast(str, safe_action).startswith("Request one of the approved media types: ")
+    assert "text/html" not in cast(str, safe_action)
+    for approved in APPROVED_TEXT_MEDIA_TYPES:
+        assert approved in cast(str, safe_action)
+
+
+def test_stream_guard_annotations_spell_out_generator_parameters() -> None:
+    """The declared Python floor is 3.12, which predates the PEP 696 parameter defaults."""
+    assert _SyncStreamGuard.__annotations__["stream_chunks"] == "Generator[bytes, None, None] | None"
+    assert _SyncStreamGuard.chunks.__annotations__["return"] == "Generator[bytes, None, None]"
+    assert _AsyncStreamGuard.__annotations__["stream_chunks"] == "AsyncGenerator[bytes, None] | None"
+    assert _AsyncStreamGuard.chunks.__annotations__["return"] == "AsyncGenerator[bytes, None]"
+
+
+def test_empty_user_update_fields_report_emptiness_not_a_mapping_failure() -> None:
+    """`{}` is a JSON mapping, so the message must name the missing field instead."""
+    with pytest.raises(ValueError, match="at least one documented field") as empty:
+        UserUpdateInput({})
+    assert "JSON mapping" not in str(empty.value)
+    with pytest.raises(ValueError, match="JSON mapping") as not_a_mapping:
+        UserUpdateInput(cast("Mapping[str, object]", "about"))
+    assert "at least one documented field" not in str(not_a_mapping.value)
+    assert UserUpdateInput({"website": None}).payload() == {"website": None}
