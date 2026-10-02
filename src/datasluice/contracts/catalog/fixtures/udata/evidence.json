@@ -334,7 +334,7 @@
     },
     "response_shape": "native-envelope-and-status-skeleton",
     "sanitized": true,
-    "recapture_note": "Captured against a fresh loopback 17.6.0 stack seeded with deterministic local roles. Every assigned row is a public read, so no mutation, upload, or token differential runs for this family. GeoLevel and GeoZone are empty on a fresh stack: levels and granularities answer an empty list, and the four zone/level targets answer 404. The stock zones list converter raises KeyError for an absent zone, so that route answers 500 and the differential asserts the typed error mapping rather than a body. Zone identifiers are percent-encoded once; the loopback container traceback shows the decoded colon form reaching upstream."
+    "recapture_note": "Captured against a fresh loopback 17.6.0 stack seeded with deterministic local roles. Every assigned row is a public read, so no mutation, upload, or token differential runs for this family. GeoLevel and GeoZone are empty on a fresh stack, so levels answers an empty list and the four zone/level targets answer 404. Granularities is never empty: upstream appends the hardcoded BASE_GRANULARITIES literal, so it answers the two base entries (poi, other). The stock zones list converter raises KeyError for an absent zone, so that route answers 500 and the differential asserts the typed error mapping rather than a body. Zone identifiers are percent-encoded once; the loopback container traceback shows the decoded colon form reaching upstream."
   },
   "controlled_posts_report_evidence": {
     "captured_at": "2026-09-27",
