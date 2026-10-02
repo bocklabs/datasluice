@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +204,57 @@ _OAUTH_ROUTE_OPERATION_IDS = {
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# The stack digests pin the controlled environment a record was captured against.
+# The test digests deliberately track the current tests instead: 04-08 records
+# them "rather than a fresh capture", so only the stack digests are provenance.
+_PROVENANCE_FILES = {
+    "dockerfile_sha256": "dev/udata-evidence/Dockerfile",
+    "compose_sha256": "dev/udata-evidence/compose.yaml",
+}
+
+
+def _blob(revision: str, path: str) -> bytes:
+    return subprocess.run(["git", "show", f"{revision}:{path}"], capture_output=True, check=True, cwd=_ROOT).stdout
+
+
+def _introducing_commit(family: str) -> str:
+    """Return the first commit whose evidence.json defines ``family``."""
+    revisions = subprocess.run(
+        ["git", "log", "--reverse", "--format=%H", "--", str(_EVIDENCE_PATH.relative_to(_ROOT))],
+        capture_output=True,
+        check=True,
+        text=True,
+        cwd=_ROOT,
+    ).stdout.split()
+    for revision in revisions:
+        document = json.loads(_blob(revision, str(_EVIDENCE_PATH.relative_to(_ROOT))))
+        if isinstance(document.get(family), dict):
+            return revision
+    raise AssertionError(f"no commit introduces {family}")
+
+
+def test_each_controlled_record_digests_the_files_at_its_introducing_commit() -> None:
+    """A controlled record is bound to the stack it was captured against, not to HEAD.
+
+    Rebinding a historical record to a digest minted after its capture silently
+    rewrites provenance, so every recorded digest must equal the real digest of
+    the file at the commit that first wrote that record.
+    """
+    document = _read_json(_EVIDENCE_PATH)
+    families = {name: record for name, record in document.items() if name.startswith("controlled_")}
+    assert families, "no controlled evidence records found"
+
+    for family, record in sorted(families.items()):
+        revision = _introducing_commit(family)
+        for field, path in _PROVENANCE_FILES.items():
+            if field not in record:
+                continue
+            expected = hashlib.sha256(_blob(revision, path)).hexdigest()
+            assert record[field] == expected, (
+                f"{family}.{field} records {record[field][:12]} but {path} at {revision[:12]} hashes to {expected[:12]}"
+            )
 
 
 def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
@@ -406,14 +458,6 @@ def test_controlled_taxonomy_evidence_covers_every_route_in_both_modes() -> None
     assert (
         controlled["wheel_test_sha256"]
         == hashlib.sha256((_ROOT / "tests/e2e/test_udata_wheel.py").read_bytes()).hexdigest()
-    )
-    assert (
-        controlled["compose_sha256"]
-        == hashlib.sha256((_ROOT / "dev/udata-evidence/compose.yaml").read_bytes()).hexdigest()
-    )
-    assert (
-        controlled["dockerfile_sha256"]
-        == hashlib.sha256((_ROOT / "dev/udata-evidence/Dockerfile").read_bytes()).hexdigest()
     )
     assert controlled["udata_image_digest"].startswith("sha256:")
 
