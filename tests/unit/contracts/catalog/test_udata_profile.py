@@ -183,6 +183,26 @@ _TAXONOMY_ROUTE_OPERATION_IDS = {
 }
 
 
+_DATASERVICE_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-dataservices",
+    "udata/api-v1.create-dataservice",
+    "udata/api-v1.recent-dataservices-atom",
+    "udata/api-v1.get-dataservice",
+    "udata/api-v1.update-dataservice",
+    "udata/api-v1.delete-dataservice",
+    "udata/api-v1.feature-dataservice",
+    "udata/api-v1.unfeature-dataservice",
+    "udata/api-v1.dataservice-datasets-create",
+    "udata/api-v1.dataservice-dataset-delete",
+    "udata/api-v1.rdf-dataservice",
+    "udata/api-v1.rdf-dataservice-format",
+    "udata/api-v2.search-dataservices",
+    "udata/api-v1.list-dataservice-followers",
+    "udata/api-v1.follow-dataservice",
+    "udata/api-v1.unfollow-dataservice",
+}
+
+
 _SPATIAL_ROUTE_OPERATION_IDS = {
     "udata/api-v1.suggest-zones",
     "udata/api-v1.spatial-zones",
@@ -326,6 +346,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _REUSE_ROUTE_OPERATION_IDS
         | _POSTS_REPORTS_ROUTE_OPERATION_IDS
         | _SPATIAL_ROUTE_OPERATION_IDS
+        | _DATASERVICE_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 

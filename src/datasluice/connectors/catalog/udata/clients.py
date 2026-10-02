@@ -116,6 +116,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.auth_oauth import (
         SyncAuthOAuthService as _SyncAuthOAuthService,
     )
+    from datasluice.connectors.catalog.udata.services.dataservices import (
+        AsyncDataservicesService as _AsyncDataservicesService,
+    )
+    from datasluice.connectors.catalog.udata.services.dataservices import (
+        SyncDataservicesService as _SyncDataservicesService,
+    )
     from datasluice.connectors.catalog.udata.services.datasets import (
         AsyncDatasetsService as _AsyncDatasetsService,
     )
@@ -3226,6 +3232,11 @@ class SyncUDataClient(_UDataClientCore):
         return SyncResourcesService(self)
 
     @property
+    def dataservices(self) -> _SyncDataservicesService:
+        """Expose the complete typed dataservice and dataservice-follower service."""
+        return SyncDataservicesService(self)
+
+    @property
     def reuses(self) -> _SyncReusesService:
         """Expose the complete typed reuse and reuse-follower service."""
         return SyncReusesService(self)
@@ -3687,6 +3698,11 @@ class AsyncUDataClient(_UDataClientCore):
     def resources(self) -> _AsyncResourcesService:
         """Expose the complete typed resource service."""
         return AsyncResourcesService(self)
+
+    @property
+    def dataservices(self) -> _AsyncDataservicesService:
+        """Expose the complete typed dataservice and dataservice-follower service."""
+        return AsyncDataservicesService(self)
 
     @property
     def reuses(self) -> _AsyncReusesService:
@@ -4213,6 +4229,10 @@ def _load_services():
         SyncActivityDiscussionsService,
     )
     from datasluice.connectors.catalog.udata.services.auth_oauth import AsyncAuthOAuthService, SyncAuthOAuthService
+    from datasluice.connectors.catalog.udata.services.dataservices import (
+        AsyncDataservicesService,
+        SyncDataservicesService,
+    )
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
         AsyncOrganizationsMembershipsService,
@@ -4254,6 +4274,8 @@ def _load_services():
         SyncResourcesService,
         AsyncReusesService,
         SyncReusesService,
+        AsyncDataservicesService,
+        SyncDataservicesService,
         AsyncOrganizationsMembershipsService,
         SyncOrganizationsMembershipsService,
         AsyncPostsReportsService,
@@ -4280,6 +4302,8 @@ def _load_services():
     SyncResourcesService,
     AsyncReusesService,
     SyncReusesService,
+    AsyncDataservicesService,
+    SyncDataservicesService,
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
     AsyncPostsReportsService,

@@ -768,6 +768,32 @@ NATIVE_OPERATION_MEMBERS["udata"].update(
         for operation_id in SPATIAL_ROUTE_OPERATION_IDS
     }
 )
+DATASERVICE_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-dataservices",
+        "udata/api-v1.create-dataservice",
+        "udata/api-v1.recent-dataservices-atom",
+        "udata/api-v1.get-dataservice",
+        "udata/api-v1.update-dataservice",
+        "udata/api-v1.delete-dataservice",
+        "udata/api-v1.feature-dataservice",
+        "udata/api-v1.unfeature-dataservice",
+        "udata/api-v1.dataservice-datasets-create",
+        "udata/api-v1.dataservice-dataset-delete",
+        "udata/api-v1.rdf-dataservice",
+        "udata/api-v1.rdf-dataservice-format",
+        "udata/api-v2.search-dataservices",
+        "udata/api-v1.list-dataservice-followers",
+        "udata/api-v1.follow-dataservice",
+        "udata/api-v1.unfollow-dataservice",
+    }
+)
+NATIVE_OPERATION_MEMBERS["udata"].update(
+    {
+        operation_id: ("SyncUDataServices", "AsyncUDataServices", "dataservices")
+        for operation_id in DATASERVICE_ROUTE_OPERATION_IDS
+    }
+)
 REUSE_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/api-v1.list-reuses",
@@ -889,6 +915,7 @@ LOCKED_EXTRA_OPERATION_IDS = (
     | REUSE_ROUTE_OPERATION_IDS
     | POSTS_REPORTS_ROUTE_OPERATION_IDS
     | SPATIAL_ROUTE_OPERATION_IDS
+    | DATASERVICE_ROUTE_OPERATION_IDS
 )
 
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {

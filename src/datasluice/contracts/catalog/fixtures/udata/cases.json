@@ -44,6 +44,10 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.create-dataservice",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.create-discussion",
       "outcome": "authenticated-success"
     },
@@ -57,6 +61,14 @@
     },
     {
       "operation": "udata/api-v1.create-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataservice-dataset-delete",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.dataservice-datasets-create",
       "outcome": "authenticated-success"
     },
     {
@@ -168,6 +180,10 @@
       "outcome": "core"
     },
     {
+      "operation": "udata/api-v1.delete-dataservice",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.delete-discussion",
       "outcome": "authenticated-success"
     },
@@ -208,7 +224,15 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.feature-dataservice",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.feature-reuse",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.follow-dataservice",
       "outcome": "authenticated-success"
     },
     {
@@ -226,6 +250,10 @@
     {
       "operation": "udata/api-v1.followers-activities-discussions-and-reuses",
       "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.get-dataservice",
+      "outcome": "core"
     },
     {
       "operation": "udata/api-v1.get-discussion",
@@ -266,6 +294,14 @@
     {
       "operation": "udata/api-v1.list-api-tokens",
       "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.list-dataservice-followers",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.list-dataservices",
+      "outcome": "core"
     },
     {
       "operation": "udata/api-v1.list-discussions",
@@ -384,11 +420,23 @@
       "outcome": "authenticated-success"
     },
     {
+      "operation": "udata/api-v1.rdf-dataservice",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.rdf-dataservice-format",
+      "outcome": "core"
+    },
+    {
       "operation": "udata/api-v1.rdf-organization",
       "outcome": "core"
     },
     {
       "operation": "udata/api-v1.rdf-organization-format",
+      "outcome": "core"
+    },
+    {
+      "operation": "udata/api-v1.recent-dataservices-atom",
       "outcome": "core"
     },
     {
@@ -532,7 +580,15 @@
       "outcome": "optional"
     },
     {
+      "operation": "udata/api-v1.unfeature-dataservice",
+      "outcome": "authenticated-success"
+    },
+    {
       "operation": "udata/api-v1.unfeature-reuse",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.unfollow-dataservice",
       "outcome": "authenticated-success"
     },
     {
@@ -545,6 +601,10 @@
     },
     {
       "operation": "udata/api-v1.unfollow-user",
+      "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v1.update-dataservice",
       "outcome": "authenticated-success"
     },
     {
@@ -598,6 +658,10 @@
     {
       "operation": "udata/api-v2.my-org-topics",
       "outcome": "authenticated-success"
+    },
+    {
+      "operation": "udata/api-v2.search-dataservices",
+      "outcome": "core"
     },
     {
       "operation": "udata/api-v2.search-discussions",

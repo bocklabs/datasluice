@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 
@@ -17,6 +18,16 @@ if TYPE_CHECKING:
         DiscussionMutationResult,
         DiscussionSearchQuery,
         DiscussionUpdateInput,
+    )
+    from datasluice.connectors.catalog.udata.models.dataservices import (
+        DataserviceCreateInput,
+        DataserviceDatasetLinkInput,
+        DataserviceDeleteOptions,
+        DataserviceFollowersQuery,
+        DataserviceListQuery,
+        DataserviceMutationResult,
+        DataserviceSearchQuery,
+        DataserviceUpdateInput,
     )
     from datasluice.connectors.catalog.udata.models.oauth import (
         OAuthAuthorizeDecision,
@@ -988,6 +999,188 @@ class AsyncUDataSpatialService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataDataservicesService(Protocol):
+    """Typed synchronous dataservice and dataservice-follower operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_dataservices(self, query: DataserviceListQuery | None = None) -> MappingRecord: ...
+
+    def create_dataservice(
+        self,
+        client_input: DataserviceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def recent_dataservices_atom_feed(self, query: DataserviceListQuery | None = None) -> MappingRecord: ...
+
+    def get_dataservice(self, dataservice_id: str) -> MappingRecord: ...
+
+    def update_dataservice(
+        self,
+        dataservice_id: str,
+        client_input: DataserviceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def delete_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        options: DataserviceDeleteOptions | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def feature_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def unfeature_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def dataservice_datasets_add(
+        self,
+        dataservice_id: str,
+        client_input: DataserviceDatasetLinkInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def dataservice_dataset_remove(
+        self,
+        dataservice_id: str,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def rdf_dataservice(self, dataservice_id: str) -> MappingRecord | MutationReceipt: ...
+
+    def rdf_dataservice_format(self, dataservice_id: str, fmt: str) -> MappingRecord: ...
+
+    def search_dataservices(self, query: DataserviceSearchQuery | None = None) -> MappingRecord: ...
+
+    def list_dataservice_followers(
+        self, dataservice_id: str, query: DataserviceFollowersQuery | None = None
+    ) -> MappingRecord: ...
+
+    def follow_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    def unfollow_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataDataservicesService(Protocol):
+    """Typed asynchronous dataservice and dataservice-follower operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_dataservices(self, query: DataserviceListQuery | None = None) -> MappingRecord: ...
+
+    async def create_dataservice(
+        self,
+        client_input: DataserviceCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def recent_dataservices_atom_feed(self, query: DataserviceListQuery | None = None) -> MappingRecord: ...
+
+    async def get_dataservice(self, dataservice_id: str) -> MappingRecord: ...
+
+    async def update_dataservice(
+        self,
+        dataservice_id: str,
+        client_input: DataserviceUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def delete_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        options: DataserviceDeleteOptions | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def feature_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def unfeature_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def dataservice_datasets_add(
+        self,
+        dataservice_id: str,
+        client_input: DataserviceDatasetLinkInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def dataservice_dataset_remove(
+        self,
+        dataservice_id: str,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def rdf_dataservice(self, dataservice_id: str) -> MappingRecord | MutationReceipt: ...
+
+    async def rdf_dataservice_format(self, dataservice_id: str, fmt: str) -> MappingRecord: ...
+
+    async def search_dataservices(self, query: DataserviceSearchQuery | None = None) -> MappingRecord: ...
+
+    async def list_dataservice_followers(
+        self, dataservice_id: str, query: DataserviceFollowersQuery | None = None
+    ) -> MappingRecord: ...
+
+    async def follow_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+    async def unfollow_dataservice(
+        self,
+        dataservice_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DataserviceMutationResult: ...
+
+
+@runtime_checkable
 class SyncUDataReusesService(Protocol):
     """Typed synchronous reuse and reuse-follower operations."""
 
@@ -1675,6 +1868,9 @@ class SyncUDataServices(Protocol):
     def resources(self) -> SyncUDataResourcesService: ...
 
     @property
+    def dataservices(self) -> SyncUDataDataservicesService: ...
+
+    @property
     def reuses(self) -> SyncUDataReusesService: ...
 
     @property
@@ -1723,6 +1919,9 @@ class AsyncUDataServices(Protocol):
 
     @property
     def resources(self) -> AsyncUDataResourcesService: ...
+
+    @property
+    def dataservices(self) -> AsyncUDataDataservicesService: ...
 
     @property
     def reuses(self) -> AsyncUDataReusesService: ...
