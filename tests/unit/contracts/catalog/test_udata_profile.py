@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from tests.unit.contracts.catalog.evidence_execution import (
     controlled_test_source,
     executed_modes,
@@ -219,15 +221,58 @@ def _blob(revision: str, path: str) -> bytes:
     return subprocess.run(["git", "show", f"{revision}:{path}"], capture_output=True, check=True, cwd=_ROOT).stdout
 
 
-def _introducing_commit(family: str) -> str:
-    """Return the first commit whose evidence.json defines ``family``."""
-    revisions = subprocess.run(
+def _evidence_revisions() -> list[str]:
+    """Return every commit that touched evidence.json, oldest first."""
+    return subprocess.run(
         ["git", "log", "--reverse", "--format=%H", "--", str(_EVIDENCE_PATH.relative_to(_ROOT))],
         capture_output=True,
         check=True,
         text=True,
         cwd=_ROOT,
     ).stdout.split()
+
+
+def _head_revision() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, check=True, text=True, cwd=_ROOT
+    ).stdout.strip()
+
+
+def _history_is_truncated(revisions: list[str], families: set[str]) -> str:
+    """Return why the evidence history cannot be walked, or an empty string if it can.
+
+    A truncated clone cannot see the commit that first wrote a record, so walking
+    history silently returns HEAD for every family and inverts the invariant this
+    test enforces. Two independent signals catch that, because either alone can
+    be fooled by a different clone shape:
+
+    1. Git reports the repository as shallow, so commits before HEAD are absent.
+    2. The walk returns exactly HEAD. A family first written at HEAD legitimately
+       resolves to HEAD, but a family that predates HEAD can only resolve to HEAD
+       when its real history is missing, so resolving every family to HEAD proves
+       the walk saw only the tip.
+    """
+    if (
+        subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            capture_output=True,
+            check=True,
+            text=True,
+            cwd=_ROOT,
+        ).stdout.strip()
+        == "true"
+    ):
+        return "the clone is shallow, so commits before HEAD are absent"
+    if not revisions:
+        return "evidence.json has no reachable history"
+    head = _head_revision()
+    if all(_introducing_commit(family, revisions) == head for family in families):
+        return f"every family resolves to HEAD {head[:12]}, so earlier history is unreachable"
+    return ""
+
+
+def _introducing_commit(family: str, revisions: list[str]) -> str:
+    """Return the first commit whose evidence.json defines ``family``."""
     for revision in revisions:
         document = json.loads(_blob(revision, str(_EVIDENCE_PATH.relative_to(_ROOT))))
         if isinstance(document.get(family), dict):
@@ -246,8 +291,13 @@ def test_each_controlled_record_digests_the_files_at_its_introducing_commit() ->
     families = {name: record for name, record in document.items() if name.startswith("controlled_")}
     assert families, "no controlled evidence records found"
 
+    revisions = _evidence_revisions()
+    truncated = _history_is_truncated(revisions, set(families))
+    if truncated:
+        pytest.skip(f"provenance walk unavailable: {truncated}; run this test against a full clone")
+
     for family, record in sorted(families.items()):
-        revision = _introducing_commit(family)
+        revision = _introducing_commit(family, revisions)
         for field, path in _PROVENANCE_FILES.items():
             if field not in record:
                 continue
