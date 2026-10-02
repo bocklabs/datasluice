@@ -7,12 +7,14 @@ import base64
 import hashlib
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib import resources
 from inspect import isawaitable
 from io import BytesIO
+from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -101,6 +103,12 @@ if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://1
 
 ORIGIN = "http://127.0.0.1:5640"
 _USER_READ_MAX_BYTES = 131072
+_SPATIAL_ORACLE_PATH = (
+    Path(__file__).parents[4] / ".planning/phases/04-udata-connector/oracle/udata-oracle-candidate.json"
+)
+_SPATIAL_PREFIX = "/api/1/spatial/"
+_SPATIAL_PLACEHOLDER = re.compile(r"<(?:[a-z_]+:)?([a-z_]+)>")
+_SPATIAL_ABSENT_TARGETS = {"id": "missing-zone", "ids": "missing-zone", "level": "missing-level"}
 _CONTROLLED_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII="
 )
@@ -4562,15 +4570,59 @@ def test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up() -
     asyncio.run(_exercise_async_post_lifecycle(token, member_token, permissions, member_permissions, title))
 
 
+def _spatial_oracle_routes() -> dict[str, str]:
+    """Return every spatial path the pinned source oracle records, keyed by its upstream endpoint name.
+
+    The oracle lives under the gitignored planning directory, so a fresh clone has no
+    independent oracle at all and every function that needs one skips loudly instead of
+    falling back to hand-transcribed paths.
+    """
+    if not _SPATIAL_ORACLE_PATH.exists():
+        pytest.skip(
+            f"no spatial source oracle at {_SPATIAL_ORACLE_PATH}; "
+            "reconcile it with scripts/extract_udata_oracle.py to run the spatial differential"
+        )
+    document = json.loads(_SPATIAL_ORACLE_PATH.read_text(encoding="utf-8"))
+    routes: dict[str, str] = {}
+    for route in document["routes"]:
+        path = route["path"]
+        if not path.startswith(_SPATIAL_PREFIX):
+            continue
+        endpoint = route["signature"].rsplit(":", 1)[1].removesuffix("API")
+        assert route["method"] == "GET", (
+            f"the spatial differential drives reads only, but the oracle records {route['method']}"
+        )
+        assert endpoint not in routes, f"the source oracle records {endpoint} twice"
+        routes[endpoint] = path
+    assert len(routes) == 7, f"the source oracle must record 7 spatial routes, found {len(routes)}"
+    return routes
+
+
+def _spatial_path(endpoint: str) -> str:
+    """Return the oracle path for one endpoint with its placeholders filled by the scenario targets."""
+    return _SPATIAL_PLACEHOLDER.sub(
+        lambda placeholder: _SPATIAL_ABSENT_TARGETS[placeholder.group(1)],
+        _spatial_oracle_routes()[endpoint],
+    )
+
+
 def _spatial_read_routes() -> tuple[tuple[str, str, tuple[object, ...]], ...]:
-    """Return every assigned spatial read route as its raw path, method, and typed arguments."""
+    """Return every assigned spatial read route as its raw path, method, and typed arguments.
+
+    Every base path comes from the pinned source oracle; only the absent-target arguments
+    and the stock query strings belong to the controlled scenario.
+    """
     return (
-        ("/api/1/spatial/granularities/", "spatial_granularities", ()),
-        ("/api/1/spatial/levels/", "spatial_levels", ()),
-        ("/api/1/spatial/zones/suggest/?q=fr&size=10", "suggest_zones", (SpatialSuggestQuery(q="fr", size=10),)),
-        ("/api/1/spatial/zone/missing-zone/", "spatial_zone", ("missing-zone",)),
-        ("/api/1/spatial/zone/missing-zone/datasets/?size=25", "spatial_zone_datasets", ("missing-zone",)),
-        ("/api/1/spatial/coverage/missing-level/", "spatial_coverage", ("missing-level",)),
+        (_spatial_path("SpatialGranularities"), "spatial_granularities", ()),
+        (_spatial_path("SpatialLevels"), "spatial_levels", ()),
+        (
+            f"{_spatial_path('SuggestZones')}?q=fr&size=10",
+            "suggest_zones",
+            (SpatialSuggestQuery(q="fr", size=10),),
+        ),
+        (_spatial_path("Zone"), "spatial_zone", ("missing-zone",)),
+        (f"{_spatial_path('ZoneDatasets')}?size=25", "spatial_zone_datasets", ("missing-zone",)),
+        (_spatial_path("SpatialCoverage"), "spatial_coverage", ("missing-level",)),
     )
 
 
@@ -4631,7 +4683,7 @@ async def _spatial_async_outcome(client: AsyncUDataClient, method: str, args: tu
 
 def test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error() -> None:
     """The stock zone list raises on an absent zone; the connector surfaces the same typed error."""
-    path = "/api/1/spatial/zones/missing-zone/"
+    path = _spatial_path("Zones")
     status, _, _ = _direct_request("", "GET", path)
     assert status == 500
 
