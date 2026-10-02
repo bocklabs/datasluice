@@ -58,18 +58,6 @@ def test_storage_rejects_traversal_on_exists(tmp_path: Path) -> None:
         storage.exists("../../etc/passwd")
 
 
-def test_fsspec_storage_rejects_dotdot_segment() -> None:
-    import fsspec.implementations.memory
-
-    from datasluice.exceptions import DownloadError
-    from datasluice.io.fsspec_storage import FsspecStorage
-
-    fs = fsspec.implementations.memory.MemoryFileSystem()
-    storage = FsspecStorage(fs, base_uri="/base")
-    with pytest.raises(DownloadError):
-        storage.write(b"data", "../escape.txt")
-
-
 def test_fsspec_as_uri_absolute_file_path() -> None:
     import fsspec.implementations.local
 

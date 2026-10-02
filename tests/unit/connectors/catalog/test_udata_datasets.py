@@ -569,7 +569,7 @@ def _sync_calls(client: SyncUDataClient) -> dict[str, object]:
 
 
 def test_async_dataset_service_matches_sync_wire_exactly() -> None:
-    routes = _site_first(dict((key, value) for family in PARITY_ROUTES.values() for key, value in family.items()))
+    routes = _site_first({key: value for family in PARITY_ROUTES.values() for key, value in family.items()})
     transport = RouterAsyncTransport(routes)
     client = AsyncUDataClient(
         transport,
@@ -652,7 +652,7 @@ def test_async_dataset_service_matches_sync_wire_exactly() -> None:
 
     async_results = asyncio.run(run())
 
-    sync_routes = _site_first(dict((key, value) for family in PARITY_ROUTES.values() for key, value in family.items()))
+    sync_routes = _site_first({key: value for family in PARITY_ROUTES.values() for key, value in family.items()})
     sync_transport, sync_client = _sync_client_with_transport(sync_routes, _USER_CREDENTIAL)
     with sync_client:
         sync_results = _sync_calls(sync_client)

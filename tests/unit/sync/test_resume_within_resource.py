@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib
-import os
 from typing import Any
 from unittest.mock import patch
 
@@ -22,10 +21,6 @@ from tests.unit.sync.conftest import FaultInjectingStateStore
 batch_stream_module = importlib.import_module("datasluice.data.batch_stream")
 parquet_module = importlib.import_module("datasluice.data.readers.parquet")
 sync_module = importlib.import_module("datasluice.sync.sync")
-if not hasattr(sync_module, "_WITHIN_RESOURCE_RESUME_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("within-resource resume implementation pending GREEN phase", allow_module_level=True)
-if not hasattr(sync_module, "_FAILURE_BOUNDARY_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("checkpoint failure-boundary hardening pending GREEN phase", allow_module_level=True)
 
 
 def _checkpoint(next_batch_index: int) -> dict[str, Any]:
@@ -73,8 +68,6 @@ def _checkpoint_v3(
 
 
 _EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-_ARTIFACT_HEALTH_READY = hasattr(sync_module, "_ARTIFACT_HEALTH_READY")
-_SKIP_ARTIFACT_HEALTH = not _ARTIFACT_HEALTH_READY and os.environ.get("DATASLUICE_TDD_RED") != "1"
 
 
 def _file_sha256(path: str) -> str:
@@ -722,7 +715,6 @@ def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> N
     assert "datasluice_checkpoint" not in state.extra
 
 
-@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="publication ordering implementation pending GREEN phase")
 def test_publication_failure_leaves_artifact_and_prior_checkpoint_recoverable(tmp_path) -> None:
     import pyarrow.parquet as pq
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib
 import sys
 
+from tests.helpers.import_purity import assert_import_pulls_no_distributions
+
 _FORBIDDEN_OPTIONAL_MODULES = ("pyarrow", "dlt", "duckdb")
 
 
@@ -20,19 +22,11 @@ def _assert_optional_modules_absent() -> None:
 
 
 def test_sync_imports_zero_optional_deps() -> None:
-    _purge_optional_modules()
-
-    importlib.import_module("datasluice.sync")
-
-    _assert_optional_modules_absent()
+    assert_import_pulls_no_distributions("datasluice.sync", _FORBIDDEN_OPTIONAL_MODULES)
 
 
 def test_import_state_store_no_optional_deps() -> None:
-    _purge_optional_modules()
-
-    importlib.import_module("datasluice.sync.state_store")
-
-    _assert_optional_modules_absent()
+    assert_import_pulls_no_distributions("datasluice.sync.state_store", _FORBIDDEN_OPTIONAL_MODULES)
 
 
 def test_session_sync_composition_imports_no_optional_deps() -> None:

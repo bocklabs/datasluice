@@ -38,6 +38,18 @@ def _policy(
     )
 
 
+def test_build_mutation_receipt_matches_enforcer_receipt() -> None:
+    enforcer = MutationEnforcer(lambda request: RuntimeResponse(200, {}, b""))
+    operation = OperationId("ckan", "datasets", "update")
+    policy = _policy()
+    audit = {"dataset": "weather", "attempt": 1}
+
+    receipt = enforcer.execute(operation, _target(), policy, audit_metadata=audit)
+    equivalent = build_mutation_receipt(operation, _target(), policy, "succeeded", audit)
+
+    assert receipt == equivalent
+
+
 def test_mutations_require_confirmed_policy_before_dispatch() -> None:
     sent = []
     enforcer = MutationEnforcer(lambda request: sent.append(request) or RuntimeResponse(200, {}, b""))
@@ -190,19 +202,3 @@ def test_succeeded_receipt_construction_failure_surfaces_after_the_dispatch() ->
         enforcer.execute(operation_id, target, policy, audit_metadata={"auth_header": "Bearer aBcDeFgH1234"})
 
     assert len(sent) == 1
-
-
-def test_build_mutation_receipt_matches_enforcer_receipt() -> None:
-    enforcer = MutationEnforcer(lambda request: RuntimeResponse(200, {}, b""))
-    operation = OperationId("ckan", "datasets", "update")
-    policy = _policy()
-    receipt = enforcer.execute(operation, _target(), policy, audit_metadata={"dataset": "weather", "attempt": 1})
-    equivalent = build_mutation_receipt(
-        operation,
-        _target(),
-        policy,
-        "succeeded",
-        {"dataset": "weather", "attempt": 1},
-    )
-
-    assert receipt == equivalent

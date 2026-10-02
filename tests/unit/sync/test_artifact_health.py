@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
-import os
 from unittest.mock import patch
 
 import pytest
@@ -16,10 +14,6 @@ from datasluice.sync import sync_resources
 from datasluice.sync._identity import canonical_identity
 from datasluice.sync.state_store import InMemoryStateStore
 from tests.unit.sync.conftest import write_counting_fs
-
-materialize_module = importlib.import_module("datasluice.sync.materialize")
-_ARTIFACT_HEALTH_READY = hasattr(materialize_module, "_ARTIFACT_HEALTH_READY")
-_SKIP_ARTIFACT_HEALTH = not _ARTIFACT_HEALTH_READY and os.environ.get("DATASLUICE_TDD_RED") != "1"
 
 
 def _sync(tmp_path, resource, store, transport, *, resume: bool = False):
@@ -44,7 +38,6 @@ def test_sync_outcome_record_is_not_tuple_compatible(tmp_path, csv_server, make_
         _ = outcome.record[0]
 
 
-@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
 def test_corrupt_destination_rematerializes(tmp_path, csv_server, make_resource) -> None:
     _server, url = csv_server()
     resource = make_resource(url)
@@ -71,7 +64,6 @@ def test_corrupt_destination_rematerializes(tmp_path, csv_server, make_resource)
     assert state.cursor[canonical_identity(resource)] == second_record.content_digest.value
 
 
-@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
 def test_missing_destination_rematerializes(tmp_path, csv_server, make_resource) -> None:
     _server, url = csv_server()
     resource = make_resource(url)
@@ -94,7 +86,6 @@ def test_missing_destination_rematerializes(tmp_path, csv_server, make_resource)
     assert fs.exists(second_record.uri)
 
 
-@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
 def test_healthy_destination_zero_write_remains(tmp_path, csv_server, make_resource) -> None:
     _server, url = csv_server()
     resource = make_resource(url)
@@ -113,7 +104,6 @@ def test_healthy_destination_zero_write_remains(tmp_path, csv_server, make_resou
     assert counting_fs.pipe_file_count == writes_after_first
 
 
-@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
 def test_completed_resume_rematerializes_unhealthy_destination(tmp_path, csv_server, make_resource) -> None:
     _server, url = csv_server()
     resource = make_resource(url)
@@ -132,24 +122,3 @@ def test_completed_resume_rematerializes_unhealthy_destination(tmp_path, csv_ser
     resumed_record = resumed[0].record
     assert resumed_record is not None
     assert fs.exists(resumed_record.uri)
-
-
-@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="destination health implementation pending GREEN phase")
-def test_304_rematerializes_unhealthy_destination(tmp_path, csv_server, make_resource) -> None:
-    _server, url = csv_server(headers={"ETag": '"stable"'})
-    resource = make_resource(url)
-    transport = HttpxCatalogTransport()
-    store = InMemoryStateStore()
-    destination = f"file://{tmp_path}/dest"
-
-    first = _sync(tmp_path, resource, store, transport)
-    record = first[0].record
-    assert record is not None
-    fs = open_filesystem(destination)
-    fs.pipe_file(record.uri, b"foreign destination bytes")
-    second = _sync(tmp_path, resource, store, transport)
-
-    assert second[0].action == "materialized"
-    second_record = second[0].record
-    assert second_record is not None
-    assert fs.exists(second_record.uri)

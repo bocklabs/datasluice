@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Callable
 from time import monotonic
 
@@ -35,25 +34,18 @@ from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.capability import AsyncProbeRunner, EffectiveCapabilityCache, ProbeRunner
 from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from tests.helpers.capture_transport import failure_body, success_body
 
 ORIGIN = "https://127.0.0.1:8443"
 DISCOVERY_OPERATION_ID = OperationId("ckan", "action-api-v3", "discovery-help-and-status")
 FILESTORE_OPERATION_ID = OperationId("ckan", "filestore", "upload-and-resource-file-replacement")
 
 
-def _success_body(result: dict[str, object]) -> bytes:
-    return json.dumps({"success": True, "result": result}).encode("utf-8")
-
-
-def _failure_body(error: dict[str, object]) -> bytes:
-    return json.dumps({"success": False, "error": error}).encode("utf-8")
-
-
 def _status_body(*, extensions: list[str], version: str | None = "2.11.5") -> bytes:
     result: dict[str, object] = {"site_title": "Loopback CKAN", "extensions": extensions}
     if version is not None:
         result["ckan_version"] = version
-    return _success_body(result)
+    return success_body(result)
 
 
 class _CannedTransport:
@@ -239,8 +231,8 @@ def test_extension_probe_classification_uses_operation_id_value_equality() -> No
 
 def test_authorization_and_forbidden_envelopes_classify_through_the_shared_core() -> None:
     """Envelope-level authorization failures keep their bounded response classes."""
-    unauthenticated = _CannedTransport(_failure_body({"__type": "Authorization Error", "message": "bad token"}))
-    forbidden = _CannedTransport(_failure_body({"__type": "Authorization Error", "message": "unauthorized to edit"}))
+    unauthenticated = _CannedTransport(failure_body({"__type": "Authorization Error", "message": "bad token"}))
+    forbidden = _CannedTransport(failure_body({"__type": "Authorization Error", "message": "unauthorized to edit"}))
     denied_status = _CannedTransport(b"{}", status_code=401)
 
     assert (

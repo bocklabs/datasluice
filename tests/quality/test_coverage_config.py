@@ -134,63 +134,48 @@ def _boundary_python() -> str:
     return sys.executable
 
 
+def _render_toml_entry(key: str, value: object, depth: int) -> list[str]:
+    """Render one configuration entry as coveragerc-compatible TOML lines."""
+    indent = "  " * depth
+    if isinstance(value, bool):
+        return [f"{indent}{key} = {str(value).lower()}"]
+    if isinstance(value, (int, float)):
+        return [f"{indent}{key} = {value!r}"]
+    if isinstance(value, list):
+        return [f"{indent}{key} = [{', '.join(repr(item) for item in value)}]"]
+    if isinstance(value, dict):
+        return [f"{indent}[{key}]", _render_toml_table(value, depth=depth + 2)]
+    return [f"{indent}{key} = {value!r}"]
+
+
+def _render_toml_table(cfg: dict, *, depth: int = 0) -> str:
+    """Render a nested configuration table as coveragerc TOML text."""
+    lines: list[str] = []
+    for key, value in cfg.items():
+        lines += _render_toml_entry(key, value, depth)
+    return "\n".join(lines)
+
+
+def _run_coverage(directory: Path, cfg_path: Path, command: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one coverage subcommand against the generated boundary directory."""
+    return subprocess.run(
+        [_boundary_python(), "-m", "coverage", command, "--rcfile", str(cfg_path), *args],
+        cwd=str(directory),
+        env={"COVERAGE_FILE": str(directory / ".coverage")},
+        capture_output=True,
+        text=True,
+    )
+
+
 def _coverage_report_for(directory: Path, coveragerc: dict, label: str) -> tuple[float, int]:
     """Run coverage against a generated module; return (reported_total, returncode)."""
     cfg_path = directory / "coveragerc.toml"
+    cfg_path.write_text(_render_toml_table(coveragerc) + "\n")
 
-    def _render(cfg: dict, *, depth: int = 0) -> str:
-        out = []
-        for key, value in cfg.items():
-            if isinstance(value, bool):
-                out.append(f"{'  ' * depth}{key} = {str(value).lower()}")
-            elif isinstance(value, (int, float)):
-                out.append(f"{'  ' * depth}{key} = {value!r}")
-            elif isinstance(value, list):
-                rendered = ", ".join(repr(v) for v in value)
-                out.append(f"{'  ' * depth}{key} = [{rendered}]")
-            elif isinstance(value, dict):
-                out.append(f"{'  ' * depth}[{key}]")
-                out.append(_render(value, depth=depth + 2))
-            else:
-                out.append(f"{'  ' * depth}{key} = {value!r}")
-        return "\n".join(out)
-
-    cfg_path.write_text(_render(coveragerc) + "\n")
-
-    env = {"COVERAGE_FILE": str(directory / ".coverage")}
-    run = subprocess.run(
-        [
-            _boundary_python(),
-            "-m",
-            "coverage",
-            "run",
-            "--rcfile",
-            str(cfg_path),
-            "--source",
-            "mod",
-            "run.py",
-        ],
-        cwd=str(directory),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    run = _run_coverage(directory, cfg_path, "run", "--source", "mod", "run.py")
     assert run.returncode == 0, f"{label} coverage run failed: {run.stderr}"
 
-    report = subprocess.run(
-        [
-            _boundary_python(),
-            "-m",
-            "coverage",
-            "report",
-            "--rcfile",
-            str(cfg_path),
-        ],
-        cwd=str(directory),
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    report = _run_coverage(directory, cfg_path, "report")
     total_line = next((line for line in report.stdout.splitlines() if line.strip().startswith("TOTAL")), "")
     total = float(total_line.split()[-1].rstrip("%")) if total_line else 0.0
     return total, report.returncode

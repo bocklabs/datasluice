@@ -27,7 +27,6 @@ if to_duckdb is None:
     pytest.skip("to_duckdb not yet implemented (RED -> GREEN)", allow_module_level=True)
 
 from datasluice.data.batch_stream import BatchStream
-from datasluice.integrations.duckdb import _validate_table_name
 
 
 def test_to_duckdb_returns_named_relation() -> None:
@@ -54,6 +53,7 @@ def test_to_duckdb_default_table_name() -> None:
     rel = to_duckdb(stream)
 
     assert rel.fetchall() == [(1,), (2,)]
+    assert rel.alias == "datasluice"
 
 
 def test_to_duckdb_injected_conn_reused() -> None:
@@ -71,7 +71,10 @@ def test_to_duckdb_injected_conn_reused() -> None:
     assert conn.table("datasluice").fetchall() == [(1,), (2,)]
 
 
-@pytest.mark.parametrize("bad_name", ["x; DROP", "bad name", "1lead", "", "'); DROP TABLE x;--"])
+@pytest.mark.parametrize(
+    "bad_name",
+    ["x; DROP", "bad name", "1lead", "", "'); DROP TABLE x;--", "x; DROP TABLE v", 'a"; SELECT', "dash-name"],
+)
 def test_to_duckdb_rejects_bad_table_name(bad_name: str) -> None:
     """to_duckdb rejects injection payloads via _validate_table_name."""
     import pyarrow as pa
@@ -96,10 +99,3 @@ def test_to_duckdb_preserves_nulls() -> None:
 
     assert table.column("name").null_count == 1
     assert len(table) == 2
-
-
-def test_validate_table_name_still_present() -> None:
-    """The guard _validate_table_name is preserved alongside to_duckdb."""
-    assert _validate_table_name("good_name") == "good_name"
-    with pytest.raises(ValueError):
-        _validate_table_name("bad name")

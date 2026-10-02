@@ -17,6 +17,7 @@ from datasluice.connectors.catalog.udata.clients import (
     _controlled_sync_revalidate,
     _controlled_sync_site_id,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform
@@ -404,7 +405,7 @@ def _run_root[T](client: SyncUDataClient, action: Callable[[], T]) -> T:
     except BudgetExhaustedError:
         client._emit(operation, "budget_exhausted")
         raise
-    except BaseException as error:
+    except SETTLEMENT_ERRORS as error:
         client._emit(operation, "cancelled" if error.__class__.__name__ == "CancelledError" else "failed")
         raise
     client._emit(operation, "succeeded")
@@ -419,7 +420,7 @@ async def _run_root_async[T](client: AsyncUDataClient, action: Callable[[], Awai
     except BudgetExhaustedError:
         client._emit(operation, "budget_exhausted")
         raise
-    except BaseException as error:
+    except ASYNC_SETTLEMENT_ERRORS as error:
         client._emit(operation, "cancelled" if error.__class__.__name__ == "CancelledError" else "failed")
         raise
     client._emit(operation, "succeeded")
@@ -676,7 +677,7 @@ class SyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
-            except BaseException:
+            except SETTLEMENT_ERRORS:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
             self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
@@ -710,7 +711,7 @@ class SyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
-            except BaseException:
+            except SETTLEMENT_ERRORS:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
             self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
@@ -907,7 +908,7 @@ class AsyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
-            except BaseException:
+            except ASYNC_SETTLEMENT_ERRORS:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
             self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")
@@ -943,7 +944,7 @@ class AsyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
-            except BaseException:
+            except ASYNC_SETTLEMENT_ERRORS:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
             self._client._emit(_operation_id(ROOT_OPERATION), "succeeded")

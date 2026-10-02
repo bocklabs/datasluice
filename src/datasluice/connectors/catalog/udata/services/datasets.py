@@ -220,6 +220,8 @@ def _mutation_outcome(error: BaseException, response: object | None = None) -> s
     if isinstance(error, TransportFailure):
         return "ambiguous"
     error_status = _error_status(error, response)
+    if 300 <= error_status < 400:
+        return "ambiguous"
     if error_status == 0 and isinstance(error, (UnauthenticatedError, ForbiddenError, CatalogValidationError)):
         return "rejected"
     return "failed"
@@ -234,14 +236,16 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
     return None
 
 
-def _redirect_receipt(
+def _rdf_redirect_receipt(
     operation: str,
     requested_id: str,
     headers: Mapping[str, str],
     status_code: int,
     origin: str,
+    path_pattern: str,
+    subject: str,
 ) -> MutationReceipt:
-    """Validate a native RDF redirect and retain a shared redacted receipt."""
+    """Validate a native RDF redirect for one record kind and retain a redacted receipt."""
     location = _header(headers, "location")
     if not location:
         raise NativeCatalogError(
@@ -266,18 +270,18 @@ def _redirect_receipt(
             platform="udata",
             status_code=status_code,
         )
-    match = re.fullmatch(r"/api/1/datasets/([^/]+)/rdf(?:\.([A-Za-z0-9_-]+))?", parsed.path)
+    match = re.fullmatch(path_pattern, parsed.path)
     if match is None:
         raise NativeCatalogError(
-            "The uData RDF redirect target is not a dataset RDF document.",
+            f"The uData RDF redirect target is not a {subject} RDF document.",
             operation=operation,
             platform="udata",
             status_code=status_code,
         )
-    dataset_id = unquote(match.group(1))
-    if dataset_id != requested_id or any(character in dataset_id for character in "/?#"):
+    record_id = unquote(match.group(1))
+    if record_id != requested_id or any(character in record_id for character in "/?#"):
         raise NativeCatalogError(
-            "The uData RDF redirect target does not identify the requested dataset.",
+            f"The uData RDF redirect target does not identify the requested {subject}.",
             operation=operation,
             platform="udata",
             status_code=status_code,
@@ -292,6 +296,25 @@ def _redirect_receipt(
         "skipped",
         status_code=status_code,
         mutation="rdf_redirect",
+    )
+
+
+def _redirect_receipt(
+    operation: str,
+    requested_id: str,
+    headers: Mapping[str, str],
+    status_code: int,
+    origin: str,
+) -> MutationReceipt:
+    """Validate a native dataset RDF redirect and retain a shared redacted receipt."""
+    return _rdf_redirect_receipt(
+        operation,
+        requested_id,
+        headers,
+        status_code,
+        origin,
+        r"/api/1/datasets/([^/]+)/rdf(?:\.([A-Za-z0-9_-]+))?",
+        "dataset",
     )
 
 

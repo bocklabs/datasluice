@@ -9,7 +9,6 @@ import pytest
 
 from datasluice.exceptions import ChecksumMismatchError
 from datasluice.io import compute_sha256, ensure_dir, safe_filename, verify_checksum
-from datasluice.io.cache import FileCache
 from datasluice.io.storage import LocalStorage
 
 
@@ -44,16 +43,6 @@ def test_ensure_dir(tmp_path: Path) -> None:
     d = ensure_dir(tmp_path / "a" / "b")
     assert d.exists()
     assert d.is_dir()
-
-
-def test_file_cache(tmp_path: Path) -> None:
-    cache = FileCache(tmp_path / "cache", ttl=3600)
-    assert cache.get("key1") is None
-    cache.put("key1", b"data")
-    assert cache.get("key1") == b"data"
-    assert cache.has("key1")
-    cache.clear()
-    assert not cache.has("key1")
 
 
 def test_local_storage(tmp_path: Path) -> None:

@@ -1,8 +1,13 @@
 """Contract tests for catalog operation and capability profile values."""
 
+from collections.abc import Sequence
 from datetime import date
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.ckan.inventory import ActionEntry
 
 from datasluice.domain.catalog.operations import (
     Atomicity,
@@ -198,10 +203,42 @@ def test_public_read_evidence_does_not_promote_mutation_permission() -> None:
     assert not effective.guard(write_operation.id).allowed
 
 
+def _entries_with_mutation_class(entries: Sequence["ActionEntry"], mutation_class: str) -> list["ActionEntry"]:
+    """Return the registry entries declaring the given mutation class."""
+    return [entry for entry in entries if entry.mutation_class == mutation_class]
+
+
+def _collaborator_entries(entries: Sequence["ActionEntry"]) -> list["ActionEntry"]:
+    """Return the registry entries owned by the dataset-collaborators operation."""
+    return [entry for entry in entries if entry.owning_operation_id.endswith("dataset-collaborators")]
+
+
+def _count_named_prefix(entries: Sequence["ActionEntry"], prefix: str) -> int:
+    """Return how many registry entries carry the given action-name prefix."""
+    return sum(1 for entry in entries if entry.name.startswith(prefix))
+
+
+def _count_result_kind(entries: Sequence["ActionEntry"], result_kind: str) -> int:
+    """Return how many registry entries declare the given result kind."""
+    return sum(1 for entry in entries if entry.result_kind == result_kind)
+
+
+def _assert_mapping_truth_table_agrees(entries: Sequence["ActionEntry"]) -> None:
+    """Assert every given registry entry agrees with the mapping truth table."""
+    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
+
+    for entry in entries:
+        spec = RESULT_KINDS.get(entry.name)
+        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
+        outcome, family = spec
+        assert outcome == entry.result_kind
+        if family is not None:
+            assert family in RECORD_KINDS
+
+
 def test_ckan_manifest_datasets_group_holds_exactly_the_documented_twenty_actions() -> None:
     """Manifest-driven completeness: role splits and kind agreement, no duplicated tuple."""
     from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
-    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
 
     entries = [entry for entry in CKAN_ACTIONS.entries if entry.group == "datasets"]
     assert len(entries) == 20
@@ -210,31 +247,22 @@ def test_ckan_manifest_datasets_group_holds_exactly_the_documented_twenty_action
         "ckan/action-api-v3.dataset-create-update-patch-delete-purge",
         "ckan/action-api-v3.dataset-collaborators",
     }
-    reads = [entry for entry in entries if entry.mutation_class == "read"]
-    standards = [entry for entry in entries if entry.mutation_class == "standard"]
-    destructive = [entry for entry in entries if entry.mutation_class == "destructive"]
+    reads = _entries_with_mutation_class(entries, "read")
+    standards = _entries_with_mutation_class(entries, "standard")
+    destructive = _entries_with_mutation_class(entries, "destructive")
     assert len(reads) == 7
     assert len(standards) == 12
     assert len(destructive) == 1
-    collaborator_reads = [e for e in reads if e.owning_operation_id.endswith("dataset-collaborators")]
-    collaborator_mutations = [e for e in standards if e.owning_operation_id.endswith("dataset-collaborators")]
-    assert len(collaborator_reads) == 2
-    assert len(collaborator_mutations) == 2
+    assert len(_collaborator_entries(reads)) == 2
+    assert len(_collaborator_entries(standards)) == 2
     purge = next(entry for entry in entries if entry.name == "dataset_purge")
     assert purge.mutation_class == "destructive"
-    for entry in entries:
-        spec = RESULT_KINDS.get(entry.name)
-        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
-        outcome, family = spec
-        assert outcome == entry.result_kind
-        if family is not None:
-            assert family in RECORD_KINDS
+    _assert_mapping_truth_table_agrees(entries)
 
 
 def test_relationships_follows_manifest_holds_exactly_the_thirty_one_core_actions() -> None:
     """Staged completeness gate: the core relationships-follows id owns exactly 31 entries."""
     from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
-    from datasluice.connectors.catalog.ckan.mapping import RECORD_KINDS, RESULT_KINDS
 
     entries = [
         entry
@@ -243,22 +271,16 @@ def test_relationships_follows_manifest_holds_exactly_the_thirty_one_core_action
     ]
     assert len(entries) == 31
     assert {entry.group for entry in entries} == {"relationships_activity"}
-    reads = [entry for entry in entries if entry.mutation_class == "read"]
+    reads = _entries_with_mutation_class(entries, "read")
     mutations = [entry for entry in entries if entry.mutation_class != "read"]
     assert len(reads) == 22
     assert len(mutations) == 9
     assert all(entry.mutation_class == "standard" for entry in mutations)
-    assert sum(1 for entry in entries if entry.name.startswith("package_relationship")) == 4
-    assert sum(1 for entry in entries if entry.result_kind == "value") == 13
-    assert sum(1 for entry in entries if entry.result_kind == "record-list") == 9
-    assert sum(1 for entry in entries if entry.result_kind == "mapping") == 9
-    for entry in entries:
-        spec = RESULT_KINDS.get(entry.name)
-        assert spec is not None, f"{entry.name} is absent from the mapping truth table"
-        outcome, family = spec
-        assert outcome == entry.result_kind
-        if family is not None:
-            assert family in RECORD_KINDS
+    assert _count_named_prefix(entries, "package_relationship") == 4
+    assert _count_result_kind(entries, "value") == 13
+    assert _count_result_kind(entries, "record-list") == 9
+    assert _count_result_kind(entries, "mapping") == 9
+    _assert_mapping_truth_table_agrees(entries)
 
 
 def test_inventory_complete() -> None:

@@ -158,40 +158,29 @@ def test_iterable_bytes_io_chunks() -> None:
 
 
 @pytest.mark.skipif(
-    not __import__("sys").platform.startswith("linux"),
-    reason="/proc/self/fd fd-accounting check is Linux-only",
+    not __import__("os").path.isdir("/proc/self/fd") and not __import__("os").path.isdir("/dev/fd"),
+    reason="file-descriptor accounting is unavailable",
 )
 def test_no_fd_leak_under_repeated_reads(tmp_path) -> None:
-    """stability: repeated open/consume/close cycles do not leak file descriptors.
-
-    Uses a real OS file handle so ``/proc/self/fd`` reflects true fd
-    accounting. An unclosed handle per iteration would grow the count by ~50;
-    the ``+2`` slack tolerates interpreter background allocations.
-    """
+    """Repeated local-file reads close the DataPlaneResourceReader source."""
+    import gc
     import os
 
-    import pyarrow.csv as pacsv
+    from datasluice.data import DataPlaneResourceReader
+    from datasluice.domain import LocalFile, Resource
 
     csv_path = tmp_path / "data.csv"
     csv_path.write_text("id,name\n1,alpha\n2,beta\n3,gamma\n")
-
-    fd_dir = "/proc/self/fd"
+    resource = Resource(id="fd-leak", format="CSV", access=LocalFile(path=str(csv_path)))
+    fd_dir = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
     before = set(os.listdir(fd_dir))
+    reader = DataPlaneResourceReader()
 
     for _ in range(50):
-        fh = open(csv_path, "rb")
-        try:
-            reader = pacsv.open_csv(fh)
-            with BatchStream(reader, reader.schema) as bs:
-                batches = list(bs.iter_batches())
-                assert len(batches) >= 1
-        finally:
-            fh.close()
-
-    import gc
+        with reader.open(resource) as stream:
+            assert sum(batch.num_rows for batch in stream.iter_batches()) == 3
 
     gc.collect()
-
     after = set(os.listdir(fd_dir))
     leaked = after - before
     assert len(after) <= len(before) + 2, (

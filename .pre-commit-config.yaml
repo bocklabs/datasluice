@@ -1,4 +1,9 @@
 repos:
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.21.2
+    hooks:
+      -   id: pyupgrade
+          args: ["--py312-plus"]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -27,8 +32,26 @@ repos:
       - id: gitleaks-docker
         name: gitleaks (hardcoded secrets)
 
+  - repo: https://github.com/rohaquinlop/complexipy-pre-commit
+    rev: v5.1.0
+    hooks:
+      - id: complexipy
+        name: cognitive complexity
+        args: ["--max-complexity-allowed", "15"]
+
   - repo: local
     hooks:
+      - id: jscpd
+        name: code duplication
+        entry: npx --yes jscpd@4 --min-lines 10 --min-tokens 70 --threshold 1.5
+          --reporters consoleFull --output /tmp/jscpd-precommit
+          --ignore "**/node_modules/**,**/.venv/**,**/jscpd-report.json"
+          src tests scripts providers
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+
       - id: ty
         name: type check (ty)
         entry: uv run --frozen --all-extras ty check .

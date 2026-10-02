@@ -61,6 +61,23 @@ def get_logger(name: str | None = None) -> logging.Logger:
     return logging.getLogger(_logger_name)
 
 
+def _redacted_extras(mapping: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the redacted form of *mapping*, or an empty mapping if redaction fails."""
+    try:
+        return redact_mapping(mapping)
+    except Exception:
+        return {}
+
+
+def _redacted_args(args: object) -> tuple[Any, ...]:
+    """Return the log arguments with every mapping redacted, preserving their original shape."""
+    values = args if isinstance(args, tuple) else (args,)
+    try:
+        return tuple(redact_mapping(value) if isinstance(value, Mapping) else value for value in values)
+    except Exception:
+        return tuple(REDACTED if isinstance(value, Mapping) else value for value in values)
+
+
 class RedactingFilter(logging.Filter):
     """Redact sensitive extras and args without touching LogRecord internals.
 
@@ -83,18 +100,11 @@ class RedactingFilter(logging.Filter):
     def _redact_record(record: logging.LogRecord) -> None:
         extras = {key: value for key, value in record.__dict__.items() if key not in _STANDARD_RECORD_ATTRS}
         if extras:
-            try:
-                safe_extras = redact_mapping(extras)
-            except Exception:
-                safe_extras = {}
+            safe_extras = _redacted_extras(extras)
             for key in extras:
                 record.__dict__[key] = safe_extras.get(key, REDACTED)
         if record.args:
-            args = record.args if isinstance(record.args, tuple) else (record.args,)
-            try:
-                record.args = tuple(redact_mapping(arg) if isinstance(arg, Mapping) else arg for arg in args)
-            except Exception:
-                record.args = tuple(REDACTED if isinstance(arg, Mapping) else arg for arg in args)
+            record.args = _redacted_args(record.args)
 
 
 def configure_logging(

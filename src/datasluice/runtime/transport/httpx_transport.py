@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from typing import Any, cast
 from urllib.parse import urljoin, urlsplit
 
 from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
+from datasluice.runtime.transport._shared import (
+    ALLOWED_REDIRECT_SCHEMES,
+    _enforce_body_limit,
+    _follow_location,
+    _next_redirect_request,
+    _redacted_redirect_url,
+    _retry_after,
+)
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
     RedirectPolicy,
@@ -16,18 +25,13 @@ from datasluice.runtime.transport.base import (
     RuntimeStreamResponse,
     TransportFailure,
     drop_body_transfer_headers,
-    redirect_method_and_body,
-    strip_sensitive_redirect_headers,
 )
-from datasluice.runtime.transport.urllib_transport import _origin, _redacted_redirect_url, _retry_after
-
-_ALLOWED_REDIRECT_SCHEMES = frozenset({"http", "https"})
 
 
 def _require_plain_http_target(url: str) -> None:
     """Reject redirect targets outside plain HTTP(S) or with malformed ports."""
     parsed = urlsplit(url)
-    if parsed.scheme.lower() not in _ALLOWED_REDIRECT_SCHEMES:
+    if parsed.scheme.lower() not in ALLOWED_REDIRECT_SCHEMES:
         raise ValueError(f"non-HTTP redirect target scheme {parsed.scheme!r}")
     _ = parsed.port
 
@@ -59,21 +63,7 @@ def _redirect_request(
         raise TransportFailure(
             f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
         ) from exc
-    headers = dict(request.headers)
-    if not _retains_credentials(credential_scope, request.url, next_url):
-        headers = strip_sensitive_redirect_headers(headers)
-    method, body, files = redirect_method_and_body(request.method, status, request.body, request.files)
-    if body is None and not files:
-        headers = drop_body_transfer_headers(headers)
-    return RuntimeRequest(
-        method=method,
-        url=next_url,
-        headers=headers,
-        body=body,
-        files=files,
-        redirect_policy=request.redirect_policy,
-        max_response_bytes=request.max_response_bytes,
-    )
+    return _next_redirect_request(request, status, next_url, credential_scope, "httpx")
 
 
 def _runtime_response(response: Any, request: RuntimeRequest) -> RuntimeResponse:
@@ -109,8 +99,7 @@ def _read_body(response: Any, max_bytes: int | None) -> bytes:
         return response.content
     body = bytearray()
     for chunk in response.iter_bytes():
-        if len(body) + len(chunk) > max_bytes:
-            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        _enforce_body_limit(len(body) + len(chunk), max_bytes)
         body.extend(chunk)
     return bytes(body)
 
@@ -120,13 +109,71 @@ async def _read_body_async(response: Any, max_bytes: int | None) -> bytes:
         return await response.aread()
     body = bytearray()
     async for chunk in response.aiter_bytes():
-        if len(body) + len(chunk) > max_bytes:
-            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        _enforce_body_limit(len(body) + len(chunk), max_bytes)
         body.extend(chunk)
     return bytes(body)
 
 
-class HttpxCatalogTransport:
+class _HttpxTransportBase:
+    def __init__(
+        self,
+        label: str,
+        client_type: Any,
+        *,
+        tls_policy: TLSPolicy | None,
+        budget: TimeBudget | None,
+        transport: object | None,
+        max_redirects: int,
+        credential_scope: CredentialScope | None,
+    ) -> None:
+        import httpx
+
+        self._httpx = httpx
+        self._label = label
+        policy = tls_policy or TLSPolicy()
+        budget = budget or TimeBudget()
+        self._client: Any = client_type(
+            timeout=httpx.Timeout(connect=budget.connect, read=budget.read, write=budget.write, pool=10.0),
+            limits=httpx.Limits(),
+            verify=policy.verify,
+            transport=cast(Any, transport),
+            follow_redirects=False,
+        )
+        self._max_redirects = max_redirects
+        self._credential_scope = credential_scope
+        self._closed = False
+
+    def _assert_open(self) -> None:
+        if self._closed:
+            raise TransportFailure(f"The {self._label} catalog transport is closed.")
+
+    def _assert_streamable(self, request: RuntimeRequest) -> None:
+        self._assert_open()
+        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
+            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+
+    def _stream_metadata(self, response: Any) -> tuple[int, dict[str, str], float | None]:
+        return (
+            response.status_code,
+            dict(response.headers),
+            _retry_after(response.headers.get("retry-after")),
+        )
+
+    def _stream_chunks(self, response: Any) -> Iterator[bytes]:
+        try:
+            yield from response.iter_bytes()
+        except self._httpx.HTTPError as exc:
+            raise TransportFailure("httpx could not read the catalog response stream.") from exc
+
+    async def _stream_chunks_async(self, response: Any) -> AsyncIterator[bytes]:
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        except self._httpx.HTTPError as exc:
+            raise TransportFailure("httpx could not read the catalog response stream.") from exc
+
+
+class HttpxCatalogTransport(_HttpxTransportBase):
     """Optional pooled synchronous httpx transport."""
 
     def __init__(
@@ -140,24 +187,19 @@ class HttpxCatalogTransport:
     ) -> None:
         import httpx
 
-        self._httpx = httpx
-        policy = tls_policy or TLSPolicy()
-        budget = budget or TimeBudget()
-        self._client: Any = httpx.Client(
-            timeout=httpx.Timeout(connect=budget.connect, read=budget.read, write=budget.write, pool=10.0),
-            limits=httpx.Limits(),
-            verify=policy.verify,
-            transport=cast(Any, transport),
-            follow_redirects=False,
+        super().__init__(
+            "httpx",
+            httpx.Client,
+            tls_policy=tls_policy,
+            budget=budget,
+            transport=transport,
+            max_redirects=max_redirects,
+            credential_scope=credential_scope,
         )
-        self._max_redirects = max_redirects
-        self._credential_scope = credential_scope
-        self._closed = False
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         """Send through httpx and follow redirects under runtime control."""
-        if self._closed:
-            raise TransportFailure("The httpx catalog transport is closed.")
+        self._assert_open()
         current = request
         for _ in range(self._max_redirects + 1):
             try:
@@ -168,8 +210,8 @@ class HttpxCatalogTransport:
                 )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
-            location = response.headers.get("location")
-            if current.redirect_policy is RedirectPolicy.NO_FOLLOW or not response.is_redirect or location is None:
+            location = _follow_location(current, response)
+            if location is None:
                 return _runtime_response(response, current)
             try:
                 current = _redirect_request(current, response.status_code, location, self._credential_scope)
@@ -185,46 +227,22 @@ class HttpxCatalogTransport:
 
     def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
         """Send one no-follow request while leaving its response body unbuffered."""
-        if self._closed:
-            raise TransportFailure("The httpx catalog transport is closed.")
-        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
-            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        self._assert_streamable(request)
         try:
-            if request.files:
-                prepared = self._client.build_request(
-                    request.method,
-                    request.url,
-                    headers=dict(drop_body_transfer_headers(request.headers)),
-                    data=None,
-                    files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
-                )
-            else:
-                prepared = self._client.build_request(
-                    request.method,
-                    request.url,
-                    headers=dict(request.headers),
-                    content=request.body,
-                )
-            response = self._client.send(prepared, stream=True, follow_redirects=False)
+            response = self._client.send(_build_request(self._client, request), stream=True, follow_redirects=False)
         except self._httpx.HTTPError as exc:
             raise TransportFailure("httpx could not open the catalog response stream.") from exc
-
-        def chunks() -> Any:
-            try:
-                yield from response.iter_bytes()
-            except self._httpx.HTTPError as exc:
-                raise TransportFailure("httpx could not read the catalog response stream.") from exc
-
+        status_code, headers, retry_after = self._stream_metadata(response)
         return RuntimeStreamResponse(
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            chunks=chunks(),
+            status_code=status_code,
+            headers=headers,
+            chunks=self._stream_chunks(response),
             close_callback=response.close,
-            retry_after=_retry_after(response.headers.get("retry-after")),
+            retry_after=retry_after,
         )
 
 
-class AsyncHttpxCatalogTransport:
+class AsyncHttpxCatalogTransport(_HttpxTransportBase):
     """Optional pooled asynchronous httpx transport."""
 
     def __init__(
@@ -238,24 +256,19 @@ class AsyncHttpxCatalogTransport:
     ) -> None:
         import httpx
 
-        self._httpx = httpx
-        policy = tls_policy or TLSPolicy()
-        budget = budget or TimeBudget()
-        self._client: Any = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=budget.connect, read=budget.read, write=budget.write, pool=10.0),
-            limits=httpx.Limits(),
-            verify=policy.verify,
-            transport=cast(Any, transport),
-            follow_redirects=False,
+        super().__init__(
+            "async httpx",
+            httpx.AsyncClient,
+            tls_policy=tls_policy,
+            budget=budget,
+            transport=transport,
+            max_redirects=max_redirects,
+            credential_scope=credential_scope,
         )
-        self._max_redirects = max_redirects
-        self._credential_scope = credential_scope
-        self._closed = False
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
         """Send asynchronously through httpx without sync delegation."""
-        if self._closed:
-            raise TransportFailure("The async httpx catalog transport is closed.")
+        self._assert_open()
         current = request
         for _ in range(self._max_redirects + 1):
             try:
@@ -266,8 +279,8 @@ class AsyncHttpxCatalogTransport:
                 )
             except self._httpx.HTTPError as exc:
                 raise TransportFailure("httpx could not complete the catalog request.") from exc
-            location = response.headers.get("location")
-            if current.redirect_policy is RedirectPolicy.NO_FOLLOW or not response.is_redirect or location is None:
+            location = _follow_location(current, response)
+            if location is None:
                 return await _runtime_response_async(response, current, self._httpx)
             try:
                 current = _redirect_request(current, response.status_code, location, self._credential_scope)
@@ -283,49 +296,18 @@ class AsyncHttpxCatalogTransport:
 
     async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
         """Send one no-follow request while leaving its response body unbuffered."""
-        if self._closed:
-            raise TransportFailure("The async httpx catalog transport is closed.")
-        if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
-            raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        self._assert_streamable(request)
         try:
-            if request.files:
-                prepared = self._client.build_request(
-                    request.method,
-                    request.url,
-                    headers=dict(drop_body_transfer_headers(request.headers)),
-                    data=None,
-                    files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
-                )
-            else:
-                prepared = self._client.build_request(
-                    request.method,
-                    request.url,
-                    headers=dict(request.headers),
-                    content=request.body,
-                )
-            response = await self._client.send(prepared, stream=True, follow_redirects=False)
+            response = await self._client.send(
+                _build_request(self._client, request), stream=True, follow_redirects=False
+            )
         except self._httpx.HTTPError as exc:
             raise TransportFailure("httpx could not open the catalog response stream.") from exc
-
-        async def chunks() -> Any:
-            try:
-                async for chunk in response.aiter_bytes():
-                    yield chunk
-            except self._httpx.HTTPError as exc:
-                raise TransportFailure("httpx could not read the catalog response stream.") from exc
-
+        status_code, headers, retry_after = self._stream_metadata(response)
         return AsyncRuntimeStreamResponse(
-            status_code=response.status_code,
-            headers=dict(response.headers),
-            chunks=chunks(),
+            status_code=status_code,
+            headers=headers,
+            chunks=self._stream_chunks_async(response),
             close_callback=response.aclose,
-            retry_after=_retry_after(response.headers.get("retry-after")),
+            retry_after=retry_after,
         )
-
-
-def _retains_credentials(scope: CredentialScope | None, current_url: str, next_url: str) -> bool:
-    """Decide whether credential-bearing headers survive this hop."""
-    if scope is None:
-        return _origin(current_url) == _origin(next_url)
-    scheme, host, _ = _origin(next_url)
-    return scope.send_on_redirect and scheme in scope.allowed_schemes and host in scope.allowed_hosts

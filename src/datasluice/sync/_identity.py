@@ -28,7 +28,6 @@ from datasluice.exceptions import DataSluiceError
 if TYPE_CHECKING:
     from datasluice.domain import Resource
 
-_CANONICAL_IDENTITY_READY = True
 
 _LOCAL_ORIGIN = "local"
 

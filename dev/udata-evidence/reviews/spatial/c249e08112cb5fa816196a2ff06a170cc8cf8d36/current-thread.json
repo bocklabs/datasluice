@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "reviewed_sha": "c249e08112cb5fa816196a2ff06a170cc8cf8d36",
+  "threads": [
+    {
+      "id": "SF-01",
+      "title": "evidence.json dockerfile_sha256 was blanket-rebound on prior families to a Dockerfile that post-dated their capture",
+      "classification": "fixed",
+      "fix_commit": "68b7cae76377db469388ce9fe95b92d238feb6b1"
+    },
+    {
+      "id": "SF-02",
+      "title": "controlled_spatial_evidence.implementation_sha predated the test files its digests named",
+      "classification": "fixed",
+      "fix_commit": "0989e4ceb4b78e060a4e2419f0ece008023142d0"
+    },
+    {
+      "id": "SF-03",
+      "title": "The recapture_note falsely claimed granularities answers [] on a fresh stack",
+      "classification": "fixed",
+      "fix_commit": "f07678fa9cd8da08660cea8e6a637bf7f7f0951e"
+    },
+    {
+      "id": "SF-04",
+      "title": "Controlled spatial differential raw paths are hand-transcribed rather than oracle-derived, and spatial is absent from the structural execution gate",
+      "classification": "not_actionable",
+      "fix_commit": null
+    },
+    {
+      "id": "SF-05",
+      "title": "The 3/3 branch-discrimination claim is not re-runnable from a committed artifact",
+      "classification": "not_actionable",
+      "fix_commit": null
+    },
+    {
+      "id": "SF-06",
+      "title": "Concurrency cells argued N/A rather than asserted",
+      "classification": "not_actionable",
+      "fix_commit": null
+    },
+    {
+      "id": "SR-01",
+      "title": "New provenance regression test walks git history but ci.yaml checks out shallow, so in CI the walk returns only HEAD",
+      "classification": "fixed",
+      "fix_commit": "c249e08112cb5fa816196a2ff06a170cc8cf8d36"
+    },
+    {
+      "id": "SR-02",
+      "title": "recapture_note still claimed the four zone/level targets answer 404; pinned upstream yields exactly three 404s and one 500",
+      "classification": "fixed",
+      "fix_commit": "787e4b22d23a7a8ccea17178426e0a0938e5ce05"
+    },
+    {
+      "id": "SR-03",
+      "title": "Superseded commit 401e40f left in history",
+      "classification": "fixed",
+      "fix_commit": "68b7cae76377db469388ce9fe95b92d238feb6b1"
+    },
+    {
+      "id": "FR-01",
+      "title": "The provenance gate is skipped in every CI run because ci.yaml never sets fetch-depth: 0, so the blanket-rebind invariant is enforced only locally",
+      "classification": "not_actionable",
+      "fix_commit": null
+    }
+  ]
+}

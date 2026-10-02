@@ -7,6 +7,7 @@ import ssl
 from collections.abc import Mapping
 from http.client import IncompleteRead
 from typing import Any, cast
+from urllib.parse import urlencode
 from urllib.request import Request
 
 import pytest
@@ -375,6 +376,49 @@ def test_urllib_redirect_preserves_method_and_body(status: int) -> None:
     assert follow_up.method == "POST"
     assert follow_up.data == body
     assert forwarded["content-type"] == "application/json"
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_urllib_cross_origin_body_redirect_fails_closed(status: int) -> None:
+    body = urlencode({"token": "redirect-body-secret"}).encode()
+    opener = _RecordingOpener([_FakeResponse(status, {"Location": "https://other.test/next"})])
+    transport = UrllibCatalogTransport()
+    cast(Any, transport)._opener = opener
+
+    with pytest.raises(TransportFailure, match="different redirect origin"):
+        transport.send(
+            RuntimeRequest(
+                "POST",
+                "https://origin.test/oauth/revoke",
+                {"Content-Type": "application/x-www-form-urlencoded"},
+                body,
+            )
+        )
+
+    assert len(opener.requests) == 1
+    assert opener.requests[0].data == body
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_urllib_cross_origin_non_post_body_redirect_fails_closed(status: int) -> None:
+    """A 301/302 keeps a non-POST body, so the refusal cannot key off the status alone."""
+    body = urlencode({"token": "redirect-body-secret"}).encode()
+    opener = _RecordingOpener([_FakeResponse(status, {"Location": "https://other.test/next"})])
+    transport = UrllibCatalogTransport()
+    cast(Any, transport)._opener = opener
+
+    with pytest.raises(TransportFailure, match="different redirect origin"):
+        transport.send(
+            RuntimeRequest(
+                "PUT",
+                "https://origin.test/resources/1/extras/",
+                {"Content-Type": "application/x-www-form-urlencoded"},
+                body,
+            )
+        )
+
+    assert len(opener.requests) == 1
+    assert opener.requests[0].data == body
 
 
 def test_urllib_malformed_location_port_does_not_escape_send() -> None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Mapping
 from typing import cast
@@ -19,9 +18,13 @@ from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetSuggestQuery,
     DatasetUpdateInput,
 )
+from datasluice.connectors.catalog.udata.wire._text_document import (
+    APPROVED_TEXT_MEDIA_TYPES,
+    bound_text_document,
+)
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, _freeze_json
-from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.errors.catalog import CatalogValidationError
 
 _PINNED_SOURCE_ORACLE_ACTION = "Verify the response against the pinned source oracle."
 _RDF_XML_MEDIA_TYPE = "application/rdf+xml"
@@ -170,16 +173,26 @@ def _validate_json_value(value: object, *, operation: str, path: str) -> None:
             return
         raise _invalid_field(path, operation, "a finite JSON value")
     if isinstance(value, Mapping):
-        for key, nested in value.items():
-            if not isinstance(key, str) or not key:
-                raise _invalid_field(path, operation, "an object with string keys")
-            _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+        _validate_json_object(value, operation=operation, path=path)
         return
     if isinstance(value, list):
-        for index, nested in enumerate(value):
-            _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
+        _validate_json_array(value, operation=operation, path=path)
         return
     raise _invalid_field(path, operation, "a JSON value")
+
+
+def _validate_json_object(value: Mapping[object, object], *, operation: str, path: str) -> None:
+    """Validate the string keys and nested values of one JSON object."""
+    for key, nested in value.items():
+        if not isinstance(key, str) or not key:
+            raise _invalid_field(path, operation, "an object with string keys")
+        _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+
+
+def _validate_json_array(value: list[object], *, operation: str, path: str) -> None:
+    """Validate the nested values of one JSON array."""
+    for index, nested in enumerate(value):
+        _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
 
 
 def _validate_nested_string_fields(
@@ -487,21 +500,6 @@ RDF_FORMAT_MEDIA_TYPES = {
     "trig": "application/trig",
 }
 
-_APPROVED_TEXT_MEDIA_TYPES = frozenset(
-    {
-        "application/atom+xml",
-        "application/json",
-        _JSON_LD_MEDIA_TYPE,
-        "application/n-triples",
-        _RDF_XML_MEDIA_TYPE,
-        "application/trig",
-        _TURTLE_MEDIA_TYPE,
-        "text/n3",
-        "text/turtle",
-        "text/xml",
-    }
-)
-
 
 def media_type_for_format(fmt: str) -> str:
     """Return the stock media type for one RDF format extension."""
@@ -536,34 +534,22 @@ def parse_text_document(
     The no-raw-body contract is preserved: only the approved media type, byte
     count, and SHA-256 digest are retained — never the document content.
     """
-    if not isinstance(body, bytes):
-        raise NativeCatalogError(
-            "The uData document body must be buffered bytes.",
-            operation=operation,
-            platform=PLATFORM.value,
-        )
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise NativeCatalogError(
-            "The uData text document is not valid UTF-8.",
-            operation=operation,
-            platform=PLATFORM.value,
-        ) from exc
-    negotiated = (response_media_type or media_type).split(";", 1)[0].strip().lower()
-    if negotiated not in _APPROVED_TEXT_MEDIA_TYPES:
-        raise NativeCatalogError(
-            f"The uData document media type {negotiated!r} is not an approved text contract.",
-            operation=operation,
-            platform=PLATFORM.value,
-            metadata={"safe_action": f"Request one of the approved media types: {media_type}."},
-        )
-    digest = hashlib.sha256(body).hexdigest()
+    document = bound_text_document(
+        body,
+        media_type,
+        response_media_type=response_media_type,
+        operation=operation,
+        platform=PLATFORM.value,
+        approved_media_types=APPROVED_TEXT_MEDIA_TYPES,
+        list_approved_action=True,
+    )
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
-        id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{operation}:{digest}"),
-        payload={"media_type": negotiated, "size_bytes": len(body), "sha256": digest},
+        id=CatalogId(
+            platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{operation}:{document.sha256}"
+        ),
+        payload=document.payload(),
     )
 
 

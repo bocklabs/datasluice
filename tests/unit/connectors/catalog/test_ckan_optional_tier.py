@@ -14,13 +14,7 @@ import json
 import pytest
 
 from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient, declared_ckan_profile
-from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.connectors.catalog.ckan.services.relationships_activity import (
-    AsyncRelationshipsActivityService,
-    SyncRelationshipsActivityService,
-)
-from datasluice.connectors.catalog.ckan.services.views import AsyncViewsService, SyncViewsService
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.operations import OperationId
@@ -31,7 +25,7 @@ from datasluice.domain.catalog.profiles import (
     RoleClassification,
 )
 from datasluice.errors.catalog import ForbiddenError, UnsupportedCapabilityError
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 ACTIVITY_ID = "ckan/action-api-v3.activity"
@@ -44,54 +38,6 @@ ACTIVITY_RESULT: dict[str, object] = {
     "activity_type": "changed package",
 }
 VIEW_RESULT: dict[str, object] = {"id": "view-1", "resource_id": "res-1", "view_type": "image_view", "title": "Chart"}
-
-
-def _success_body(result: object) -> bytes:
-    return json.dumps({"success": True, "result": result}).encode("utf-8")
-
-
-def _failure_body(error: dict[str, object]) -> bytes:
-    return json.dumps({"success": False, "error": dict(error)}).encode("utf-8")
-
-
-class SyncCaptureTransport:
-    """A deterministic loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-
-    def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    def close(self) -> None:
-        return None
-
-
-class AsyncCaptureTransport:
-    """A deterministic async loopback capture transport recording every sent request."""
-
-    def __init__(self, *, status_code: int = 200, body: bytes = b"{}") -> None:
-        self.status_code = status_code
-        self.body = body
-        self.requests: list[RuntimeRequest] = []
-
-    async def send(self, request: RuntimeRequest) -> RuntimeResponse:
-        self.requests.append(request)
-        return RuntimeResponse(
-            status_code=self.status_code,
-            headers={"Content-Type": "application/json"},
-            body=self.body,
-        )
-
-    async def aclose(self) -> None:
-        return None
 
 
 class SeededProbeRunner:
@@ -172,32 +118,9 @@ def _async_client(transport: AsyncCaptureTransport, runner: AsyncSeededProbeRunn
     )
 
 
-def _names_for(owning_id: str) -> set[str]:
-    return {entry.name for entry in CKAN_ACTIONS.entries if entry.owning_operation_id == owning_id}
-
-
-def test_every_activity_and_view_action_exposes_a_typed_method_on_both_mode_services() -> None:
-    """Each optional-tier manifest action names a callable member on both projections."""
-    sync_relationships = {name for name in dir(SyncRelationshipsActivityService) if not name.startswith("_")}
-    async_relationships = {name for name in dir(AsyncRelationshipsActivityService) if not name.startswith("_")}
-    activity_names = _names_for(ACTIVITY_ID)
-    assert len(activity_names) == 13
-    for action in activity_names:
-        assert action in sync_relationships, f"sync surface misses {action}"
-        assert action in async_relationships, f"async surface misses {action}"
-
-    sync_views = {name for name in dir(SyncViewsService) if not name.startswith("_")}
-    async_views = {name for name in dir(AsyncViewsService) if not name.startswith("_")}
-    view_names = _names_for(VIEWS_ID)
-    assert len(view_names) == 9
-    for action in view_names:
-        assert action in sync_views, f"sync surface misses {action}"
-        assert action in async_views, f"async surface misses {action}"
-
-
 def test_activity_unsupported_blocks_package_activity_list_before_any_transport_io() -> None:
     """UNPROBED-unsupported activity evidence refuses pre-dispatch at zero I/O."""
-    transport = SyncCaptureTransport(body=_success_body([]))
+    transport = SyncCaptureTransport(body=success_body([]))
     client = _client(transport, SeededProbeRunner(unsupported=frozenset({ACTIVITY_ID})))
 
     with pytest.raises(UnsupportedCapabilityError) as excinfo:
@@ -210,7 +133,7 @@ def test_activity_unsupported_blocks_package_activity_list_before_any_transport_
 
 def test_activity_success_state_dispatches_and_decodes_activity_kind_records() -> None:
     """SUCCESS activity evidence dispatches and decodes activity-kind records."""
-    transport = SyncCaptureTransport(body=_success_body([ACTIVITY_RESULT]))
+    transport = SyncCaptureTransport(body=success_body([ACTIVITY_RESULT]))
     client = _client(transport)
 
     envelope = client.relationships_activity.package_activity_list(id="dataset-a")
@@ -225,7 +148,7 @@ def test_activity_success_state_dispatches_and_decodes_activity_kind_records() -
 
 def test_activity_resolves_independently_of_the_core_relationships_id() -> None:
     """Blocked activity evidence never blocks the core relationships-follows family."""
-    transport = SyncCaptureTransport(body=_success_body([{"subject": "a", "object": "b"}]))
+    transport = SyncCaptureTransport(body=success_body([{"subject": "a", "object": "b"}]))
     client = _client(transport, SeededProbeRunner(unsupported=frozenset({ACTIVITY_ID})))
 
     envelope = client.relationships_activity.package_relationships_list(
@@ -241,7 +164,7 @@ def test_activity_resolves_independently_of_the_core_relationships_id() -> None:
 
 def test_views_unsupported_blocks_resource_view_list_before_any_transport_io() -> None:
     """UNSUPPORTED views evidence refuses pre-dispatch at zero I/O."""
-    transport = SyncCaptureTransport(body=_success_body([VIEW_RESULT]))
+    transport = SyncCaptureTransport(body=success_body([VIEW_RESULT]))
     client = _client(transport, SeededProbeRunner(unsupported=frozenset({VIEWS_ID})))
 
     with pytest.raises(UnsupportedCapabilityError) as excinfo:
@@ -253,7 +176,7 @@ def test_views_unsupported_blocks_resource_view_list_before_any_transport_io() -
 
 def test_views_success_state_dispatches_and_decodes_view_records() -> None:
     """SUCCESS views evidence dispatches and decodes lossless view mappings."""
-    transport = SyncCaptureTransport(body=_success_body([VIEW_RESULT]))
+    transport = SyncCaptureTransport(body=success_body([VIEW_RESULT]))
     client = _client(transport)
 
     envelope = client.views.resource_view_list(id="res-1")
@@ -268,7 +191,7 @@ def test_views_success_state_dispatches_and_decodes_view_records() -> None:
 
 def test_dashboard_and_activity_create_dispatch_receipt_bearing_when_available() -> None:
     """Available activity evidence lets the standard mutations return receipts."""
-    transport = SyncCaptureTransport(body=_success_body(None))
+    transport = SyncCaptureTransport(body=success_body(None))
     client = _client(transport)
 
     marked = client.relationships_activity.dashboard_mark_activities_old()
@@ -276,7 +199,7 @@ def test_dashboard_and_activity_create_dispatch_receipt_bearing_when_available()
     assert isinstance(marked, CKANMutationResult)
     assert marked.receipt.outcome == "succeeded"
 
-    create_transport = SyncCaptureTransport(body=_success_body(ACTIVITY_RESULT))
+    create_transport = SyncCaptureTransport(body=success_body(ACTIVITY_RESULT))
     create_client = _client(create_transport)
     created = create_client.relationships_activity.activity_create(
         user_id="user-1",
@@ -296,7 +219,7 @@ def test_dashboard_and_activity_create_dispatch_receipt_bearing_when_available()
 def test_send_email_notifications_forbidden_envelope_maps_to_forbidden_error() -> None:
     """The privileged notification action maps forbidden envelopes with a safe action."""
     transport = SyncCaptureTransport(
-        body=_failure_body({"__type": "Authorization Error", "message": "not authorized to send notifications"})
+        body=failure_body({"__type": "Authorization Error", "message": "not authorized to send notifications"})
     )
     client = _client(transport)
 
@@ -309,7 +232,7 @@ def test_send_email_notifications_forbidden_envelope_maps_to_forbidden_error() -
 
 def test_default_resource_views_pass_their_objects_verbatim() -> None:
     """Default-view creation actions cross with their documented objects untouched."""
-    package_transport = SyncCaptureTransport(body=_success_body([VIEW_RESULT]))
+    package_transport = SyncCaptureTransport(body=success_body([VIEW_RESULT]))
     package_client = _client(package_transport)
 
     package = {"id": "dataset-a", "resources": [{"id": "res-1"}]}
@@ -323,7 +246,7 @@ def test_default_resource_views_pass_their_objects_verbatim() -> None:
     }
     assert package_result.receipt.target.resource_kind.value == "dataset"
 
-    resource_transport = SyncCaptureTransport(body=_success_body([VIEW_RESULT]))
+    resource_transport = SyncCaptureTransport(body=success_body([VIEW_RESULT]))
     resource_client = _client(resource_transport)
 
     resource = {"id": "res-1", "format": "CSV"}
@@ -335,7 +258,7 @@ def test_default_resource_views_pass_their_objects_verbatim() -> None:
 
 def test_async_views_mirror_the_dual_state_semantics_per_family() -> None:
     """The async twin blocks and dispatches the views family from its own evidence."""
-    blocked_transport = AsyncCaptureTransport(body=_success_body([VIEW_RESULT]))
+    blocked_transport = AsyncCaptureTransport(body=success_body([VIEW_RESULT]))
     blocked_client = _async_client(blocked_transport, AsyncSeededProbeRunner(unsupported=frozenset({VIEWS_ID})))
 
     resource_view_list = blocked_client.views.resource_view_list(id="res-1")
@@ -343,7 +266,7 @@ def test_async_views_mirror_the_dual_state_semantics_per_family() -> None:
         asyncio.run(resource_view_list)
     assert blocked_transport.requests == []
 
-    allowed_transport = AsyncCaptureTransport(body=_success_body([VIEW_RESULT]))
+    allowed_transport = AsyncCaptureTransport(body=success_body([VIEW_RESULT]))
     allowed_client = _async_client(allowed_transport)
     envelope = asyncio.run(allowed_client.views.resource_view_list(id="res-1"))
     assert isinstance(envelope.items[0], MappingRecord)

@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib
-import os
 from typing import Any
 from unittest.mock import patch
-
-import pytest
 
 from datasluice.data import DataPlaneResourceReader
 from datasluice.domain import Artifact, LocalFile, Resource
@@ -20,8 +17,6 @@ from tests.unit.sync.conftest import CSV_BYTES, write_counting_fs
 
 materialize_module = importlib.import_module("datasluice.sync.materialize")
 materialize: Any = materialize_module.materialize
-if not hasattr(materialize_module, "_IDEMPOTENT_MATERIALIZE_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("idempotent materialize implementation pending GREEN phase", allow_module_level=True)
 
 
 def _sync(tmp_path, resource, state_store, transport):

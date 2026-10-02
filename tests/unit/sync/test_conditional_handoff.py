@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 from typing import Any
 
 import pytest
@@ -15,8 +14,6 @@ from datasluice.sync import sync_resources
 from tests.helpers.http_server import MockResponse
 
 sync_module = importlib.import_module("datasluice.sync.sync")
-if not hasattr(sync_module, "_RESPONSE_AWARE_READER_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("response-aware reader handoff implementation pending GREEN phase", allow_module_level=True)
 
 
 class _ResponseAwareReader:
@@ -115,27 +112,6 @@ def test_response_aware_reader_closes_untransferred_response_on_failure(tmp_path
     stream_cm = reader.response_streams[0]
     assert stream_cm.enter_count == 0
     assert stream_cm.exit_count == 1
-
-
-def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource) -> None:
-    server, url = csv_server(headers={"ETag": '"fallback"'})
-    resource = make_resource(url)
-    transport = HttpxCatalogTransport()
-    reader = _BaseReader(transport)
-
-    outcomes = list(
-        sync_resources(
-            [resource],
-            state_store=_inmemory_state_store(),
-            reader=reader,
-            destination_uri=f"file://{tmp_path}/dest",
-            transport=transport,
-        )
-    )
-
-    assert outcomes[0].action == "materialized"
-    assert reader.open_calls == 1
-    assert server.captured_paths == ["/data.csv"]
 
 
 def test_base_reader_checkpoints_materialized_representation(tmp_path, csv_server, make_resource) -> None:

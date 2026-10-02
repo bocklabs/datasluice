@@ -98,9 +98,12 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
+      # Full history: the controlled-evidence provenance test walks git history to the
+      # commit that first wrote each record, and skips itself in a shallow clone.
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up UV

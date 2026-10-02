@@ -405,9 +405,9 @@ def _validate_dataservice_csv_filter(key: str, value: object) -> None:
 class SiteProfile:
     """A lossless immutable representation of the uData site document."""
 
-    payload: Mapping[str, object]
+    payload: Mapping[str, object] = field(repr=False)
     present_fields: frozenset[str] | None = None
-    extensions: Mapping[str, object] = field(default_factory=dict)
+    extensions: Mapping[str, object] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.payload, Mapping):
@@ -538,12 +538,12 @@ class SitePatchInput:
     title: str | _UnsetValue = UNSET
     keywords: tuple[str, ...] | None | _UnsetValue = UNSET
     feed_size: int | _UnsetValue = UNSET
-    configs: Mapping[str, object] | None | _UnsetValue = UNSET
-    themes: Mapping[str, object] | None | _UnsetValue = UNSET
-    settings: Mapping[str, object] | None | _UnsetValue = UNSET
-    datasets_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = UNSET
-    reuses_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = UNSET
-    dataservices_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = UNSET
+    configs: Mapping[str, object] | None | _UnsetValue = field(default=UNSET, repr=False)
+    themes: Mapping[str, object] | None | _UnsetValue = field(default=UNSET, repr=False)
+    settings: Mapping[str, object] | None | _UnsetValue = field(default=UNSET, repr=False)
+    datasets_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = field(default=UNSET, repr=False)
+    reuses_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = field(default=UNSET, repr=False)
+    dataservices_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = field(default=UNSET, repr=False)
 
     def __post_init__(self) -> None:
         _validate_site_patch_scalars(self.title, self.keywords, self.feed_size)
@@ -898,7 +898,7 @@ class SiteMutationResult:
     """A site PATCH outcome with a redacted receipt and optional returned profile."""
 
     receipt: MutationReceipt
-    profile: SiteProfile | None = None
+    profile: SiteProfile | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.receipt, MutationReceipt):
