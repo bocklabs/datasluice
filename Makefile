@@ -21,12 +21,10 @@ test:
 	uv run pytest
 
 test-all:
-	uv run --python=3.12 pytest
 	uv run --python=3.13 pytest
 	uv run --python=3.14 pytest
 
 coverage:
-	uv run --python=3.12 coverage run -m pytest
 	uv run --python=3.13 coverage run -m pytest
 	uv run --python=3.14 coverage run -m pytest
 	uv run coverage combine
@@ -40,7 +38,7 @@ lint:
 	uv run ruff check . --fix
 
 type-check:
-	uv run --all-extras ty check --output-format=concise .
+	uv run --all-extras mypy src scripts tests
 
 qa: format lint type-check test
 

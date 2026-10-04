@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from threading import Event, Lock
 from time import sleep
 from typing import cast
@@ -29,6 +29,22 @@ def _plan(*values: str) -> BulkPlan:
 
 def _receipt(item: CatalogId) -> MutationReceipt:
     return MutationReceipt(operation="ckan/datasets.update", outcome="succeeded", target=item)
+
+
+def _recording_receipts(calls: list[str]) -> Callable[[CatalogId], MutationReceipt]:
+    def execute(item: CatalogId) -> MutationReceipt:
+        calls.append(item.value)
+        return _receipt(item)
+
+    return execute
+
+
+def _recording_id_receipts(calls: list[CatalogId]) -> Callable[[CatalogId], MutationReceipt]:
+    def execute(item: CatalogId) -> MutationReceipt:
+        calls.append(item)
+        return _receipt(item)
+
+    return execute
 
 
 def test_sync_streams_completion_outcomes_in_plan_order_and_persists_each_boundary() -> None:
@@ -57,11 +73,7 @@ def test_sync_streams_completion_outcomes_in_plan_order_and_persists_each_bounda
 def test_empty_and_single_item_plans_follow_their_distinct_dispatch_paths() -> None:
     calls: list[str] = []
     empty = list(BulkExecutor(lambda item: _receipt(item), checkpoint_sink=lambda checkpoint: None).stream(_plan()))
-    one = list(
-        BulkExecutor(
-            lambda item: calls.append(item.value) or _receipt(item), checkpoint_sink=lambda checkpoint: None
-        ).stream(_plan("only"))
-    )
+    one = list(BulkExecutor(_recording_receipts(calls), checkpoint_sink=lambda checkpoint: None).stream(_plan("only")))
 
     assert len(empty) == 1
     assert isinstance(empty[0], BulkSummary)
@@ -78,7 +90,7 @@ def test_empty_and_single_item_plans_follow_their_distinct_dispatch_paths() -> N
 def test_duplicate_ids_fail_before_any_dispatch() -> None:
     plan = _plan("same", "same")
     calls: list[CatalogId] = []
-    executor = BulkExecutor(lambda item: calls.append(item) or _receipt(item), checkpoint_sink=lambda checkpoint: None)
+    executor = BulkExecutor(_recording_id_receipts(calls), checkpoint_sink=lambda checkpoint: None)
 
     with pytest.raises(CatalogValidationError) as raised:
         list(executor.stream(plan))
@@ -110,7 +122,7 @@ def test_resume_rejects_a_checkpoint_created_for_a_different_plan() -> None:
     calls: list[str] = []
 
     bulk_executor = BulkExecutor(
-        lambda item: calls.append(item.value) or _receipt(item),
+        _recording_receipts(calls),
         checkpoint=checkpoint,
         checkpoint_sink=lambda checkpoint: None,
     )
@@ -264,7 +276,7 @@ def test_sync_pre_dispatch_item_budget_expiry_skips_execution() -> None:
 
     outcomes = list(
         BulkExecutor(
-            lambda item: calls.append(item) or _receipt(item),
+            _recording_id_receipts(calls),
             per_item_budget=TimeBudget(connect=1.0, read=1.0, write=1.0, total=1.0),
             clock=clock,
             checkpoint_sink=lambda checkpoint: None,
@@ -350,7 +362,7 @@ def test_resume_uses_materialized_checkpoint_without_redispatching_completed_ite
 
     outcomes = list(
         BulkExecutor(
-            lambda item: calls.append(item.value) or _receipt(item),
+            _recording_receipts(calls),
             checkpoint=restored,
             checkpoint_sink=checkpoints.append,
         ).stream(plan)
@@ -596,7 +608,7 @@ def test_abandoned_sync_stream_drains_in_flight_items_and_persists_the_final_che
     releaser = threading.Timer(0.2, blocker.set)
     releaser.start()
     generator = cast(
-        "Generator[BulkItemReceipt | BulkSummary, None, None]",
+        "Generator[BulkItemReceipt | BulkSummary]",
         BulkExecutor(
             execute,
             policy=BulkExecutionPolicy(max_parallelism=2),
@@ -630,7 +642,7 @@ def test_async_aclose_drains_in_flight_tasks_and_persists_the_final_checkpoint_o
             return _receipt(item)
 
         stream = cast(
-            "AsyncGenerator[BulkItemReceipt | BulkSummary, None]",
+            "AsyncGenerator[BulkItemReceipt | BulkSummary]",
             AsyncBulkExecutor(
                 execute,
                 policy=BulkExecutionPolicy(max_parallelism=2),

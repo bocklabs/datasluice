@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -33,8 +34,11 @@ from datasluice.ports.storage import StoragePort
 
 FsspecStorage = _fsspec_storage_module.FsspecStorage
 
+if TYPE_CHECKING:
+    from datasluice.io.fsspec_storage import FsspecStorage as FsspecStorageType
 
-def _memory_storage() -> FsspecStorage:
+
+def _memory_storage() -> FsspecStorageType:
     import fsspec
 
     return FsspecStorage(fsspec.filesystem("memory"))

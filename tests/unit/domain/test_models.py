@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any, cast
 
 import pytest
 
@@ -29,6 +30,11 @@ from datasluice.domain.catalog.profiles import (
     RoleClassification,
 )
 from datasluice.exceptions import DataSluiceError
+
+
+def _assign(target: object, field: str, value: object) -> None:
+    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
+    setattr(target, field, value)
 
 
 def test_license_defaults() -> None:
@@ -95,10 +101,11 @@ def test_value_record_round_trips_every_scalar_through_strict_schema_v1(
 
 
 def test_value_record_rejects_non_scalar_values_with_the_domain_contract_error() -> None:
-    with pytest.raises(DataSluiceError):
-        ValueRecord(value=[1, 2])  # ty: ignore[invalid-argument-type]
-    with pytest.raises(DataSluiceError):
-        ValueRecord(value={"nested": "object"})  # ty: ignore[invalid-argument-type]
+    # Runtime validation is what these assert, so the invalid values pass through untyped kwargs.
+    invalid: tuple[dict[str, Any], ...] = ({"value": [1, 2]}, {"value": {"nested": "object"}})
+    for kwargs in invalid:
+        with pytest.raises(DataSluiceError):
+            ValueRecord(**kwargs)
 
 
 def test_value_record_rejects_non_finite_floats_and_foreign_envelope_keys() -> None:
@@ -126,20 +133,23 @@ def test_mapping_record_freezes_its_interior_and_rejects_non_object_payloads() -
     record = MappingRecord(payload={"nested": {"key": "value"}})
     assert isinstance(record.payload, MappingProxyType)
     with pytest.raises(TypeError):
-        record.payload["nested"]["key"] = "mutated"  # ty: ignore[invalid-assignment]
+        nested = cast("dict[str, str]", record.payload["nested"])
+        nested["key"] = "mutated"
     with pytest.raises(DataSluiceError):
-        MappingRecord(payload=[1, 2, 3])  # ty: ignore[invalid-argument-type]
+        MappingRecord(**cast("dict[str, Any]", {"payload": [1, 2, 3]}))
 
 
 def test_result_envelope_accepts_value_and_mapping_records_as_first_class_items() -> None:
-    envelope = ResultEnvelope(items=(ValueRecord(value=42), MappingRecord(payload={"ok": True})))
+    envelope = ResultEnvelope[ValueRecord | MappingRecord](
+        items=(ValueRecord(value=42), MappingRecord(payload={"ok": True}))
+    )
 
     assert [item.kind for item in envelope.items] == ["value_record", "mapping_record"]
     restored = ResultEnvelope.from_dict(envelope.to_dict(), item_decoder=_decode_item)
     assert restored.items == envelope.items
 
 
-def _decode_item(item: object) -> object:
+def _decode_item(item: object) -> ValueRecord | MappingRecord:
     kind = item.get("kind") if isinstance(item, dict) else None
     if kind == "value_record":
         return ValueRecord.from_dict(item)
@@ -194,7 +204,7 @@ def test_probe_evidence_rejects_unknown_provenance_values() -> None:
             credential_classification=CredentialClassification.ANONYMOUS,
             role_classification=RoleClassification.ANONYMOUS,
             observed_response_class=ProbeResponseClass.SUCCESS,
-            provenance="bogus",  # ty: ignore[invalid-argument-type]
+            **cast("dict[str, Any]", {"provenance": "bogus"}),
         )
 
 

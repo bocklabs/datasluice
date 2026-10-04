@@ -1593,8 +1593,8 @@ def _default_probe_runners(
 
     profile = declared_ckan_profile()
     if inspect.iscoroutinefunction(getattr(transport, "send", None)):
-        return None, CKANAsyncProbeRunner(transport, origin, profile)  # ty: ignore[invalid-argument-type]
-    return CKANProbeRunner(transport, origin, profile), None  # ty: ignore[invalid-argument-type]
+        return None, CKANAsyncProbeRunner(cast(AsyncCatalogTransport, transport), origin, profile)
+    return CKANProbeRunner(cast(CatalogTransport, transport), origin, profile), None
 
 
 def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
@@ -1628,6 +1628,7 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
 def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
     """Construct one asynchronous CKAN client from immutable settings."""
     require_extra("ckan")
+    transport: AsyncCatalogTransport
     override = settings.async_transport
     if override is None:
         transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)

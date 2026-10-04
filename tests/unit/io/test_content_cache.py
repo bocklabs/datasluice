@@ -302,11 +302,11 @@ def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
         concurrent.futures.wait(reader_futures)
 
     writer_errors: list[BaseException] = []
-    for future in writer_futures:
-        writer_errors.extend(future.result())
+    for writer in writer_futures:
+        writer_errors.extend(writer.result())
     reader_violations: list[str] = []
-    for future in reader_futures:
-        reader_violations.extend(future.result())
+    for reader in reader_futures:
+        reader_violations.extend(reader.result())
 
     assert writer_errors == [], f"writer errors: {writer_errors}"
     assert reader_violations == [], f"torn-read violations: {reader_violations}"

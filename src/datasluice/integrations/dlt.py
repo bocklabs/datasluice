@@ -32,6 +32,7 @@ def _resource_from_record(record: Any) -> Any:
     if record.url is None:
         raise ValueError(f"Normalized resource {record.id.value!r} requires a direct URL for dlt extraction")
     scheme = urlsplit(record.url).scheme
+    access: HttpDownload | ObjectStorage | LocalFile
     if scheme in {"http", "https"}:
         access = HttpDownload(url=record.url)
     elif scheme in {"s3", "gs", "gcs", "az", "azure", "abfs"}:

@@ -1588,6 +1588,11 @@ def test_namespaced_third_party_fake_certifies_through_the_same_runner() -> None
     assert certification.report_fingerprint == namespaced_report.fingerprint
 
 
+def _assign(target: object, field: str, value: object) -> None:
+    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
+    setattr(target, field, value)
+
+
 def test_public_catalog_models_are_frozen_typed_values() -> None:
     """Test 4: every public domain catalog dataclass is immutable."""
     modules = [
@@ -1608,7 +1613,8 @@ def test_public_catalog_models_are_frozen_typed_values() -> None:
         module = importlib.import_module(f"datasluice.domain.catalog.{module_name}")
         for name, value in vars(module).items():
             if dataclasses.is_dataclass(value) and value.__module__ == module.__name__:
-                assert value.__dataclass_params__.frozen, f"{module_name}.{name} must be frozen"
+                params = getattr(value, "__dataclass_params__", None)
+                assert params is not None and params.frozen, f"{module_name}.{name} must be frozen"
                 checked += 1
     assert checked >= 50, f"expected the full public model corpus, checked {checked}"
     from dataclasses import FrozenInstanceError
@@ -1617,10 +1623,10 @@ def test_public_catalog_models_are_frozen_typed_values() -> None:
 
     case = CatalogContractCase(operation_id="op")
     with pytest.raises(FrozenInstanceError):
-        case.operation_id = "other"  # ty: ignore[invalid-assignment]
+        _assign(case, "operation_id", "other")
     outcome = CaseOutcome(operation_id="op", mode="sync", capability="available", state="passed")
     with pytest.raises(FrozenInstanceError):
-        outcome.state = "failed"  # ty: ignore[invalid-assignment]
+        _assign(outcome, "state", "failed")
 
 
 def test_public_catalog_imports_stay_import_light() -> None:
@@ -1846,6 +1852,8 @@ def test_outputs_are_secret_safe_by_default() -> None:
 
 def test_every_runtime_event_sink_is_secret_safe() -> None:
     """Test 4: every shipped event sink receives only gate-redacted envelopes."""
+    from typing import cast
+
     from datasluice.runtime import events
 
     class CapturingHandler(logging.Handler):
@@ -1869,7 +1877,9 @@ def test_every_runtime_event_sink_is_secret_safe() -> None:
             for name, value in inspect.getmembers(events, inspect.isclass)
             if name.endswith("Sink") and not getattr(value, "_is_protocol", False)
         ]
-        sinks = [value(logger) if value is events.LoggingSink else value() for value in sink_classes]
+        sinks: list[events.EventSink] = [
+            value(logger) if value is events.LoggingSink else value() for value in cast("list[type[Any]]", sink_classes)
+        ]
         envelope = events.EventEmitter(sinks=tuple(sinks)).record(
             operation_id="reference/datasets/get",
             platform="reference",

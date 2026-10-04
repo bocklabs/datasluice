@@ -85,9 +85,9 @@ def test_async_cancellation_releases_the_test_transport(
                 parked.set()
                 await asyncio.Future()
 
-            writer.close = spy_close  # ty: ignore[invalid-assignment]
-            writer.wait_closed = spy_wait_closed  # ty: ignore[invalid-assignment]
-            writer.drain = lambda: gated_drain()  # ty: ignore[invalid-assignment]
+            monkeypatch.setattr(writer, "close", spy_close)
+            monkeypatch.setattr(writer, "wait_closed", spy_wait_closed)
+            monkeypatch.setattr(writer, "drain", gated_drain)
             return reader, writer
 
         monkeypatch.setattr(asyncio, "open_connection", gated_open_connection)

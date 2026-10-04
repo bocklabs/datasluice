@@ -278,6 +278,7 @@ def run_catalog_contract(
     fixture_set: ReferenceFixtureSet | None = None,
 ) -> ComplianceReport:
     """Execute a finite catalog contract matrix and retain every case outcome."""
+    cases: tuple[CatalogContractCase, ...]
     if isinstance(case, CatalogContractCase):
         if fixture_set is None:
             return _run_tracer_case(case, sync_client, async_client)

@@ -59,6 +59,11 @@ MEMBER_RESULT: dict[str, object] = {
 }
 
 
+def _call(service: object, name: str, /, **kwargs: object) -> object:
+    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
+    return getattr(service, name)(**kwargs)
+
+
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
     return SyncCKANClient(
         transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
@@ -239,7 +244,7 @@ def test_organization_purge_requires_a_policy_at_the_call_boundary() -> None:
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        client.organizations.organization_purge(id="org-1")  # ty: ignore[missing-argument]
+        _call(client.organizations, "organization_purge", id="org-1")
 
     assert transport.requests == []
 

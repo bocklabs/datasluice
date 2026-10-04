@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -33,9 +34,10 @@ def test_sync_outcome_record_is_not_tuple_compatible(tmp_path, csv_server, make_
     _server, url = csv_server()
     outcome = _sync(tmp_path, make_resource(url), InMemoryStateStore(), HttpxCatalogTransport())[0]
 
-    assert isinstance(outcome.record, Artifact)
+    record: object = outcome.record
+    assert isinstance(record, Artifact)
     with pytest.raises(TypeError):
-        _ = outcome.record[0]
+        _ = cast("tuple[object, ...]", record)[0]
 
 
 def test_corrupt_destination_rematerializes(tmp_path, csv_server, make_resource) -> None:

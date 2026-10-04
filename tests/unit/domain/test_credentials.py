@@ -1,13 +1,3 @@
-"""Unit tests for the CredentialScope dataclass model.
-
-CredentialScope redirect-policy enforcement now lives inside the runtime
-transports (``credential_scope=`` on both catalog transports); the behavioral
-coverage for it is in ``tests/unit/runtime/test_transport_urllib.py`` and
-``tests/unit/runtime/test_transport_httpx.py``. This module pins only the
-model's defaults, freezing, and custom values, plus unrelated exception
-contracts that historically shared this file.
-"""
-
 from __future__ import annotations
 
 import dataclasses
@@ -16,6 +6,11 @@ import pytest
 
 from datasluice.domain import CredentialScope
 from datasluice.exceptions import PortalError, RetryableHTTPError
+
+
+def _assign(target: object, field: str, value: object) -> None:
+    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
+    setattr(target, field, value)
 
 
 def test_credential_scope_defaults() -> None:
@@ -28,7 +23,7 @@ def test_credential_scope_defaults() -> None:
 def test_credential_scope_is_frozen() -> None:
     scope = CredentialScope()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        scope.send_on_redirect = True  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(scope, "send_on_redirect", True)
 
 
 def test_credential_scope_custom_values() -> None:

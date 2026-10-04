@@ -32,7 +32,7 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     NativeCatalogError,
 )
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure, UploadStream
 
 
 class _InterruptingTransport:
@@ -610,16 +610,20 @@ def test_streaming_deadline_failure_still_closes_the_borrowed_source_exactly_onc
     upload = ResourceUploadInput(source, "data.csv", 3, budget=_budget(1.0), clock=clock)
     clock.advance(10.0)
 
+    data: UploadStream | None = None
     with pytest.raises(UploadDeadlineExceeded):
         part = upload.part()
-        assert not isinstance(part.data, bytes)
-        part.data.read()
+        candidate = part.data
+        assert not isinstance(candidate, bytes)
+        data = candidate
+        data.read()
 
     upload.close()
     upload.close()
     assert source.close_calls == 1
+    assert data is not None
     with pytest.raises(ValueError, match="is closed"):
-        part.data.read()
+        data.read()
     with pytest.raises(ValueError, match="cannot be reused"):
         upload.part()
 

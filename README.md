@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/datasluice.png" alt="DataSluice" width="600">
+  Datasluice
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 </p>
 
 > ⚠️ **Unstable — under active development.**
-> DataSluice is pre-1.0 and evolving fast. Breaking changes may occur at any time without notice. Use it at your own risk.
+> Datasluice is pre-1.0 and evolving fast. Breaking changes may occur at any time without notice. Use it at your own risk.
 
 ---
 
@@ -65,7 +65,7 @@ datasluice materialize ./source.csv --destination ./converted --mode parquet --o
 datasluice materialize https://example.org/data.json --destination ./converted --mode parquet --output json
 ```
 
-`./converted` is an output directory. DataSluice writes a content-addressed
+`./converted` is an output directory. Datasluice writes a content-addressed
 Parquet file there and returns its URI and checksums. CSV, JSON, JSONL,
 GeoJSON, XLSX, and Parquet inputs use the same command.
 

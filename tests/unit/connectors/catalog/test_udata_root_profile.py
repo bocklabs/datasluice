@@ -1615,7 +1615,7 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
                 lambda: None,
             )
 
-    events = []
+    events: list[Any] = []
     transport = FailingStreamTransport(_routes())
     client = SyncUDataClient(
         transport,
@@ -2060,7 +2060,8 @@ def test_root_profile_models_are_typed_and_immutable() -> None:
     assert isinstance(profile.catalog_id.value, str)
     assert isinstance(profile.to_dict(), dict)
     assert isinstance(SitePatchInput(title="x"), SitePatchInput)
-    assert NativeRecord is not SiteProfile
+    assert not issubclass(SiteProfile, NativeRecord)
+    assert not issubclass(NativeRecord, SiteProfile)
 
 
 def test_root_profile_model_reprs_hide_configuration_values() -> None:

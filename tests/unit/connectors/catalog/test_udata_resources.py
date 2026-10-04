@@ -882,12 +882,12 @@ def test_approved_text_media_type_remediation_lists_the_approved_set() -> None:
         assert approved in cast(str, safe_action)
 
 
-def test_stream_guard_annotations_spell_out_generator_parameters() -> None:
-    """The declared Python floor is 3.12, which predates the PEP 696 parameter defaults."""
-    assert _SyncStreamGuard.__annotations__["stream_chunks"] == "Generator[bytes, None, None] | None"
-    assert _SyncStreamGuard.chunks.__annotations__["return"] == "Generator[bytes, None, None]"
-    assert _AsyncStreamGuard.__annotations__["stream_chunks"] == "AsyncGenerator[bytes, None] | None"
-    assert _AsyncStreamGuard.chunks.__annotations__["return"] == "AsyncGenerator[bytes, None]"
+def test_stream_guard_annotations_omit_generator_parameter_defaults() -> None:
+    """The declared Python floor is 3.13, so PEP 696 parameter defaults need no annotation."""
+    assert _SyncStreamGuard.__annotations__["stream_chunks"] == "Generator[bytes] | None"
+    assert _SyncStreamGuard.chunks.__annotations__["return"] == "Generator[bytes]"
+    assert _AsyncStreamGuard.__annotations__["stream_chunks"] == "AsyncGenerator[bytes] | None"
+    assert _AsyncStreamGuard.chunks.__annotations__["return"] == "AsyncGenerator[bytes]"
 
 
 def test_empty_user_update_fields_report_emptiness_not_a_mapping_failure() -> None:

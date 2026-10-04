@@ -90,7 +90,7 @@ def _optional_text(name: str, payload: Mapping[str, object], key: str) -> str | 
 
 
 _QUERY_ROUTES = frozenset({"client_info", "authorize"})
-_FORM_BODY_TYPES = {
+_FORM_BODY_TYPES: dict[str, type[OAuthTokenRequest | OAuthRevokeRequest | OAuthAuthorizeDecision]] = {
     "access_token": OAuthTokenRequest,
     "revoke_token": OAuthRevokeRequest,
     "authorize_post": OAuthAuthorizeDecision,

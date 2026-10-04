@@ -68,6 +68,11 @@ GROUP_RESULT: dict[str, object] = {"id": "grp-1", "name": "transit-group", "titl
 PACKAGE_ROW: dict[str, object] = {"id": "pkg-9", "name": "route-dataset", "title": "Routes"}
 
 
+def _call(service: object, name: str, /, **kwargs: object) -> object:
+    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
+    return getattr(service, name)(**kwargs)
+
+
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
     return SyncCKANClient(
         transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
@@ -332,7 +337,7 @@ def test_api_token_revoke_requires_the_token_id_at_the_call_boundary() -> None:
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        client.users.api_token_revoke()  # ty: ignore[missing-argument]
+        _call(client.users, "api_token_revoke")
 
     assert transport.requests == []
 

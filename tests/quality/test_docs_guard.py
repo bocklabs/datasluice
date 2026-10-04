@@ -249,7 +249,7 @@ def _page_text(relative: str) -> str:
 
 def _install_boundary_violations() -> list[str]:
     text = _page_text("docs/install.md")
-    violations = []
+    violations: list[str] = []
     if not text:
         return violations
     if "apache-airflow-providers-datasluice" not in text:

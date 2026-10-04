@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
@@ -22,6 +24,14 @@ from datasluice.runtime.transport.base import RuntimeResponse
 
 def _target() -> CatalogId:
     return CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather")
+
+
+def _recording_dispatch(sent: list[MutationDispatchRequest]) -> Callable[[MutationDispatchRequest], RuntimeResponse]:
+    def dispatch(request: MutationDispatchRequest) -> RuntimeResponse:
+        sent.append(request)
+        return RuntimeResponse(200, {}, b"")
+
+    return dispatch
 
 
 def _policy(
@@ -51,8 +61,8 @@ def test_build_mutation_receipt_matches_enforcer_receipt() -> None:
 
 
 def test_mutations_require_confirmed_policy_before_dispatch() -> None:
-    sent = []
-    enforcer = MutationEnforcer(lambda request: sent.append(request) or RuntimeResponse(200, {}, b""))
+    sent: list[MutationDispatchRequest] = []
+    enforcer = MutationEnforcer(_recording_dispatch(sent))
 
     operation_id = OperationId("ckan", "datasets", "update")
     target = _target()
@@ -68,8 +78,8 @@ def test_mutations_require_confirmed_policy_before_dispatch() -> None:
 
 
 def test_destructive_mutations_require_explicit_confirmation() -> None:
-    sent: list[object] = []
-    enforcer = MutationEnforcer(lambda request: sent.append(request) or RuntimeResponse(200, {}, b""))
+    sent: list[MutationDispatchRequest] = []
+    enforcer = MutationEnforcer(_recording_dispatch(sent))
     unconfirmed = MutationPolicy(
         destructive=True,
         confirmation=ConfirmationPolicy(confirmed=False),
@@ -86,8 +96,8 @@ def test_destructive_mutations_require_explicit_confirmation() -> None:
 
 
 def test_confirmed_mutations_require_a_concurrency_instruction() -> None:
-    sent: list[object] = []
-    enforcer = MutationEnforcer(lambda request: sent.append(request) or RuntimeResponse(200, {}, b""))
+    sent: list[MutationDispatchRequest] = []
+    enforcer = MutationEnforcer(_recording_dispatch(sent))
     confirmed = MutationPolicy(
         destructive=False,
         confirmation=ConfirmationPolicy(confirmed=True),
@@ -192,8 +202,8 @@ def test_failed_dispatch_receipt_construction_does_not_mask_the_original_error()
 
 
 def test_succeeded_receipt_construction_failure_surfaces_after_the_dispatch() -> None:
-    sent: list[object] = []
-    enforcer = MutationEnforcer(lambda request: sent.append(request) or RuntimeResponse(200, {}, b""))
+    sent: list[MutationDispatchRequest] = []
+    enforcer = MutationEnforcer(_recording_dispatch(sent))
 
     operation_id = OperationId("ckan", "datasets", "update")
     target = _target()

@@ -56,6 +56,11 @@ class StubProbeRunner:
         )
 
 
+def _call(service: object, name: str, /, **kwargs: object) -> object:
+    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
+    return getattr(service, name)(**kwargs)
+
+
 def _client(
     transport: SyncCaptureTransport,
     *,
@@ -141,7 +146,7 @@ def test_typed_signature_rejects_the_deprecated_page_parameter_with_type_error()
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        client.datasets.current_package_list_with_resources(page=2)  # ty: ignore[unknown-argument]
+        _call(client.datasets, "current_package_list_with_resources", page=2)
 
     assert transport.requests == []
 
@@ -228,7 +233,7 @@ def test_dataset_purge_requires_a_policy_at_the_call_boundary() -> None:
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        client.datasets.dataset_purge(id="pkg-1")  # ty: ignore[missing-argument]
+        _call(client.datasets, "dataset_purge", id="pkg-1")
 
     assert transport.requests == []
 

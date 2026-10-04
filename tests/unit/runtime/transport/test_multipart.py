@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import FrozenInstanceError
 from io import BytesIO
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -46,6 +46,11 @@ class _ReadCountingStream(BytesIO):
         return chunk
 
 
+def _assign(target: object, field: str, value: object) -> None:
+    """Assign a read-only field so frozen-dataclass rejection is what the assertion observes."""
+    setattr(target, field, value)
+
+
 def stream_part(source: BytesIO) -> UploadPart:
     return UploadPart(
         field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
@@ -77,8 +82,8 @@ def test_runtime_request_rejects_stream_parts_with_followed_redirects() -> None:
 
 
 def test_runtime_request_freezes_parts_into_a_tuple() -> None:
-    parts = list(_PARTS)
-    request = RuntimeRequest("POST", "https://example.test/upload", files=parts)  # ty: ignore[invalid-argument-type]
+    parts: list[UploadPart] = list(_PARTS)
+    request = RuntimeRequest("POST", "https://example.test/upload", files=tuple(parts))
 
     parts.append(UploadPart(field_name="extra", data=b"x"))
     assert request.files == _PARTS
@@ -87,15 +92,18 @@ def test_runtime_request_freezes_parts_into_a_tuple() -> None:
 def test_upload_part_is_frozen_and_validates_its_fields() -> None:
     part = _PARTS[0]
     with pytest.raises(FrozenInstanceError):
-        part.data = b"mutated"  # ty: ignore[invalid-assignment]
+        _assign(part, "data", b"mutated")
     with pytest.raises(ValueError, match="non-empty"):
         UploadPart(field_name="", data=b"x")
-    with pytest.raises(ValueError, match="bytes"):
-        UploadPart(field_name="upload", data="text")  # ty: ignore[invalid-argument-type]
-    with pytest.raises(ValueError, match="file names"):
-        UploadPart(field_name="upload", data=b"x", file_name=5)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(ValueError, match="content types"):
-        UploadPart(field_name="upload", data=b"x", content_type=[])  # ty: ignore[invalid-argument-type]
+    # Runtime validation is what each case asserts, so the invalid values are passed through untyped kwargs.
+    invalid: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("bytes", {"field_name": "upload", "data": "text"}),
+        ("file names", {"field_name": "upload", "data": b"x", "file_name": 5}),
+        ("content types", {"field_name": "upload", "data": b"x", "content_type": []}),
+    )
+    for match, kwargs in invalid:
+        with pytest.raises(ValueError, match=match):
+            UploadPart(**kwargs)
 
 
 def test_upload_part_requires_a_stream_to_be_both_readable_and_closeable() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from typing import Any, cast
 
 import datasluice.application as application_module
@@ -13,8 +14,8 @@ from datasluice.contracts.catalog.protocols import CatalogConnectorContext
 class _Session:
     _transport = object()
 
-    def open_catalog[T](self, factory: object, context: CatalogConnectorContext) -> T:
-        return cast(Any, factory)(context)
+    def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
+        return factory(context)
 
 
 class _Reader:

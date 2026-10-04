@@ -195,8 +195,9 @@ def test_runtime_request_freezes_header_mapping() -> None:
     request = RuntimeRequest("GET", "http://127.0.0.1:8000/", {"Authorization": "Bearer secret"})
 
     assert dict(request.headers) == {"Authorization": "Bearer secret"}
+    headers = cast("dict[str, str]", request.headers)
     with pytest.raises(TypeError):
-        request.headers["X-Extra"] = "1"  # ty: ignore[invalid-assignment]: asserts MappingProxyType raises at runtime
+        headers["X-Extra"] = "1"
 
 
 def test_urllib_cross_origin_redirect_strips_sensitive_headers_case_insensitively() -> None:

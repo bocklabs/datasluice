@@ -54,6 +54,11 @@ VOCABULARY_RESULT: dict[str, object] = {"id": "vocab-1", "name": "genres", "tags
 LICENSE_ROW: dict[str, object] = {"id": "cc-by", "title": "CC BY 4.0", "url": "https://creativecommons.org"}
 
 
+def _call(service: object, name: str, /, **kwargs: object) -> object:
+    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
+    return getattr(service, name)(**kwargs)
+
+
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
     return SyncCKANClient(
         transport, declared_ckan_profile(), CKANClientSettings(base_url=LOOPBACK_ORIGIN), owns_transport=False
@@ -125,10 +130,10 @@ def test_deprecated_fields_parameter_is_unrepresentable_on_typed_signatures() ->
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        client.vocabularies_licenses.tag_search(fields=["name"])  # ty: ignore[unknown-argument]
+        _call(client.vocabularies_licenses, "tag_search", fields=["name"])
 
     with pytest.raises(TypeError):
-        client.vocabularies_licenses.tag_autocomplete(fields=["name"])  # ty: ignore[unknown-argument]
+        _call(client.vocabularies_licenses, "tag_autocomplete", fields=["name"])
 
     assert transport.requests == []
 

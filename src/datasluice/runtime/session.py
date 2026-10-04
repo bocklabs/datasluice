@@ -90,6 +90,7 @@ class DataSluiceSession:
         self._async_transport = async_transport
         self.storage = storage
         self._cache = cache
+        self.state_store: StateStore
         if state_store is None:
             from datasluice.sync.state_store import InMemoryStateStore
 

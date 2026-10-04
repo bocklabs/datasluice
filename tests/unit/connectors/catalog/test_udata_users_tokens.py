@@ -69,7 +69,7 @@ class _AsyncRouter:
 
 
 def _routes(*items: tuple[str, str, int, object]) -> dict[tuple[str, str], tuple[int, object]]:
-    routes = {("GET", f"{ORIGIN}/api/1/site/"): (200, SITE)}
+    routes: dict[tuple[str, str], tuple[int, object]] = {("GET", f"{ORIGIN}/api/1/site/"): (200, SITE)}
     routes.update({(method, f"{ORIGIN}{path}"): (status, body) for method, path, status, body in items})
     return routes
 

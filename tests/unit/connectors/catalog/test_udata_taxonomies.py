@@ -235,7 +235,7 @@ _MALFORMED_SEGMENTS = (
     True,
     ["dataset-1"],
 )
-_MALFORMED_OBJECT_LISTS = (
+_MALFORMED_OBJECT_LISTS: tuple[object, ...] = (
     ["object", 4],
     [4, "object"],
     {},
@@ -244,7 +244,7 @@ _MALFORMED_OBJECT_LISTS = (
     None,
     [{"nested": []}, "object"],
 )
-_MALFORMED_STRING_LISTS = (["csv", 4], ["csv", ""], ["csv", None], {}, "csv", None, [b"csv"])
+_MALFORMED_STRING_LISTS: tuple[object, ...] = (["csv", 4], ["csv", ""], ["csv", None], {}, "csv", None, [b"csv"])
 _NON_FINITE_LITERALS = (b"NaN", b"Infinity", b"-Infinity")
 _TAXONOMY_READ_PATHS = (
     ("available_badges", (), "/api/1/datasets/badges/", b'{"certified": @@}'),

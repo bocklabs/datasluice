@@ -11,6 +11,7 @@ import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from importlib import resources
 from inspect import isawaitable
 from io import BytesIO
@@ -87,10 +88,13 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import CatalogError
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
+
+type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 if os.environ.get("UDATA_EVIDENCE_ORIGIN", "http://127.0.0.1:5640") != "http://127.0.0.1:5640":
     pytest.skip(
@@ -377,12 +381,19 @@ def _record_payload(record: object) -> Mapping[str, object]:
     return {key: value for key, value in record.payload.items() if key not in {"operation", "resource_kind"}}
 
 
-def _plain_json(value: object) -> object:
+def _plain_json(value: object) -> JsonValue:
     if isinstance(value, Mapping):
-        return {key: _plain_json(item) for key, item in value.items()}
+        return {str(key): _plain_json(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_plain_json(item) for item in value]
-    return value
+    return value if isinstance(value, (bool, int, float, str)) or value is None else str(value)
+
+
+def _plain_mapping(value: object) -> dict[str, JsonValue]:
+    """Return one plain JSON mapping, asserting the projection is an object and not an array."""
+    plain = _plain_json(value)
+    assert isinstance(plain, dict), plain
+    return plain
 
 
 def _assert_page_matches_raw(method: str, payload: object, page: UDataPageEnvelope) -> None:
@@ -411,6 +422,7 @@ def _assert_page_matches_raw(method: str, payload: object, page: UDataPageEnvelo
 
 
 def _assert_records_match_raw(method: str, payload: object, records: tuple[object, ...]) -> None:
+    raw_items: object
     if method == "available_organization_badges":
         assert isinstance(payload, Mapping)
         raw_items = [{"id": key, "label": value} for key, value in payload.items()]
@@ -1773,7 +1785,7 @@ def test_controlled_organization_read_matrix_matches_raw_routes() -> None:
                 status,
                 payload,
                 headers,
-                lambda method=method, args=args: getattr(client.organizations_memberships, method)(*args),
+                partial(getattr(client.organizations_memberships, method), *args),
             )
 
     async def run_async() -> None:
@@ -4831,9 +4843,9 @@ def _assert_dataservice_read_matches_raw(
         assert typed.metadata.get("status_code") == status, name
         return
     if isinstance(payload, bytes):
-        body = _plain_json(typed.payload)
-        assert body["size_bytes"] > 0, name
-        assert len(body["sha256"]) == 64, name
+        body = _plain_mapping(typed.payload)
+        assert isinstance(body["size_bytes"], int) and body["size_bytes"] > 0, name
+        assert isinstance(body["sha256"], str) and len(body["sha256"]) == 64, name
         expected = headers.get("content-type", "application/octet-stream").split(";")[0].lower()
         assert body["media_type"] == expected, name
         assert "body" not in body, name
@@ -4906,7 +4918,7 @@ def _seeded_dataset_id(token: str) -> str:
     return str(items[0]["id"])
 
 
-def _assert_dataservice_receipt_matches_raw(name: str, raw_status: int, receipt: object) -> None:
+def _assert_dataservice_receipt_matches_raw(name: str, raw_status: int, receipt: MutationReceipt) -> None:
     """Assert one mutation receipt reports the operation and status the raw route returned."""
     assert str(receipt.operation) == name, name
     assert receipt.audit_metadata["status_code"] == raw_status, (name, raw_status)
@@ -4937,9 +4949,10 @@ def _exercise_sync_dataservice_relationship_and_feature(
     linked = added.record.payload["datasets"]
     assert isinstance(linked, Mapping), linked
     assert linked["total"] >= 1, linked
-    raw_after_link = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
-    assert raw_after_link[0] == 200
-    assert _plain_json(added.record.payload)["datasets"] == raw_after_link[1]["datasets"]
+    link_status, raw_after_link, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
+    assert link_status == 200
+    assert isinstance(raw_after_link, Mapping), raw_after_link
+    assert _plain_mapping(added.record.payload)["datasets"] == raw_after_link["datasets"]
 
     updated = client.dataservices.update_dataservice(
         dataservice_id,
@@ -4948,7 +4961,7 @@ def _exercise_sync_dataservice_relationship_and_feature(
         _dataservice_mutation_policy("udata/api-v1.update-dataservice", dataservice_id),
     )
     assert updated.record is not None
-    assert _plain_json(updated.record.payload)["description"] == "Controlled evidence update"
+    assert _plain_mapping(updated.record.payload)["description"] == "Controlled evidence update"
     raw_patch, _, _ = _direct_request(
         token, "PATCH", f"/api/1/dataservices/{dataservice_id}/", body={"description": "Controlled evidence update"}
     )
@@ -4959,14 +4972,14 @@ def _exercise_sync_dataservice_relationship_and_feature(
         dataservice_id, permissions, _dataservice_mutation_policy("udata/api-v1.feature-dataservice", dataservice_id)
     )
     assert featured.record is not None
-    assert _plain_json(featured.record.payload)["featured"] is True
+    assert _plain_mapping(featured.record.payload)["featured"] is True
     unfeatured = client.dataservices.unfeature_dataservice(
         dataservice_id,
         permissions,
         _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", dataservice_id),
     )
     assert unfeatured.record is not None
-    assert _plain_json(unfeatured.record.payload)["featured"] is False
+    assert _plain_mapping(unfeatured.record.payload)["featured"] is False
 
     removed = client.dataservices.dataservice_dataset_remove(
         dataservice_id,
@@ -5101,14 +5114,14 @@ async def _exercise_async_dataservice_lifecycle(token: str, permissions: Effecti
                 _dataservice_mutation_policy("udata/api-v1.feature-dataservice", dataservice_id),
             )
             assert featured.record is not None
-            assert _plain_json(featured.record.payload)["featured"] is True
+            assert _plain_mapping(featured.record.payload)["featured"] is True
             unfeatured = await client.dataservices.unfeature_dataservice(
                 dataservice_id,
                 permissions,
                 _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", dataservice_id),
             )
             assert unfeatured.record is not None
-            assert _plain_json(unfeatured.record.payload)["featured"] is False
+            assert _plain_mapping(unfeatured.record.payload)["featured"] is False
             followed = await client.dataservices.follow_dataservice(
                 dataservice_id,
                 permissions,

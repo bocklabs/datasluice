@@ -49,8 +49,8 @@ jobs:
       - name: Set up UV
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
-      - name: Type check with ty
-        run: uv run --all-extras ty check .
+      - name: Type check with mypy
+        run: uv run --all-extras mypy src scripts tests
 
   provider-matrix:
     name: Resolve provider compatibility matrix
@@ -96,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.13", "3.14"]
     steps:
       # Full history: the controlled-evidence provenance test walks git history to the
       # commit that first wrote each record, and skips itself in a shallow clone.
@@ -139,7 +139,6 @@ jobs:
           pattern: core-coverage-*
           merge-multiple: true
           path: .coverage/
-          include-hidden-files: true
 
       - name: Combine core coverage
         run: uv run coverage combine --data-file=.coverage.core .coverage/
@@ -231,7 +230,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]
+        python-version: ["3.13", "3.14"]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -256,7 +255,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]
+        python-version: ["3.13", "3.14"]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -290,7 +289,7 @@ jobs:
 
       - name: Install built wheel & smoke import
         run: |
-          uv venv --python 3.12 /tmp/smoke
+          uv venv --python 3.13 /tmp/smoke
           uv pip install --python /tmp/smoke dist/*.whl
           /tmp/smoke/bin/python -c "import datasluice; print(datasluice.__version__)"
 

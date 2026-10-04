@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlencode
 
 import pytest
 
 httpx = pytest.importorskip("httpx")
+
+if TYPE_CHECKING:
+    from httpx import Request, Response
 
 from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import (
@@ -79,7 +82,7 @@ def test_httpx_transport_absent_retry_after_header_maps_to_none() -> None:
 
 
 def test_httpx_transport_maps_transport_failure() -> None:
-    def responder(request: httpx.Request) -> httpx.Response:
+    def responder(request: Request) -> Response:
         raise httpx.ConnectTimeout("timed out", request=request)
 
     probe = SyncProbe(responder)
@@ -283,7 +286,7 @@ def test_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() ->
 def test_httpx_malformed_redirect_location_closes_response_before_failing() -> None:
     closed: list[bool] = []
 
-    def responder(request: httpx.Request) -> httpx.Response:
+    def responder(request: Request) -> Response:
         del request
         response = httpx.Response(302, headers={"Location": "https://example.test:abc/next"})
         original_close = response.close
@@ -453,7 +456,7 @@ def test_async_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
 def test_async_httpx_malformed_redirect_location_closes_response_before_failing() -> None:
     closed: list[bool] = []
 
-    def responder(request: httpx.Request) -> httpx.Response:
+    def responder(request: Request) -> Response:
         del request
         response = httpx.Response(302, headers={"Location": "https://example.test:abc/next"})
         original_aclose = response.aclose
@@ -493,7 +496,7 @@ def test_async_httpx_refuses_non_http_redirect_target_and_redacts_failure_surfac
 
 
 def test_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
-    def responder(request: httpx.Request) -> httpx.Response:
+    def responder(request: Request) -> Response:
         del request
         response = httpx.Response(200)
 
@@ -514,7 +517,7 @@ def test_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
 
 
 def test_async_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
-    def responder(request: httpx.Request) -> httpx.Response:
+    def responder(request: Request) -> Response:
         del request
         response = httpx.Response(200)
 

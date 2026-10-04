@@ -47,7 +47,7 @@ jobs:
           upload_artifacts: 'true'
 
           background: >-
-            Review DataSluice as a contract-first Python 3.12+ open-data SDK and CLI.
+            Review DataSluice as a contract-first Python 3.13+ open-data SDK and CLI.
             Treat AGENTS.md, pyproject.toml, the applicable public contracts, and the
             current roadmap/design documentation as context, but review the changed
             implementation and its relevant call paths. The project is a deliberate

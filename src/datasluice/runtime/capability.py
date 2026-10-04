@@ -372,10 +372,10 @@ class EffectiveCapabilityCache:
             flight.error = self._invalidation_error(key[3])
             flight.event.set()
         self._sync_flights.clear()
-        for key, flight in tuple(self._async_flights.items()):
-            if not flight.done():
-                flight.set_exception(self._invalidation_error(key[3]))
-                flight.exception()
+        for key, async_flight in tuple(self._async_flights.items()):
+            if not async_flight.done():
+                async_flight.set_exception(self._invalidation_error(key[3]))
+                async_flight.exception()
         self._async_flights.clear()
 
     def _invalidate_operation(self, operation_id: OperationId) -> None:
@@ -388,11 +388,11 @@ class EffectiveCapabilityCache:
                 flight.error = self._invalidation_error(operation_id)
                 flight.event.set()
                 self._sync_flights.pop(key, None)
-        for key, flight in tuple(self._async_flights.items()):
+        for key, async_flight in tuple(self._async_flights.items()):
             if key[3] == operation_id:
-                if not flight.done():
-                    flight.set_exception(self._invalidation_error(operation_id))
-                    flight.exception()
+                if not async_flight.done():
+                    async_flight.set_exception(self._invalidation_error(operation_id))
+                    async_flight.exception()
                 self._async_flights.pop(key, None)
 
     def _follower_failure(self, operation_id: OperationId, exc: BaseException) -> BaseException:

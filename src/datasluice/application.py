@@ -202,6 +202,7 @@ def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
     parts = urlsplit(locator.uri)
     identity_source = str(locator.to_dict()["uri"])
     resource_id = hashlib.sha256(identity_source.encode()).hexdigest()
+    access: LocalFile | ObjectStorage | HttpDownload
     if parts.scheme == "file":
         access = LocalFile(path=unquote(parts.path))
     elif parts.scheme in _OBJECT_STORAGE_SCHEMES:

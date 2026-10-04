@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
+from http.client import HTTPResponse
 from urllib.parse import SplitResult, urlsplit
 from urllib.request import Request, urlopen
 
@@ -139,8 +140,8 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
     return next((value for key, value in headers.items() if key.lower() == name), None)
 
 
-def _sync_body(response: object) -> bytes:
-    return response.read()  # ty: ignore[unresolved-attribute]
+def _sync_body(response: HTTPResponse) -> bytes:
+    return response.read()
 
 
 async def _async_body(reader: asyncio.StreamReader, headers: Mapping[str, str]) -> bytes:

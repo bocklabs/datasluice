@@ -23,6 +23,13 @@ _MAPPING_RECORD_PAYLOAD_PATH = "mapping_record.payload"
 _NATIVE_RECORD_PAYLOAD_PATH = "native_record.payload"
 
 
+def _envelope_item(item: object) -> dict[str, object]:
+    to_dict = getattr(item, "to_dict", None)
+    if not callable(to_dict):
+        raise _contract_error("result_envelope.items")
+    return cast(dict[str, object], to_dict())
+
+
 def _contract_error(path: str) -> DataSluiceError:
     return DataSluiceError(f"Invalid schema-v1 catalog contract at {path}")
 
@@ -635,7 +642,7 @@ class ResultEnvelope[T]:
         return {
             "schema_version": 1,
             "kind": "result_envelope",
-            "items": [item.to_dict() for item in self.items],  # ty: ignore[unresolved-attribute]: validated in post-init
+            "items": [_envelope_item(item) for item in self.items],
             "page": self.page.to_dict() if self.page is not None else None,
             "warnings": [warning.to_dict() for warning in self.warnings],
             "platform": self.platform.to_dict() if self.platform is not None else None,

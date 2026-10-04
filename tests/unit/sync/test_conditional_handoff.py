@@ -21,7 +21,7 @@ class _ResponseAwareReader:
         self._delegate = DataPlaneResourceReader(transport=transport)
         self.open_calls = 0
         self.open_response_calls = 0
-        self.response_streams = []
+        self.response_streams: list[Any] = []
 
     def open(self, resource, *, batch_size: int = 65536):
         self.open_calls += 1

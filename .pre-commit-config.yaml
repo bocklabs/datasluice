@@ -3,7 +3,7 @@ repos:
     rev: v3.21.2
     hooks:
       -   id: pyupgrade
-          args: ["--py312-plus"]
+          args: ["--py313-plus"]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -18,7 +18,6 @@ repos:
       - id: debug-statements
       - id: mixed-line-ending
         args: ["--fix=lf"]
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.13.2
     hooks:
@@ -51,9 +50,9 @@ repos:
         pass_filenames: false
         always_run: true
 
-      - id: ty
-        name: type check (ty)
-        entry: uv run --frozen --all-extras ty check .
+      - id: mypy
+        name: type check (mypy)
+        entry: uv run --frozen --all-extras mypy src scripts tests
         language: system
         types: [python]
         pass_filenames: false

@@ -19,6 +19,7 @@ from datasluice.contracts.catalog.protocols import (
     CatalogConnectorContext,
     SyncCatalogOperationExecutor,
 )
+from datasluice.domain import Resource
 from datasluice.domain.catalog.auth import CredentialResolver
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.exceptions import StreamClosedError
@@ -70,8 +71,8 @@ class _MinimalSession:
 
     _transport = object()
 
-    def open_catalog[T](self, factory: object, context: CatalogConnectorContext) -> T:
-        return cast("T", cast("Callable[[CatalogConnectorContext], object]", factory)(context))
+    def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
+        return factory(context)
 
 
 class _BatchStream:
@@ -186,7 +187,9 @@ def test_facade_opens_direct_locator_through_the_injected_reader() -> None:
 
     assert batches == [b"batch-one"]
     assert len(reader.opened) == 1
-    assert reader.opened[0].url == "file:///data/example.csv"  # ty: ignore[unresolved-attribute]
+    opened_resource = reader.opened[0]
+    assert isinstance(opened_resource, Resource)
+    assert opened_resource.url == "file:///data/example.csv"
 
 
 def test_facade_open_returns_lazy_single_use_resource_wrapper() -> None:

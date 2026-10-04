@@ -26,6 +26,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -78,22 +79,17 @@ def _rebind_to_local_fixture(body: str, source: Path, destination: Path) -> str:
 
 @contextmanager
 def _no_external_sockets() -> Iterator[None]:
-    real_connect = socket.socket.connect
-    real_create = socket.create_connection
-
     def blocked_connect(sock: socket.socket, address: Any) -> None:
         raise AssertionError(f"documented example contacted {address!r}")
 
     def blocked_create(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
         raise AssertionError(f"documented example contacted {address!r}")
 
-    socket.socket.connect = blocked_connect  # ty: ignore[invalid-assignment]
-    socket.create_connection = blocked_create  # ty: ignore[invalid-assignment]
-    try:
+    with (
+        patch.object(socket.socket, "connect", blocked_connect),
+        patch.object(socket, "create_connection", blocked_create),
+    ):
         yield
-    finally:
-        socket.socket.connect = real_connect
-        socket.create_connection = real_create
 
 
 def _execute_page(page: Path, tmp_path: Path) -> None:

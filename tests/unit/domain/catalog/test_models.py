@@ -6,7 +6,7 @@ import dataclasses
 import json
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -38,6 +38,11 @@ _CREDENTIAL_PAYLOAD: dict[str, object] = {
 }
 
 
+def _assign(target: object, field: str, value: object) -> None:
+    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
+    setattr(target, field, value)
+
+
 def _dataset() -> DatasetRecord:
     return DatasetRecord(
         id=CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather"),
@@ -59,10 +64,14 @@ def test_catalog_id_requires_typed_platform_and_resource_kind_and_round_trips() 
     }
     assert CatalogId.from_dict(identifier.to_dict()) == identifier
 
-    with pytest.raises(DataSluiceError):
-        CatalogId("ckan", ResourceKind.DATASET, "weather")  # ty: ignore[invalid-argument-type]: runtime validation
-    with pytest.raises(DataSluiceError):
-        CatalogId(CatalogPlatform.CKAN, "dataset", "weather")  # ty: ignore[invalid-argument-type]: runtime validation
+    # Runtime validation is what these assert, so the invalid values pass through untyped kwargs.
+    invalid: tuple[dict[str, Any], ...] = (
+        {"platform": "ckan", "resource_kind": ResourceKind.DATASET, "value": "weather"},
+        {"platform": CatalogPlatform.CKAN, "resource_kind": "dataset", "value": "weather"},
+    )
+    for kwargs in invalid:
+        with pytest.raises(DataSluiceError):
+            CatalogId(**kwargs)
     with pytest.raises(DataSluiceError):
         NativeRecord(
             platform=CatalogPlatform.UDATA,
@@ -88,7 +97,7 @@ def test_native_and_normalized_records_are_recursively_immutable_and_thaw_to_fre
     with pytest.raises(TypeError):
         cast(dict[str, object], native.payload)["state"] = "active"
     with pytest.raises(dataclasses.FrozenInstanceError):
-        dataset.name = "Other"  # ty: ignore[invalid-assignment]: frozen dataclass assertion
+        _assign(dataset, "name", "Other")
 
     serialized = native.to_dict()
     serialized_payload = cast(dict[str, list[dict[str, str]]], serialized["payload"])
@@ -152,12 +161,9 @@ def test_catalog_id_rejects_malformed_versions_kinds_and_values(value: object) -
 )
 def test_records_reject_invalid_extensions_and_json_values(value: object) -> None:
     record_id = CatalogId(CatalogPlatform.CKAN, ResourceKind.DATASET, "weather")
+    # Runtime validation is the assertion; the rejected value reaches the constructor untyped.
     with pytest.raises(DataSluiceError):
-        DatasetRecord(
-            id=record_id,
-            name="Weather",
-            extensions=value,  # ty: ignore[invalid-argument-type]: runtime validation assertion
-        )
+        DatasetRecord(id=record_id, name="Weather", extensions=cast("Mapping[str, object]", value))
 
 
 def _credential_record() -> NativeRecord:
