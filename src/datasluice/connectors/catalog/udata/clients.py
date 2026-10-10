@@ -116,6 +116,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.auth_oauth import (
         SyncAuthOAuthService as _SyncAuthOAuthService,
     )
+    from datasluice.connectors.catalog.udata.services.contact_visualization import (
+        AsyncContactVisualizationService as _AsyncContactVisualizationService,
+    )
+    from datasluice.connectors.catalog.udata.services.contact_visualization import (
+        SyncContactVisualizationService as _SyncContactVisualizationService,
+    )
     from datasluice.connectors.catalog.udata.services.dataservices import (
         AsyncDataservicesService as _AsyncDataservicesService,
     )
@@ -206,7 +212,7 @@ _PAGER_PARAMS = frozenset({"page", "page_size"})
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
-_CONTROLLED_DOCKERFILE_SHA256 = "6d3b4b1fbd47bfc1da08c96d57ef2f402ede125c25839c8323252d10066eba6b"
+_CONTROLLED_DOCKERFILE_SHA256 = "a94687e5a97585c598cfe7a9755ed30e46659cc5fd34b62c334fa447dc5ddf0a"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
 _CONTROLLED_UDATA_VERSION = "17.6.0"
 _CONTROLLED_UDATA_IMAGE_SPEC = ("udata-evidence-udata", "", "udata-evidence-udata")
@@ -3312,6 +3318,11 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the typed OAuth and authentication service."""
         return SyncAuthOAuthService(self)
 
+    @property
+    def contact_visualization(self) -> _SyncContactVisualizationService:
+        """Expose the typed contact-point and visualization service."""
+        return SyncContactVisualizationService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -3779,6 +3790,11 @@ class AsyncUDataClient(_UDataClientCore):
     def auth_oauth(self) -> _AsyncAuthOAuthService:
         """Expose the typed OAuth and authentication service."""
         return AsyncAuthOAuthService(self)
+
+    @property
+    def contact_visualization(self) -> _AsyncContactVisualizationService:
+        """Expose the typed contact-point and visualization service."""
+        return AsyncContactVisualizationService(self)
 
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
@@ -4266,6 +4282,10 @@ def _load_services():
         SyncActivityDiscussionsService,
     )
     from datasluice.connectors.catalog.udata.services.auth_oauth import AsyncAuthOAuthService, SyncAuthOAuthService
+    from datasluice.connectors.catalog.udata.services.contact_visualization import (
+        AsyncContactVisualizationService,
+        SyncContactVisualizationService,
+    )
     from datasluice.connectors.catalog.udata.services.dataservices import (
         AsyncDataservicesService,
         SyncDataservicesService,
@@ -4323,6 +4343,8 @@ def _load_services():
         SyncSpatialService,
         AsyncAuthOAuthService,
         SyncAuthOAuthService,
+        AsyncContactVisualizationService,
+        SyncContactVisualizationService,
     )
 
 
@@ -4351,4 +4373,6 @@ def _load_services():
     SyncSpatialService,
     AsyncAuthOAuthService,
     SyncAuthOAuthService,
+    AsyncContactVisualizationService,
+    SyncContactVisualizationService,
 ) = _load_services()
