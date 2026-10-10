@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -14,7 +14,9 @@ from datasluice.contracts.catalog.protocols import (
     SyncManagedExecutor,
 )
 from tests.helpers.catalog_transport import AsyncLoopbackTransport, SyncLoopbackTransport
-from tests.helpers.http_server import _CapturingServer
+
+if TYPE_CHECKING:
+    from tests.helpers.http_server import _CapturingServer
 
 
 def test_sync_transport_uses_real_loopback_path_and_headers(
@@ -85,9 +87,9 @@ def test_async_cancellation_releases_the_test_transport(
                 parked.set()
                 await asyncio.Future()
 
-            writer.close = spy_close  # ty: ignore[invalid-assignment]
-            writer.wait_closed = spy_wait_closed  # ty: ignore[invalid-assignment]
-            writer.drain = lambda: gated_drain()  # ty: ignore[invalid-assignment]
+            monkeypatch.setattr(writer, "close", spy_close)
+            monkeypatch.setattr(writer, "wait_closed", spy_wait_closed)
+            monkeypatch.setattr(writer, "drain", gated_drain)
             return reader, writer
 
         monkeypatch.setattr(asyncio, "open_connection", gated_open_connection)
@@ -111,8 +113,8 @@ def test_caller_owned_transport_is_not_closed_by_connector_lifecycle() -> None:
     """Caller-owned dependencies survive connector shutdown while ownership remains explicit."""
     transport = SyncLoopbackTransport()
     context = CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, transport),
-        async_executor=cast(AsyncCatalogOperationExecutor, object()),
+        sync_executor=cast("SyncCatalogOperationExecutor", transport),
+        async_executor=cast("AsyncCatalogOperationExecutor", object()),
         manages_sync_executor=False,
     )
 

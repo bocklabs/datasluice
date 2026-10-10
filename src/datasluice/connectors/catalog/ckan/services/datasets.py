@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import NotRequired, TypedDict, Unpack
+from typing import TYPE_CHECKING, NotRequired, TypedDict, Unpack
 
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
@@ -12,13 +12,15 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncDatasetService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import DatasetRecord, ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.domain.catalog.models import DatasetRecord, ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _DATASET_GROUP = "datasets"
 

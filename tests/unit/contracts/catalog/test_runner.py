@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from datasluice.contracts.catalog.fakes import AsyncReferenceConnector, SyncReferenceConnector
 from datasluice.contracts.catalog.fixtures import ReferenceCase, load_reference_fixture_set
-from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 from datasluice.contracts.catalog.runner import catalog_contract_cases, run_catalog_contract
-from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
+    from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
 
 
 class FailingSyncReferenceConnector(SyncReferenceConnector):
@@ -51,8 +53,8 @@ def test_runner_accumulates_declared_success_and_rejection_outcomes_without_stop
 
     report = run_catalog_contract(
         catalog_contract_cases(fixture_set),
-        sync_client=cast(SyncCatalogClient, sync_client),
-        async_client=cast(AsyncCatalogClient, async_client),
+        sync_client=cast("SyncCatalogClient", sync_client),
+        async_client=cast("AsyncCatalogClient", async_client),
         fixture_set=fixture_set,
     )
 
@@ -71,8 +73,8 @@ def test_runner_retains_a_failed_case_and_exposes_its_pytest_identifier() -> Non
 
     report = run_catalog_contract(
         (case,),
-        sync_client=cast(SyncCatalogClient, sync_client),
-        async_client=cast(AsyncCatalogClient, async_client),
+        sync_client=cast("SyncCatalogClient", sync_client),
+        async_client=cast("AsyncCatalogClient", async_client),
         fixture_set=fixture_set,
     )
 

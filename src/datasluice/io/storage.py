@@ -8,10 +8,13 @@ pipeline.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from datasluice.exceptions import DownloadError
 from datasluice.io.local import ensure_dir, save_bytes
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class Storage(ABC):

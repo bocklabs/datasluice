@@ -6,14 +6,16 @@ import inspect
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pytest
 from typer.testing import CliRunner
 
 from datasluice.cli import materialize as materialize_command
 from datasluice.cli.app import app
 from datasluice.domain import Artifact, HttpDownload, Resource
+
+if TYPE_CHECKING:
+    import pytest
 
 runner = CliRunner()
 

@@ -6,14 +6,12 @@ import asyncio
 import inspect
 import math
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
-from typing import Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 from urllib.parse import urlsplit, urlunsplit
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard
-from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
     CredentialClassification,
@@ -34,6 +32,11 @@ from datasluice.errors.catalog import (
     UnsupportedCapabilityError,
 )
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from datasluice.domain.catalog.auth import EffectivePermissions
 
 
 @runtime_checkable
@@ -56,6 +59,9 @@ class AsyncProbeRunner(Protocol):
 class _CacheEntry:
     profile: EffectiveCapabilityProfile
     timestamp: float
+
+
+_AsyncFlight = asyncio.Future[EffectiveCapabilityProfile]
 
 
 @dataclass(slots=True)
@@ -99,7 +105,7 @@ class EffectiveCapabilityCache:
         self._lock = threading.Lock()
         self._entries: dict[tuple[str, str, str, OperationId], _CacheEntry] = {}
         self._sync_flights: dict[tuple[str, str, str, OperationId], _SyncFlight] = {}
-        self._async_flights: dict[tuple[str, str, str, OperationId], asyncio.Future[EffectiveCapabilityProfile]] = {}
+        self._async_flights: dict[tuple[str, str, str, OperationId], _AsyncFlight] = {}
 
     @property
     def baseline_profile(self) -> EffectiveCapabilityProfile:
@@ -129,6 +135,10 @@ class EffectiveCapabilityCache:
         return self._resolve_sync_leader(operation_id, credential_scope, cache_key, flight)
 
     def _sync_flight(self, cache_key: tuple[str, str, str, OperationId]) -> tuple[_SyncFlight, bool]:
+        """Return the shared synchronous flight for *cache_key* and whether this caller leads it.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
         with self._lock:
             flight = self._sync_flights.get(cache_key)
             if flight is not None:
@@ -157,27 +167,119 @@ class EffectiveCapabilityCache:
             effective = self._resolve_from_runner(operation_id, credential_scope=credential_scope)
             completed_at = self._clock()
         except BaseException as exc:
-            with self._lock:
-                flight.error = self._follower_failure(operation_id, exc)
-                if self._sync_flights.get(cache_key) is flight:
-                    self._sync_flights.pop(cache_key, None)
-                flight.event.set()
+            self._fail_sync_leader(cache_key, flight, operation_id, exc)
             raise
         with self._lock:
-            if flight.cancelled:
-                if self._sync_flights.get(cache_key) is flight:
-                    self._sync_flights.pop(cache_key, None)
-                if flight.error is None:
-                    flight.error = self._invalidation_error(operation_id)
-                if not flight.event.is_set():
-                    flight.event.set()
-                raise flight.error
-            self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
-            flight.profile = effective
-            if self._sync_flights.get(cache_key) is flight:
-                self._sync_flights.pop(cache_key, None)
-            flight.event.set()
+            self._complete_sync_leader(cache_key, flight, operation_id, effective, completed_at)
         return effective
+
+    def _fail_sync_leader(
+        self,
+        cache_key: tuple[str, str, str, OperationId],
+        flight: _SyncFlight,
+        operation_id: OperationId,
+        exc: BaseException,
+    ) -> None:
+        """Publish one failed synchronous probe to its waiting followers.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
+        with self._lock:
+            flight.error = self._follower_failure(operation_id, exc)
+            self._discard_sync_flight(cache_key, flight)
+            flight.event.set()
+
+    def _complete_sync_leader(
+        self,
+        cache_key: tuple[str, str, str, OperationId],
+        flight: _SyncFlight,
+        operation_id: OperationId,
+        effective: EffectiveCapabilityProfile,
+        completed_at: float,
+    ) -> None:
+        """Cache one successful synchronous probe and release its waiting followers.
+
+        The caller must hold ``self._lock``; this helper never acquires it,
+        because ``threading.Lock`` is not reentrant.
+        """
+        if flight.cancelled:
+            self._discard_sync_flight(cache_key, flight)
+            if flight.error is None:
+                flight.error = self._invalidation_error(operation_id)
+            if not flight.event.is_set():
+                flight.event.set()
+            raise flight.error
+        self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
+        flight.profile = effective
+        self._discard_sync_flight(cache_key, flight)
+        flight.event.set()
+
+    def _discard_sync_flight(self, cache_key: tuple[str, str, str, OperationId], flight: _SyncFlight) -> None:
+        """Drop the in-flight probe for *cache_key* when *flight* still owns it.
+
+        The caller must hold ``self._lock``.
+        """
+        if self._sync_flights.get(cache_key) is flight:
+            self._sync_flights.pop(cache_key, None)
+
+    def _async_flight(self, cache_key: tuple[str, str, str, OperationId]) -> tuple[_AsyncFlight, bool]:
+        """Return the shared asynchronous flight for *cache_key* and whether this caller leads it.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
+        with self._lock:
+            flight = self._async_flights.get(cache_key)
+            if flight is not None:
+                return flight, False
+            created = asyncio.get_running_loop().create_future()
+            self._async_flights[cache_key] = created
+            return created, True
+
+    def _discard_async_flight(self, cache_key: tuple[str, str, str, OperationId], flight: _AsyncFlight) -> None:
+        """Drop the in-flight asynchronous probe for *cache_key* when *flight* still owns it.
+
+        The caller must hold ``self._lock``.
+        """
+        if self._async_flights.get(cache_key) is flight:
+            self._async_flights.pop(cache_key, None)
+
+    def _fail_async_leader(
+        self,
+        cache_key: tuple[str, str, str, OperationId],
+        flight: _AsyncFlight,
+        operation_id: OperationId,
+        exc: BaseException,
+    ) -> None:
+        """Publish one failed asynchronous probe to its waiting followers.
+
+        Acquires ``self._lock`` itself; callers must not already hold it.
+        """
+        with self._lock:
+            self._discard_async_flight(cache_key, flight)
+            if not flight.done():
+                flight.set_exception(self._async_follower_failure(operation_id, exc))
+                flight.exception()
+
+    def _complete_async_leader(
+        self,
+        cache_key: tuple[str, str, str, OperationId],
+        flight: _AsyncFlight,
+        operation_id: OperationId,
+        effective: EffectiveCapabilityProfile,
+        completed_at: float,
+    ) -> None:
+        """Cache one successful asynchronous probe and release its waiting followers.
+
+        The caller must hold ``self._lock``; this helper never acquires it,
+        because ``threading.Lock`` is not reentrant.
+        """
+        if flight.cancelled():
+            self._discard_async_flight(cache_key, flight)
+            raise self._invalidation_error(operation_id)
+        self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
+        self._discard_async_flight(cache_key, flight)
+        if not flight.done():
+            flight.set_result(effective)
 
     async def resolve_async(
         self, operation_id: OperationId, *, credential_scope: str = "anonymous"
@@ -193,13 +295,7 @@ class EffectiveCapabilityCache:
         if operation_id not in self._declared_profile.operations or self._async_probe_runner is None:
             return self._baseline
 
-        loop = asyncio.get_running_loop()
-        with self._lock:
-            flight = self._async_flights.get(cache_key)
-            leader = flight is None
-            if leader:
-                flight = loop.create_future()
-                self._async_flights[cache_key] = flight
+        flight, leader = self._async_flight(cache_key)
         if not leader:
             return await flight
 
@@ -207,23 +303,10 @@ class EffectiveCapabilityCache:
             effective = await self._resolve_from_async_runner(operation_id, credential_scope=credential_scope)
             completed_at = self._clock()
         except BaseException as exc:
-            with self._lock:
-                if self._async_flights.get(cache_key) is flight:
-                    self._async_flights.pop(cache_key, None)
-                if not flight.done():
-                    flight.set_exception(self._async_follower_failure(operation_id, exc))
-                    flight.exception()
+            self._fail_async_leader(cache_key, flight, operation_id, exc)
             raise
         with self._lock:
-            if flight.cancelled():
-                if self._async_flights.get(cache_key) is flight:
-                    self._async_flights.pop(cache_key, None)
-                raise self._invalidation_error(operation_id)
-            self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
-            if self._async_flights.get(cache_key) is flight:
-                self._async_flights.pop(cache_key, None)
-            if not flight.done():
-                flight.set_result(effective)
+            self._complete_async_leader(cache_key, flight, operation_id, effective, completed_at)
         return effective
 
     def peek(self, operation_id: OperationId, *, credential_scope: str = "anonymous") -> EffectiveCapabilityProfile:
@@ -292,10 +375,10 @@ class EffectiveCapabilityCache:
             flight.error = self._invalidation_error(key[3])
             flight.event.set()
         self._sync_flights.clear()
-        for key, flight in tuple(self._async_flights.items()):
-            if not flight.done():
-                flight.set_exception(self._invalidation_error(key[3]))
-                flight.exception()
+        for key, async_flight in tuple(self._async_flights.items()):
+            if not async_flight.done():
+                async_flight.set_exception(self._invalidation_error(key[3]))
+                async_flight.exception()
         self._async_flights.clear()
 
     def _invalidate_operation(self, operation_id: OperationId) -> None:
@@ -308,11 +391,11 @@ class EffectiveCapabilityCache:
                 flight.error = self._invalidation_error(operation_id)
                 flight.event.set()
                 self._sync_flights.pop(key, None)
-        for key, flight in tuple(self._async_flights.items()):
+        for key, async_flight in tuple(self._async_flights.items()):
             if key[3] == operation_id:
-                if not flight.done():
-                    flight.set_exception(self._invalidation_error(operation_id))
-                    flight.exception()
+                if not async_flight.done():
+                    async_flight.set_exception(self._invalidation_error(operation_id))
+                    async_flight.exception()
                 self._async_flights.pop(key, None)
 
     def _follower_failure(self, operation_id: OperationId, exc: BaseException) -> BaseException:
@@ -366,7 +449,7 @@ class EffectiveCapabilityCache:
             result = runner.probe(operation_id)
             if inspect.isawaitable(result):
                 raise TypeError("Synchronous capability runners cannot return awaitables.")
-            evidence = cast(ProbeEvidence, result)
+            evidence = cast("ProbeEvidence", result)
             self._validate_evidence(operation_id, evidence, credential_scope=credential_scope)
         except CatalogValidationError:
             raise

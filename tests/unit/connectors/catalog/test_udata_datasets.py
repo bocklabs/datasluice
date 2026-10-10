@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from datasluice.connectors.catalog.udata import mapping
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetCreateInput,
@@ -26,8 +27,8 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import NativeRecord
-from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     CatalogConflictError,
@@ -39,7 +40,10 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
     UnauthenticatedError,
 )
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.operations import OperationId
 
 _USER_CREDENTIAL = UDataCredential(api_key="secret-key")
 _ADMIN_CREDENTIAL = UDataCredential(api_key="admin-key")
@@ -452,8 +456,8 @@ def test_dataset_failures_map_to_typed_errors_without_retry_on_client_errors() -
             client.datasets.create(client_input, permissions=_USER_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert gone.value.capability_state == "unavailable"
-    invalid_receipt = cast(dict[str, object], invalid.value.metadata["receipt"])
-    audit_metadata = cast(dict[str, object], invalid_receipt["audit_metadata"])
+    invalid_receipt = cast("dict[str, object]", invalid.value.metadata["receipt"])
+    audit_metadata = cast("dict[str, object]", invalid_receipt["audit_metadata"])
     assert audit_metadata["status_code"] == 400
     assert invalid_receipt["outcome"] == "failed"
     assert len([r for r in transport.requests if r.url.endswith("/api/1/site/")]) == 1
@@ -569,7 +573,7 @@ def _sync_calls(client: SyncUDataClient) -> dict[str, object]:
 
 
 def test_async_dataset_service_matches_sync_wire_exactly() -> None:
-    routes = _site_first(dict((key, value) for family in PARITY_ROUTES.values() for key, value in family.items()))
+    routes = _site_first({key: value for family in PARITY_ROUTES.values() for key, value in family.items()})
     transport = RouterAsyncTransport(routes)
     client = AsyncUDataClient(
         transport,
@@ -652,7 +656,7 @@ def test_async_dataset_service_matches_sync_wire_exactly() -> None:
 
     async_results = asyncio.run(run())
 
-    sync_routes = _site_first(dict((key, value) for family in PARITY_ROUTES.values() for key, value in family.items()))
+    sync_routes = _site_first({key: value for family in PARITY_ROUTES.values() for key, value in family.items()})
     sync_transport, sync_client = _sync_client_with_transport(sync_routes, _USER_CREDENTIAL)
     with sync_client:
         sync_results = _sync_calls(sync_client)
@@ -705,9 +709,8 @@ def test_cr01_feature_requires_admin_role_evidence() -> None:
 def test_cr02_rejected_mutations_carry_redacted_receipts() -> None:
     routes = _site_first({})
     transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
-    with client:
-        with pytest.raises(ForbiddenError) as excinfo:
-            client.datasets.feature("abc", permissions=_USER_PERMISSIONS)
+    with client, pytest.raises(ForbiddenError) as excinfo:
+        client.datasets.feature("abc", permissions=_USER_PERMISSIONS)
 
     receipt = _receipt_from(excinfo.value)
     assert receipt.operation == "udata/api-v1.feature-dataset"
@@ -766,9 +769,8 @@ def test_cr01_retry_enabled_idempotency_is_rejected_before_sync_mutation_dispatc
         idempotency=idempotency,
     )
 
-    with client:
-        with pytest.raises(ForbiddenError) as raised:
-            client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=policy)
+    with client, pytest.raises(ForbiddenError) as raised:
+        client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=policy)
 
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in transport.requests if request.url == delete_url] == []
@@ -925,9 +927,8 @@ def test_cr05_foreign_origin_probe_evidence_is_rejected() -> None:
         probe_runner=ForeignRunner(),
         owns_transport=False,
     )
-    with client:
-        with pytest.raises(CatalogError, match="deployment origin"):
-            client.datasets.list()
+    with client, pytest.raises(CatalogError, match="deployment origin"):
+        client.datasets.list()
 
 
 def test_cr05_capability_evidence_is_bound_to_deployment_and_credential_scope() -> None:
@@ -1074,7 +1075,7 @@ def test_cr02_transport_failure_keeps_an_ambiguous_receipt_on_the_original_error
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             if request.method == "POST":
                 self.requests.append(request)
-                raise TransportFailure("connection dropped after dispatch")
+                raise TransportError("connection dropped after dispatch")
             return super().send(request)
 
     transport = FailingTransport(_site_first({}))
@@ -1089,7 +1090,7 @@ def test_cr02_transport_failure_keeps_an_ambiguous_receipt_on_the_original_error
     with client:
         client_input = DatasetCreateInput(title="T", description="D")
         mutation_policy = _mutation_policy("udata/api-v1.create-dataset", "T")
-        with pytest.raises(TransportFailure) as raised:
+        with pytest.raises(TransportError) as raised:
             client.datasets.create(client_input, permissions=_USER_PERMISSIONS, mutation_policy=mutation_policy)
 
     assert _receipt_from(raised.value).outcome == "ambiguous"
@@ -1116,9 +1117,8 @@ def test_cr03_idempotency_key_is_not_silently_treated_as_retry_authorization() -
     )
     transport, client = _sync_client_with_transport(_site_first({}), _USER_CREDENTIAL)
 
-    with client:
-        with pytest.raises(ForbiddenError) as raised:
-            client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=policy)
+    with client, pytest.raises(ForbiddenError) as raised:
+        client.datasets.delete("abc", _USER_PERMISSIONS, mutation_policy=policy)
 
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in transport.requests if request.method == "DELETE"] == []
@@ -1197,9 +1197,8 @@ def test_wr04_invalid_text_bytes_raise_a_typed_native_error() -> None:
             ): (200, b"\xff", {"Content-Type": "text/turtle"})
         }
     )
-    with _sync_client(routes) as client:
-        with pytest.raises(NativeCatalogError, match="UTF-8"):
-            client.datasets.rdf_format("abc", "ttl")
+    with _sync_client(routes) as client, pytest.raises(NativeCatalogError, match="UTF-8"):
+        client.datasets.rdf_format("abc", "ttl")
 
 
 def test_wr05_v1_page_retains_previous_link_and_field_presence() -> None:
@@ -1218,17 +1217,16 @@ def test_wr05_v1_page_retains_previous_link_and_field_presence() -> None:
     assert envelope.native_page.previous_page == "http://127.0.0.1:5640/api/1/datasets/?page=1"
     assert "previous_page" in envelope.native_page.present_fields
     assert envelope.platform is not None
-    metadata = cast(dict[str, object], envelope.platform.extensions["udata.page"])
+    metadata = cast("dict[str, object]", envelope.platform.extensions["udata.page"])
     assert metadata["previous_page"] == "http://127.0.0.1:5640/api/1/datasets/?page=1"
-    assert "previous_page" in cast(list[str], metadata["present_fields"])
+    assert "previous_page" in cast("list[str]", metadata["present_fields"])
 
 
 def test_wr06_malformed_documented_dataset_fields_fail_with_route_identity() -> None:
     malformed = {**_dataset_doc(), "private": "false"}
     routes = _site_first({("GET", "http://127.0.0.1:5640/api/1/datasets/abc/"): malformed})
-    with _sync_client(routes) as client:
-        with pytest.raises(CatalogValidationError) as raised:
-            client.datasets.get("abc")
+    with _sync_client(routes) as client, pytest.raises(CatalogValidationError) as raised:
+        client.datasets.get("abc")
 
     assert raised.value.operation == "udata/api-v1.get-dataset"
     with pytest.raises(CatalogValidationError):
@@ -1254,10 +1252,10 @@ def test_wr07_nested_extras_inputs_and_results_are_json_safe_and_immutable() -> 
         )
 
     with pytest.raises(TypeError):
-        cast(dict[str, object], result.extras)["nested"] = {}
-    nested = cast(Mapping[str, object], result.extras)["nested"]
+        cast("dict[str, object]", result.extras)["nested"] = {}
+    nested = cast("Mapping[str, object]", result.extras)["nested"]
     with pytest.raises(TypeError):
-        cast(dict[str, object], nested)["items"] = []
+        cast("dict[str, object]", nested)["items"] = []
 
 
 def test_wr08_async_mutations_use_async_credential_resolution() -> None:
@@ -1331,13 +1329,13 @@ def test_wr09_async_mutation_failure_preserves_the_same_ambiguous_receipt() -> N
 
 
 def test_wr10_query_models_reject_non_scalar_filter_values_at_construction() -> None:
-    typed_value = cast(str, 1)
+    typed_value = cast("str", 1)
     with pytest.raises(ValueError):
         DatasetListQuery(sort=typed_value)
-    typed_value_2 = cast(Mapping[str, str | bool | tuple[str, ...]], {"tag": 1})
+    typed_value_2 = cast("Mapping[str, str | bool | tuple[str, ...]]", {"tag": 1})
     with pytest.raises(ValueError):
         DatasetListQuery(filters=typed_value_2)
-    typed_value_3 = cast(Mapping[str, str | bool | tuple[str, ...]], {"last_update_range": ("last_30_days",)})
+    typed_value_3 = cast("Mapping[str, str | bool | tuple[str, ...]]", {"last_update_range": ("last_30_days",)})
     with pytest.raises(ValueError, match="last_update_range"):
         DatasetSearchQuery(filters=typed_value_3)
 
@@ -1346,9 +1344,9 @@ def test_wr13_error_metadata_is_deeply_immutable_and_finite() -> None:
     error = NativeCatalogError(
         "bad response", operation="udata/api-v1.get-dataset", platform="udata", metadata={"nested": {"value": 1}}
     )
-    nested = cast(Mapping[str, object], error.metadata["nested"])
+    nested = cast("Mapping[str, object]", error.metadata["nested"])
     with pytest.raises(TypeError):
-        cast(dict[str, object], nested)["value"] = 2
+        cast("dict[str, object]", nested)["value"] = 2
     coerced = NativeCatalogError(
         "bad response", operation="udata/api-v1.get-dataset", platform="udata", metadata={"value": float("nan")}
     )
@@ -1359,3 +1357,110 @@ def transport_requests(client: SyncUDataClient) -> list[RuntimeRequest]:
     transport = client._transport
     assert isinstance(transport, RouterTransport)
     return transport.requests
+
+
+_CREDENTIAL_DATASET_ITEM: dict[str, object] = {
+    "id": "5f4d2c8e9a1b",
+    "title": "Weather",
+    "slug": "weather",
+    "description": "Daily observations",
+    "token": "live-token-plaintext",
+    "api_key": "live-api-key-plaintext",
+    "body": '{"raw": "live-raw-body-plaintext"}',
+    "nested": {"password": "live-password-plaintext", "safe": "kept"},
+}
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _thaw(nested) for key, nested in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw(nested) for nested in value]
+    return value
+
+
+def test_dataset_summary_record_construction_redacts_credential_shaped_item_fields() -> None:
+    record = mapping.parse_dataset_summary(_CREDENTIAL_DATASET_ITEM)
+
+    payload = _thaw(record.payload)
+    assert isinstance(payload, dict)
+    assert payload["token"] == REDACTED
+    assert payload["api_key"] == REDACTED
+    assert payload["body"] == REDACTED
+    assert payload["nested"] == {"password": REDACTED, "safe": "kept"}
+    for plaintext in ("live-token-plaintext", "live-api-key-plaintext", "live-password-plaintext"):
+        assert plaintext not in str(record.payload), f"{plaintext} must not enter the typed record"
+        assert plaintext not in json.dumps(record.to_dict())
+
+
+def test_dataset_summary_record_construction_keeps_every_non_credential_field() -> None:
+    item = {f"field_{index}": index for index in range(64)} | {"id": "5f4d2c8e9a1b"}
+    record = mapping.parse_dataset_summary(item)
+
+    payload = _thaw(record.payload)
+    assert isinstance(payload, dict)
+    assert payload == item
+
+
+def test_dataset_page_serialization_redacts_credentials_for_every_listed_record() -> None:
+    page = mapping.parse_native_page({"data": [_CREDENTIAL_DATASET_ITEM], "page": 1, "total": 1})
+    envelope = mapping.shape_dataset_page(page)
+
+    serialized = json.dumps(envelope.to_dict())
+    for plaintext in ("live-token-plaintext", "live-api-key-plaintext", "live-password-plaintext"):
+        assert plaintext not in serialized
+    assert REDACTED in serialized
+
+
+def test_dataset_detail_unknown_fields_are_redacted_but_retained_in_extensions() -> None:
+    detail = {**_CREDENTIAL_DATASET_ITEM, "portal_extra": "kept", "unknown_token": "live-unknown-plaintext"}
+
+    record = wire.parse_dataset_detail(detail)
+    extensions = _thaw(record.extensions)
+    assert isinstance(extensions, dict)
+    unknown = extensions["udata.dataset"]
+    assert isinstance(unknown, dict)
+    assert unknown["portal_extra"] == "kept"
+    assert unknown["unknown_token"] == REDACTED
+    assert unknown["token"] == REDACTED
+    assert unknown["api_key"] == REDACTED
+    assert unknown["body"] == REDACTED
+    assert unknown["nested"] == {"password": REDACTED, "safe": "kept"}
+    assert record.payload["title"] == "Weather"
+    assert "live-unknown-plaintext" not in json.dumps(record.to_dict())
+    assert "live-token-plaintext" not in json.dumps(record.to_dict())
+
+
+def test_dataset_extras_are_validated_and_redacted_rather_than_passed_through() -> None:
+    extras = wire.parse_extras(
+        {
+            "unit": "mm",
+            "api_key": "live-extras-key-plaintext",
+            "nested": {"secret": "live-extras-secret-plaintext", "kept": 1},
+        }
+    )
+
+    assert extras["unit"] == "mm"
+    assert extras["api_key"] == REDACTED
+    assert _thaw(extras["nested"]) == {"secret": REDACTED, "kept": 1}
+    assert "live-extras-key-plaintext" not in str(extras)
+    assert "live-extras-secret-plaintext" not in str(extras)
+
+
+def test_dataset_extras_validation_still_fails_typed_before_redaction() -> None:
+    with pytest.raises(CatalogValidationError) as raised:
+        wire.parse_extras({"not-finite": float("nan")})
+
+    assert raised.value.operation == "udata/api-v1.dataset-list-search-show-create-update-delete"
+    with pytest.raises(CatalogValidationError):
+        wire.parse_extras(["not", "an", "object"])
+
+
+def test_suggestion_records_redact_credential_shaped_fields() -> None:
+    records = wire.parse_suggestions([_CREDENTIAL_DATASET_ITEM], operation="udata/api-v1.suggest-datasets")
+
+    assert records[0].payload["title"] == "Weather"
+    unknown = _thaw(records[0].extensions)
+    assert isinstance(unknown, dict)
+    assert unknown["udata.dataset"]["token"] == REDACTED
+    assert "live-token-plaintext" not in json.dumps([record.to_dict() for record in records])

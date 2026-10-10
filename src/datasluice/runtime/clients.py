@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
 from time import monotonic, sleep
-from types import TracebackType
-from typing import Protocol, Self, cast
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast
 from urllib.parse import urlsplit
 
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import (
     CKANCredential,
     CredentialResolver,
@@ -29,7 +28,7 @@ from datasluice.domain.catalog.profiles import (
     EffectiveCapabilityState,
     ProbeResponseClass,
 )
-from datasluice.domain.catalog.resilience import CircuitKey, TimeBudget
+from datasluice.domain.catalog.resilience import CircuitKey, CircuitState, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
@@ -59,9 +58,14 @@ from datasluice.runtime.transport.base import (
     CatalogTransport,
     RuntimeRequest,
     RuntimeResponse,
-    TransportFailure,
+    TransportError,
 )
 from datasluice.runtime.transport.user_agent import build_user_agent
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 
 
 class AsyncCatalogTransport(Protocol):
@@ -133,6 +137,10 @@ def _default_budget() -> TimeBudget:
     )
 
 
+def _no_sleep(delay: float) -> None:
+    return None
+
+
 def _circuit_key(request: RuntimeRequest, credentials: object | None) -> CircuitKey:
     parsed = urlsplit(request.url)
     return CircuitKey(origin=f"{parsed.scheme}://{parsed.netloc}", credential_scope=_credential_scope(credentials))
@@ -145,7 +153,7 @@ def _refreshed_credential(credentials: object | None) -> object | None:
         return _refreshed_credential(credentials.explicit)
     resolve = getattr(credentials, "resolve", None)
     if callable(resolve):
-        return cast(Callable[[], object], resolve)()
+        return cast("Callable[[], object]", resolve)()
     return credentials
 
 
@@ -156,10 +164,10 @@ async def _refreshed_credential_async(credentials: object | None) -> object | No
         return await _refreshed_credential_async(credentials.explicit)
     resolve_async = getattr(credentials, "resolve_async", None)
     if callable(resolve_async):
-        return await cast(Callable[[], Awaitable[object]], resolve_async)()
+        return await cast("Callable[[], Awaitable[object]]", resolve_async)()
     resolve = getattr(credentials, "resolve", None)
     if callable(resolve):
-        return cast(Callable[[], object], resolve)()
+        return cast("Callable[[], object]", resolve)()
     return credentials
 
 
@@ -173,12 +181,12 @@ def _circuit_open_error(operation: CatalogOperationRequest) -> CatalogUnavailabl
     )
 
 
-def _result(
+def _result[T](
     operation: CatalogOperationRequest,
     response: RuntimeResponse,
-    decoder: Callable[[object], object],
+    decoder: Callable[[object], T],
     record_response: Callable[[ProbeResponseClass], object] | None = None,
-) -> ResultEnvelope[object]:
+) -> ResultEnvelope[T]:
     if not 200 <= response.status_code < 300:
         response_class = {
             401: ProbeResponseClass.UNAUTHORIZED,
@@ -223,8 +231,183 @@ def _enforce_guards(
         build_catalog_operation_guard(operation.operation_id, effective).require_allowed()
 
 
-class SyncCatalogClient:
+class _DispatchState:
+    __slots__ = ("attempts", "recorded")
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.recorded = False
+
+    @property
+    def retry_count(self) -> int:
+        return max(0, self.attempts - 1)
+
+
+class _ClientState[T]:
+    _transport: T
+    _owns_transport: bool
+    _capabilities: EffectiveCapabilityCache
+    _profile: EffectiveCapabilityProfile
+    _credentials: object | None
+    _budget: TimeBudget
+    _breakers: BreakerRegistry
+    _max_attempts: int
+    _clock: Callable[[], float]
+    _retry_sleep: Callable[[float], Any]
+    _emitter: EventEmitter
+    _closed: bool
+    _closed_message: str
+
+    def __init__(
+        self,
+        transport: T,
+        capabilities: EffectiveCapabilityCache,
+        *,
+        credentials: object | None,
+        budget: TimeBudget | None,
+        breakers: BreakerRegistry | None,
+        max_attempts: int,
+        clock: Callable[[], float],
+        retry_sleep: Callable[[float], Any],
+        emitter: EventEmitter | None,
+    ) -> None:
+        self._transport = transport
+        self._capabilities = capabilities
+        self._profile = capabilities.baseline_profile
+        self._credentials = credentials
+        self._budget = budget or _default_budget()
+        self._breakers = breakers or BreakerRegistry(
+            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
+            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
+            clock=clock,
+        )
+        self._max_attempts = max_attempts
+        self._clock = clock
+        self._retry_sleep = retry_sleep
+        self._emitter = emitter or EventEmitter()
+        self._closed = False
+
+    def _emit(self, operation: CatalogOperationRequest, outcome: str, **metadata: object) -> None:
+        self._emitter.record(
+            operation_id=str(operation.operation_id),
+            platform=operation.operation_id.platform,
+            outcome=outcome,
+            metadata=metadata,
+        )
+
+    def _emit_breaker_change(self, operation: CatalogOperationRequest, before: bool, after: bool) -> None:
+        if before != after:
+            self._emit(operation, "breaker_state_change", breaker_open=after)
+
+    def _assert_open(self) -> None:
+        if self._closed:
+            raise RuntimeError(self._closed_message)
+
+    def _admit(
+        self, operation: CatalogOperationRequest, request: RuntimeRequest, deadline: DeadlineMonitor
+    ) -> CircuitKey:
+        deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
+        key = _circuit_key(request, self._credentials)
+        if not self._breakers.admit(key):
+            self._emit(operation, "breaker_open")
+            raise _circuit_open_error(operation)
+        return key
+
+    def _record_transport_failure(
+        self, operation: CatalogOperationRequest, key: CircuitKey, state: _DispatchState, before: CircuitState
+    ) -> None:
+        after = self._breakers.record_transport_failure(key)
+        state.recorded = True
+        self._emit_breaker_change(operation, before.open, after.open)
+
+    def _record_response(
+        self,
+        operation: CatalogOperationRequest,
+        key: CircuitKey,
+        state: _DispatchState,
+        before: CircuitState,
+        response: RuntimeResponse,
+    ) -> RuntimeResponse:
+        after = self._breakers.record_response(key, response.status_code)
+        state.recorded = True
+        self._emit_breaker_change(operation, before.open, after.open)
+        return response
+
+    @contextmanager
+    def _dispatch_guard(
+        self,
+        operation: CatalogOperationRequest,
+        state: _DispatchState,
+        deadline: DeadlineMonitor,
+        key: CircuitKey,
+    ) -> Iterator[None]:
+        try:
+            try:
+                yield
+            except BudgetExhaustedError:
+                self._emit(
+                    operation, "budget_exhausted", budget_usage=max(0.0, self._budget.total - deadline.remaining())
+                )
+                raise
+            except Exception:
+                self._emit(operation, "failed", retry_count=state.retry_count)
+                raise
+        finally:
+            _release_abandoned_trial(self._breakers, key, state.recorded)
+
+    def _decode[RecordT](
+        self, operation: CatalogOperationRequest, decoder: Callable[[object], RecordT], response: RuntimeResponse
+    ) -> ResultEnvelope[RecordT]:
+        return _result(
+            operation,
+            response,
+            decoder,
+            record_response=lambda response_class: self._capabilities.record_response(
+                operation.operation_id, response_class
+            ),
+        )
+
+    def _emit_success(
+        self, operation: CatalogOperationRequest, deadline: DeadlineMonitor, state: _DispatchState
+    ) -> None:
+        self._emit(
+            operation,
+            "succeeded",
+            retry_count=state.retry_count,
+            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
+        )
+
+    def _retry_loop(
+        self, operation: CatalogOperationRequest, deadline: DeadlineMonitor, sleep: Callable[[float], Any]
+    ) -> RetryLoop:
+        return RetryLoop(
+            budget=self._budget,
+            idempotency=_idempotency_for(operation),
+            deadline=deadline,
+            max_attempts=self._max_attempts,
+            sleep=sleep,
+        )
+
+    def capability(self, operation_id: str) -> str:
+        """Return the cached effective classification without dispatching transport I/O."""
+        operation = _operation_id(operation_id, self._profile)
+        state = self._capabilities.peek(operation).guard(operation).state
+        return _capability_value(state)
+
+    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
+        """Discard all effective capability state or one operation's state."""
+        self._capabilities.invalidate(_coerce_operation_id(operation_id, self._profile))
+
+    def platform_metadata(self) -> Mapping[str, object]:
+        """Return safe pinned-profile metadata."""
+        declared = self._profile.declared_profile
+        return {"platform": next(iter(declared.operations)).platform, "profile_version": declared.profile_version}
+
+
+class SyncCatalogClient(_ClientState[CatalogTransport]):
     """Synchronous normalized client over an injected runtime transport."""
+
+    _closed_message = "The synchronous catalog client is closed."
 
     def __init__(
         self,
@@ -242,27 +425,23 @@ class SyncCatalogClient:
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         owns_transport: bool = True,
     ) -> None:
-        self._transport = transport
+        super().__init__(
+            transport,
+            EffectiveCapabilityCache(
+                profile,
+                probe_runner=probe_runner,
+                ttl_seconds=capability_cache_ttl,
+                clock=clock,
+            ),
+            credentials=credentials,
+            budget=budget,
+            breakers=breakers,
+            max_attempts=max_attempts,
+            clock=clock,
+            retry_sleep=retry_sleep,
+            emitter=emitter,
+        )
         self._owns_transport = owns_transport
-        self._capabilities = EffectiveCapabilityCache(
-            profile,
-            probe_runner=probe_runner,
-            ttl_seconds=capability_cache_ttl,
-            clock=clock,
-        )
-        self._profile = self._capabilities.baseline_profile
-        self._credentials = credentials
-        self._budget = budget or _default_budget()
-        self._breakers = breakers or BreakerRegistry(
-            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
-            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
-            clock=clock,
-        )
-        self._max_attempts = max_attempts
-        self._clock = clock
-        self._retry_sleep = retry_sleep
-        self._emitter = emitter or EventEmitter()
-        self._closed = False
 
     @property
     def transport(self) -> CatalogTransport:
@@ -289,114 +468,45 @@ class SyncCatalogClient:
         """Return the synchronous organization service projection."""
         return _SyncService(self, OrganizationRecord.from_dict)
 
-    def _dispatch(
+    def _dispatch[T](
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
-        decoder: Callable[[object], object],
-    ) -> ResultEnvelope[object]:
-        if self._closed:
-            raise RuntimeError("The synchronous catalog client is closed.")
+        decoder: Callable[[object], T],
+    ) -> ResultEnvelope[T]:
+        self._assert_open()
         _enforce_guards(operation, guard)
         effective = self._capabilities.resolve(operation.operation_id)
         _enforce_guards(operation, guard, effective, caller_checked=True)
         request = _request_for(operation, _refreshed_credential(self._credentials))
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
-        key = _circuit_key(request, self._credentials)
-        if not self._breakers.admit(key):
-            self._emit(operation, "breaker_open")
-            raise _circuit_open_error(operation)
-
-        attempts = 0
-        recorded = False
+        key = self._admit(operation, request, deadline)
+        state = _DispatchState()
 
         def send() -> RuntimeResponse:
-            nonlocal attempts, recorded
-            attempts += 1
-            recorded = False
+            state.attempts += 1
+            state.recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = self._transport.send(request)
-            except TransportFailure:
-                after = self._breakers.record_transport_failure(key)
-                recorded = True
-                self._emit_breaker_change(operation, before.open, after.open)
+            except TransportError:
+                self._record_transport_failure(operation, key, state, before)
                 raise
-            after = self._breakers.record_response(key, response.status_code)
-            recorded = True
-            self._emit_breaker_change(operation, before.open, after.open)
-            return response
+            return self._record_response(operation, key, state, before, response)
 
-        try:
-            try:
-                response = RetryLoop(
-                    budget=self._budget,
-                    idempotency=_idempotency_for(operation),
-                    deadline=deadline,
-                    max_attempts=self._max_attempts,
-                    sleep=self._retry_sleep,
-                ).run(send)
-                result = _result(
-                    operation,
-                    response,
-                    decoder,
-                    record_response=lambda response_class: self._capabilities.record_response(
-                        operation.operation_id, response_class
-                    ),
-                )
-            except BudgetExhaustedError:
-                self._emit(
-                    operation, "budget_exhausted", budget_usage=max(0.0, self._budget.total - deadline.remaining())
-                )
-                raise
-            except Exception:
-                self._emit(operation, "failed", retry_count=max(0, attempts - 1))
-                raise
-        finally:
-            _release_abandoned_trial(self._breakers, key, recorded)
-        self._emit(
-            operation,
-            "succeeded",
-            retry_count=max(0, attempts - 1),
-            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-        )
+        with self._dispatch_guard(operation, state, deadline, key):
+            response = self._retry_loop(operation, deadline, self._retry_sleep).run(send)
+            result = self._decode(operation, decoder, response)
+        self._emit_success(operation, deadline, state)
         return result
-
-    def _emit(self, operation: CatalogOperationRequest, outcome: str, **metadata: object) -> None:
-        self._emitter.record(
-            operation_id=str(operation.operation_id),
-            platform=operation.operation_id.platform,
-            outcome=outcome,
-            metadata=metadata,
-        )
-
-    def _emit_breaker_change(self, operation: CatalogOperationRequest, before: bool, after: bool) -> None:
-        if before != after:
-            self._emit(operation, "breaker_state_change", breaker_open=after)
 
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Dispatch a dataset get operation."""
-        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, guard, DatasetRecord.from_dict))
+        return self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Dispatch a dataset list operation."""
-        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, guard, DatasetRecord.from_dict))
-
-    def capability(self, operation_id: str) -> str:
-        """Return the cached effective classification without dispatching transport I/O."""
-        operation = _operation_id(operation_id, self._profile)
-        state = self._capabilities.peek(operation).guard(operation).state
-        return _capability_value(state)
-
-    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
-        """Discard all effective capability state or one operation's state."""
-        self._capabilities.invalidate(_coerce_operation_id(operation_id, self._profile))
-
-    def platform_metadata(self) -> Mapping[str, object]:
-        """Return safe pinned-profile metadata."""
-        declared = self._profile.declared_profile
-        return {"platform": next(iter(declared.operations)).platform, "profile_version": declared.profile_version}
+        return self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     def close(self) -> None:
         """Close the client and its owned transport exactly once."""
@@ -416,8 +526,10 @@ class SyncCatalogClient:
         self.close()
 
 
-class AsyncCatalogClient:
+class AsyncCatalogClient(_ClientState[AsyncCatalogTransport]):
     """Asynchronous normalized client over an injected async transport."""
+
+    _closed_message = "The asynchronous catalog client is closed."
 
     def __init__(
         self,
@@ -435,27 +547,23 @@ class AsyncCatalogClient:
         capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
         owns_transport: bool = True,
     ) -> None:
-        self._transport = transport
+        super().__init__(
+            transport,
+            EffectiveCapabilityCache(
+                profile,
+                async_probe_runner=probe_runner,
+                ttl_seconds=capability_cache_ttl,
+                clock=clock,
+            ),
+            credentials=credentials,
+            budget=budget,
+            breakers=breakers,
+            max_attempts=max_attempts,
+            clock=clock,
+            retry_sleep=retry_sleep,
+            emitter=emitter,
+        )
         self._owns_transport = owns_transport
-        self._capabilities = EffectiveCapabilityCache(
-            profile,
-            async_probe_runner=probe_runner,
-            ttl_seconds=capability_cache_ttl,
-            clock=clock,
-        )
-        self._profile = self._capabilities.baseline_profile
-        self._credentials = credentials
-        self._budget = budget or _default_budget()
-        self._breakers = breakers or BreakerRegistry(
-            failure_threshold=DEFAULT_BREAKER_FAILURE_THRESHOLD,
-            cooldown=DEFAULT_BREAKER_COOLDOWN_SECONDS,
-            clock=clock,
-        )
-        self._max_attempts = max_attempts
-        self._clock = clock
-        self._retry_sleep = retry_sleep
-        self._emitter = emitter or EventEmitter()
-        self._closed = False
 
     @property
     def transport(self) -> AsyncCatalogTransport:
@@ -482,119 +590,50 @@ class AsyncCatalogClient:
         """Return the asynchronous organization service projection."""
         return _AsyncService(self, OrganizationRecord.from_dict)
 
-    async def _dispatch(
+    async def _dispatch[T](
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
-        decoder: Callable[[object], object],
-    ) -> ResultEnvelope[object]:
-        if self._closed:
-            raise RuntimeError("The asynchronous catalog client is closed.")
+        decoder: Callable[[object], T],
+    ) -> ResultEnvelope[T]:
+        self._assert_open()
         _enforce_guards(operation, guard)
         effective = await self._capabilities.resolve_async(operation.operation_id)
         _enforce_guards(operation, guard, effective, caller_checked=True)
         credential = await _refreshed_credential_async(self._credentials)
         request = _request_for(operation, credential)
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(operation.operation_id), operation.operation_id.platform)
-        key = _circuit_key(request, self._credentials)
-        if not self._breakers.admit(key):
-            self._emit(operation, "breaker_open")
-            raise _circuit_open_error(operation)
-
-        attempts = 0
-        recorded = False
+        key = self._admit(operation, request, deadline)
+        state = _DispatchState()
 
         async def send() -> RuntimeResponse:
-            nonlocal attempts, recorded
-            attempts += 1
-            recorded = False
+            state.attempts += 1
+            state.recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = await self._transport.send(request)
-            except TransportFailure:
-                after = self._breakers.record_transport_failure(key)
-                recorded = True
-                self._emit_breaker_change(operation, before.open, after.open)
+            except TransportError:
+                self._record_transport_failure(operation, key, state, before)
                 raise
-            after = self._breakers.record_response(key, response.status_code)
-            recorded = True
-            self._emit_breaker_change(operation, before.open, after.open)
-            return response
+            return self._record_response(operation, key, state, before, response)
 
-        try:
-            try:
-                response = await RetryLoop(
-                    budget=self._budget,
-                    idempotency=_idempotency_for(operation),
-                    deadline=deadline,
-                    max_attempts=self._max_attempts,
-                    sleep=lambda _: None,
-                ).run_async(send, sleep=self._retry_sleep)
-                result = _result(
-                    operation,
-                    response,
-                    decoder,
-                    record_response=lambda response_class: self._capabilities.record_response(
-                        operation.operation_id, response_class
-                    ),
-                )
-            except BudgetExhaustedError:
-                self._emit(
-                    operation, "budget_exhausted", budget_usage=max(0.0, self._budget.total - deadline.remaining())
-                )
-                raise
-            except Exception:
-                self._emit(operation, "failed", retry_count=max(0, attempts - 1))
-                raise
-        finally:
-            _release_abandoned_trial(self._breakers, key, recorded)
-        self._emit(
-            operation,
-            "succeeded",
-            retry_count=max(0, attempts - 1),
-            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-        )
+        with self._dispatch_guard(operation, state, deadline, key):
+            response = await self._retry_loop(operation, deadline, _no_sleep).run_async(send, sleep=self._retry_sleep)
+            result = self._decode(operation, decoder, response)
+        self._emit_success(operation, deadline, state)
         return result
-
-    def _emit(self, operation: CatalogOperationRequest, outcome: str, **metadata: object) -> None:
-        self._emitter.record(
-            operation_id=str(operation.operation_id),
-            platform=operation.operation_id.platform,
-            outcome=outcome,
-            metadata=metadata,
-        )
-
-    def _emit_breaker_change(self, operation: CatalogOperationRequest, before: bool, after: bool) -> None:
-        if before != after:
-            self._emit(operation, "breaker_state_change", breaker_open=after)
 
     async def get(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[DatasetRecord]:
         """Dispatch an asynchronous dataset get operation."""
-        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, guard, DatasetRecord.from_dict))
+        return await self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     async def list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[DatasetRecord]:
         """Dispatch an asynchronous dataset list operation."""
-        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, guard, DatasetRecord.from_dict))
-
-    def capability(self, operation_id: str) -> str:
-        """Return the cached effective classification without dispatching transport I/O."""
-        operation = _operation_id(operation_id, self._profile)
-        state = self._capabilities.peek(operation).guard(operation).state
-        return _capability_value(state)
-
-    def invalidate(self, operation_id: str | OperationId | None = None) -> None:
-        """Discard all effective capability state or one operation's state."""
-        self._capabilities.invalidate(_coerce_operation_id(operation_id, self._profile))
-
-    def platform_metadata(self) -> Mapping[str, object]:
-        """Return safe pinned-profile metadata."""
-        declared = self._profile.declared_profile
-        return {"platform": next(iter(declared.operations)).platform, "profile_version": declared.profile_version}
+        return await self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""
@@ -663,11 +702,11 @@ class _SyncService[T]:
 
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a get operation through the owning client."""
-        return cast(ResultEnvelope[T], self._client._dispatch(operation, guard, self._decoder))
+        return self._client._dispatch(operation, guard, self._decoder)
 
     def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a list operation through the owning client."""
-        return cast(ResultEnvelope[T], self._client._dispatch(operation, guard, self._decoder))
+        return self._client._dispatch(operation, guard, self._decoder)
 
 
 class _AsyncService[T]:
@@ -681,8 +720,8 @@ class _AsyncService[T]:
 
     async def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch an asynchronous get operation through the owning client."""
-        return cast(ResultEnvelope[T], await self._client._dispatch(operation, guard, self._decoder))
+        return await self._client._dispatch(operation, guard, self._decoder)
 
     async def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch an asynchronous list operation through the owning client."""
-        return cast(ResultEnvelope[T], await self._client._dispatch(operation, guard, self._decoder))
+        return await self._client._dispatch(operation, guard, self._decoder)

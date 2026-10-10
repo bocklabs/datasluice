@@ -140,7 +140,7 @@ def _profile_document(platform: str) -> dict[str, Any]:
     document = json.loads(matches[0].read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise ValueError("Packaged capability profiles must be JSON objects.")
-    return cast(dict[str, Any], document)
+    return cast("dict[str, Any]", document)
 
 
 def _profile_entries(document: dict[str, Any]) -> list[dict[str, str]]:
@@ -148,7 +148,7 @@ def _profile_entries(document: dict[str, Any]) -> list[dict[str, str]]:
     entries = document.get("operations")
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
         raise ValueError("Packaged capability profiles must declare operations.")
-    return [cast(dict[str, str], entry) for entry in entries]
+    return [cast("dict[str, str]", entry) for entry in entries]
 
 
 def _operation_spec(entry: dict[str, str]) -> OperationSpec:

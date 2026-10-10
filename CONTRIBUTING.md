@@ -98,7 +98,7 @@ ci: add wheel smoke test to CI
 | Full QA (format → lint → typecheck → test) | `just qa` or `make qa` |
 | Format only | `uv run ruff format .` |
 | Lint only | `uv run ruff check . --fix` |
-| Type check | `uv run --all-extras ty check .` |
+| Type check | `uv run --all-extras mypy src scripts tests` |
 | Tests | `uv run pytest` |
 | Build distribution | `uv build` |
 | Validate distribution | `uvx twine check dist/*` |

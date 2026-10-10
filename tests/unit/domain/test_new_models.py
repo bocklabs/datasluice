@@ -28,6 +28,11 @@ from datasluice.domain.catalog import CatalogId, CatalogPlatform, DatasetRecord,
 from datasluice.domain.detection import DetectionEvidence
 
 
+def _assign(target: object, field: str, value: object) -> None:
+    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
+    setattr(target, field, value)
+
+
 def test_schema_defaults() -> None:
     schema = Schema(name="resources")
     assert schema.name == "resources"
@@ -39,7 +44,7 @@ def test_schema_defaults() -> None:
 def test_schema_is_frozen() -> None:
     schema = Schema(name="s")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        schema.name = "other"  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(schema, "name", "other")
 
 
 def test_resource_access_subclass_kind_defaults() -> None:
@@ -61,9 +66,9 @@ def test_http_download_defaults() -> None:
 def test_resource_access_is_frozen() -> None:
     http = HttpDownload(url="https://x")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        http.url = "https://y"  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(http, "url", "https://y")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        http.kind = "other"  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(http, "kind", "other")
 
 
 def test_resource_access_is_base_of_subclasses() -> None:
@@ -92,13 +97,13 @@ def test_detection_result_accepts_none_portal_type() -> None:
 def test_detection_result_is_frozen() -> None:
     result = DetectionResult(portal_type="ckan")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        result.confidence = 1.0  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(result, "confidence", 1.0)
 
 
 def test_detection_evidence_is_frozen() -> None:
     evidence = DetectionEvidence(check="api", matched=True)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        evidence.matched = False  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(evidence, "matched", False)
 
 
 def test_detection_result_confidence_range_enforced() -> None:
@@ -138,9 +143,9 @@ def test_catalog_models_are_immutable_and_versioned() -> None:
     assert CatalogId.from_dict(identifier.to_dict()) == identifier
     assert DatasetRecord.from_dict(record.to_dict()) == record
     with pytest.raises(dataclasses.FrozenInstanceError):
-        record.name = "Other"  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(record, "name", "Other")
     with pytest.raises(TypeError):
-        cast(dict[str, object], record.extensions)["example.org"] = {}
+        cast("dict[str, object]", record.extensions)["example.org"] = {}
 
 
 def test_resource_access_kind_not_overridable() -> None:
@@ -167,7 +172,7 @@ def test_artifact_defaults() -> None:
 def test_artifact_is_frozen() -> None:
     artifact = _artifact()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        artifact.size = 1  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(artifact, "size", 1)
 
 
 def _artifact() -> Artifact:
@@ -199,4 +204,4 @@ def test_sync_state_defaults() -> None:
 def test_sync_state_is_frozen() -> None:
     state = SyncState(cursor={"res-1": "2026-01-01T00:00:00Z"})
     with pytest.raises(dataclasses.FrozenInstanceError):
-        state.cursor = {"res-1": "2026-02-01T00:00:00Z"}  # ty: ignore[invalid-assignment]: asserts frozen dataclass raises at runtime
+        _assign(state, "cursor", {"res-1": "2026-02-01T00:00:00Z"})

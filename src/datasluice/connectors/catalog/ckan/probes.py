@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from time import monotonic
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import declared_ckan_profile
 from datasluice.connectors.catalog.ckan.mapping import parse_action_envelope
@@ -27,9 +28,11 @@ from datasluice.domain.catalog.profiles import (
     RoleClassification,
 )
 from datasluice.errors.catalog import CatalogError, ForbiddenError, UnauthenticatedError
-from datasluice.runtime.clients import AsyncCatalogTransport
-from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from datasluice.runtime.clients import AsyncCatalogTransport
+    from datasluice.runtime.events import EventEmitter
 
 _NOT_AUTHORIZED = "not authorized"
 _AUTHORIZATION_ERROR = "Authorization Error"

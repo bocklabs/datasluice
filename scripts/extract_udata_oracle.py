@@ -8,9 +8,11 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 PINNED_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})
@@ -542,43 +544,72 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the bounded local-only reconciliation or verification operation."""
-    args = build_parser().parse_args(argv)
-    if args.exclude_namespace and any((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
-        raise SystemExit("namespace exclusion only applies to source extraction")
-    if args.verify_preflight:
-        print(json.dumps(verify_preflight(args.verify_preflight), sort_keys=True))
-        return 0
-    if args.source_root or args.source_output:
-        if not args.source_root or not args.source_output:
-            raise SystemExit("--source-root and --source-output are required together")
-        if any((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
-            raise SystemExit("source extraction cannot be combined with route reconciliation arguments")
-        document = extract_source_document(args.source_root)
-        if args.exclude_namespace:
-            document = {
-                **document,
-                "routes": [
-                    route
-                    for route in document["routes"]
-                    if not any(
-                        route["path"] == namespace or route["path"].startswith(namespace + "/")
-                        for namespace in args.exclude_namespace
-                    )
-                ],
-                "excluded_namespaces": sorted(args.exclude_namespace),
-            }
-        write_source_document(args.source_output, document)
-        print(json.dumps({key: value for key, value in document.items() if key != "routes"}, sort_keys=True))
-        return 0
-    if not all((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
+def _reconciliation_arguments(args: argparse.Namespace) -> tuple[Any, ...]:
+    """Return the route reconciliation arguments exactly as the caller supplied them."""
+    return (args.source, args.swagger, args.url_map, args.candidate, args.preflight)
+
+
+def _source_extraction_requested(args: argparse.Namespace) -> bool:
+    """Report whether the caller asked for a source-only route document."""
+    return bool(args.source_root or args.source_output)
+
+
+def _excluded_route(route: Mapping[str, Any], namespaces: Sequence[str]) -> bool:
+    """Report whether a route sits at or beneath one of the excluded namespaces."""
+    path = route["path"]
+    return any(path == namespace or path.startswith(f"{namespace}/") for namespace in namespaces)
+
+
+def _without_namespaces(document: dict[str, Any], namespaces: Sequence[str]) -> dict[str, Any]:
+    """Return a source document with every excluded namespace removed from its routes."""
+    return {
+        **document,
+        "routes": [route for route in document["routes"] if not _excluded_route(route, namespaces)],
+        "excluded_namespaces": sorted(namespaces),
+    }
+
+
+def _summary_json(document: Mapping[str, Any]) -> str:
+    """Render a document without its bulk route list."""
+    return json.dumps({key: value for key, value in document.items() if key != "routes"}, sort_keys=True)
+
+
+def _run_source_extraction(args: argparse.Namespace) -> int:
+    """Extract a source-only route document from the pinned upstream checkout."""
+    if not args.source_root or not args.source_output:
+        raise SystemExit("--source-root and --source-output are required together")
+    if any(_reconciliation_arguments(args)):
+        raise SystemExit("source extraction cannot be combined with route reconciliation arguments")
+    document = extract_source_document(args.source_root)
+    if args.exclude_namespace:
+        document = _without_namespaces(document, args.exclude_namespace)
+    write_source_document(args.source_output, document)
+    print(_summary_json(document))
+    return 0
+
+
+def _run_reconciliation(args: argparse.Namespace) -> int:
+    """Reconcile the three independent route captures and write the decision-pending preflight record."""
+    if not all(_reconciliation_arguments(args)):
         raise SystemExit("--source, --swagger, --url-map, --candidate, and --preflight are required together")
     result = reconcile_route_documents(args.source, args.swagger, args.url_map)
     write_candidate(args.candidate, result)
     write_preflight(args.preflight, result)
-    print(json.dumps({key: value for key, value in result.items() if key != "routes"}, sort_keys=True))
+    print(_summary_json(result))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the bounded local-only reconciliation or verification operation."""
+    args = build_parser().parse_args(argv)
+    if args.exclude_namespace and any(_reconciliation_arguments(args)):
+        raise SystemExit("namespace exclusion only applies to source extraction")
+    if args.verify_preflight:
+        print(json.dumps(verify_preflight(args.verify_preflight), sort_keys=True))
+        return 0
+    if _source_extraction_requested(args):
+        return _run_source_extraction(args)
+    return _run_reconciliation(args)
 
 
 if __name__ == "__main__":

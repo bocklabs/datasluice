@@ -8,17 +8,17 @@ and never crashes session creation.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import ConnectorNotFoundError
 from datasluice.logging import get_logger
 
-logger = get_logger("runtime.plugin_manager")
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-_BUILTIN_CONNECTOR_IDS = frozenset({"datasluice/ckan", "datasluice/udata", "datasluice/socrata"})
+logger = get_logger("runtime.plugin_manager")
 
 
 @dataclass(frozen=True)

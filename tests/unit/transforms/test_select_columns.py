@@ -48,14 +48,14 @@ def test_select_missing_raises() -> None:
     from datasluice.exceptions import TransformError
 
     schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
-    select_columns = SelectColumns(("adress",))
-    batches = iter([])
+    select_columns = SelectColumns(("address",))
+    batches: list[Any] = []
     context = _ctx(schema)
     apply = select_columns.apply(batches, context)
     with pytest.raises(TransformError) as exc_info:
         list(apply)
     msg = str(exc_info.value)
-    assert "adress" in msg
+    assert "address" in msg
     assert "id" in msg
     assert "name" in msg
 

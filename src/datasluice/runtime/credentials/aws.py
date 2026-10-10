@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from threading import RLock
-from typing import Protocol, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Protocol, TypedDict, Unpack, cast
 
 from datasluice.domain.catalog.auth import CatalogCredential, CredentialSource
-from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.runtime.credentials import _resolution_error, credential_from_fields, credential_from_secret
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.ids import CatalogPlatform
 
 
 class _GetSecretValueRequest(TypedDict):
@@ -70,7 +72,7 @@ def _aws_client_factory() -> AwsClientFactory:
         raise ImportError(message) from exc
 
     def create_client(region: str | None) -> AwsSecretsManagerClient:
-        return cast(AwsSecretsManagerClient, boto3.client("secretsmanager", region_name=region))
+        return cast("AwsSecretsManagerClient", boto3.client("secretsmanager", region_name=region))
 
     return create_client
 
@@ -87,7 +89,7 @@ def _credential_from_aws_secret(platform: CatalogPlatform, secret: str) -> Catal
     except json.JSONDecodeError:
         return credential_from_secret(platform, secret)
     if isinstance(parsed, Mapping):
-        return credential_from_fields(platform, cast(Mapping[str, object], parsed))
+        return credential_from_fields(platform, cast("Mapping[str, object]", parsed))
     if isinstance(parsed, str):
         return credential_from_secret(platform, parsed)
     if parsed is None or isinstance(parsed, bool | int | float):

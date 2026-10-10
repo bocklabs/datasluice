@@ -12,7 +12,7 @@ actual I/O.
 
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import SplitResult, parse_qsl, urlencode, urlsplit, urlunsplit
 
 _SENSITIVE_QUERY_KEYS = frozenset(
     {
@@ -34,6 +34,35 @@ _SENSITIVE_QUERY_KEYS = frozenset(
 _REDACTED = "***"
 
 
+def _netloc_without_userinfo(parts: SplitResult) -> str:
+    """Return the netloc of *parts* with any ``user:password@`` prefix removed."""
+    if parts.hostname is None:
+        return parts.netloc.rsplit("@", 1)[-1]
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    hostname = parts.hostname
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    return hostname if port is None else f"{hostname}:{port}"
+
+
+def _redacted_query(query: str) -> str:
+    """Return *query* re-encoded with every sensitive parameter value replaced."""
+    if not query:
+        return ""
+    try:
+        pairs = parse_qsl(query, keep_blank_values=True)
+    except ValueError:
+        return ""
+    return urlencode(
+        [(name, _REDACTED if name.lower() in _SENSITIVE_QUERY_KEYS else value) for name, value in pairs],
+        doseq=True,
+        safe="*",
+    )
+
+
 def sanitize_uri(uri: str) -> str:
     """Return *uri* with userinfo and sensitive query values redacted for safe display.
 
@@ -53,25 +82,6 @@ def sanitize_uri(uri: str) -> str:
         return uri
     if not parts.scheme:
         return uri
-    if parts.hostname is None:
-        netloc = parts.netloc.rsplit("@", 1)[-1]
-    else:
-        try:
-            port = parts.port
-        except ValueError:
-            port = None
-        hostname = parts.hostname
-        if ":" in hostname:
-            hostname = f"[{hostname}]"
-        netloc = hostname if port is None else f"{hostname}:{port}"
-    redacted: list[tuple[str, str]] = []
-    if parts.query:
-        try:
-            redacted = [
-                (name, _REDACTED if name.lower() in _SENSITIVE_QUERY_KEYS else value)
-                for name, value in parse_qsl(parts.query, keep_blank_values=True)
-            ]
-        except ValueError:
-            redacted = []
-    query = urlencode(redacted, doseq=True, safe="*")
-    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+    return urlunsplit(
+        (parts.scheme, _netloc_without_userinfo(parts), parts.path, _redacted_query(parts.query), parts.fragment)
+    )

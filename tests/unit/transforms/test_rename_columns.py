@@ -51,7 +51,7 @@ def test_rename_missing_source_raises() -> None:
 
     schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
     rename_columns = RenameColumns({"nonexistent": "x"})
-    batches = iter([])
+    batches: list[Any] = []
     context = _ctx(schema)
     apply = rename_columns.apply(batches, context)
     with pytest.raises(TransformError) as exc_info:

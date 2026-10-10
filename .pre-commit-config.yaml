@@ -1,4 +1,13 @@
+ci:
+  skip: [pylint]
+
+
 repos:
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.21.2
+    hooks:
+      -   id: pyupgrade
+          args: ["--py313-plus"]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -13,7 +22,6 @@ repos:
       - id: debug-statements
       - id: mixed-line-ending
         args: ["--fix=lf"]
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.13.2
     hooks:
@@ -27,11 +35,28 @@ repos:
       - id: gitleaks-docker
         name: gitleaks (hardcoded secrets)
 
+  - repo: https://github.com/rohaquinlop/complexipy-pre-commit
+    rev: v5.1.0
+    hooks:
+      - id: complexipy
+        name: cognitive complexity
+        args: ["--max-complexity-allowed", "15"]
+
   - repo: local
     hooks:
-      - id: ty
-        name: type check (ty)
-        entry: uv run --frozen --all-extras ty check .
+      - id: jscpd
+        name: code duplication
+        entry: npx --yes jscpd@4.3.0 --min-lines 10 --min-tokens 70 --threshold 1.5
+          --reporters consoleFull --output /tmp/jscpd-precommit
+          --ignore "**/node_modules/**,**/.venv/**,**/jscpd-report.json"
+          src tests scripts providers
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: mypy
+        name: type check (mypy)
+        entry: uv run --frozen --all-extras mypy src scripts tests
         language: system
         types: [python]
         pass_filenames: false
@@ -63,3 +88,14 @@ repos:
     hooks:
       - id: check-ast
       - id: check-docstring-first
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: "0.26"
+    hooks:
+      - id: validate-pyproject
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        args: [--ignore-words-list=blocs]

@@ -5,14 +5,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from collections.abc import Mapping, Set
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.errors.catalog import ForbiddenError, UnauthenticatedError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Set
 
 
 class SecretValue:

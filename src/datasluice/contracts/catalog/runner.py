@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from datasluice.contracts.catalog.fixtures import ReferenceCase, ReferenceFixtureSet
 from datasluice.contracts.catalog.protocols import (
@@ -16,7 +15,6 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogClient,
 )
 from datasluice.contracts.catalog.report import CaseOutcome, ComplianceReport
-from datasluice.domain.catalog.models import DatasetRecord, MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.errors.catalog import (
     CatalogRateLimitError,
@@ -25,6 +23,11 @@ from datasluice.errors.catalog import (
     UnsupportedCapabilityError,
 )
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
+    from datasluice.domain.catalog.models import DatasetRecord, MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 
 type ContractMode = Literal["sync", "async"]
 type FixtureOutcome = Literal[
@@ -123,7 +126,7 @@ def catalog_contract_cases(fixture_set: ReferenceFixtureSet) -> tuple[CatalogCon
     cases = [
         CatalogContractCase(
             operation_id=str(reference_case.operation_id),
-            outcome=cast(FixtureOutcome, reference_case.outcome),
+            outcome=cast("FixtureOutcome", reference_case.outcome),
             mode=mode,
         )
         for reference_case in fixture_set.cases
@@ -229,20 +232,20 @@ def _run_reference_cases(
     cases: tuple[CatalogContractCase, ...], sync_client: object, async_client: object, fixture_set: ReferenceFixtureSet
 ) -> tuple[CaseOutcome, ...]:
     outcomes: list[CaseOutcome] = []
-    with cast(SyncCatalogClient, sync_client):
+    with cast("SyncCatalogClient", sync_client):
         for case in cases:
             if case.mode == "sync":
                 outcomes.append(
-                    _run_reference_sync_case(case, cast(_SyncReferenceCaseClient, sync_client), fixture_set)
+                    _run_reference_sync_case(case, cast("_SyncReferenceCaseClient", sync_client), fixture_set)
                 )
 
     async def execute_async() -> None:
-        async with cast(AsyncCatalogClient, async_client):
+        async with cast("AsyncCatalogClient", async_client):
             for case in cases:
                 if case.mode == "async":
                     outcomes.append(
                         await _run_reference_async_case(
-                            case, cast(_AsyncReferenceCaseClient, async_client), fixture_set
+                            case, cast("_AsyncReferenceCaseClient", async_client), fixture_set
                         )
                     )
 
@@ -278,6 +281,7 @@ def run_catalog_contract(
     fixture_set: ReferenceFixtureSet | None = None,
 ) -> ComplianceReport:
     """Execute a finite catalog contract matrix and retain every case outcome."""
+    cases: tuple[CatalogContractCase, ...]
     if isinstance(case, CatalogContractCase):
         if fixture_set is None:
             return _run_tracer_case(case, sync_client, async_client)

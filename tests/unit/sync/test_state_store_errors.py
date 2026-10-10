@@ -7,14 +7,16 @@ StateStoreError and are never swallowed as missing state.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
 from datasluice.exceptions import StateStoreError
 from datasluice.sync.state_store import FileStateStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_permission_error_raises_statestoreerror(tmp_path: Path) -> None:
@@ -24,9 +26,8 @@ def test_permission_error_raises_statestoreerror(tmp_path: Path) -> None:
     def raise_permission(self: Any, path: str) -> bytes:
         raise PermissionError(f"denied: {path}")
 
-    with patch.object(type(store._fs), "cat_file", raise_permission):
-        with pytest.raises(StateStoreError):
-            store.get(key)
+    with patch.object(type(store._fs), "cat_file", raise_permission), pytest.raises(StateStoreError):
+        store.get(key)
 
 
 def test_timeout_error_raises_statestoreerror(tmp_path: Path) -> None:
@@ -36,9 +37,8 @@ def test_timeout_error_raises_statestoreerror(tmp_path: Path) -> None:
     def raise_timeout(self: Any, path: str) -> bytes:
         raise TimeoutError(f"timed out reading: {path}")
 
-    with patch.object(type(store._fs), "cat_file", raise_timeout):
-        with pytest.raises(StateStoreError):
-            store.get(key)
+    with patch.object(type(store._fs), "cat_file", raise_timeout), pytest.raises(StateStoreError):
+        store.get(key)
 
 
 def test_generic_oserror_raises_statestoreerror(tmp_path: Path) -> None:
@@ -48,9 +48,8 @@ def test_generic_oserror_raises_statestoreerror(tmp_path: Path) -> None:
     def raise_oserror(self: Any, path: str) -> bytes:
         raise OSError("connection reset")
 
-    with patch.object(type(store._fs), "cat_file", raise_oserror):
-        with pytest.raises(StateStoreError):
-            store.get(key)
+    with patch.object(type(store._fs), "cat_file", raise_oserror), pytest.raises(StateStoreError):
+        store.get(key)
 
 
 def test_file_not_found_returns_none(tmp_path: Path) -> None:
@@ -71,9 +70,8 @@ def test_read_version_raises_statestoreerror_on_backend_failure(tmp_path: Path) 
     def raise_permission(self: Any, path: str) -> bytes:
         raise PermissionError(f"denied: {path}")
 
-    with patch.object(type(store._fs), "cat_file", raise_permission):
-        with pytest.raises(StateStoreError):
-            store.read_version(key)
+    with patch.object(type(store._fs), "cat_file", raise_permission), pytest.raises(StateStoreError):
+        store.read_version(key)
 
 
 def test_delete_raises_statestoreerror_on_backend_failure(tmp_path: Path) -> None:
@@ -83,6 +81,5 @@ def test_delete_raises_statestoreerror_on_backend_failure(tmp_path: Path) -> Non
     def raise_oserror(self: Any, path: str) -> None:
         raise OSError("backend rm failure")
 
-    with patch.object(type(store._fs), "rm", raise_oserror):
-        with pytest.raises(StateStoreError):
-            store.delete(key)
+    with patch.object(type(store._fs), "rm", raise_oserror), pytest.raises(StateStoreError):
+        store.delete(key)

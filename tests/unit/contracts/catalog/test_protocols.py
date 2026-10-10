@@ -51,8 +51,8 @@ def test_connector_context_keeps_sync_and_async_executors_independent() -> None:
     sync_executor = object()
     async_executor = object()
     context = CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, sync_executor),
-        async_executor=cast(AsyncCatalogOperationExecutor, async_executor),
+        sync_executor=cast("SyncCatalogOperationExecutor", sync_executor),
+        async_executor=cast("AsyncCatalogOperationExecutor", async_executor),
         credentials=CKANCredential(api_token="secret"),
         manages_sync_executor=False,
         manages_async_executor=True,

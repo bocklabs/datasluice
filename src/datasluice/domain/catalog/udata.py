@@ -155,12 +155,13 @@ def _validate_text(value: object, field_name: str, *, allow_none: bool = False) 
         raise ValueError(f"uData site {field_name} must be a non-empty string.")
 
 
-def _validate_json_mapping(value: object, field_name: str, *, allow_none: bool = False) -> None:
+def _validate_json_mapping(value: object, field_name: str, *, allow_none: bool = False) -> Mapping[str, object] | None:
     if allow_none and value is None:
-        return
+        return None
     if not isinstance(value, Mapping):
         raise ValueError(f"uData site {field_name} must be a JSON object.")
     _freeze_mapping(value, f"udata.site.{field_name}")
+    return value
 
 
 def _validate_blocks(value: object, field_name: str, *, allow_none: bool = False) -> None:
@@ -180,7 +181,7 @@ def _validate_site_profile_payload(payload: Mapping[str, object]) -> None:
 def _validate_site_profile_scalars(payload: Mapping[str, object]) -> None:
     for field_name in ("id", "title", "version"):
         _validate_text(payload.get(field_name), field_name)
-    if not _VERSION.fullmatch(cast(str, payload["version"])):
+    if not _VERSION.fullmatch(cast("str", payload["version"])):
         raise ValueError("uData site version must be a semantic version string.")
     keywords = payload.get("keywords")
     if keywords is not None and (
@@ -405,9 +406,9 @@ def _validate_dataservice_csv_filter(key: str, value: object) -> None:
 class SiteProfile:
     """A lossless immutable representation of the uData site document."""
 
-    payload: Mapping[str, object]
+    payload: Mapping[str, object] = field(repr=False)
     present_fields: frozenset[str] | None = None
-    extensions: Mapping[str, object] = field(default_factory=dict)
+    extensions: Mapping[str, object] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.payload, Mapping):
@@ -426,7 +427,7 @@ class SiteProfile:
     @property
     def id(self) -> str:
         """Return the native site identifier."""
-        return cast(str, self.payload["id"])
+        return cast("str", self.payload["id"])
 
     @property
     def site_id(self) -> str:
@@ -436,49 +437,49 @@ class SiteProfile:
     @property
     def title(self) -> str:
         """Return the native site title."""
-        return cast(str, self.payload["title"])
+        return cast("str", self.payload["title"])
 
     @property
     def version(self) -> str:
         """Return the native uData version."""
-        return cast(str, self.payload["version"])
+        return cast("str", self.payload["version"])
 
     @property
     def keywords(self) -> tuple[str, ...] | None:
         """Return the native site keyword list when it was present."""
         value = self.payload.get("keywords")
-        return tuple(cast(list[str] | tuple[str, ...], value)) if value is not None else None
+        return tuple(cast("list[str] | tuple[str, ...]", value)) if value is not None else None
 
     @property
     def feed_size(self) -> int | None:
         """Return the native site feed size when it was present."""
         value = self.payload.get("feed_size")
-        return cast(int | None, value)
+        return cast("int | None", value)
 
     @property
     def configs(self) -> Mapping[str, object] | None:
         """Return the native site configuration mapping when present."""
-        return cast(Mapping[str, object] | None, self.payload.get("configs"))
+        return _validate_json_mapping(self.payload.get("configs"), "configs", allow_none=True)
 
     @property
     def themes(self) -> Mapping[str, object] | None:
         """Return the native site theme mapping when present."""
-        return cast(Mapping[str, object] | None, self.payload.get("themes"))
+        return _validate_json_mapping(self.payload.get("themes"), "themes", allow_none=True)
 
     @property
     def settings(self) -> Mapping[str, object] | None:
         """Return the native site settings mapping when present."""
-        return cast(Mapping[str, object] | None, self.payload.get("settings"))
+        return _validate_json_mapping(self.payload.get("settings"), "settings", allow_none=True)
 
     @property
     def metrics(self) -> Mapping[str, object] | None:
         """Return the native site metrics mapping when present."""
-        return cast(Mapping[str, object] | None, self.payload.get("metrics"))
+        return _validate_json_mapping(self.payload.get("metrics"), "metrics", allow_none=True)
 
     def _block_values(self, field_name: str) -> tuple[Mapping[str, object], ...] | None:
         value = self.payload.get(field_name)
         return (
-            tuple(cast(list[Mapping[str, object]] | tuple[Mapping[str, object], ...], value))
+            tuple(cast("list[Mapping[str, object]] | tuple[Mapping[str, object], ...]", value))
             if value is not None
             else None
         )
@@ -509,7 +510,7 @@ class SiteProfile:
             "schema_version": 1,
             "kind": "udata_site_profile",
             "payload": _thaw_json(self.payload),
-            "present_fields": sorted(cast(frozenset[str], self.present_fields)),
+            "present_fields": sorted(cast("frozenset[str]", self.present_fields)),
             "extensions": _thaw_json(self.extensions),
         }
 
@@ -538,12 +539,12 @@ class SitePatchInput:
     title: str | _UnsetValue = UNSET
     keywords: tuple[str, ...] | None | _UnsetValue = UNSET
     feed_size: int | _UnsetValue = UNSET
-    configs: Mapping[str, object] | None | _UnsetValue = UNSET
-    themes: Mapping[str, object] | None | _UnsetValue = UNSET
-    settings: Mapping[str, object] | None | _UnsetValue = UNSET
-    datasets_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = UNSET
-    reuses_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = UNSET
-    dataservices_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = UNSET
+    configs: Mapping[str, object] | None | _UnsetValue = field(default=UNSET, repr=False)
+    themes: Mapping[str, object] | None | _UnsetValue = field(default=UNSET, repr=False)
+    settings: Mapping[str, object] | None | _UnsetValue = field(default=UNSET, repr=False)
+    datasets_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = field(default=UNSET, repr=False)
+    reuses_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = field(default=UNSET, repr=False)
+    dataservices_blocs: tuple[Mapping[str, object], ...] | None | _UnsetValue = field(default=UNSET, repr=False)
 
     def __post_init__(self) -> None:
         _validate_site_patch_scalars(self.title, self.keywords, self.feed_size)
@@ -673,7 +674,7 @@ class SiteDatasetCatalogQuery:
             elif isinstance(value, tuple):
                 params.extend((key, item) for item in value)
             else:
-                params.append((key, cast(str, value)))
+                params.append((key, cast("str", value)))
         return params
 
 
@@ -718,7 +719,7 @@ class SiteDatasetCsvQuery:
             elif isinstance(value, tuple):
                 params.extend((key, item) for item in value)
             else:
-                params.append((key, cast(str, value)))
+                params.append((key, cast("str", value)))
         return params
 
 
@@ -786,7 +787,7 @@ class SiteReuseCsvQuery:
             elif isinstance(value, bool):
                 params.append((key, "true" if value else "false"))
             else:
-                params.append((key, cast(str, value)))
+                params.append((key, cast("str", value)))
         return params
 
 
@@ -829,7 +830,7 @@ class SiteDataserviceCsvQuery:
             elif isinstance(value, bool):
                 params.append((key, "true" if value else "false"))
             else:
-                params.append((key, cast(str, value)))
+                params.append((key, cast("str", value)))
         return params
 
 
@@ -898,7 +899,7 @@ class SiteMutationResult:
     """A site PATCH outcome with a redacted receipt and optional returned profile."""
 
     receipt: MutationReceipt
-    profile: SiteProfile | None = None
+    profile: SiteProfile | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.receipt, MutationReceipt):

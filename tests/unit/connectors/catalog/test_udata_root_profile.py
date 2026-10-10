@@ -8,12 +8,10 @@ import io
 import json
 import os
 import sys
-from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import replace
-from pathlib import Path
 from types import FunctionType, ModuleType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -59,8 +57,12 @@ from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
-    TransportFailure,
+    TransportError,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable, Generator, Mapping
+    from pathlib import Path
 
 _ORIGIN = "http://127.0.0.1:5640"
 _SITE_URL = f"{_ORIGIN}/api/1/site/"
@@ -72,8 +74,8 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     (
         "udata",
         "udata-evidence-udata",
-        "sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
-        "udata-evidence-udata@sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
+        "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+        "udata-evidence-udata",
     ),
     (
         "mongo",
@@ -95,9 +97,9 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     ),
     (
         "storage",
-        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-        "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "quay.io/minio/aistor/minio@sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
+        "sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
+        "quay.io/minio/aistor/minio@sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
     ),
     (
         "mailpit",
@@ -107,6 +109,9 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     ),
 )
 _TEST_CONTROLLED_SERVICE_NAMES = tuple(spec[0] for spec in _TEST_CONTROLLED_IMAGE_SPECS)
+_CONTROLLED_DOCKER_ENDPOINT = "unix:///Users/nitish/.docker/run/docker.sock"
+_CONTROLLED_PROGRAM_SITE_URL = "http://127.0.0.1:7000/api/1/site/"
+_CONTROLLED_PROGRAM_TIMEOUT_SECONDS = 10
 
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
@@ -225,7 +230,9 @@ def test_controlled_async_reap_uses_a_bounded_cleanup_timeout() -> None:
         raise TimeoutError
 
     async def run() -> None:
-        await udata_clients._terminate_controlled_process(cast(Any, process), wait_for=bounded_wait, clock=lambda: 0.0)
+        await udata_clients._terminate_controlled_process(
+            cast("Any", process), wait_for=bounded_wait, clock=lambda: 0.0
+        )
 
     asyncio.run(run())
 
@@ -376,6 +383,142 @@ def test_controlled_dependency_image_identity_rejects_unapproved_identity(mismat
         )
 
 
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    (
+        ("config", "not the approved build"),
+        ("repository", "repository digest is not approved"),
+        ("spec", "not the approved build"),
+    ),
+)
+def test_controlled_service_image_identity_rejects_unapproved_service_identity(mismatch: str, message: str) -> None:
+    container_id = "a" * 64
+    repository = "udata-evidence-udata"
+    approved_image_id = "sha256:" + "c" * 64
+    observed_config_image = repository
+    observed_image_id = approved_image_id
+    observed_repository_digest = repository
+    approved_spec = (repository, "", repository)
+    if mismatch == "config":
+        observed_config_image = "udata-evidence-other"
+    elif mismatch == "repository":
+        observed_repository_digest = "udata-evidence-other"
+    else:
+        approved_spec = (repository, approved_image_id, repository)
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return (
+                json.dumps(container_id) + " " + json.dumps(observed_image_id) + " " + json.dumps(observed_config_image)
+            )
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(observed_image_id) + " " + json.dumps([observed_repository_digest])
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    with pytest.raises(CatalogValidationError, match=message):
+        udata_clients._controlled_service_image_identity(
+            read,
+            "udata",
+            "unix:///tmp/docker.sock",
+            approved_spec,
+            repository,
+            (repository, "", repository),
+            udata_clients._controlled_error,
+        )
+
+
+def test_controlled_service_image_identity_accepts_any_build_id_for_the_pinned_repository() -> None:
+    container_id = "a" * 64
+    repository = "udata-evidence-udata"
+    image_id = "sha256:" + "e" * 64
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(image_id) + " " + json.dumps([repository])
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    _container_id, identity = udata_clients._controlled_service_image_identity(
+        read,
+        "udata",
+        "unix:///tmp/docker.sock",
+        (repository, "", repository),
+        repository,
+        (repository, "", repository),
+        udata_clients._controlled_error,
+    )
+
+    assert identity == f"udata|{repository}|{image_id}|{repository}"
+
+
+@pytest.mark.parametrize("observed", ("17.7.0", "17.6.1", "", "17.6.0.dev0"))
+def test_controlled_stack_rejects_a_service_that_is_not_the_pinned_version(observed: str) -> None:
+    with pytest.raises(CatalogValidationError, match="not the approved build"):
+        udata_clients._require_controlled_version(observed, "17.6.0", udata_clients._controlled_error)
+
+
+@pytest.mark.parametrize("udata_version", ("17.7.0", "17.6.1", ""))
+def test_controlled_client_rejects_a_stack_running_an_unapproved_udata_version(udata_version: str) -> None:
+    transport = RouterTransport(
+        {("GET", _SITE_URL): _json_response(200, _site_body(), {"Content-Type": "application/json"})}
+    )
+    with ExitStack() as stack:
+        _controlled_stack_fixture(stack, transport, udata_version=udata_version)
+        with pytest.raises(CatalogValidationError, match="not the approved build"):
+            udata_clients._ControlledSyncTransport()
+
+
+def test_controlled_client_accepts_a_stack_running_the_pinned_udata_version() -> None:
+    transport = RouterTransport(
+        {("GET", _SITE_URL): _json_response(200, _site_body(), {"Content-Type": "application/json"})}
+    )
+    with ExitStack() as stack:
+        _controlled_stack_fixture(stack, transport)
+        controlled_transport = udata_clients._ControlledSyncTransport()
+        response = controlled_transport.send(RuntimeRequest(method="GET", url=_SITE_URL, headers={}))
+
+    assert response.status_code == 200
+
+
+def test_controlled_service_image_identity_returns_the_pinned_repository_digest() -> None:
+    """A locally rebuilt image carries a fresh image ID, so the identity stays the repository.
+
+    The image ID changes on every `docker compose up --build`, so pinning it made the
+    controlled stack reject its own builds. The repository is the stable identifier, and
+    the Dockerfile/compose digests plus the running version carry the source identity.
+    """
+    container_id = "a" * 64
+    repository = "udata-evidence-udata"
+    image_id = "sha256:" + "f" * 64
+    spec = (repository, "", repository)
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(image_id) + " " + json.dumps([repository])
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    _container_id, identity = udata_clients._controlled_service_image_identity(
+        read,
+        "udata",
+        "unix:///tmp/docker.sock",
+        spec,
+        repository,
+        spec,
+        udata_clients._controlled_error,
+    )
+
+    assert identity == f"udata|{repository}|{image_id}|{repository}"
+
+
 def test_controlled_command_rejects_docker_environment_overrides(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -475,7 +618,7 @@ def test_async_stream_document_decode_failure_is_redacted() -> None:
 
 
 def test_stream_document_cleanup_failure_preserves_primary_error() -> None:
-    def chunks() -> Generator[bytes, None, None]:
+    def chunks() -> Generator[bytes]:
         yield b"valid\n"
         raise ValueError("primary")
 
@@ -499,6 +642,73 @@ def test_stream_document_cleanup_failure_preserves_primary_error() -> None:
 
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert str(excinfo.value.__cause__) == "cleanup"
+
+
+def test_stream_document_interrupt_closes_and_settles_failure() -> None:
+    closed: list[bool] = []
+    failures: list[BaseException] = []
+
+    def interrupt(_: bytes) -> None:
+        raise KeyboardInterrupt
+
+    response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=iter((b"valid\n",)),
+        close_callback=lambda: closed.append(True),
+        failure_callback=failures.append,
+    )
+
+    with pytest.raises(KeyboardInterrupt) as excinfo:
+        wire.digest_stream_document(
+            response,
+            endpoint=_SITE_URL,
+            expected_media_type="text/csv",
+            max_bytes=8,
+            sink=interrupt,
+        )
+
+    assert closed == [True]
+    assert failures == [excinfo.value]
+
+
+def test_async_stream_document_interrupt_closes_and_settles_failure() -> None:
+    closed: list[bool] = []
+    failures: list[BaseException] = []
+
+    async def interrupt(_: bytes) -> None:
+        raise KeyboardInterrupt
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"valid\n"
+
+    async def close() -> None:
+        closed.append(True)
+
+    async def fail(error: BaseException) -> None:
+        failures.append(error)
+
+    response = AsyncRuntimeStreamResponse(
+        status_code=200,
+        headers={"Content-Type": "text/csv"},
+        chunks=chunks(),
+        close_callback=close,
+        failure_callback=fail,
+    )
+
+    async def run() -> None:
+        with pytest.raises(KeyboardInterrupt) as excinfo:
+            await wire.digest_stream_document_async(
+                response,
+                endpoint=_SITE_URL,
+                expected_media_type="text/csv",
+                max_bytes=8,
+                sink=interrupt,
+            )
+        assert closed == [True]
+        assert failures == [excinfo.value]
+
+    asyncio.run(run())
 
 
 def test_async_stream_document_cleanup_failure_preserves_primary_error() -> None:
@@ -687,86 +897,258 @@ class AsyncRouterTransport:
         self.close_count += 1
 
 
-def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
+class _ControlledProgramResponse:
+    """Stub urllib response handed back by the fake opener of the canned program."""
+
+    def __init__(self, response: RuntimeResponse) -> None:
+        self.status = response.status_code
+        self.headers = dict(response.headers)
+        self._body = response.body
+
+    def read(self, _: int) -> bytes:
+        return self._body
+
+    def close(self) -> None:
+        return None
+
+
+class _ControlledProgramRequest:
+    """Stub urllib request the canned program issues against the site endpoint."""
+
+    def __init__(
+        self,
+        url: str,
+        data: bytes | None = None,
+        headers: Mapping[str, str] | None = None,
+        method: str | None = None,
+    ) -> None:
+        self.full_url = url
+        self.data = data
+        self.headers = dict(headers or {})
+        self.method = method
+
+
+class _ControlledProgramRedirectHandler:
+    """Redirect handler that refuses every redirect the canned program attempts."""
+
+    def redirect_request(self, *_: object, **__: object) -> None:
+        return None
+
+
+def _assert_controlled_patch_request(request: _ControlledProgramRequest, input_data: bytes) -> None:
+    """Assert the canned program received the exact site PATCH envelope."""
+    expected_headers = {
+        "content-type": "application/json",
+        "x-api-key": "site-key",
+    }
+    assert {key.lower(): value for key, value in request.headers.items()} == expected_headers
+    assert request.data is not None
+    assert json.loads(request.data) == json.loads(input_data)["body"]
+
+
+class _ControlledProgramOpener:
+    """Fake urllib opener that enforces the exact controlled site request contract."""
+
+    def __init__(self, response: RuntimeResponse, input_data: bytes | None) -> None:
+        self._response = response
+        self._input_data = input_data
+        self.opened = False
+
+    def open(self, request: _ControlledProgramRequest, timeout: float) -> _ControlledProgramResponse:
+        self.opened = True
+        assert timeout == _CONTROLLED_PROGRAM_TIMEOUT_SECONDS
+        assert request.full_url == _CONTROLLED_PROGRAM_SITE_URL
+        assert (request.method or "GET") == ("PATCH" if self._input_data is not None else "GET")
+        if self._input_data is not None:
+            _assert_controlled_patch_request(request, self._input_data)
+        return _ControlledProgramResponse(self._response)
+
+
+def _controlled_urllib_modules(opener: _ControlledProgramOpener) -> dict[str, ModuleType]:
+    """Build the fake ``urllib`` module trio the canned program imports."""
+    fake_request = ModuleType("urllib.request")
+    fake_request_module = cast("Any", fake_request)
+    fake_request_module.Request = _ControlledProgramRequest
+    fake_request_module.HTTPRedirectHandler = _ControlledProgramRedirectHandler
+    fake_request_module.build_opener = lambda *_: opener
+    fake_error = ModuleType("urllib.error")
+    cast("Any", fake_error).HTTPError = type("FakeHTTPError", (Exception,), {})
+    fake_urllib = ModuleType("urllib")
+    fake_urllib_module = cast("Any", fake_urllib)
+    fake_urllib_module.__path__ = []
+    fake_urllib_module.request = fake_request
+    fake_urllib_module.error = fake_error
+    return {"urllib": fake_urllib, "urllib.request": fake_request, "urllib.error": fake_error}
+
+
+def _execute_controlled_program(program: str, input_data: bytes | None, response: RuntimeResponse) -> str:
+    """Execute the canned in-container program and return its captured stdout."""
+    opener = _ControlledProgramOpener(response, input_data)
+    output = io.StringIO()
+    with (
+        patch.dict(sys.modules, _controlled_urllib_modules(opener)),
+        patch.object(sys, "stdin", io.StringIO("" if input_data is None else input_data.decode())),
+        redirect_stdout(output),
+    ):
+        exec(program, {"__name__": "__main__"})
+    assert opener.opened is True
+    return output.getvalue().strip()
+
+
+def _controlled_service_indexes() -> tuple[dict[str, str], dict[str, tuple[str, str, str]], dict[str, str]]:
+    """Return the canned container ids, image specs, and image ids keyed by service name."""
     container_ids = {service: f"{index:064x}" for index, service in enumerate(_TEST_CONTROLLED_SERVICE_NAMES, 1)}
     image_specs: dict[str, tuple[str, str, str]] = {
         service: (config_image, image_id, repository_digest)
         for service, config_image, image_id, repository_digest in _TEST_CONTROLLED_IMAGE_SPECS
     }
     image_ids: dict[str, str] = {service: image_id for service, _, image_id, _ in _TEST_CONTROLLED_IMAGE_SPECS}
+    return container_ids, image_specs, image_ids
+
+
+def _controlled_stack_reply(args: tuple[str, ...]) -> str | None:
+    """Return the canned reply for a stack-level docker command, or None when unmatched."""
+    if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
+        return f'"{_CONTROLLED_DOCKER_ENDPOINT}"'
+    if args[-4:] == ("ps", "--status", "running", "--services"):
+        return "\n".join(_TEST_CONTROLLED_SERVICE_NAMES)
+    if args[-3:] == ("port", "udata", "7000"):
+        return "127.0.0.1:5640"
+    return None
+
+
+def _controlled_service_for(index: Mapping[str, str], value: str) -> str:
+    """Return the controlled service name owning the given container or image identity."""
+    return next(service for service, candidate in index.items() if candidate == value)
+
+
+def _controlled_container_reply(
+    args: tuple[str, ...],
+    container_ids: Mapping[str, str],
+    image_specs: Mapping[str, tuple[str, str, str]],
+    image_ids: Mapping[str, str],
+    udata_version: str,
+) -> str | None:
+    """Return the canned reply for a container- or image-level docker command, or None when unmatched."""
+    if len(args) == 3 and args[:2] == ("ps", "-q"):
+        return container_ids[args[2]]
+    if args[:2] == ("inspect", "--format"):
+        container_id = args[-1]
+        service = _controlled_service_for(container_ids, container_id)
+        config_image, _image_id, _repository_digest = image_specs[service]
+        return " ".join((json.dumps(container_id), json.dumps(image_ids[service]), json.dumps(config_image)))
+    if args[:3] == ("image", "inspect", "--format"):
+        image_id = args[-1]
+        service = _controlled_service_for(image_ids, image_id)
+        _config_image, _image_id, repository_digest = image_specs[service]
+        return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
+    if args[:3] == ("exec", container_ids["udata"], "git"):
+        return "0546582058d84706812a1c37387576efc4e5ad1f"
+    if args[:3] == ("exec", container_ids["udata"], "printenv"):
+        return "unit-test-stack"
+    if args[:4] == ("exec", container_ids["udata"], "python", "-c"):
+        return udata_version
+    return None
+
+
+def _is_controlled_python_program(args: tuple[str, ...]) -> bool:
+    """Report whether the command is the canned in-container Python invocation."""
+    return len(args) >= 3 and args[-3] == "python"
+
+
+def _record_controlled_patch_body(input_data: bytes, patch_bodies: list[dict[str, object]]) -> None:
+    """Record the decoded PATCH body so tests can assert the exact wire envelope."""
+    request_payload = json.loads(input_data)
+    assert isinstance(request_payload, dict)
+    assert set(request_payload) == {"token", "body"}
+    assert request_payload["token"] == "site-key"
+    body = request_payload["body"]
+    assert isinstance(body, dict)
+    patch_bodies.append(cast("dict[str, object]", body))
+
+
+def _controlled_site_reply(
+    input_data: bytes | None,
+    transport: RouterTransport | AsyncRouterTransport,
+    patch_bodies: list[dict[str, object]],
+) -> RuntimeResponse:
+    """Return the routed site response the canned program must observe."""
+    if input_data is not None:
+        _record_controlled_patch_body(input_data, patch_bodies)
+    return transport.routes.get(
+        ("PATCH", _SITE_URL) if input_data is not None else ("GET", _SITE_URL),
+        _json_response(200, _site_body(), {"Content-Type": "application/json"}),
+    )
+
+
+def _run_controlled_python_program(
+    args: tuple[str, ...],
+    *,
+    input_data: bytes | None,
+    docker_endpoint: str | None,
+    direct: bool,
+    transport: RouterTransport | AsyncRouterTransport,
+    container_ids: Mapping[str, str],
+    patch_bodies: list[dict[str, object]],
+) -> str:
+    """Run the canned in-container Python program and return its captured stdout."""
+    assert args[:3] == ("exec", "-i", container_ids["udata"])
+    assert docker_endpoint == _CONTROLLED_DOCKER_ENDPOINT
+    assert direct is True
+    response = _controlled_site_reply(input_data, transport, patch_bodies)
+    return _execute_controlled_program(args[-1], input_data, response)
+
+
+def _controlled_command_reply(
+    args: tuple[str, ...],
+    *,
+    container_ids: dict[str, str],
+    image_specs: dict[str, tuple[str, str, str]],
+    image_ids: dict[str, str],
+    input_data: bytes | None,
+    docker_endpoint: str | None,
+    direct: bool,
+    transport: RouterTransport | AsyncRouterTransport,
+    patch_bodies: list[dict[str, object]],
+    udata_version: str,
+) -> str:
+    """Return the canned reply for one controlled docker command."""
+    stack_reply = _controlled_stack_reply(args)
+    if stack_reply is not None:
+        return stack_reply
+    container_reply = _controlled_container_reply(args, container_ids, image_specs, image_ids, udata_version)
+    if container_reply is not None:
+        return container_reply
+    if _is_controlled_python_program(args):
+        return _run_controlled_python_program(
+            args,
+            input_data=input_data,
+            docker_endpoint=docker_endpoint,
+            direct=direct,
+            transport=transport,
+            container_ids=container_ids,
+            patch_bodies=patch_bodies,
+        )
+    raise AssertionError(f"unexpected controlled command {args}")
+
+
+def _replace_closure_cell(function: Callable[..., object], name: str, value: object, stack: ExitStack) -> None:
+    """Swap one closure cell for the duration of the exit stack."""
+    function_type = cast("FunctionType", function)
+    cells = dict(zip(function_type.__code__.co_freevars, function_type.__closure__ or (), strict=True))
+    cell = cells[name]
+    previous = cell.cell_contents
+    cell.cell_contents = value
+    stack.callback(setattr, cell, "cell_contents", previous)
+
+
+def _controlled_process_setup(
+    stack: ExitStack, transport: RouterTransport | AsyncRouterTransport, udata_version: str = "17.6.0"
+) -> None:
+    """Bind the canned controlled-stack docker and program replies onto the real transport types."""
+    container_ids, image_specs, image_ids = _controlled_service_indexes()
     controlled_patch_bodies: list[dict[str, object]] = []
-    cast(Any, transport)._controlled_patch_bodies = controlled_patch_bodies
-
-    def execute_program(program: str, input_data: bytes | None, response: RuntimeResponse) -> str:
-        opened = False
-
-        class FakeResponse:
-            status = response.status_code
-            headers = dict(response.headers)
-
-            def read(self, _: int) -> bytes:
-                return response.body
-
-            def close(self) -> None:
-                return None
-
-        class FakeRequest:
-            def __init__(
-                self,
-                url: str,
-                data: bytes | None = None,
-                headers: Mapping[str, str] | None = None,
-                method: str | None = None,
-            ) -> None:
-                self.full_url = url
-                self.data = data
-                self.headers = dict(headers or {})
-                self.method = method
-
-        class FakeRedirectHandler:
-            def redirect_request(self, *_: object, **__: object) -> None:
-                return None
-
-        class FakeOpener:
-            def open(self, request: FakeRequest, timeout: float) -> FakeResponse:
-                nonlocal opened
-                opened = True
-                assert timeout == 10
-                assert request.full_url == "http://127.0.0.1:7000/api/1/site/"
-                assert (request.method or "GET") == ("PATCH" if input_data is not None else "GET")
-                if input_data is not None:
-                    assert {key.lower(): value for key, value in request.headers.items()} == {
-                        "content-type": "application/json",
-                        "x-api-key": "site-key",
-                    }
-                    assert request.data is not None
-                    assert json.loads(request.data) == json.loads(input_data)["body"]
-                return FakeResponse()
-
-        fake_request = ModuleType("urllib.request")
-        fake_request_module = cast(Any, fake_request)
-        fake_request_module.Request = FakeRequest
-        fake_request_module.HTTPRedirectHandler = FakeRedirectHandler
-        fake_request_module.build_opener = lambda *_: FakeOpener()
-        fake_error = ModuleType("urllib.error")
-        cast(Any, fake_error).HTTPError = type("FakeHTTPError", (Exception,), {})
-        fake_urllib = ModuleType("urllib")
-        fake_urllib_module = cast(Any, fake_urllib)
-        fake_urllib_module.__path__ = []
-        fake_urllib_module.request = fake_request
-        fake_urllib_module.error = fake_error
-        output = io.StringIO()
-        with (
-            patch.dict(
-                sys.modules,
-                {"urllib": fake_urllib, "urllib.request": fake_request, "urllib.error": fake_error},
-            ),
-            patch.object(sys, "stdin", io.StringIO("" if input_data is None else input_data.decode())),
-            redirect_stdout(output),
-        ):
-            exec(program, {"__name__": "__main__"})
-        assert opened is True
-        return output.getvalue().strip()
+    cast("Any", transport)._controlled_patch_bodies = controlled_patch_bodies
 
     def sync_command(
         args: tuple[str, ...],
@@ -776,46 +1158,18 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
         direct: bool = False,
         **_: object,
     ) -> str:
-        if args == ("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}"):
-            return '"unix:///Users/nitish/.docker/run/docker.sock"'
-        if args[-4:] == ("ps", "--status", "running", "--services"):
-            return "\n".join(_TEST_CONTROLLED_SERVICE_NAMES)
-        if args[-3:] == ("port", "udata", "7000"):
-            return "127.0.0.1:5640"
-        if len(args) == 3 and args[:2] == ("ps", "-q"):
-            return container_ids[args[2]]
-        if args[:2] == ("inspect", "--format"):
-            container_id = args[-1]
-            service = next(service for service, value in container_ids.items() if value == container_id)
-            config_image, _image_id, _repository_digest = image_specs[service]
-            return " ".join((json.dumps(container_id), json.dumps(image_ids[service]), json.dumps(config_image)))
-        if args[:3] == ("image", "inspect", "--format"):
-            image_id = args[-1]
-            service = next(service for service, value in image_ids.items() if value == image_id)
-            _config_image, _image_id, repository_digest = image_specs[service]
-            return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
-        if args[:3] == ("exec", container_ids["udata"], "git"):
-            return "0546582058d84706812a1c37387576efc4e5ad1f"
-        if args[:3] == ("exec", container_ids["udata"], "printenv"):
-            return "unit-test-stack"
-        if len(args) >= 3 and args[-3] == "python":
-            assert args[:3] == ("exec", "-i", container_ids["udata"])
-            assert docker_endpoint == "unix:///Users/nitish/.docker/run/docker.sock"
-            assert direct is True
-            if input_data is not None:
-                request_payload = json.loads(input_data)
-                assert isinstance(request_payload, dict)
-                assert set(request_payload) == {"token", "body"}
-                assert request_payload["token"] == "site-key"
-                body = request_payload["body"]
-                assert isinstance(body, dict)
-                controlled_patch_bodies.append(cast(dict[str, object], body))
-            response = transport.routes.get(
-                ("PATCH", _SITE_URL) if input_data is not None else ("GET", _SITE_URL),
-                _json_response(200, _site_body(), {"Content-Type": "application/json"}),
-            )
-            return execute_program(args[-1], input_data, response)
-        raise AssertionError(f"unexpected controlled command {args}")
+        return _controlled_command_reply(
+            args,
+            container_ids=container_ids,
+            image_specs=image_specs,
+            image_ids=image_ids,
+            input_data=input_data,
+            docker_endpoint=docker_endpoint,
+            direct=direct,
+            transport=transport,
+            patch_bodies=controlled_patch_bodies,
+            udata_version=udata_version,
+        )
 
     async def async_command(
         args: tuple[str, ...],
@@ -832,16 +1186,50 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
     sync_operations = udata_clients._make_controlled_sync_operations(sync_command)
     async_operations = udata_clients._make_controlled_async_operations(async_command)
 
-    def replace_closure_cell(function: Callable[..., object], name: str, value: object) -> None:
-        function_type = cast(FunctionType, function)
-        cells = dict(zip(function_type.__code__.co_freevars, function_type.__closure__ or (), strict=True))
-        cell = cells[name]
-        previous = cell.cell_contents
-        cell.cell_contents = value
-        stack.callback(setattr, cell, "cell_contents", previous)
+    _replace_closure_cell(
+        cast("Callable[..., object]", sync_type.__init__), "trusted_sync_operations", sync_operations, stack
+    )
+    _replace_closure_cell(
+        cast("Callable[..., object]", async_type.__init__), "trusted_async_operations", async_operations, stack
+    )
 
-    replace_closure_cell(cast(Callable[..., object], sync_type.__init__), "trusted_sync_operations", sync_operations)
-    replace_closure_cell(cast(Callable[..., object], async_type.__init__), "trusted_async_operations", async_operations)
+
+def _controlled_stack_fixture(stack: ExitStack, transport: RouterTransport, udata_version: str = "17.6.0") -> None:
+    """Bind the docker commands, stack nonce, and controlled probe behind one stack.
+
+    The httpx client is replaced so the controlled transport's site probe and any
+    request through it resolve against the router instead of a live deployment.
+    """
+    sync_transport = cast("RouterTransport", transport)
+    stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
+    _controlled_process_setup(stack, transport, udata_version=udata_version)
+    original_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        headers = {
+            {"accept": "Accept", "content-type": "Content-Type", "x-api-key": "X-API-KEY"}.get(key.lower(), key): value
+            for key, value in request.headers.items()
+        }
+        response = sync_transport.send(
+            RuntimeRequest(
+                method=request.method,
+                url=str(request.url),
+                headers=headers,
+                body=request.content or None,
+            )
+        )
+        return httpx.Response(
+            response.status_code,
+            headers=dict(response.headers),
+            content=response.body,
+            request=request,
+        )
+
+    def client_factory(**_: object) -> httpx.Client:
+        return original_client(transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    stack.enter_context(patch.object(httpx, "Client", client_factory))
+    transport.routes[("GET", _SITE_URL)] = _json_response(200, _site_body(), {"Content-Type": "application/json"})
 
 
 def _sync_client(
@@ -928,7 +1316,7 @@ def _sync_client(
                 stack.close()
                 closed = True
 
-    cast(Any, client).close = close
+    cast("Any", client).close = close
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -1005,7 +1393,7 @@ def _async_client(
                 stack.close()
                 closed = True
 
-    cast(Any, client).aclose = aclose
+    cast("Any", client).aclose = aclose
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -1046,7 +1434,7 @@ def test_row183_get_site_decodes_a_lossless_typed_profile() -> None:
     assert profile.title == "uData"
     assert profile.version == "17.6.0"
     assert profile.payload["portal_extension"] == {"enabled": True}
-    profile_payload = cast(dict[str, object], profile.to_dict()["payload"])
+    profile_payload = cast("dict[str, object]", profile.to_dict()["payload"])
     assert profile_payload["metrics"] == {"datasets": 1}
     assert [request.url for request in transport.requests] == [_SITE_URL, _SITE_URL]
 
@@ -1073,7 +1461,7 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert isinstance(result, SiteMutationResult)
     assert result.profile is not None
     assert result.profile.title == "Changed"
-    assert cast(Any, transport)._controlled_patch_bodies == [{"title": "Changed", "configs": None}]
+    assert cast("Any", transport)._controlled_patch_bodies == [{"title": "Changed", "configs": None}]
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.target.value == "site"
     assert result.receipt.audit_metadata["controlled_evidence_digest"] == _controlled_evidence().digest
@@ -1098,16 +1486,16 @@ def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_ov
         called = True
         raise AssertionError("mutable controlled helper was invoked")
 
-    with client:
-        with (
-            patch.object(udata_clients, "_controlled_command", replacement),
-            patch.object(udata_clients, "_controlled_patch_response", replacement),
-        ):
-            result = client.root_profile.set_site(
-                SitePatchInput(title="Changed"),
-                permissions=_PERMISSIONS,
-                mutation_policy=_site_policy(),
-            )
+    with (
+        client,
+        patch.object(udata_clients, "_controlled_command", replacement),
+        patch.object(udata_clients, "_controlled_patch_response", replacement),
+    ):
+        result = client.root_profile.set_site(
+            SitePatchInput(title="Changed"),
+            permissions=_PERMISSIONS,
+            mutation_policy=_site_policy(),
+        )
 
     assert result.receipt.outcome == "succeeded"
     assert called is False
@@ -1401,9 +1789,9 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
         def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
             self.requests.append(request)
 
-            def chunks() -> Generator[bytes, None, None]:
+            def chunks() -> Generator[bytes]:
                 yield b"id\n"
-                raise TransportFailure("stream interrupted")
+                raise TransportError("stream interrupted")
 
             return RuntimeStreamResponse(
                 200,
@@ -1412,7 +1800,7 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
                 lambda: None,
             )
 
-    events = []
+    events: list[Any] = []
     transport = FailingStreamTransport(_routes())
     client = SyncUDataClient(
         transport,
@@ -1421,7 +1809,7 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
         emitter=EventEmitter(sinks=(events.append,)),
         owns_transport=False,
     )
-    with client, pytest.raises(TransportFailure):
+    with client, pytest.raises(TransportError):
         client.root_profile.datasets_csv()
 
     assert events[-1].outcome == "failed"
@@ -1535,7 +1923,7 @@ def test_rdf_xml_aliases_are_supported(fmt: str) -> None:
 
 
 def test_route_specific_csv_query_models_do_not_share_dataset_filters() -> None:
-    typed_value = cast(Any, SiteOrganizationCsvQuery)
+    typed_value = cast("Any", SiteOrganizationCsvQuery)
     with pytest.raises(TypeError):
         typed_value(name="org", page_size=2)
     with pytest.raises(ValueError):
@@ -1678,10 +2066,10 @@ def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
 
 def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport() -> None:
     transport = RouterTransport(_routes())
-    typed_value = cast(Any, udata_clients._ControlledSyncTransport)
+    typed_value = cast("Any", udata_clients._ControlledSyncTransport)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         typed_value(transport=transport)
-    typed_value_2 = cast(Any, UDataClientSettings)
+    typed_value_2 = cast("Any", UDataClientSettings)
     object_2 = object()
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         typed_value_2(
@@ -1718,7 +2106,7 @@ def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: p
     monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
     monkeypatch.setattr(root_service, "_controlled_sync_evidence_digest", lambda _: _controlled_evidence().digest)
 
-    client_type = cast(Any, type(client))
+    client_type = cast("Any", type(client))
     with pytest.raises(AttributeError, match="factory-owned"):
         client_type._mutation_dispatch_gate = object()
 
@@ -1814,21 +2202,6 @@ def test_unrelated_local_listener_loses_authority_before_patch_dispatch() -> Non
     assert [request.method for request in transport.requests] == ["GET", "GET"]
 
 
-def test_forwarding_listener_loses_authority_before_patch_dispatch() -> None:
-    transport, client = _sync_client(
-        _routes(),
-        credential=_CREDENTIAL,
-        revalidate=lambda *, site_id: False,
-    )
-
-    patch = SitePatchInput(title="unchanged")
-    mutation_policy = _site_policy()
-    with client, pytest.raises(CatalogValidationError):
-        client.root_profile.set_site(patch, permissions=_PERMISSIONS, mutation_policy=mutation_policy)
-
-    assert [request.method for request in transport.requests] == ["GET", "GET"]
-
-
 def test_async_root_service_matches_sync_wire_and_result_shapes() -> None:
     url = f"{_ORIGIN}/api/1/site/datasets.csv"
     body = b'"id";"title"\n'
@@ -1865,11 +2238,30 @@ def test_root_profile_wire_operations_use_the_existing_broad_capability_identity
 
 def test_root_profile_models_are_typed_and_immutable() -> None:
     profile = SiteProfile.from_payload(_site_body())
-    typed_value = cast(dict[str, object], profile.payload)
+    typed_value = cast("dict[str, object]", profile.payload)
     with pytest.raises(TypeError):
         dict.__setitem__(typed_value, "title", "changed")
 
     assert isinstance(profile.catalog_id.value, str)
     assert isinstance(profile.to_dict(), dict)
     assert isinstance(SitePatchInput(title="x"), SitePatchInput)
-    assert NativeRecord is not SiteProfile
+    assert not issubclass(SiteProfile, NativeRecord)
+    assert not issubclass(NativeRecord, SiteProfile)
+
+
+def test_root_profile_model_reprs_hide_configuration_values() -> None:
+    marker = "sensitive-site-configuration"
+    profile = SiteProfile.from_payload({**_site_body(), "configs": {"marker": marker}})
+    patch = SitePatchInput(configs={"marker": marker}, settings={"marker": marker})
+    result = SiteMutationResult(
+        MutationReceipt(
+            operation=wire.SET_SITE_OPERATION,
+            outcome="succeeded",
+            target=profile.catalog_id,
+        ),
+        profile,
+    )
+
+    assert marker not in repr(profile)
+    assert marker not in repr(patch)
+    assert marker not in repr(result)

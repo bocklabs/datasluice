@@ -71,29 +71,52 @@ def _root_name(value: ast.expr) -> str | None:
     return current.id if isinstance(current, ast.Name) else None
 
 
+def _import_from_core_names(path: Path, node: ast.ImportFrom) -> set[str]:
+    """Return the public core names bound by one ``from datasluice... import`` statement."""
+    if node.module == "datasluice":
+        return {alias.asname or alias.name for alias in node.names}
+    if node.module and node.module.startswith("datasluice."):
+        assert node.module in _PUBLIC_CORE_MODULES, f"{path} imports private core module {node.module!r}"
+        return {alias.asname or alias.name for alias in node.names}
+    return set()
+
+
+def _import_core_names(path: Path, node: ast.Import) -> set[str]:
+    """Return the public core names bound by one ``import`` statement, rejecting private modules."""
+    names: set[str] = set()
+    for alias in node.names:
+        if alias.name.startswith("datasluice."):
+            assert alias.name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {alias.name!r}"
+            names.add(alias.asname or "datasluice")
+        if alias.name == "datasluice":
+            names.add(alias.asname or alias.name)
+    return names
+
+
+def _imported_core_names(path: Path, tree: ast.Module) -> set[str]:
+    """Return every public core name *path* imports, rejecting any private core module."""
+    core_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            core_names |= _import_from_core_names(path, node)
+        elif isinstance(node, ast.Import):
+            core_names |= _import_core_names(path, node)
+    return core_names
+
+
+def _assert_no_private_core_attribute_access(path: Path, tree: ast.Module, core_names: set[str]) -> None:
+    """Reject any private attribute reached through a name *path* imported from the public core."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+            root = _root_name(node.value)
+            if root in core_names:
+                raise AssertionError(f"{path} accesses private core attribute {root}.{node.attr}")
+
+
 def test_provider_python_files_use_only_public_core_imports_and_attributes() -> None:
     for path in _provider_python_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        core_names: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "datasluice":
-                core_names.update(alias.asname or alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("datasluice."):
-                assert node.module in _PUBLIC_CORE_MODULES, f"{path} imports private core module {node.module!r}"
-                core_names.update(alias.asname or alias.name for alias in node.names)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name.startswith("datasluice."):
-                        assert alias.name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {alias.name!r}"
-                        core_names.add(alias.asname or "datasluice")
-                    if alias.name == "datasluice":
-                        core_names.add(alias.asname or alias.name)
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
-                root = _root_name(node.value)
-                if root in core_names:
-                    raise AssertionError(f"{path} accesses private core attribute {root}.{node.attr}")
+        _assert_no_private_core_attribute_access(path, tree, _imported_core_names(path, tree))
 
 
 def test_retired_hook_operator_modules_and_behavior_tests_are_absent() -> None:
@@ -107,31 +130,48 @@ def test_retired_runtime_modules_are_not_importable(module_name: str) -> None:
         importlib.import_module(module_name)
 
 
+def _imported_module_names(tree: ast.Module) -> list[str]:
+    """Return every absolute module name *tree* imports."""
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.append(node.module)
+    return names
+
+
+def _imported_from_names(tree: ast.Module) -> list[str]:
+    """Return every absolute ``module.name`` pair *tree* imports via ``from ... import``."""
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.extend(f"{node.module}.{alias.name}" for alias in node.names)
+    return names
+
+
+def _assert_public_core_import(path: Path, name: str) -> None:
+    """Reject *name* when it names a core module outside the published public surface."""
+    if name.startswith("datasluice"):
+        assert name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {name!r}"
+
+
 def test_runtime_packages_import_only_new_core_runtime_surfaces() -> None:
     for path in sorted(_PROVIDER_PACKAGE.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.startswith("datasluice"):
-                        assert alias.name in _PUBLIC_CORE_MODULES, f"{path} imports private core module {alias.name!r}"
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                if node.module.startswith("datasluice") and node.module != "datasluice":
-                    assert node.module in _PUBLIC_CORE_MODULES, f"{path} imports private core module {node.module!r}"
+                    _assert_public_core_import(path, alias.name)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module and node.module != "datasluice":
+                _assert_public_core_import(path, node.module)
 
 
 def test_provider_tree_imports_no_retired_runtime_module() -> None:
     for path in _provider_python_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert alias.name not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {alias.name!r}"
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                assert node.module not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {node.module!r}"
-                for alias in node.names:
-                    imported = f"{node.module}.{alias.name}"
-                    assert imported not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {imported!r}"
+        for name in (*_imported_module_names(tree), *_imported_from_names(tree)):
+            assert name not in _RETIRED_RUNTIME_MODULES, f"{path} imports retired module {name!r}"
 
 
 def test_runtime_packages_export_the_new_hook_and_deferred_operator() -> None:

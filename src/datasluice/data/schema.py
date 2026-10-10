@@ -15,10 +15,11 @@ docstring.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from datasluice.domain.schema import Schema
 
 

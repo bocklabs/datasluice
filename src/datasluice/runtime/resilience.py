@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
 from threading import RLock
 from time import monotonic
+from typing import TYPE_CHECKING
 
 from datasluice.domain.catalog.resilience import CircuitKey, CircuitState, RetryDecision, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
 from datasluice.errors.catalog import BudgetExhaustedError
 from datasluice.logging import get_logger
-from datasluice.runtime.transport.base import RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeResponse, TransportError
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
 
 logger = get_logger("runtime.resilience")
 
@@ -103,7 +106,7 @@ class RetryLoop:
         self,
         attempt: int,
         response: RuntimeResponse | None,
-        failure: TransportFailure | None,
+        failure: TransportError | None,
     ) -> RuntimeResponse | float:
         """Compute one attempt's verdict: terminal response, validated retry delay, or raised failure."""
         decision = RetryDecision.for_response(
@@ -118,7 +121,7 @@ class RetryLoop:
             if response is not None:
                 return response
             if failure is None:
-                raise TransportFailure("Runtime transport produced neither a response nor a failure.")
+                raise TransportError("Runtime transport produced neither a response nor a failure.")
             raise failure
         delay = decision.delay or 0.0
         self._deadline.check_wait(
@@ -138,10 +141,10 @@ class RetryLoop:
         for attempt in range(1, self._max_attempts + 1):
             self._deadline.assert_dispatchable()
             response: RuntimeResponse | None = None
-            failure: TransportFailure | None = None
+            failure: TransportError | None = None
             try:
                 response = send()
-            except TransportFailure as exc:
+            except TransportError as exc:
                 failure = exc
             outcome = self._settle_attempt(attempt, response, failure)
             if isinstance(outcome, RuntimeResponse):
@@ -159,10 +162,10 @@ class RetryLoop:
         for attempt in range(1, self._max_attempts + 1):
             self._deadline.assert_dispatchable()
             response: RuntimeResponse | None = None
-            failure: TransportFailure | None = None
+            failure: TransportError | None = None
             try:
                 response = await send()
-            except TransportFailure as exc:
+            except TransportError as exc:
                 failure = exc
             outcome = self._settle_attempt(attempt, response, failure)
             if isinstance(outcome, RuntimeResponse):

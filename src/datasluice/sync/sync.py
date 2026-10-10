@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-from collections.abc import Iterable, Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,17 +16,13 @@ from datasluice.runtime.transport.base import RuntimeRequest
 from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
     from datasluice.domain import Artifact, SyncState
 
 LegacyArtifactRecord = tuple[str, str, int, str]
 
 logger = get_logger("sync.sync")
-
-_CONDITIONAL_SYNC_READY = True
-_RESPONSE_AWARE_READER_READY = True
-_WITHIN_RESOURCE_RESUME_READY = True
-_FAILURE_BOUNDARY_READY = True
-_ARTIFACT_HEALTH_READY = True
 
 
 @dataclass(frozen=True)
@@ -49,7 +44,7 @@ def _resource_transaction(state_store: Any, key: str, *, is_atomic: bool) -> Any
     cannot interleave their artifact publication with their state CAS — the
     loser's CAS sees the winner's committed version and aborts before
     publishing. For stores without ``key_lock`` (e.g. external AtomicStateStore
-    implementors that did not opt in), a no-op context manager is returned so
+    implementers that did not opt in), a no-op context manager is returned so
     behavior matches today's per-call CAS.
     """
     if is_atomic and hasattr(state_store, "key_lock"):
@@ -323,7 +318,7 @@ def sync_resources(
 
     # Probe once: stores implementing the additive AtomicStateStore capability
     # (FileStateStore) get CAS-protected transitions; others (InMemoryStateStore,
-    # external implementors) fall back to unconditional put.
+    # external implementers) fall back to unconditional put.
     from datasluice.ports import AtomicStateStore
 
     is_atomic = isinstance(state_store, AtomicStateStore)

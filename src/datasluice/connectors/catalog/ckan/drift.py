@@ -6,15 +6,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from datasluice.connectors.catalog.ckan.clients import create_sync_client
 from datasluice.connectors.catalog.ckan.probes import LineState, version_line_state
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.redaction import redact_for_output
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
 
 type Ordering = Literal["platform-deterministic", "canonicalized"]
 
@@ -238,14 +240,19 @@ def canonical_compare(observed: object, expected_keys: frozenset[str], ordering:
     if isinstance(observed, Mapping):
         return {str(key) for key in observed} == set(expected_keys)
     if isinstance(observed, Sequence) and not isinstance(observed, str | bytes | bytearray):
-        if observed and all(isinstance(item, Mapping) for item in observed):
-            return all(canonical_compare(item, expected_keys, ordering) for item in observed)
-        names = [str(item) for item in observed]
-        expected = sorted(expected_keys)
-        if ordering == "platform-deterministic":
-            return names == expected
-        return sorted(names) == expected
+        return _canonical_compare_sequence(observed, expected_keys, ordering)
     return False
+
+
+def _canonical_compare_sequence(observed: Sequence[object], expected_keys: frozenset[str], ordering: Ordering) -> bool:
+    """Compare one observed sequence of record mappings or of names under the ordering mode."""
+    if observed and all(isinstance(item, Mapping) for item in observed):
+        return all(canonical_compare(item, expected_keys, ordering) for item in observed)
+    names = [str(item) for item in observed]
+    expected = sorted(expected_keys)
+    if ordering == "platform-deterministic":
+        return names == expected
+    return sorted(names) == expected
 
 
 def _invoke_typed_read(client: _DriftClient, check: DriftCheck) -> ResultEnvelope[CKANResultItem]:

@@ -12,13 +12,14 @@ command-line arguments and never printed, logged, or written to artifacts.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import stat
 import subprocess
-from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from time import monotonic
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import SyncCKANClient, create_sync_client
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
@@ -34,6 +35,9 @@ from datasluice.domain.catalog.safety import (
 )
 from datasluice.errors.catalog import ForbiddenError
 from datasluice.runtime.bulk import BulkExecutor, BulkItemReceipt, BulkSummary
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 CREDENTIAL_ROLES = ("sysadmin", "org_admin", "user")
 IDENTITIES = ("datasluice-sysadmin", "datasluice-org-admin", "datasluice-user")
@@ -230,10 +234,8 @@ def _forbidden_artifact(
 
 def _purge_quietly(purge: Callable[..., object], name: str) -> None:
     """Purge one leftover entity from a prior aborted run, ignoring failures."""
-    try:
+    with contextlib.suppress(Exception):
         purge(id=name, policy=confirmed_destructive_policy())
-    except Exception:
-        pass
 
 
 def capture_identity_presence(client: SyncCKANClient) -> dict[str, bool]:

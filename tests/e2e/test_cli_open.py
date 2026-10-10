@@ -18,12 +18,14 @@ from typer.testing import CliRunner
 
 from datasluice.domain import HttpDownload, Resource
 
+_RSS_PROBE = Path(__file__).resolve().parent / "open_rss_probe.py"
+
 if importlib.util.find_spec("datasluice.cli.open") is None:
     if os.environ.get("DATASLUICE_TDD_RED") == "1":
         pytest.fail("streaming open CLI contracts pending GREEN phase", pytrace=False)
     pytest.skip("streaming open CLI contracts pending GREEN phase", allow_module_level=True)
 
-open_command = cast(Any, importlib.import_module("datasluice.cli.open"))
+open_command = cast("Any", importlib.import_module("datasluice.cli.open"))
 open_app = typer.Typer()
 open_app.command()(open_command.open)
 runner = CliRunner()
@@ -135,63 +137,11 @@ def test_all_jsonl_emits_each_row_without_collecting(monkeypatch: pytest.MonkeyP
     assert "render_jsonl_rows(_iter_rows" in source
 
 
-_SUBPROCESS_CODE = """
-import contextlib
-import os
-import resource
-import sys
-
-import pyarrow as pa
-
-import datasluice.cli.open as open_command
-from datasluice.domain import HttpDownload, Resource
-
-
-class Opened:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return None
-
-    def iter_batches(self):
-        payload = "x" * 2048
-        for start in range(0, 75000, 500):
-            yield pa.RecordBatch.from_pylist(
-                [{"id": value, "payload": payload} for value in range(start, start + 500)]
-            )
-
-
-class Facade:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return None
-
-    def resolve(self, locator):
-        url = "https://data.example.test/large.csv"
-        return Resource(id="large", url=url, format="CSV", access=HttpDownload(url=url))
-
-    def open(self, resource):
-        return Opened()
-
-
-open_command.open_data_sluice = Facade
-with open(os.devnull, "w") as sink:
-    with contextlib.redirect_stdout(sink):
-        open_command.open("https://data.example.test/large.csv", all_rows=True, output="jsonl")
-peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-peak_rss_kb = peak_rss // 1024 if sys.platform == "darwin" else peak_rss
-print(f"peak_rss_kb={peak_rss_kb}")
-"""
-
-
 def test_all_jsonl_peak_memory_stays_bounded() -> None:
     """Large streamed JSONL output does not retain every emitted row in process memory."""
     environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")}
     result = subprocess.run(
-        [sys.executable, "-c", _SUBPROCESS_CODE],
+        [sys.executable, str(_RSS_PROBE)],
         capture_output=True,
         text=True,
         check=True,

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
-import os
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -18,10 +16,6 @@ from datasluice.domain import SyncState
 from datasluice.exceptions import StateStoreError
 from datasluice.ports.state_store import StateStore
 from datasluice.sync.state_store import FileStateStore, InMemoryStateStore
-
-state_store_module = importlib.import_module("datasluice.sync.state_store")
-if not hasattr(state_store_module, "_SECRET_FREE_STATE_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("secret-free durable state implementation pending GREEN phase", allow_module_level=True)
 
 
 def _sha_watermark(character: str = "a") -> str:
@@ -56,9 +50,11 @@ def _assert_rejected_before_pipe(
 ) -> None:
     prior_raw = store.read_raw(key)
     original_pipe = store._fs.pipe_file
-    with patch.object(store._fs, "pipe_file", wraps=original_pipe) as pipe_file:
-        with pytest.raises(StateStoreError) as exc_info:
-            store.put(key, state)
+    with (
+        patch.object(store._fs, "pipe_file", wraps=original_pipe) as pipe_file,
+        pytest.raises(StateStoreError) as exc_info,
+    ):
+        store.put(key, state)
     pipe_file.assert_not_called()
     assert store.read_raw(key) == prior_raw
     message = str(exc_info.value)
@@ -264,7 +260,7 @@ def test_arbitrary_cursor_mapping_is_rejected_before_write(file_store: FileState
         _assert_rejected_before_pipe(
             file_store,
             key,
-            SyncState(cursor=cast(Any, cursor)),
+            SyncState(cursor=cast("Any", cursor)),
             secret_fragments=(opaque_value,),
         )
         assert file_store.get(key) == prior
@@ -451,9 +447,9 @@ def test_move_failure_preserves_prior_complete_state(file_store: FileStateStore)
     with (
         patch.object(file_store._fs, "pipe_file", wraps=original_pipe) as pipe_file,
         patch.object(file_store._fs, "mv", side_effect=OSError("injected move failure")),
+        pytest.raises(StateStoreError, match="Failed to publish durable state envelope"),
     ):
-        with pytest.raises(StateStoreError, match="Failed to publish durable state envelope"):
-            file_store.put(key, new_state)
+        file_store.put(key, new_state)
 
     pipe_file.assert_called_once()
     assert file_store.get(key) == old_state
@@ -486,11 +482,6 @@ def test_inmemory_protocol_conformance() -> None:
     assert isinstance(InMemoryStateStore(), StateStore)
 
 
-_ADVERSARIAL_READY = getattr(state_store_module, "_ADVERSARIAL_VALIDATOR_READY", False)
-_skip_adversarial = pytest.mark.skipif(not _ADVERSARIAL_READY, reason="adversarial validator pending GREEN")
-
-
-@_skip_adversarial
 def test_adversarial_signed_url_etag_rejected(tmp_path: Path) -> None:
     key = "resource-signed-url"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -507,7 +498,6 @@ def test_adversarial_signed_url_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_adversarial_bearer_credential_etag_rejected(tmp_path: Path) -> None:
     key = "resource-bearer"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -521,7 +511,6 @@ def test_adversarial_bearer_credential_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_adversarial_control_byte_etag_rejected(tmp_path: Path) -> None:
     key = "resource-control"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -535,7 +524,6 @@ def test_adversarial_control_byte_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_adversarial_oversized_etag_rejected(tmp_path: Path) -> None:
     key = "resource-oversized"
     store = FileStateStore(f"file://{tmp_path}/state")
@@ -549,7 +537,6 @@ def test_adversarial_oversized_etag_rejected(tmp_path: Path) -> None:
     )
 
 
-@_skip_adversarial
 def test_legitimate_etag_still_accepted(file_store: FileStateStore) -> None:
     key = "resource-legitimate"
     etags = (
@@ -563,7 +550,6 @@ def test_legitimate_etag_still_accepted(file_store: FileStateStore) -> None:
         assert file_store.get(key) == state
 
 
-@_skip_adversarial
 def test_contract_reconciliation_documented_as_accepted_override() -> None:
     docstring = FileStateStore.__doc__ or ""
     assert "Contract Reconciliation" in docstring

@@ -29,7 +29,7 @@ from datasluice.domain.catalog.profiles import (
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.exceptions import PortalError
 from datasluice.runtime.capability import EffectiveCapabilityCache
-from datasluice.runtime.transport.base import TransportFailure
+from datasluice.runtime.transport.base import TransportError
 
 
 class _Registry:
@@ -306,9 +306,9 @@ def test_one_flaky_probe_never_aborts_the_detection_run() -> None:
     assert result.confidence == 1.0
 
 
-@pytest.mark.parametrize("failure", [OSError("socket gone"), TransportFailure("unreachable")])
+@pytest.mark.parametrize("failure", [OSError("socket gone"), TransportError("unreachable")])
 def test_flaky_probe_containment_covers_transport_level_failures(failure: Exception) -> None:
-    """OSError and TransportFailure are contained exactly like PortalError."""
+    """OSError and TransportError are contained exactly like PortalError."""
     profile = _declared_profile("ckan")
     get_op = next(iter(profile.operations))
     runner = _FailingProbeRunner(

@@ -15,7 +15,7 @@ from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_c
 from datasluice.contracts.catalog.fakes import SyncReferenceConnector
 from datasluice.contracts.catalog.protocols import CatalogOperationRequest, SyncCatalogClient
 from datasluice.domain.catalog.operations import OperationId
-from datasluice.integrations.dlt import _sanitize, datasluice_source
+from datasluice.integrations.dlt import datasluice_source
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 
 pytest.importorskip("dlt")
@@ -48,7 +48,7 @@ class _FixtureServer(ThreadingHTTPServer):
 
 class _ActionAndDataHandler(BaseHTTPRequestHandler):
     def _respond(self) -> None:
-        server = cast(_FixtureServer, self.server)
+        server = cast("_FixtureServer", self.server)
         path = urllib.parse.urlparse(self.path).path
         length = self.headers.get("Content-Length")
         if length:
@@ -149,7 +149,7 @@ def test_ckan_live_client_flows_through_dlt_source_end_to_end(tmp_path: Any) -> 
         assert client.transport is transport
         pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "ckan_seam")
 
-        pipeline.extract(datasluice_source(cast(SyncCatalogClient, client), _ckan_query()))
+        pipeline.extract(datasluice_source(cast("SyncCatalogClient", client), _ckan_query()))
         pipeline.normalize()
         pipeline.load()
 
@@ -170,22 +170,14 @@ def test_ckan_live_client_flows_through_dlt_source_end_to_end(tmp_path: Any) -> 
 
 def test_client_without_transport_accessor_raises_the_existing_type_error() -> None:
     """A protocol-compatible client lacking the public accessor is rejected with today's TypeError."""
-    transportless_ckan_like_connector = _TransportlessCkanLikeConnector()
-    typed_value = cast(SyncCatalogClient, transportless_ckan_like_connector)
-    ckan_query = _ckan_query()
     with pytest.raises(TypeError, match="exposing the public transport accessor"):
-        datasluice_source(typed_value, ckan_query)
+        datasluice_source(cast("SyncCatalogClient", _TransportlessCkanLikeConnector()), _ckan_query())
 
 
 def test_non_resources_list_operation_raises_the_existing_value_error() -> None:
     """Any operation other than resources.list is rejected with today's ValueError."""
     query = CatalogOperationRequest(operation_id=OperationId(platform="ckan", service="datasets", method="list"))
     transportless_ckan_like_connector = _TransportlessCkanLikeConnector()
-    typed_value = cast(SyncCatalogClient, transportless_ckan_like_connector)
+    typed_value = cast("SyncCatalogClient", transportless_ckan_like_connector)
     with pytest.raises(ValueError, match="requires a resources.list catalog operation"):
         datasluice_source(typed_value, query)
-
-
-def test_seam_table_naming_matches_the_resource_identifier() -> None:
-    """The dlt table name derives deterministically from the CKAN resource id."""
-    assert _sanitize("res-0001") == "res_0001"

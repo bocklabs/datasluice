@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -35,19 +35,27 @@ def _freeze_json(value: object, path: str) -> object:
     if isinstance(value, str):
         return _sanitize_text(value, path)
     if isinstance(value, Mapping):
-        if len(value) > 32:
-            raise _report_error(path)
-        frozen: dict[str, object] = {}
-        for key, nested in value.items():
-            if not isinstance(key, str) or len(key) > 64:
-                raise _report_error(path)
-            frozen[key] = _freeze_json(nested, f"{path}.{key}")
-        return MappingProxyType(frozen)
+        return _freeze_json_object(value, path)
     if isinstance(value, (tuple, list)):
-        if len(value) > 32:
-            raise _report_error(path)
-        return tuple(_freeze_json(nested, path) for nested in value)
+        return _freeze_json_sequence(value, path)
     raise _report_error(path)
+
+
+def _freeze_json_object(value: Mapping[object, object], path: str) -> Mapping[str, object]:
+    if len(value) > 32:
+        raise _report_error(path)
+    frozen: dict[str, object] = {}
+    for key, nested in value.items():
+        if not isinstance(key, str) or len(key) > 64:
+            raise _report_error(path)
+        frozen[key] = _freeze_json(nested, f"{path}.{key}")
+    return MappingProxyType(frozen)
+
+
+def _freeze_json_sequence(value: Sequence[object], path: str) -> tuple[object, ...]:
+    if len(value) > 32:
+        raise _report_error(path)
+    return tuple(_freeze_json(nested, path) for nested in value)
 
 
 def _thaw_json(value: object) -> object:
@@ -151,9 +159,9 @@ class CaseOutcome:
             raise _report_error("outcome")
         return cls(
             operation_id=value["operation_id"],
-            mode=cast(Literal["sync", "async"], value["mode"]),
-            capability=cast(Literal["available", "unavailable"], value["capability"]),
-            state=cast(Literal["passed", "failed", "blocked"], value["state"]),
+            mode=cast("Literal['sync', 'async']", value["mode"]),
+            capability=cast("Literal['available', 'unavailable']", value["capability"]),
+            state=cast("Literal['passed', 'failed', 'blocked']", value["state"]),
             tier=value["tier"],
             warnings=tuple(warnings),
             evidence=evidence,
@@ -313,9 +321,14 @@ class ComplianceReport:
             "contract_schema_version",
             "generated_at",
         )
+        identity_values: dict[str, str | None] = {}
+        for name in identities:
+            identity = value[name]
+            if identity is not None and not isinstance(identity, str):
+                raise _report_error("report")
+            identity_values[name] = identity
         if (
-            not all(value[name] is None or isinstance(value[name], str) for name in identities)
-            or not isinstance(value["expected_case_ids"], list)
+            not isinstance(value["expected_case_ids"], list)
             or not all(isinstance(case_id, str) for case_id in value["expected_case_ids"])
             or not isinstance(value["outcomes"], list)
             or not isinstance(value["warnings"], list)
@@ -325,12 +338,12 @@ class ComplianceReport:
             raise _report_error("report")
         return cls(
             outcomes=tuple(CaseOutcome.from_dict(outcome) for outcome in value["outcomes"]),
-            connector_id=cast(str | None, value["connector_id"]),
-            manifest_version=cast(str | None, value["manifest_version"]),
-            profile_version=cast(str | None, value["profile_version"]),
-            fixture_fingerprint=cast(str | None, value["fixture_fingerprint"]),
-            contract_schema_version=cast(str | None, value["contract_schema_version"]),
-            generated_at=cast(str | None, value["generated_at"]),
+            connector_id=identity_values["connector_id"],
+            manifest_version=identity_values["manifest_version"],
+            profile_version=identity_values["profile_version"],
+            fixture_fingerprint=identity_values["fixture_fingerprint"],
+            contract_schema_version=identity_values["contract_schema_version"],
+            generated_at=identity_values["generated_at"],
             expected_case_ids=tuple(value["expected_case_ids"]),
             warnings=tuple(value["warnings"]),
             platform_metadata=value["platform_metadata"],

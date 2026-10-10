@@ -8,15 +8,14 @@ import hashlib
 import inspect
 import json
 import secrets
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from threading import RLock
 from time import monotonic, time
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import urlencode, urlsplit
 
 from datasluice.domain.catalog.auth import OAuthFlow, SecretValue
-from datasluice.domain.catalog.resilience import CircuitKey, TimeBudget
+from datasluice.domain.catalog.resilience import CircuitKey, CircuitState, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
@@ -36,6 +35,9 @@ from datasluice.runtime.constants import (
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
 
 _OAUTH_REFRESH_OPERATION = "oauth.refresh"
 _OAUTH_TOKEN_OPERATION = "oauth.token"
@@ -195,14 +197,14 @@ class ClientCredentialsFlow:
         """Synchronously exchange client credentials through the runtime transport."""
         if _is_async_transport(self._transport):
             raise TypeError("The synchronous OAuth flow requires a synchronous runtime transport.")
-        transport = cast(CatalogTransport, self._transport)
+        transport = cast("CatalogTransport", self._transport)
         return _credential(transport.send(self._request()))
 
     async def fetch_async(self) -> OAuthCredential:
         """Asynchronously exchange client credentials through the async runtime transport."""
         if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")
-        transport = cast(AsyncTokenTransport, self._transport)
+        transport = cast("AsyncTokenTransport", self._transport)
         return _credential(await transport.send(self._request()))
 
 
@@ -256,14 +258,14 @@ class AuthorizationCodeFlow:
         """Synchronously exchange an authorization code through the runtime transport."""
         if _is_async_transport(self._transport):
             raise TypeError("The synchronous OAuth flow requires a synchronous runtime transport.")
-        transport = cast(CatalogTransport, self._transport)
+        transport = cast("CatalogTransport", self._transport)
         return _credential(transport.send(self._request(code)))
 
     async def exchange_async(self, code: str) -> OAuthCredential:
         """Asynchronously exchange an authorization code through the async runtime transport."""
         if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")
-        transport = cast(AsyncTokenTransport, self._transport)
+        transport = cast("AsyncTokenTransport", self._transport)
         return _credential(await transport.send(self._request(code)))
 
 
@@ -365,8 +367,7 @@ class RefreshingCredentialProvider:
             refresh_token=updated.refresh_token or self._credential.refresh_token,
         )
 
-    def _refresh_sync(self) -> OAuthCredential:
-        transport = cast(CatalogTransport, self._transport)
+    def _refresh_admission(self) -> tuple[CircuitKey, CircuitState]:
         key = _refresh_key(self._flow, self._credential)
         if not self._breakers.admit(key):
             self._emit("breaker_open")
@@ -377,31 +378,36 @@ class RefreshingCredentialProvider:
                 capability_state="unavailable",
                 safe_action="Wait for the circuit cool-down before refreshing credentials.",
             )
-        deadline = DeadlineMonitor(self._budget, clock=self._monotonic_clock)
-        before = self._breakers.inspect(key)
-        try:
-            deadline.assert_dispatchable(_OAUTH_REFRESH_OPERATION, "runtime")
-            response = RetryLoop(
-                budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=True),
-                deadline=deadline,
-                max_attempts=1,
-                sleep=lambda _: None,
-            ).run(lambda: transport.send(self._request()))
-            deadline.assert_dispatchable()
-        except BudgetExhaustedError:
-            self._breakers.release_trial(key)
-            self._emit("budget_exhausted")
-            raise
-        except Exception:
-            after = self._breakers.record_transport_failure(key)
-            if before.open != after.open:
-                self._emit("breaker_state_change", breaker_open=after.open)
-            self._emit("failed")
-            raise
+        return key, self._breakers.inspect(key)
+
+    def _refresh_deadline(self) -> DeadlineMonitor:
+        return DeadlineMonitor(self._budget, clock=self._monotonic_clock)
+
+    def _refresh_retry_loop(self, deadline: DeadlineMonitor) -> RetryLoop:
+        return RetryLoop(
+            budget=self._budget,
+            idempotency=IdempotencyPolicy(safe=True),
+            deadline=deadline,
+            max_attempts=1,
+            sleep=lambda _: None,
+        )
+
+    def _record_breaker_change(self, before: bool, after: bool) -> None:
+        if before != after:
+            self._emit("breaker_state_change", breaker_open=after)
+
+    def _abandon_trial(self, key: CircuitKey) -> None:
+        self._breakers.release_trial(key)
+        self._emit("budget_exhausted")
+
+    def _record_refresh_failure(self, key: CircuitKey, before: CircuitState) -> None:
+        after = self._breakers.record_transport_failure(key)
+        self._record_breaker_change(before.open, after.open)
+        self._emit("failed")
+
+    def _settle_refresh(self, key: CircuitKey, before: CircuitState, response: RuntimeResponse) -> OAuthCredential:
         after = self._breakers.record_response(key, response.status_code)
-        if before.open != after.open:
-            self._emit("breaker_state_change", breaker_open=after.open)
+        self._record_breaker_change(before.open, after.open)
         try:
             refreshed = self._updated_credential(response)
         except Exception:
@@ -409,6 +415,22 @@ class RefreshingCredentialProvider:
             raise
         self._emit("succeeded")
         return refreshed
+
+    def _refresh_sync(self) -> OAuthCredential:
+        transport = cast("CatalogTransport", self._transport)
+        key, before = self._refresh_admission()
+        deadline = self._refresh_deadline()
+        try:
+            deadline.assert_dispatchable(_OAUTH_REFRESH_OPERATION, "runtime")
+            response = self._refresh_retry_loop(deadline).run(lambda: transport.send(self._request()))
+            deadline.assert_dispatchable()
+        except BudgetExhaustedError:
+            self._abandon_trial(key)
+            raise
+        except Exception:
+            self._record_refresh_failure(key, before)
+            raise
+        return self._settle_refresh(key, before, response)
 
     def resolve(self) -> OAuthCredential:
         """Return the current credential, refreshing it once when it is near expiry."""
@@ -420,49 +442,22 @@ class RefreshingCredentialProvider:
             return self._credential
 
     async def _refresh_async(self) -> OAuthCredential:
-        transport = cast(AsyncTokenTransport, self._transport)
-        key = _refresh_key(self._flow, self._credential)
-        if not self._breakers.admit(key):
-            self._emit("breaker_open")
-            raise CatalogUnavailableError(
-                "The OAuth token endpoint circuit is open.",
-                operation=_OAUTH_REFRESH_OPERATION,
-                platform="runtime",
-                capability_state="unavailable",
-                safe_action="Wait for the circuit cool-down before refreshing credentials.",
-            )
-        deadline = DeadlineMonitor(self._budget, clock=self._monotonic_clock)
-        before = self._breakers.inspect(key)
+        transport = cast("AsyncTokenTransport", self._transport)
+        key, before = self._refresh_admission()
+        deadline = self._refresh_deadline()
         try:
             deadline.assert_dispatchable(_OAUTH_REFRESH_OPERATION, "runtime")
-            response = await RetryLoop(
-                budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=True),
-                deadline=deadline,
-                max_attempts=1,
-                sleep=lambda _: None,
-            ).run_async(lambda: transport.send(self._request()), sleep=asyncio.sleep)
+            response = await self._refresh_retry_loop(deadline).run_async(
+                lambda: transport.send(self._request()), sleep=asyncio.sleep
+            )
             deadline.assert_dispatchable()
         except BudgetExhaustedError:
-            self._breakers.release_trial(key)
-            self._emit("budget_exhausted")
+            self._abandon_trial(key)
             raise
         except Exception:
-            after = self._breakers.record_transport_failure(key)
-            if before.open != after.open:
-                self._emit("breaker_state_change", breaker_open=after.open)
-            self._emit("failed")
+            self._record_refresh_failure(key, before)
             raise
-        after = self._breakers.record_response(key, response.status_code)
-        if before.open != after.open:
-            self._emit("breaker_state_change", breaker_open=after.open)
-        try:
-            refreshed = self._updated_credential(response)
-        except Exception:
-            self._emit("failed")
-            raise
-        self._emit("succeeded")
-        return refreshed
+        return self._settle_refresh(key, before, response)
 
     async def resolve_async(self) -> OAuthCredential:
         """Asynchronously return the current credential, refreshing only on the async transport."""

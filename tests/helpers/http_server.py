@@ -54,7 +54,7 @@ class _CapturingServer(ThreadingHTTPServer):
 
 class _ScriptableHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        server = cast(_CapturingServer, self.server)
+        server = cast("_CapturingServer", self.server)
         path = urllib.parse.urlparse(self.path).path
         entry = server.responses.get(path)
         resp: MockResponse

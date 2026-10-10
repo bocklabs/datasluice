@@ -51,7 +51,7 @@ def _keyring_password_getter() -> PasswordGetter:
     except ImportError as exc:
         message = "OS keychain credential discovery requires `uv sync --extra keychain` (datasluice[keychain])."
         raise ImportError(message) from exc
-    return cast(PasswordGetter, keyring.get_password)
+    return cast("PasswordGetter", keyring.get_password)
 
 
 __all__ = ("KeychainCredentialProvider",)

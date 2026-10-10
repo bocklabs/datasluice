@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
 from datasluice.cli._output import diagnostic_console, render_json, result_console
 from datasluice.cli._resolver import open_data_sluice, parse_locator, resolve_one_resource
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 DEFAULT_SCAN_ROWS = 1_000
 DEFAULT_SAMPLE_ROWS = 20

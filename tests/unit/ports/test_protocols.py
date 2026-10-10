@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+import datasluice.ports as ports
 from datasluice.ports import (
-    AtomicStateStore,
     CachePort,
     CatalogPort,
     CheckpointableResourceReader,
@@ -17,20 +17,6 @@ from datasluice.ports import (
     StateStore,
     StoragePort,
 )
-
-ALL_PROTOCOLS = [
-    AtomicStateStore,
-    CachePort,
-    CatalogPort,
-    CheckpointableResourceReader,
-    OrganizationCatalog,
-    PortalDetector,
-    ResourceReader,
-    ResponseAwareReader,
-    SearchableCatalog,
-    StateStore,
-    StoragePort,
-]
 
 ALL_PORT_NAMES = frozenset(
     {
@@ -48,16 +34,12 @@ ALL_PORT_NAMES = frozenset(
     }
 )
 
+ALL_PROTOCOLS = [getattr(ports, name) for name in sorted(ALL_PORT_NAMES)]
+
 
 def test_all_protocols_are_runtime_checkable() -> None:
     for protocol in ALL_PROTOCOLS:
         assert getattr(protocol, "_is_runtime_protocol", False) is True, f"{protocol.__name__} is not runtime_checkable"
-
-
-def test_protocol_name_index_and_class_roster_cannot_drift() -> None:
-    """ALL_PORT_NAMES and ALL_PROTOCOLS describe exactly the same protocol set."""
-    assert set(ALL_PORT_NAMES) == {protocol.__name__ for protocol in ALL_PROTOCOLS}
-    assert len(ALL_PORT_NAMES) == len(ALL_PROTOCOLS)
 
 
 def test_all_protocols_subclass_typing_protocol() -> None:
@@ -88,27 +70,11 @@ def test_organization_catalog_extends_catalog_port() -> None:
 
 
 def test_all_protocols_importable_individually() -> None:
-    for name in [
-        "AtomicStateStore",
-        "CachePort",
-        "CatalogPort",
-        "CheckpointableResourceReader",
-        "OrganizationCatalog",
-        "PortalDetector",
-        "ResourceReader",
-        "ResponseAwareReader",
-        "SearchableCatalog",
-        "StateStore",
-        "StoragePort",
-    ]:
-        import datasluice.ports as ports
-
+    for name in sorted(ALL_PORT_NAMES):
         assert hasattr(ports, name), f"{name} missing from datasluice.ports"
 
 
 def test_ports_all_exposes_exactly_the_documented_protocols() -> None:
-    import datasluice.ports as ports
-
     assert set(ports.__all__) == ALL_PORT_NAMES
     assert list(ports.__all__) == sorted(ports.__all__)
 

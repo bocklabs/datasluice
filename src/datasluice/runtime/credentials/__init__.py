@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from datasluice.domain.catalog.auth import (
     CatalogCredential,
@@ -16,6 +15,9 @@ from datasluice.domain.catalog.auth import (
 )
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 
 class DiscoveryProvider(Protocol):

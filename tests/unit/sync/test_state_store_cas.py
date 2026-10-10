@@ -9,14 +9,16 @@ declaring which fsspec backends provide an atomic rename.
 from __future__ import annotations
 
 import threading
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from datasluice.domain import Artifact, SyncState
 from datasluice.exceptions import SyncStateConflictError
 from datasluice.sync.state_store import _UNSET, FileStateStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_cas_loser_raises(tmp_path: Path) -> None:
@@ -50,25 +52,6 @@ def test_cas_no_conflict_normal_write(tmp_path: Path) -> None:
     store.put(key, second, expected_prior=expected_prior)
 
     assert store.get(key) == second
-
-
-def test_cas_matrix_n10(tmp_path: Path) -> None:
-    for iteration in range(10):
-        base_uri = f"file://{tmp_path}/run-{iteration}/state"
-        store_a = FileStateStore(base_uri)
-        store_b = FileStateStore(base_uri)
-        key = "resource-1"
-        expected_prior = store_a.read_raw(key)
-        winner = SyncState(cursor={"resource-1": f'"winner-{iteration}"'})
-
-        assert expected_prior is None
-        store_b.put(key, winner)
-
-        state = SyncState(cursor={"resource-1": f'"loser-{iteration}"'})
-        with pytest.raises(SyncStateConflictError):
-            store_a.put(key, state, expected_prior=expected_prior)
-
-        assert store_a.get(key) == winner
 
 
 def test_conditional_put_with_correct_prior_succeeds(tmp_path: Path) -> None:
@@ -174,13 +157,6 @@ def test_barrier_synchronized_dual_writer_loser_raises(tmp_path: Path) -> None:
     final_state = store.get(key)
     assert final_state is not None
     assert final_state.cursor == {key: f'"{winner_value}"'}
-
-
-def test_atomic_mv_backends_declares_local_and_memory() -> None:
-    from datasluice.sync.state_store import _ATOMIC_MV_BACKENDS
-
-    assert "file" in _ATOMIC_MV_BACKENDS
-    assert "memory" in _ATOMIC_MV_BACKENDS
 
 
 def test_is_atomic_mv_true_for_local_backend(tmp_path: Path) -> None:

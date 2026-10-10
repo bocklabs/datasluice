@@ -11,7 +11,6 @@ capability claims.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
@@ -24,14 +23,16 @@ from datasluice.connectors.catalog.ckan.clients import (
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM, TOKEN
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, CKANTokenResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _USER_GROUP = "users"
 _TOKEN_OPERATION = "ckan/action-api-v3.user-create-update-delete-token-management"

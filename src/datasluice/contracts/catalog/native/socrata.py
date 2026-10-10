@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
-from datasluice.errors.catalog import NativeCatalogError
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.errors.catalog import NativeCatalogError
 
 type SocrataResult = ResultEnvelope[NativeRecord]
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import re
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
@@ -16,6 +16,9 @@ from datasluice.cli.credentials import validate
 from datasluice.cli.materialize import materialize
 from datasluice.cli.open import open
 from datasluice.cli.scan import scan
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 runner = CliRunner()
 

@@ -23,7 +23,7 @@ dependencies = [
   "typer",
   "rich",
 ]
-requires-python = ">= 3.12"
+requires-python = ">= 3.13"
 
 [dependency-groups]
 dev = [
@@ -41,7 +41,7 @@ test = [
     "pytest",
 ]
 typecheck = [
-    "ty",
+    "mypy",
 ]
 docs = [
     "zensical",
@@ -83,20 +83,6 @@ datasluice = "datasluice.cli.app:app"
 "datasluice/udata" = "datasluice.connectors.catalog.udata.factory:create_udata_connector"
 "datasluice/socrata" = "datasluice.connectors.catalog.socrata.factory:create_socrata_connector"
 
-[tool.ty]
-# All rules are enabled as "error" by default; no need to specify unless overriding.
-# Example override: relax a rule for the entire project (uncomment if needed).
-# rules.TY015 = "warn"  # For invalid-argument-type, warn instead of error.
-
-[tool.ty.src]
-# The Airflow provider is an isolated build root (D-21/D-52) whose host-framework
-# dependency (apache-airflow) is deliberately not installed in the core dev venv
-# (D-23). Core type-checking excludes it; the provider is type-checked inside the
-# wheel-only candidate venv built by providers/apache-airflow/tests/run_candidate.py.
-# Agent worktrees contain separate repository checkouts and must not be resolved
-# as additional first-party module roots.
-exclude = ["providers", ".claude"]
-
 [tool.ruff]
 line-length = 120
 
@@ -108,17 +94,13 @@ select = [
     "I",   # isort
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
+    "ERA",
+    "DTZ",
+    "SIM",
+    "TC",
+    "N",
+    "INP"
 ]
-
-[tool.ruff.lint.per-file-ignores]
-# Skip-guarded suites import optional dependencies after pytest.importorskip
-# guards, so imports legitimately follow executable statements there.
-"tests/unit/integrations/*" = ["E402"]
-"tests/unit/data/*" = ["E402"]
-"tests/unit/io/*" = ["E402"]
-"tests/unit/runtime/transport/*" = ["E402"]
-"tests/unit/runtime/test_transport_httpx.py" = ["E402"]
-"tests/unit/transforms/*" = ["E402"]
 
 [tool.coverage.run]
 branch = true

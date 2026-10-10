@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from threading import RLock
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from datasluice.domain.catalog.auth import CatalogCredential, CredentialSource
-from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.runtime.credentials import _resolution_error, credential_from_fields
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.ids import CatalogPlatform
 
 
 class VaultKvV2Client(Protocol):
@@ -92,7 +94,7 @@ def _vault_client_factory() -> VaultClientFactory:
         raise ImportError(message) from exc
 
     def create_client(url: str, token: str) -> VaultClient:
-        return cast(VaultClient, hvac.Client(url=url, token=token))
+        return cast("VaultClient", hvac.Client(url=url, token=token))
 
     return create_client
 
@@ -103,7 +105,7 @@ def _vault_fields(response: object) -> Mapping[str, object]:
     envelope = response.get("data")
     if not isinstance(envelope, Mapping) or not isinstance(fields := envelope.get("data"), Mapping):
         raise ValueError("Vault KV v2 must return fields under data.data.")
-    return cast(Mapping[str, object], fields)
+    return cast("Mapping[str, object]", fields)
 
 
 __all__ = ("VaultCredentialProvider",)

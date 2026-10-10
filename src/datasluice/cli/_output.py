@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 result_console = Console()
 diagnostic_console = Console(stderr=True)

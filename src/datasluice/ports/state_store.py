@@ -4,7 +4,7 @@ The base :class:`StateStore` Protocol is the persistence contract every store
 must satisfy. :class:`AtomicStateStore` is an *additive capability* Protocol:
 stores that support compare-and-swap (CAS) writes opt in by also implementing
 ``read_version`` and ``conditional_put``. Stores that do not need CAS
-(:class:`datasluice.sync.state_store.InMemoryStateStore`, external implementors)
+(:class:`datasluice.sync.state_store.InMemoryStateStore`, external implementers)
 remain structurally valid against :class:`StateStore` alone.
 """
 
@@ -37,7 +37,7 @@ class AtomicStateStore(Protocol):
     as ``expected_prior`` to :meth:`conditional_put`, so a concurrent writer's
     intervening commit is detected (raising
     :class:`datasluice.exceptions.SyncStateConflictError`) rather than silently
-    overwritten. Implementors make the compare-read and the atomic-move
+    overwritten. Implementers make the compare-read and the atomic-move
     indivisible within a single process (per-key lock) and declare which fsspec
     backends provide a true atomic rename.
 

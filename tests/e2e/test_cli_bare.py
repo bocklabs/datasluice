@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_PROBE = Path(__file__).resolve().parent / "installed_probe.py"
 
 _RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
 
@@ -46,6 +47,16 @@ def _clean_env(venv: str) -> dict[str, str]:
     return {"PATH": str(Path(venv) / "bin"), "HOME": os.environ.get("HOME", ""), "LANG": "en_US.UTF-8"}
 
 
+def _run_probe(venv: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [venv["python"], str(_PROBE), *args],
+        capture_output=True,
+        text=True,
+        env=_clean_env(venv["venv"]),
+        timeout=120,
+    )
+
+
 def test_bare_wheel_imports_from_venv_not_checkout(bare_env: dict[str, str]) -> None:
     """The bare install imports datasluice from the venv site-packages, never the checkout."""
     result = subprocess.run(
@@ -61,37 +72,7 @@ def test_bare_wheel_imports_from_venv_not_checkout(bare_env: dict[str, str]) -> 
 
 def test_bare_wheel_import_sweep_stays_optional_dependency_free(bare_env: dict[str, str]) -> None:
     """Every base-reachable public package imports without optional distributions."""
-    result = subprocess.run(
-        [
-            bare_env["python"],
-            "-c",
-            "import sys;"
-            "import datasluice;"
-            "import datasluice.cli;"
-            "import datasluice.data;"
-            "import datasluice.data.readers;"
-            "import datasluice.io;"
-            "import datasluice.sync;"
-            "import datasluice.discovery;"
-            "import datasluice.integrations.dlt;"
-            "import datasluice.runtime;"
-            "import datasluice.runtime.bulk;"
-            "import datasluice.runtime.mutation;"
-            "import datasluice.runtime.oauth;"
-            "import datasluice.connectors.catalog.ckan;"
-            "import datasluice.connectors.catalog.udata;"
-            "import datasluice.connectors.catalog.socrata;"
-            "optional = ('boto3', 'dlt', 'duckdb', 'fsspec', 'httpx', 'hvac', 'keyring', 'openpyxl', "
-            "'opentelemetry', 'pandas', 'polars', 'pyarrow', 'zstandard');"
-            "loaded = [name for name in optional if any(module == name or module.startswith(name + '.') "
-            "for module in sys.modules)];"
-            "assert not loaded, loaded",
-        ],
-        capture_output=True,
-        text=True,
-        env=_clean_env(bare_env["venv"]),
-        timeout=60,
-    )
+    result = _run_probe(bare_env, "import-sweep")
     assert result.returncode == 0, result.stderr
 
 
@@ -128,10 +109,11 @@ def test_bare_console_script_exposes_runtime_cli_surface(bare_env: dict[str, str
         )
 
 
-def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str]) -> None:
+@pytest.mark.parametrize("retired", _RETIRED_COMMANDS)
+def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str], retired: str) -> None:
     """Former portal-era commands fail resolution in the installed bare wheel."""
     result = subprocess.run(
-        [bare_env["console"], "search", "https://data.example.test"],
+        [bare_env["console"], retired, "https://data.example.test"],
         capture_output=True,
         text=True,
         env=_clean_env(bare_env["venv"]),
@@ -144,36 +126,13 @@ def test_bare_console_script_rejects_retired_commands(bare_env: dict[str, str]) 
 
 def test_bare_wheel_ships_reference_fixture_sets(bare_env: dict[str, str]) -> None:
     """The installed wheel loads every reference fixture set without the checkout."""
-    result = subprocess.run(
-        [
-            bare_env["python"],
-            "-c",
-            "from datasluice.contracts.catalog import load_reference_fixture_set;"
-            "print([load_reference_fixture_set(p).platform for p in ('ckan', 'udata', 'socrata')])",
-        ],
-        capture_output=True,
-        text=True,
-        env=_clean_env(bare_env["venv"]),
-        timeout=60,
-    )
+    result = _run_probe(bare_env, "fixture-sets")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "['ckan', 'udata', 'socrata']"
 
 
 def test_bare_import_no_optional_dependency_required(bare_env: dict[str, str]) -> None:
     """A bare install imports without requiring pyarrow, httpx, or fsspec."""
-    result = subprocess.run(
-        [
-            bare_env["python"],
-            "-c",
-            "import importlib.util; import datasluice;"
-            "print(importlib.util.find_spec('pyarrow') is None,"
-            "importlib.util.find_spec('httpx') is None,"
-            "importlib.util.find_spec('fsspec') is None)",
-        ],
-        capture_output=True,
-        text=True,
-        env=_clean_env(bare_env["venv"]),
-    )
+    result = _run_probe(bare_env, "no-optional")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "True True True"

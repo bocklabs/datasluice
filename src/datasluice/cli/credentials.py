@@ -1,7 +1,5 @@
 """Credential discovery inspection and safe explicit credential validation."""
 
-from __future__ import annotations
-
 import importlib.util
 import json
 from collections.abc import Mapping
@@ -106,7 +104,7 @@ def _credential_output(credential: CatalogCredential) -> Mapping[str, object]:
         }
     else:
         raise TypeError("Unsupported explicit credential type.")
-    return cast(Mapping[str, object], redact_for_output(value))
+    return cast("Mapping[str, object]", redact_for_output(value))
 
 
 def _validate_output(output: str) -> None:

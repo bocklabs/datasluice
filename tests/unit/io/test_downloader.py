@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -10,8 +10,11 @@ from datasluice.domain import Resource
 from datasluice.exceptions import DownloadError
 from datasluice.io.cache import FileCache
 from datasluice.io.downloader import Downloader
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from datasluice.runtime.transport.user_agent import build_user_agent
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _Transport:
@@ -54,7 +57,7 @@ def test_downloader_rejects_unsuccessful_status_with_sanitized_url(tmp_path: Pat
 
 
 def test_downloader_wraps_transport_failure_with_preserved_cause(tmp_path: Path) -> None:
-    failure = TransportFailure("connection closed")
+    failure = TransportError("connection closed")
 
     transport = _Transport(failure)
     downloader = Downloader(transport)

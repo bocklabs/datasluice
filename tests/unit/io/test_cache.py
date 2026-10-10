@@ -6,9 +6,12 @@ import hashlib
 import os
 import stat
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from datasluice.io.cache import FileCache
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_key_path_is_sha256_hexdigest(tmp_path: Path) -> None:

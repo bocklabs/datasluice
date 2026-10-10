@@ -8,12 +8,13 @@ future reviewed work for when a real documented limit exists.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 
 

@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import ssl
-from collections.abc import Iterator, Mapping
-from datetime import UTC, datetime
-from email.message import Message
-from email.utils import parsedate_to_datetime
 from http.client import HTTPException, HTTPMessage
-from typing import IO
+from typing import IO, TYPE_CHECKING
 from urllib.error import HTTPError
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.request import (
     HTTPDefaultErrorHandler,
     HTTPErrorProcessor,
@@ -21,74 +17,31 @@ from urllib.request import (
     Request,
 )
 
-from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
+from datasluice.runtime.transport._shared import (
+    ALLOWED_REDIRECT_SCHEMES,
+    _enforce_body_limit,
+    _next_redirect_request,
+    _redacted_redirect_url,
+    _retry_after,
+)
 from datasluice.runtime.transport.base import (
     CatalogTransport,
     RedirectPolicy,
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
-    TransportFailure,
-    drop_body_transfer_headers,
-    redirect_method_and_body,
-    strip_sensitive_redirect_headers,
+    TransportError,
 )
 
-_CREDENTIAL_PARTS = (
-    "api_key",
-    "apikey",
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "credential",
-    "authorization",
-    "signature",
-)
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+    from email.message import Message
+
+    from datasluice.domain import CredentialScope
+
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
-_ALLOWED_SCHEMES = frozenset({"http", "https"})
-
-
-def _retry_after(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        return max(0.0, float(value))
-    except ValueError:
-        try:
-            parsed = parsedate_to_datetime(value)
-        except (TypeError, ValueError):
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return max(0.0, (parsed - datetime.now(UTC)).total_seconds())
-
-
-def _origin(url: str) -> tuple[str, str, int | None]:
-    try:
-        parsed = urlsplit(url)
-        port = parsed.port
-    except ValueError:
-        return "", "", None
-    return parsed.scheme.lower(), parsed.hostname or "", port or (443 if parsed.scheme == "https" else 80)
-
-
-def _redacted_redirect_url(url: str) -> str:
-    """Render *url* for exception surfaces with credential-shaped query params removed."""
-    try:
-        parsed = urlsplit(url)
-        query = urlencode(
-            [
-                (key, value)
-                for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-                if not any(part in key.lower() for part in _CREDENTIAL_PARTS)
-            ]
-        )
-    except ValueError:
-        return "<unparseable-redirect-target>"
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
 
 
 def _tls_context(policy: TLSPolicy) -> ssl.SSLContext:
@@ -127,9 +80,12 @@ class UrllibCatalogTransport(CatalogTransport):
     Redirect targets are limited to ``http`` and ``https`` and are requested
     verbatim, so presigned query strings survive every hop; sensitive headers
     are re-evaluated against the target origin and any configured
-    :class:`CredentialScope`. Note that urllib applies its timeout to each
-    individual socket operation (connect and read) rather than bounding the
-    whole request; callers needing a hard deadline must enforce it themselves.
+    :class:`CredentialScope`. A hop whose normalized origin differs from the
+    current one refuses to carry a request body whatever the scope allows, so
+    a cross-origin 307/308 never relays a body. Note that urllib applies its
+    timeout to each individual socket operation (connect and read) rather than
+    bounding the whole request; callers needing a hard deadline must enforce it
+    themselves.
     """
 
     def __init__(
@@ -150,9 +106,9 @@ class UrllibCatalogTransport(CatalogTransport):
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         """Send one request, following bounded and sanitized redirects."""
         if self._closed:
-            raise TransportFailure("The urllib catalog transport is closed.")
+            raise TransportError("The urllib catalog transport is closed.")
         if request.files:
-            raise TransportFailure(
+            raise TransportError(
                 "Multipart requests require the httpx transport; install datasluice[http] or inject an httpx transport."
             )
         current = request
@@ -164,7 +120,7 @@ class UrllibCatalogTransport(CatalogTransport):
             if next_request is None:
                 return _runtime_response(status, headers, body)
             current = next_request
-        raise TransportFailure("Catalog redirect limit exceeded.")
+        raise TransportError("Catalog redirect limit exceeded.")
 
     def _read_current(self, request: RuntimeRequest) -> tuple[int, dict[str, str], bytes]:
         try:
@@ -188,9 +144,9 @@ class UrllibCatalogTransport(CatalogTransport):
             finally:
                 exc.close()
         except HTTPException as exc:
-            raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
+            raise TransportError("urllib lost the catalog connection mid-response.") from exc
         except OSError as exc:
-            raise TransportFailure("urllib could not complete the catalog request.") from exc
+            raise TransportError("urllib could not complete the catalog request.") from exc
 
     def _redirect_request(
         self, request: RuntimeRequest, status: int, headers: Mapping[str, str]
@@ -201,28 +157,12 @@ class UrllibCatalogTransport(CatalogTransport):
         try:
             next_url = urljoin(request.url, location)
         except ValueError as exc:
-            raise TransportFailure(
+            raise TransportError(
                 f"urllib received an unusable redirect target {_redacted_redirect_url(location)!r}."
             ) from exc
-        if urlsplit(next_url).scheme.lower() not in _ALLOWED_SCHEMES:
-            raise TransportFailure(f"Refusing to follow non-HTTP redirect to {_redacted_redirect_url(next_url)!r}.")
-        headers_for_next = dict(request.headers)
-        if not self._retains_credentials(request.url, next_url):
-            headers_for_next = strip_sensitive_redirect_headers(headers_for_next)
-        next_method, next_body, next_files = redirect_method_and_body(
-            request.method, status, request.body, request.files
-        )
-        if next_body is None and not next_files:
-            headers_for_next = drop_body_transfer_headers(headers_for_next)
-        return RuntimeRequest(
-            method=next_method,
-            url=next_url,
-            headers=headers_for_next,
-            body=next_body,
-            files=next_files,
-            redirect_policy=request.redirect_policy,
-            max_response_bytes=request.max_response_bytes,
-        )
+        if urlsplit(next_url).scheme.lower() not in ALLOWED_REDIRECT_SCHEMES:
+            raise TransportError(f"Refusing to follow non-HTTP redirect to {_redacted_redirect_url(next_url)!r}.")
+        return _next_redirect_request(request, status, next_url, self._credential_scope, "urllib")
 
     def close(self) -> None:
         """Mark the transport closed; urllib has no persistent pool."""
@@ -231,9 +171,9 @@ class UrllibCatalogTransport(CatalogTransport):
     def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
         """Open one no-follow response without pre-buffering its body."""
         if self._closed:
-            raise TransportFailure("The urllib catalog transport is closed.")
+            raise TransportError("The urllib catalog transport is closed.")
         if request.files:
-            raise TransportFailure(
+            raise TransportError(
                 "Multipart requests require the httpx transport; install datasluice[http] or inject an httpx transport."
             )
         if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
@@ -250,16 +190,16 @@ class UrllibCatalogTransport(CatalogTransport):
             status = exc.code
             headers = _header_map(exc.headers)
         except HTTPException as exc:
-            raise TransportFailure("urllib lost the catalog connection before streaming its response.") from exc
+            raise TransportError("urllib lost the catalog connection before streaming its response.") from exc
         except OSError as exc:
-            raise TransportFailure("urllib could not open the catalog response stream.") from exc
+            raise TransportError("urllib could not open the catalog response stream.") from exc
 
         def chunks() -> Iterator[bytes]:
             try:
                 while chunk := response.read(64 * 1024):
                     yield chunk
             except (HTTPException, OSError) as exc:
-                raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
+                raise TransportError("urllib lost the catalog connection mid-response.") from exc
 
         return RuntimeStreamResponse(
             status_code=status,
@@ -268,14 +208,6 @@ class UrllibCatalogTransport(CatalogTransport):
             close_callback=response.close,
             retry_after=_retry_after(_header(headers, "retry-after")),
         )
-
-    def _retains_credentials(self, current_url: str, next_url: str) -> bool:
-        """Decide whether credential-bearing headers survive this hop."""
-        scope = self._credential_scope
-        if scope is None:
-            return _origin(current_url) == _origin(next_url)
-        scheme, host, _ = _origin(next_url)
-        return scope.send_on_redirect and scheme in scope.allowed_schemes and host in scope.allowed_hosts
 
 
 def _header_map(headers: Mapping[str, str] | Message[str, str]) -> dict[str, str]:
@@ -294,23 +226,22 @@ def _read_response_body(response: object, max_bytes: int | None) -> bytes:
     """Read a response body with an optional incremental byte ceiling."""
     read = getattr(response, "read", None)
     if not callable(read):
-        raise TransportFailure("urllib returned a response without a readable body.")
+        raise TransportError("urllib returned a response without a readable body.")
     if max_bytes is None:
         body = read()
         if not isinstance(body, bytes):
-            raise TransportFailure("urllib returned a non-byte catalog response body.")
+            raise TransportError("urllib returned a non-byte catalog response body.")
         return body
     parts: list[bytes] = []
     size = 0
     while True:
         chunk = read(64 * 1024)
         if not isinstance(chunk, bytes):
-            raise TransportFailure("urllib yielded a non-byte catalog response chunk.")
+            raise TransportError("urllib yielded a non-byte catalog response chunk.")
         if not chunk:
             return b"".join(parts)
         size += len(chunk)
-        if size > max_bytes:
-            raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        _enforce_body_limit(size, max_bytes)
         parts.append(chunk)
 
 

@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import AsyncIterator, Callable
 from importlib import resources
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import pytest
@@ -37,6 +36,9 @@ from datasluice.runtime.transport.base import (
     RuntimeResponse,
     RuntimeStreamResponse,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable, Mapping
 
 _ROOT_CONTRACT_RESOURCE = resources.files("datasluice.contracts").joinpath("catalog/fixtures/udata/root_profile.json")
 _ORIGIN = "http://127.0.0.1:5640"
@@ -197,8 +199,8 @@ def _site_response(headers: dict[str, str] | None = None) -> RuntimeResponse:
 
 
 def _fixture_row_responder(row: dict[str, object]) -> Callable[[RuntimeRequest], RuntimeResponse]:
-    expected_path = cast(str, row["path"]).replace("<format>", "json")
-    row_number = cast(int, row["row"])
+    expected_path = cast("str", row["path"]).replace("<format>", "json")
+    row_number = cast("int", row["row"])
 
     def responder(request: RuntimeRequest) -> RuntimeResponse:
         request_path = urlsplit(request.url).path
@@ -295,11 +297,11 @@ async def _async_fixture_operation(client: AsyncUDataClient, operation: str) -> 
         "udata.v1.SiteJsonLdContext_get": service.jsonld_context,
     }
     result = operations[operation]()
-    return await cast(Any, result)
+    return await cast("Any", result)
 
 
 def _root_read_rows() -> list[dict[str, object]]:
-    rows = cast(list[dict[str, object]], _root_contract()["rows"])
+    rows = cast("list[dict[str, object]]", _root_contract()["rows"])
     return [row for row in rows if not row.get("controlled_only", False)]
 
 
@@ -325,8 +327,8 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
 
 
 def test_root_profile_rows_are_exhaustively_declared() -> None:
-    rows = cast(list[dict[str, object]], _root_contract()["rows"])
-    assert {cast(int, item["row"]) for item in rows} == ROOT_ROW_NUMBERS
+    rows = cast("list[dict[str, object]]", _root_contract()["rows"])
+    assert {cast("int", item["row"]) for item in rows} == ROOT_ROW_NUMBERS
     assert [row for row in rows if row.get("controlled_only")] == [
         {
             "row": 184,
@@ -342,20 +344,20 @@ def test_root_profile_rows_are_exhaustively_declared() -> None:
 
 
 def test_root_profile_failure_cells_are_exhaustively_declared() -> None:
-    failures = cast(list[dict[str, object]], _root_contract()["failure_cases"])
-    assert {cast(str, item["id"]) for item in failures} == ROOT_FAILURE_IDS
+    failures = cast("list[dict[str, object]]", _root_contract()["failure_cases"])
+    assert {cast("str", item["id"]) for item in failures} == ROOT_FAILURE_IDS
 
 
 @pytest.mark.parametrize("row", sorted(ROOT_ROW_NUMBERS))
 def test_root_profile_row_has_declared_evidence(row: int) -> None:
-    rows = cast(list[dict[str, object]], _root_contract()["rows"])
-    assert any(cast(int, item["row"]) == row for item in rows)
+    rows = cast("list[dict[str, object]]", _root_contract()["rows"])
+    assert any(cast("int", item["row"]) == row for item in rows)
 
 
 @pytest.mark.parametrize("row", _root_read_rows(), ids=lambda row: f"row-{row['row']}")
 def test_root_contract_executes_each_non_mutating_service_row_in_both_modes(row: dict[str, object]) -> None:
-    operation = cast(str, row["operation"])
-    expected_path = cast(str, row["path"]).replace("<format>", "json")
+    operation = cast("str", row["operation"])
+    expected_path = cast("str", row["path"]).replace("<format>", "json")
     sync_transport, sync_client = _sync_root_client(_fixture_row_responder(row))
     with sync_client:
         sync_value = _sync_fixture_operation(sync_client, operation)
@@ -371,30 +373,106 @@ def test_root_contract_executes_each_non_mutating_service_row_in_both_modes(row:
     for transport in (sync_transport, async_transport):
         assert [(request.method, urlsplit(request.url).path) for request in transport.requests] == [
             ("GET", _SITE_PATH),
-            (cast(str, row["method"]), expected_path),
+            (cast("str", row["method"]), expected_path),
         ]
-    assert cast(Any, sync_value).to_dict() == cast(Any, async_value).to_dict()
+    assert cast("Any", sync_value).to_dict() == cast("Any", async_value).to_dict()
 
-    row_number = cast(int, row["row"])
+    row_number = cast("int", row["row"])
     if row_number == 183:
-        assert cast(Any, sync_value).id == "site"
+        assert cast("Any", sync_value).id == "site"
     elif row_number == 185:
-        assert cast(Any, sync_value).location == "/api/1/site/catalog.json"
+        assert cast("Any", sync_value).location == "/api/1/site/catalog.json"
     elif row_number == 186:
-        assert cast(Any, sync_value).location == "/api/1/site/catalog.json?page=1&page_size=100"
+        assert cast("Any", sync_value).location == "/api/1/site/catalog.json?page=1&page_size=100"
     else:
         expected_media_type = "application/ld+json" if row_number in {187, 195} else "text/csv"
-        assert cast(Any, sync_value).media_type == expected_media_type
-        assert cast(Any, sync_value).size_bytes > 0
-        assert "body" not in cast(Any, sync_value).to_dict()
+        assert cast("Any", sync_value).media_type == expected_media_type
+        assert cast("Any", sync_value).size_bytes > 0
+        assert "body" not in cast("Any", sync_value).to_dict()
     if row_number in {187, 188, 189, 190, 191, 192, 193, 194}:
         assert sync_transport.stream_close_count == async_transport.stream_close_count == 1
 
 
+_OBJECT_ID_FILTER_KEYS = frozenset(
+    {
+        "license",
+        "organization",
+        "owner",
+        "followed_by",
+        "topic",
+        "dataservice",
+        "reuse",
+        "dataset",
+        "contact_point",
+    }
+)
+
+
+def _declared_scalar_filter_value(key: str, choices: Mapping[str, list[str]]) -> str:
+    """Return the scalar filter value the declared schema documents for one key."""
+    if key in choices:
+        return choices[key][0]
+    if key == "geozone":
+        return "country:fr"
+    if key in _OBJECT_ID_FILTER_KEYS:
+        return "0123456789abcdef01234567"
+    return "value"
+
+
+def _declared_schema_filters(schema: Mapping[str, object]) -> dict[str, object]:
+    """Build the filter map that exercises every declared key of one query schema."""
+    filters: dict[str, object] = {}
+    for key in cast("list[str]", schema.get("repeatable", [])):
+        filters[key] = ("one", "two")
+    for key in cast("list[str]", schema.get("boolean", [])):
+        filters[key] = True
+    choices = cast("dict[str, list[str]]", schema.get("choices", {}))
+    for key in cast("list[str]", schema.get("scalar", [])):
+        if key in {"q", "sort"}:
+            continue
+        filters[key] = _declared_scalar_filter_value(key, choices)
+    return filters
+
+
+def _declared_query_kwargs(schema: Mapping[str, object], filters: dict[str, object], sort: str) -> dict[str, object]:
+    """Return the constructor keyword arguments the declared schema requires."""
+    kwargs: dict[str, object] = {"filters": filters}
+    scalar_keys = cast("list[str]", schema.get("scalar", []))
+    if "defaults" in schema:
+        defaults = cast("dict[str, int]", schema["defaults"])
+        kwargs.update(page=defaults["page"], page_size=defaults["page_size"])
+    if "q" in scalar_keys:
+        kwargs["q"] = "query"
+    if "sort" in scalar_keys:
+        kwargs["sort"] = sort
+    return kwargs
+
+
+def _declared_query_keys(schema: Mapping[str, object]) -> set[str]:
+    """Return the exact query-parameter key set the declared schema documents."""
+    keys = {
+        *cast("list[str]", schema.get("repeatable", [])),
+        *cast("list[str]", schema.get("boolean", [])),
+        *cast("list[str]", schema.get("scalar", [])),
+    }
+    if "defaults" in schema:
+        keys.update({"page", "page_size"})
+    return keys
+
+
+def _assert_query_schema_preserves_cardinality(query_type: Any, sort: str, schema: dict[str, object]) -> None:
+    """Assert one declared query schema yields exactly its documented parameter keys."""
+    filters = _declared_schema_filters(schema)
+    query = query_type(**_declared_query_kwargs(schema, filters, sort))
+
+    assert {key for key, _ in query.query_params()} == _declared_query_keys(schema)
+
+
 def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> None:
+    """Each declared query schema emits exactly the parameters the contract documents."""
     document = _root_contract()
-    rows = cast(list[dict[str, object]], document["rows"])
-    schemas = {cast(int, row["row"]): row.get("query_schema") for row in rows}
+    rows = cast("list[dict[str, object]]", document["rows"])
+    schemas = {cast("int", row["row"]): row.get("query_schema") for row in rows}
     assert schemas[186] == "dataset_catalog"
     assert schemas[187] == "dataset_catalog"
     assert schemas[188] == "dataset_csv"
@@ -415,213 +493,191 @@ def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> N
         "reuse_csv": (SiteReuseCsvQuery, "title"),
         "dataservice_csv": (SiteDataserviceCsvQuery, "title"),
     }
-    query_schemas = cast(dict[str, dict[str, object]], document["query_schemas"])
-    object_id_keys = {
-        "license",
-        "organization",
-        "owner",
-        "followed_by",
-        "topic",
-        "dataservice",
-        "reuse",
-        "dataset",
-        "contact_point",
-    }
+    query_schemas = cast("dict[str, dict[str, object]]", document["query_schemas"])
     for schema_name, (query_type, sort) in query_types.items():
-        schema = query_schemas[schema_name]
-        filters: dict[str, object] = {}
-        for key in cast(list[str], schema.get("repeatable", [])):
-            filters[key] = ("one", "two")
-        for key in cast(list[str], schema.get("boolean", [])):
-            filters[key] = True
-        choices = cast(dict[str, list[str]], schema.get("choices", {}))
-        for key in cast(list[str], schema.get("scalar", [])):
-            if key in {"q", "sort"}:
-                continue
-            if key in choices:
-                filters[key] = choices[key][0]
-            elif key == "geozone":
-                filters[key] = "country:fr"
-            elif key in object_id_keys:
-                filters[key] = "0123456789abcdef01234567"
-            else:
-                filters[key] = "value"
-        kwargs: dict[str, object] = {"filters": filters}
-        if "defaults" in schema:
-            defaults = cast(dict[str, int], schema["defaults"])
-            kwargs.update(page=defaults["page"], page_size=defaults["page_size"])
-        if "q" in cast(list[str], schema.get("scalar", [])):
-            kwargs["q"] = "query"
-        if "sort" in cast(list[str], schema.get("scalar", [])):
-            kwargs["sort"] = sort
-        query = cast(Any, query_type)(**kwargs)
-        actual_keys = {key for key, _ in query.query_params()}
-        expected_keys = {
-            *cast(list[str], schema.get("repeatable", [])),
-            *cast(list[str], schema.get("boolean", [])),
-            *cast(list[str], schema.get("scalar", [])),
-        }
-        if "defaults" in schema:
-            expected_keys.update({"page", "page_size"})
-        assert actual_keys == expected_keys
+        _assert_query_schema_preserves_cardinality(query_type, sort, query_schemas[schema_name])
 
     with pytest.raises(ValueError):
         SiteDatasetCatalogQuery(filters={"credit": "ignored"})
 
 
+def _site_only_responder(request: RuntimeRequest) -> RuntimeResponse:
+    """Answer the site probe and nothing else."""
+    return _site_response()
+
+
+def _assert_invalid_format_pre_dispatch() -> None:
+    """The declared format is refused in both modes before any request is dispatched."""
+    sync_transport, sync_client = _sync_root_client(_site_only_responder)
+    with sync_client, pytest.raises(CatalogValidationError):
+        sync_client.root_profile.data_portal("yaml")
+
+    async_transport, async_client = _async_root_client(_site_only_responder)
+
+    async def invalid_format() -> None:
+        async with async_client:
+            with pytest.raises(CatalogValidationError):
+                await async_client.root_profile.data_portal("yaml")
+
+    asyncio.run(invalid_format())
+    assert sync_transport.requests == async_transport.requests == []
+
+
+def _assert_external_redirect_refused() -> None:
+    """The declared cross-origin redirect fails closed in both modes after the same two requests."""
+
+    def external_redirect(request: RuntimeRequest) -> RuntimeResponse:
+        if urlsplit(request.url).path == _SITE_PATH:
+            return _site_response()
+        return RuntimeResponse(302, {"Location": "https://other.example/site/catalog.json"}, b"")
+
+    sync_transport, sync_client = _sync_root_client(external_redirect)
+    with sync_client, pytest.raises(NativeCatalogError):
+        sync_client.root_profile.data_portal("json")
+
+    async_transport, async_client = _async_root_client(external_redirect)
+
+    async def external_redirect_async() -> None:
+        async with async_client:
+            with pytest.raises(NativeCatalogError):
+                await async_client.root_profile.data_portal("json")
+
+    asyncio.run(external_redirect_async())
+    for transport in (sync_transport, async_transport):
+        assert [(request.method, urlsplit(request.url).path) for request in transport.requests] == [
+            ("GET", _SITE_PATH),
+            ("GET", "/api/1/site/data.json"),
+        ]
+
+
+def _missing_media_responder() -> Callable[[RuntimeRequest], RuntimeResponse]:
+    """Build a responder whose second response carries no media type at all."""
+    response_count = 0
+
+    def responder(request: RuntimeRequest) -> RuntimeResponse:
+        nonlocal response_count
+        response_count += 1
+        return _site_response() if response_count == 1 else RuntimeResponse(200, {}, b"{}")
+
+    return responder
+
+
+def _assert_missing_or_conflicting_media_refused() -> None:
+    """The declared second response without a media type fails in both modes."""
+    sync_transport, sync_client = _sync_root_client(_missing_media_responder())
+    with sync_client, pytest.raises(NativeCatalogError):
+        sync_client.root_profile.get()
+
+    async_transport, async_client = _async_root_client(_missing_media_responder())
+
+    async def missing_media_async() -> None:
+        async with async_client:
+            with pytest.raises(NativeCatalogError):
+                await async_client.root_profile.get()
+
+    asyncio.run(missing_media_async())
+    assert len(sync_transport.requests) == len(async_transport.requests) == 2
+
+
+def _assert_export_limit_and_close() -> None:
+    """The declared export limit raises in both modes and closes each stream exactly once."""
+
+    def oversized_export(request: RuntimeRequest) -> RuntimeResponse:
+        if urlsplit(request.url).path == _SITE_PATH:
+            return _site_response()
+        return RuntimeResponse(200, {"Content-Type": "text/csv"}, b"id,title\nsite,uData\n")
+
+    sync_transport, sync_client = _sync_root_client(oversized_export, root_export_max_bytes=1)
+    with sync_client, pytest.raises(NativeCatalogError):
+        sync_client.root_profile.datasets_csv()
+
+    async_transport, async_client = _async_root_client(oversized_export, root_export_max_bytes=1)
+
+    async def oversized_export_async() -> None:
+        async with async_client:
+            with pytest.raises(NativeCatalogError):
+                await async_client.root_profile.datasets_csv()
+
+    asyncio.run(oversized_export_async())
+    assert sync_transport.stream_close_count == async_transport.stream_close_count == 1
+
+
+def _assert_set_site_denial_isolated() -> None:
+    """The declared permissionless mutation is refused without dispatch in both modes."""
+
+    def direct_and_factory_sync(client: SyncUDataClient, transport: _FixtureSyncTransport) -> None:
+        with client:
+            patch = SitePatchInput(title="unowned")
+            with pytest.raises(CatalogValidationError):
+                client.root_profile.set_site(patch, permissions=None)
+            assert transport.requests == []
+            assert client.root_profile.get().id == "site"
+
+    sync_transport, sync_client = _sync_root_client(_site_only_responder)
+    direct_and_factory_sync(sync_client, sync_transport)
+    factory_sync_transport = _FixtureSyncTransport(_site_only_responder)
+    factory_sync_client = create_sync_client(
+        UDataClientSettings(base_url=_ORIGIN, sync_transport=factory_sync_transport)
+    )
+    direct_and_factory_sync(factory_sync_client, factory_sync_transport)
+
+    async def direct_and_factory_async(client: AsyncUDataClient, transport: _FixtureAsyncTransport) -> None:
+        async with client:
+            patch = SitePatchInput(title="unowned")
+            with pytest.raises(CatalogValidationError):
+                await client.root_profile.set_site(patch, permissions=None)
+            assert transport.requests == []
+            assert (await client.root_profile.get()).id == "site"
+
+    async_transport, async_client = _async_root_client(_site_only_responder)
+    asyncio.run(direct_and_factory_async(async_client, async_transport))
+    factory_async_transport = _FixtureAsyncTransport(_site_only_responder)
+    factory_async_client = create_async_client(
+        UDataClientSettings(base_url=_ORIGIN, async_transport=factory_async_transport)
+    )
+    asyncio.run(direct_and_factory_async(factory_async_client, factory_async_transport))
+
+
+def _assert_async_parity() -> None:
+    """The declared parity cell produces identical profiles from identical request sequences."""
+    sync_transport, sync_client = _sync_root_client(_site_only_responder)
+    with sync_client:
+        sync_profile = sync_client.root_profile.get()
+
+    async_transport, async_client = _async_root_client(_site_only_responder)
+
+    async def async_profile() -> object:
+        async with async_client:
+            return await async_client.root_profile.get()
+
+    assert sync_profile.to_dict() == cast("Any", asyncio.run(async_profile())).to_dict()
+    assert [request.url for request in sync_transport.requests] == [request.url for request in async_transport.requests]
+
+
 @pytest.mark.parametrize(
     "failure",
-    cast(list[dict[str, object]], _root_contract()["failure_cases"]),
-    ids=lambda failure: cast(str, failure["id"]),
+    cast("list[dict[str, object]]", _root_contract()["failure_cases"]),
+    ids=lambda failure: cast("str", failure["id"]),
 )
 def test_root_contract_failure_cells_execute_the_declared_sync_async_behavior(failure: dict[str, object]) -> None:
-    failure_id = cast(str, failure["id"])
+    """Every declared root failure cell runs the sync/async behaviour the contract names."""
+    failure_id = cast("str", failure["id"])
     assert failure["modes"] == ["sync", "async"]
 
     if failure_id == "root_invalid_format_pre_dispatch":
-        sync_transport, sync_client = _sync_root_client(lambda request: _site_response())
-        with sync_client, pytest.raises(CatalogValidationError):
-            sync_client.root_profile.data_portal("yaml")
-
-        async_transport, async_client = _async_root_client(lambda request: _site_response())
-
-        async def invalid_format() -> None:
-            async with async_client:
-                with pytest.raises(CatalogValidationError):
-                    await async_client.root_profile.data_portal("yaml")
-
-        asyncio.run(invalid_format())
-        assert sync_transport.requests == async_transport.requests == []
-        return
-
-    if failure_id == "root_external_redirect":
-
-        def external_redirect(request: RuntimeRequest) -> RuntimeResponse:
-            if urlsplit(request.url).path == _SITE_PATH:
-                return _site_response()
-            return RuntimeResponse(302, {"Location": "https://other.example/site/catalog.json"}, b"")
-
-        sync_transport, sync_client = _sync_root_client(external_redirect)
-        with sync_client, pytest.raises(NativeCatalogError):
-            sync_client.root_profile.data_portal("json")
-
-        async_transport, async_client = _async_root_client(external_redirect)
-
-        async def external_redirect_async() -> None:
-            async with async_client:
-                with pytest.raises(NativeCatalogError):
-                    await async_client.root_profile.data_portal("json")
-
-        asyncio.run(external_redirect_async())
-        for transport in (sync_transport, async_transport):
-            assert [(request.method, urlsplit(request.url).path) for request in transport.requests] == [
-                ("GET", _SITE_PATH),
-                ("GET", "/api/1/site/data.json"),
-            ]
-        return
-
-    if failure_id == "root_missing_or_conflicting_media":
-
-        def missing_media() -> Callable[[RuntimeRequest], RuntimeResponse]:
-            response_count = 0
-
-            def responder(request: RuntimeRequest) -> RuntimeResponse:
-                nonlocal response_count
-                response_count += 1
-                return _site_response() if response_count == 1 else RuntimeResponse(200, {}, b"{}")
-
-            return responder
-
-        sync_transport, sync_client = _sync_root_client(missing_media())
-        with sync_client, pytest.raises(NativeCatalogError):
-            sync_client.root_profile.get()
-
-        async_transport, async_client = _async_root_client(missing_media())
-
-        async def missing_media_async() -> None:
-            async with async_client:
-                with pytest.raises(NativeCatalogError):
-                    await async_client.root_profile.get()
-
-        asyncio.run(missing_media_async())
-        assert len(sync_transport.requests) == len(async_transport.requests) == 2
-        return
-
-    if failure_id == "root_export_limit_and_close":
-
-        def oversized_export(request: RuntimeRequest) -> RuntimeResponse:
-            if urlsplit(request.url).path == _SITE_PATH:
-                return _site_response()
-            return RuntimeResponse(200, {"Content-Type": "text/csv"}, b"id,title\nsite,uData\n")
-
-        sync_transport, sync_client = _sync_root_client(oversized_export, root_export_max_bytes=1)
-        with sync_client, pytest.raises(NativeCatalogError):
-            sync_client.root_profile.datasets_csv()
-
-        async_transport, async_client = _async_root_client(oversized_export, root_export_max_bytes=1)
-
-        async def oversized_export_async() -> None:
-            async with async_client:
-                with pytest.raises(NativeCatalogError):
-                    await async_client.root_profile.datasets_csv()
-
-        asyncio.run(oversized_export_async())
-        assert sync_transport.stream_close_count == async_transport.stream_close_count == 1
-        return
-
-    if failure_id == "root_set_site_denial_isolated":
-
-        def direct_and_factory_sync(client: SyncUDataClient, transport: _FixtureSyncTransport) -> None:
-            with client:
-                patch = SitePatchInput(title="unowned")
-                with pytest.raises(CatalogValidationError):
-                    client.root_profile.set_site(patch, permissions=None)
-                assert transport.requests == []
-                assert client.root_profile.get().id == "site"
-
-        sync_transport, sync_client = _sync_root_client(lambda request: _site_response())
-        direct_and_factory_sync(sync_client, sync_transport)
-        factory_sync_transport = _FixtureSyncTransport(lambda request: _site_response())
-        factory_sync_client = create_sync_client(
-            UDataClientSettings(base_url=_ORIGIN, sync_transport=factory_sync_transport)
-        )
-        direct_and_factory_sync(factory_sync_client, factory_sync_transport)
-
-        async def direct_and_factory_async(client: AsyncUDataClient, transport: _FixtureAsyncTransport) -> None:
-            async with client:
-                patch = SitePatchInput(title="unowned")
-                with pytest.raises(CatalogValidationError):
-                    await client.root_profile.set_site(patch, permissions=None)
-                assert transport.requests == []
-                assert (await client.root_profile.get()).id == "site"
-
-        async_transport, async_client = _async_root_client(lambda request: _site_response())
-        asyncio.run(direct_and_factory_async(async_client, async_transport))
-        factory_async_transport = _FixtureAsyncTransport(lambda request: _site_response())
-        factory_async_client = create_async_client(
-            UDataClientSettings(base_url=_ORIGIN, async_transport=factory_async_transport)
-        )
-        asyncio.run(direct_and_factory_async(factory_async_client, factory_async_transport))
-        return
-
-    if failure_id == "root_async_parity":
-        sync_transport, sync_client = _sync_root_client(lambda request: _site_response())
-        with sync_client:
-            sync_profile = sync_client.root_profile.get()
-
-        async_transport, async_client = _async_root_client(lambda request: _site_response())
-
-        async def async_profile() -> object:
-            async with async_client:
-                return await async_client.root_profile.get()
-
-        assert sync_profile.to_dict() == cast(Any, asyncio.run(async_profile())).to_dict()
-        assert [request.url for request in sync_transport.requests] == [
-            request.url for request in async_transport.requests
-        ]
-        return
-
-    raise AssertionError(f"Unhandled root failure fixture: {failure_id}")
+        _assert_invalid_format_pre_dispatch()
+    elif failure_id == "root_external_redirect":
+        _assert_external_redirect_refused()
+    elif failure_id == "root_missing_or_conflicting_media":
+        _assert_missing_or_conflicting_media_refused()
+    elif failure_id == "root_export_limit_and_close":
+        _assert_export_limit_and_close()
+    elif failure_id == "root_set_site_denial_isolated":
+        _assert_set_site_denial_isolated()
+    elif failure_id == "root_async_parity":
+        _assert_async_parity()
+    else:
+        raise AssertionError(f"Unhandled root failure fixture: {failure_id}")
 
 
 def test_conformance_module_imports_isolated() -> None:

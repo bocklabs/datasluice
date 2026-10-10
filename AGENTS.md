@@ -11,7 +11,7 @@ uv sync --all-extras   # install everything (dev + all optional deps)
 uv run <command>       # run anything in the project venv
 ```
 
-`--all-extras` is **required** for type checking and running pre-commit locally, because `ty` resolves lazy imports of optional deps (pandas, polars, dlt, duckdb, pyarrow, openpyxl, airflow). Without it you get `unresolved-import` errors.
+`--all-extras` is **required** for type checking and running pre-commit locally, because `mypy` resolves lazy imports of optional deps (pandas, polars, dlt, duckdb, pyarrow, openpyxl, airflow). Without it you get `import-not-found` errors.
 
 `just` (task runner) is a Rust binary, not a pip package. Install it into the venv:
 ```bash
@@ -26,7 +26,7 @@ If `just` is missing, `make` works as a zero-dependency fallback (same targets).
 | Full QA (format → lint → typecheck → test) | `just qa` or `make qa` |
 | Format only | `uv run ruff format .` |
 | Lint only | `uv run ruff check . --fix` |
-| Type check | `uv run --all-extras ty check .` |
+| Type check | `uv run --all-extras mypy src scripts tests` |
 | Tests | `uv run pytest` |
 | Single test file | `uv run pytest tests/unit/domain/test_models.py` |
 | Pre-commit (all files) | `uv run pre-commit run --all-files` |
@@ -34,11 +34,11 @@ If `just` is missing, `make` works as a zero-dependency fallback (same targets).
 | Serve docs | `just docs-serve` |
 | Build dist | `uv build` |
 
-`just qa` and `make qa` run the same pipeline: ruff format → ruff lint → ty check → pytest.
+`just qa` and `make qa` run the same pipeline: ruff format → ruff lint → mypy → pytest.
 
 ## Pre-commit
 
-Pre-commit includes **local hooks** for `ty check` and `pytest` (see `.pre-commit-config.yaml`). These run via `uv run`, so they need the project venv. Always invoke pre-commit as `uv run pre-commit`, not bare `pre-commit`.
+Pre-commit includes **local hooks** for `mypy` and `pytest` (see `.pre-commit-config.yaml`). These run via `uv run`, so they need the project venv. Always invoke pre-commit as `uv run pre-commit`, not bare `pre-commit`.
 
 ## Architecture
 
@@ -52,7 +52,7 @@ Pre-commit includes **local hooks** for `ty check` and `pytest` (see `.pre-commi
 
 - **Line length**: 120 (ruff).
 - **Ruff selects**: E, W, F, I, B, UP (pyupgrade).
-- **PEP 695 type params**: use `def func[T](...)` syntax, not `TypeVar`. The project targets Python 3.12+.
+- **PEP 695 type params**: use `def func[T](...)` syntax, not `TypeVar`. The project targets Python 3.13+.
 - **Typer commands**: use `Annotated[str, typer.Option(...)]` pattern, not `param: str = typer.Option(...)`. The B008 rule (flake8-bugbear) rejects function calls in argument defaults.
 - **No comments** in code unless explicitly requested.
 - **Docstrings**: Google style. First line is a summary.
@@ -65,8 +65,8 @@ Built with **Zensical** (MkDocs Material wrapper). Config is `zensical.toml`, no
 
 GitHub Actions (`.github/workflows/ci.yaml`):
 - Runs on pull requests and push to `main`.
-- **type-check job** uses `uv run --all-extras ty check .` — if you add new optional deps, the CI must install them.
-- Tests run on Python 3.12, 3.13, and 3.14 matrix.
+- **type-check job** uses `uv run --all-extras mypy src scripts tests` — if you add new optional deps, the CI must install them.
+- Tests run on Python 3.13 and 3.14 matrix.
 - **build** job builds the dist, runs `twine check`, and uploads the artifact.
 - **smoke-test** job installs the built wheel in a fresh venv and imports `datasluice`.
 - Coverage threshold: 50% (`fail_under` in pyproject.toml).

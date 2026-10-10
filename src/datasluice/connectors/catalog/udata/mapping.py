@@ -4,12 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import cast
 
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import DatasetRecord, NativeRecord, PageInfo, PlatformMetadata, ResultEnvelope
+from datasluice.domain.catalog.models import (
+    DatasetRecord,
+    NativeRecord,
+    PageInfo,
+    PlatformMetadata,
+    ResultEnvelope,
+    redact_record_payload,
+)
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 _UDATA_V1_PAGE_ENVELOPE_ACTION = "Verify the deployment serves the stock uData v1 page envelope."
@@ -182,7 +188,11 @@ def parse_native_page(payload: object, *, operation: str = _DATASETS_OPERATION_I
 
 
 def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
-    """Bound one dataset list item into the lossless native record envelope.
+    """Bound one dataset list item into a redacted native record envelope.
+
+    Credential-shaped keys and credential-shaped string content are redacted
+    before the item enters the typed record, so they cannot reach a serialized
+    artifact, fixture, or sync destination. Every non-credential field is kept.
 
     Raises:
         CatalogValidationError: When the item omits its identity.
@@ -190,12 +200,12 @@ def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATAS
     from datasluice.connectors.catalog.udata.wire.datasets import _validate_dataset_fields
 
     _validate_dataset_fields(item, operation=operation, detail=False)
-    identifier = cast(str, item["id"])
+    identifier = cast("str", item["id"])
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
         id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=identifier),
-        payload=MappingProxyType(dict(item)),
+        payload=redact_record_payload(item),
     )
 
 
@@ -236,9 +246,19 @@ def normalized_dataset(record: NativeRecord) -> DatasetRecord:
     )
 
 
-def shape_dataset_page(page: NativePage, *, operation: str = _DATASETS_OPERATION_ID) -> UDataPageEnvelope:
-    """Shape one decoded native page into the typed result envelope."""
-    records = tuple(parse_dataset_summary(item, operation=operation) for item in page.items)
+def shape_native_page(page: NativePage, records: tuple[UDataResultItem, ...]) -> UDataPageEnvelope:
+    """Shape one decoded native page and its bound records into the typed result envelope.
+
+    The native pager is retained verbatim alongside the normalized cursor, so
+    present/absent field presence survives the projection.
+
+    Args:
+        page: The presence-aware decoded pager.
+        records: The records already bound to the page items.
+
+    Returns:
+        The envelope carrying normalized cursors plus native pager metadata.
+    """
     page_info = None
     if page.page is not None:
         next_cursor = str(page.page + 1) if page.next_page is not None else None
@@ -256,6 +276,12 @@ def shape_dataset_page(page: NativePage, *, operation: str = _DATASETS_OPERATION
         extensions={"udata.page": native_page.to_dict()},
     )
     return UDataPageEnvelope(items=records, page=page_info, platform=metadata, native_page=native_page)
+
+
+def shape_dataset_page(page: NativePage, *, operation: str = _DATASETS_OPERATION_ID) -> UDataPageEnvelope:
+    """Shape one decoded native page into the typed result envelope."""
+    records = tuple(parse_dataset_summary(item, operation=operation) for item in page.items)
+    return shape_native_page(page, records)
 
 
 def unimplemented_family(operation: str) -> NativeCatalogError:

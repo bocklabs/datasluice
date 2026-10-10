@@ -231,15 +231,19 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
     assert all("@sha256:" in image for image in images)
     assert "127.0.0.1:" in text
     assert "HOME: /tmp" in text
-    assert "volumes:" not in text
+    assert text.count("volumes:") == 1
+    assert "MINIO_LICENSE_FILE" in text
+    assert "/run/secrets/minio.license" in text
+    assert "read_only: true" in text
+    assert "create_host_path: false" in text
     assert "mongo" in text
     assert "redis" in text
     assert "elasticsearch" in text
     assert "minio" in text
     assert "mailpit" in text
     assert oracle.PINNED_COMMIT in dockerfile
-    assert "ghcr.io/astral-sh/uv:0.12.5@sha256:" in dockerfile
-    assert "python:3.13-slim-bookworm@sha256:" in dockerfile
+    assert "ghcr.io/astral-sh/uv@sha256:" in dockerfile
+    assert "python@sha256:" in dockerfile
     assert "flask-caching==2.3.1" in dockerfile
     output = tmp_path / "capture.json"
     capture.write_capture("http://127.0.0.1:5640", "17.6.0", output)
@@ -406,3 +410,74 @@ def test_url_map_capture_filters_infrastructure_and_scoped_namespaces(tmp_path: 
             "reason": route_capture.DEFAULT_EXCLUSION_REASONS["/api/1/proconnect"],
         },
     ]
+
+
+def test_main_routes_verification_before_source_extraction(tmp_path: Path, capsys: Any) -> None:
+    """--verify-preflight short-circuits, so it never reaches the extraction guards."""
+    preflight = tmp_path / "preflight.md"
+    preflight.write_text(
+        "\n".join(
+            [
+                "---",
+                "schema_version: 1",
+                "status: approved",
+                "decision: approve-baseline-defer-targets",
+                f"source_commit: {oracle.PINNED_COMMIT}",
+                "route_count: 268",
+                "source_digest: " + "a" * 64,
+                "swagger_digest: " + "b" * 64,
+                "url_map_digest: " + "c" * 64,
+                "targets_approved: false",
+                "approved_by: human",
+                "approved_at: 2026-08-26T00:00:00Z",
+                "---",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = oracle.main(["--verify-preflight", str(preflight)])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--exclude-namespace", "oauth", "--source", "s.json", "--swagger", "w.json", "--url-map", "u.json"],
+        ["--exclude-namespace", "oauth", "--candidate", "c.json", "--preflight", "p.md"],
+        ["--exclude-namespace", "oauth", "--source", "s.json"],
+    ],
+)
+def test_main_refuses_namespace_exclusion_outside_source_extraction(argv: list[str]) -> None:
+    """Excluding a namespace only makes sense for a source-only extraction."""
+    with pytest.raises(SystemExit, match="namespace exclusion only applies to source extraction"):
+        oracle.main(argv)
+
+
+def test_main_requires_the_source_extraction_pair(tmp_path: Path) -> None:
+    """Half a source-extraction invocation is a usage error, not a reconciliation."""
+    with pytest.raises(SystemExit, match="--source-root and --source-output are required together"):
+        oracle.main(["--source-root", str(tmp_path / "checkout")])
+
+
+def test_main_refuses_source_extraction_mixed_with_reconciliation(tmp_path: Path) -> None:
+    """The two operations are mutually exclusive, so mixing them is refused up front."""
+    argv = [
+        "--source-root",
+        str(tmp_path / "checkout"),
+        "--source-output",
+        str(tmp_path / "out.json"),
+        "--swagger",
+        "w.json",
+    ]
+    with pytest.raises(SystemExit, match="cannot be combined with route reconciliation arguments"):
+        oracle.main(argv)
+
+
+def test_main_with_no_arguments_reports_the_reconciliation_contract(tmp_path: Path) -> None:
+    """An empty invocation falls through to the reconciliation guard, not the extraction one."""
+    with pytest.raises(SystemExit, match="are required together"):
+        oracle.main([])

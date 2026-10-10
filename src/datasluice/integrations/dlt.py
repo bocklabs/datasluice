@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote, urlsplit
 
 from datasluice.logging import get_logger
-from datasluice.runtime.transport.base import CatalogTransport
 
 if TYPE_CHECKING:
     from datasluice.contracts.catalog.protocols import CatalogOperationRequest, SyncCatalogClient
+    from datasluice.runtime.transport.base import CatalogTransport
 
 
 logger = get_logger("integrations.dlt")
@@ -32,6 +32,7 @@ def _resource_from_record(record: Any) -> Any:
     if record.url is None:
         raise ValueError(f"Normalized resource {record.id.value!r} requires a direct URL for dlt extraction")
     scheme = urlsplit(record.url).scheme
+    access: HttpDownload | ObjectStorage | LocalFile
     if scheme in {"http", "https"}:
         access = HttpDownload(url=record.url)
     elif scheme in {"s3", "gs", "gcs", "az", "azure", "abfs"}:
@@ -83,7 +84,7 @@ def _make_dlt_resource(
         from datasluice.integrations.arrow import to_arrow
         from datasluice.sync._hashing import logical_sha256
 
-        reader = DataPlaneResourceReader(transport=cast(CatalogTransport, transport))
+        reader = DataPlaneResourceReader(transport=cast("CatalogTransport", transport))
         state: dict[str, Any] = {"identity": identity, "watermark": None}
         if state_store is not None:
             prior = state_store.get(identity)

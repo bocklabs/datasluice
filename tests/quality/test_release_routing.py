@@ -121,20 +121,29 @@ def _provider_registry_ready() -> bool:
     return REGISTRY_PATH.exists()
 
 
-def _manifest_ready() -> bool:
-    if not (RELEASE_CONFIG.exists() and RELEASE_MANIFEST.exists()):
-        return False
-    config = _load_json(RELEASE_CONFIG)
+ROOT_PACKAGE = "."
+
+
+def _inherits_top_level_defaults(entry: dict) -> bool:
+    """Return whether a package entry inherits changelog types and release type from the top level."""
+    return "changelog-types" not in entry and "release-type" not in entry
+
+
+def _config_defaults_ready(config: dict) -> bool:
+    """Return whether the config declares the shared top-level release defaults."""
     if config.get("release-type") != "python":
         return False
-    if not isinstance(config.get("changelog-types"), list) or not config["changelog-types"]:
+    changelog_types = config.get("changelog-types")
+    if not isinstance(changelog_types, list) or not changelog_types:
         return False
-    if config.get("include-component-in-tag") is not True:
+    return config.get("include-component-in-tag") is True
+
+
+def _package_entries_ready(packages: dict) -> bool:
+    """Return whether the packages map locks the core and provider component entries."""
+    if set(packages) != {ROOT_PACKAGE, PROVIDER_PATH}:
         return False
-    packages = config.get("packages") or {}
-    if set(packages) != {".", PROVIDER_PATH}:
-        return False
-    root = packages.get(".") or {}
+    root = packages.get(ROOT_PACKAGE) or {}
     provider = packages.get(PROVIDER_PATH) or {}
     if root.get("component") != "datasluice":
         return False
@@ -142,14 +151,32 @@ def _manifest_ready() -> bool:
         return False
     if provider.get("initial-version") != "0.1.0":
         return False
-    if "changelog-types" in root or "changelog-types" in provider:
-        return False
-    if "release-type" in root or "release-type" in provider:
-        return False
-    manifest = _load_json(RELEASE_MANIFEST)
+    return _inherits_top_level_defaults(root) and _inherits_top_level_defaults(provider)
+
+
+def _is_pinned_version(value: object) -> bool:
+    """Return whether a value is a pinned three-part semantic version string."""
+    return isinstance(value, str) and bool(re.fullmatch(r"\d+\.\d+\.\d+", value))
+
+
+def _manifest_versions_ready(manifest: dict, packages: dict) -> bool:
+    """Return whether the manifest pins a semantic version for exactly the configured packages."""
     if set(manifest) != set(packages):
         return False
-    return all(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version) for version in manifest.values())
+    return all(_is_pinned_version(version) for version in manifest.values())
+
+
+def _manifest_ready() -> bool:
+    """Return whether the Release Please config and manifest form the locked two-component release."""
+    if not (RELEASE_CONFIG.exists() and RELEASE_MANIFEST.exists()):
+        return False
+    config = _load_json(RELEASE_CONFIG)
+    if not _config_defaults_ready(config):
+        return False
+    packages = config.get("packages") or {}
+    if not _package_entries_ready(packages):
+        return False
+    return _manifest_versions_ready(_load_json(RELEASE_MANIFEST), packages)
 
 
 def _package_version(path: Path) -> str:

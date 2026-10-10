@@ -13,7 +13,6 @@ import os
 import re
 import secrets
 import threading
-from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -25,6 +24,8 @@ from datasluice.io.filesystem import safe_remove
 from datasluice.logging import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from datasluice.domain import SyncState
 
 _INVALID_DURABLE_SYNC_STATE_CURSOR = "Invalid durable SyncState at state.cursor"
@@ -44,8 +45,6 @@ _GLOBAL_LOCKS_USERS: dict[str, int] = {}
 _GLOBAL_LOCKS_GUARD = threading.Lock()
 
 _UNSET = object()
-_SECRET_FREE_STATE_READY = True
-_ADVERSARIAL_VALIDATOR_READY = True
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
 _COMPLETED_ARTIFACT_KEYS = {"destination_identity", "destination_size", "destination_checksum"}
@@ -156,10 +155,7 @@ class FileStateStore:
         scope.
         """
         protocol = self._fs.protocol
-        if isinstance(protocol, str):
-            protocol_str = protocol
-        else:
-            protocol_str = "+".join(sorted(protocol))
+        protocol_str = protocol if isinstance(protocol, str) else "+".join(sorted(protocol))
         return f"{protocol_str}::{self._base}::{self._state_path(key)}"
 
     @contextmanager

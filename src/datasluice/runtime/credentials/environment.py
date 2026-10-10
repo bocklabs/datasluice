@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from datasluice.domain.catalog.auth import CatalogCredential, CredentialSource
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.runtime.credentials import credential_from_secret
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _ENVIRONMENT_NAMES = {
     CatalogPlatform.CKAN: "DATASLUICE_CKAN_API_TOKEN",

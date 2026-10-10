@@ -248,8 +248,8 @@ def test_denied_states_raise_typed_errors_before_executor_dispatch(
     effective = _effective(operation, profile, response_class)
     executor = _RecordingSyncExecutor()
     context = CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, executor),
-        async_executor=cast(AsyncCatalogOperationExecutor, _RecordingAsyncExecutor()),
+        sync_executor=cast("SyncCatalogOperationExecutor", executor),
+        async_executor=cast("AsyncCatalogOperationExecutor", _RecordingAsyncExecutor()),
     )
     request = CatalogOperationRequest(operation_id=operation.id)
     guard = CatalogOperationGuard(operation_id=operation.id, profile=effective)
@@ -274,8 +274,8 @@ def test_allowed_guard_dispatches_through_the_managed_executor() -> None:
     effective = _effective(operation, profile, ProbeResponseClass.SUCCESS)
     executor = _RecordingSyncExecutor()
     context = CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, executor),
-        async_executor=cast(AsyncCatalogOperationExecutor, _RecordingAsyncExecutor()),
+        sync_executor=cast("SyncCatalogOperationExecutor", executor),
+        async_executor=cast("AsyncCatalogOperationExecutor", _RecordingAsyncExecutor()),
     )
     request = CatalogOperationRequest(operation_id=operation.id)
     guard = CatalogOperationGuard(operation_id=operation.id, profile=effective)

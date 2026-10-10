@@ -145,9 +145,8 @@ def test_cleanup_attempts_both_streams_and_retains_first_close_failure() -> None
     transformed = _Stream(("batch",), close_error=RuntimeError("transformed close failed"))
     opened = _opened(_Reader(raw)).transform(_Pipeline(transformed))
 
-    with pytest.raises(RuntimeError, match="transformed close failed"):
-        with opened as stream:
-            assert list(stream) == ["batch"]
+    with pytest.raises(RuntimeError, match="transformed close failed"), opened as stream:
+        assert list(stream) == ["batch"]
 
     assert transformed.close_calls == raw.close_calls == 1
 

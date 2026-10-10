@@ -10,7 +10,6 @@ capability claims.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
@@ -22,25 +21,34 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncNativeService,
 )
 from datasluice.connectors.catalog.ckan.mapping import GROUP, PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
+from datasluice.connectors.catalog.ckan.services._shared import WireParams, detail_params, drop_unset, wire_params
 from datasluice.domain.catalog.ids import CatalogId
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _GROUP_GROUP = "groups"
-
-
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}
 
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     key = "name" if action == "group_create" else "id"
     return CatalogId(PLATFORM, GROUP, str(params[key]))
+
+
+def _fields_params(
+    id: str,
+    name: str | None,
+    title: str | None,
+    description: str | None,
+    image_url: str | None,
+) -> WireParams:
+    return wire_params({"id": id}, {"name": name, "title": title, "description": description, "image_url": image_url})
 
 
 class SyncGroupsService(_SyncNativeService):
@@ -49,7 +57,7 @@ class SyncGroupsService(_SyncNativeService):
     __slots__ = ()
 
     def __init__(self, client: SyncCKANClient) -> None:
-        super().__init__(client, "groups")
+        super().__init__(client, _GROUP_GROUP)
 
     def group_list(
         self,
@@ -60,8 +68,9 @@ class SyncGroupsService(_SyncNativeService):
         capacity: str | None = None,
     ) -> ResultEnvelope[CKANResultItem]:
         """List group names with native sort and offset paging."""
-        params = _drop_unset({"sort": sort, "limit": limit, "offset": offset, "capacity": capacity})
-        return self._invoke_read("group_list", params)
+        return self._invoke_read(
+            "group_list", drop_unset({"sort": sort, "limit": limit, "offset": offset, "capacity": capacity})
+        )
 
     def group_list_authz(self) -> ResultEnvelope[CKANResultItem]:
         """List groups the authenticated caller is authorized to see."""
@@ -76,25 +85,17 @@ class SyncGroupsService(_SyncNativeService):
         include_users: bool | None = None,
     ) -> ResultEnvelope[CKANResultItem]:
         """Show one group by id or name."""
-        params: dict[str, object] = {"id": id}
-        params.update(
-            _drop_unset(
-                {
-                    "include_datasets": include_datasets,
-                    "include_dataset_count": include_dataset_count,
-                    "include_users": include_users,
-                }
-            )
+        return self._invoke_read(
+            "group_show", detail_params(id, include_datasets, include_dataset_count, include_users)
         )
-        return self._invoke_read("group_show", params)
 
     def group_package_show(self, *, id: str, limit: int | None = None) -> ResultEnvelope[CKANResultItem]:
         """Show the datasets of one group."""
-        return self._invoke_read("group_package_show", _drop_unset({"id": id, "limit": limit}))
+        return self._invoke_read("group_package_show", drop_unset({"id": id, "limit": limit}))
 
     def group_autocomplete(self, *, q: str, limit: int | None = None) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete group names or titles."""
-        return self._invoke_read("group_autocomplete", _drop_unset({"q": q, "limit": limit}))
+        return self._invoke_read("group_autocomplete", drop_unset({"q": q, "limit": limit}))
 
     def group_create(
         self,
@@ -106,9 +107,11 @@ class SyncGroupsService(_SyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create a group from documented keyword fields."""
-        params: dict[str, object] = {"name": name}
-        params.update(_drop_unset({"title": title, "description": description, "image_url": image_url}))
-        return self._invoke_mutation("group_create", params, policy)
+        return self._invoke_mutation(
+            "group_create",
+            wire_params({"name": name}, {"title": title, "description": description, "image_url": image_url}),
+            policy,
+        )
 
     def group_update(
         self,
@@ -121,9 +124,7 @@ class SyncGroupsService(_SyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one group from documented keyword fields."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unset({"name": name, "title": title, "description": description, "image_url": image_url}))
-        return self._invoke_mutation("group_update", params, policy)
+        return self._invoke_mutation("group_update", _fields_params(id, name, title, description, image_url), policy)
 
     def group_patch(
         self,
@@ -136,9 +137,7 @@ class SyncGroupsService(_SyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Patch selected group fields without replacing the record."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unset({"name": name, "title": title, "description": description, "image_url": image_url}))
-        return self._invoke_mutation("group_patch", params, policy)
+        return self._invoke_mutation("group_patch", _fields_params(id, name, title, description, image_url), policy)
 
     def group_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
         """Soft-delete one group to state=deleted on the standard tier."""
@@ -152,8 +151,7 @@ class SyncGroupsService(_SyncNativeService):
         self, *, id: str, username: str, role: str, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Grant one user a role within a group."""
-        params: dict[str, object] = {"id": id, "username": username, "role": role}
-        return self._invoke_mutation("group_member_create", params, policy)
+        return self._invoke_mutation("group_member_create", {"id": id, "username": username, "role": role}, policy)
 
     def group_member_delete(
         self, *, id: str, username: str, policy: MutationPolicy | None = None
@@ -164,9 +162,7 @@ class SyncGroupsService(_SyncNativeService):
     def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
         return _sync_typed_read(self._client, _GROUP_GROUP, action, params)
 
-    def _invoke_mutation(
-        self, action: str, params: dict[str, object], policy: MutationPolicy | None
-    ) -> CKANMutationResult:
+    def _invoke_mutation(self, action: str, params: WireParams, policy: MutationPolicy | None) -> CKANMutationResult:
         return _sync_typed_mutation(self._client, _GROUP_GROUP, action, params, policy, _mutation_target)
 
 
@@ -176,7 +172,7 @@ class AsyncGroupsService(_AsyncNativeService):
     __slots__ = ()
 
     def __init__(self, client: AsyncCKANClient) -> None:
-        super().__init__(client, "groups")
+        super().__init__(client, _GROUP_GROUP)
 
     async def group_list(
         self,
@@ -187,8 +183,9 @@ class AsyncGroupsService(_AsyncNativeService):
         capacity: str | None = None,
     ) -> ResultEnvelope[CKANResultItem]:
         """List group names with native sort and offset paging."""
-        params = _drop_unset({"sort": sort, "limit": limit, "offset": offset, "capacity": capacity})
-        return await self._invoke_read("group_list", params)
+        return await self._invoke_read(
+            "group_list", drop_unset({"sort": sort, "limit": limit, "offset": offset, "capacity": capacity})
+        )
 
     async def group_list_authz(self) -> ResultEnvelope[CKANResultItem]:
         """List groups the authenticated caller is authorized to see."""
@@ -203,25 +200,17 @@ class AsyncGroupsService(_AsyncNativeService):
         include_users: bool | None = None,
     ) -> ResultEnvelope[CKANResultItem]:
         """Show one group by id or name."""
-        params: dict[str, object] = {"id": id}
-        params.update(
-            _drop_unset(
-                {
-                    "include_datasets": include_datasets,
-                    "include_dataset_count": include_dataset_count,
-                    "include_users": include_users,
-                }
-            )
+        return await self._invoke_read(
+            "group_show", detail_params(id, include_datasets, include_dataset_count, include_users)
         )
-        return await self._invoke_read("group_show", params)
 
     async def group_package_show(self, *, id: str, limit: int | None = None) -> ResultEnvelope[CKANResultItem]:
         """Show the datasets of one group."""
-        return await self._invoke_read("group_package_show", _drop_unset({"id": id, "limit": limit}))
+        return await self._invoke_read("group_package_show", drop_unset({"id": id, "limit": limit}))
 
     async def group_autocomplete(self, *, q: str, limit: int | None = None) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete group names or titles."""
-        return await self._invoke_read("group_autocomplete", _drop_unset({"q": q, "limit": limit}))
+        return await self._invoke_read("group_autocomplete", drop_unset({"q": q, "limit": limit}))
 
     async def group_create(
         self,
@@ -233,9 +222,11 @@ class AsyncGroupsService(_AsyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create a group from documented keyword fields."""
-        params: dict[str, object] = {"name": name}
-        params.update(_drop_unset({"title": title, "description": description, "image_url": image_url}))
-        return await self._invoke_mutation("group_create", params, policy)
+        return await self._invoke_mutation(
+            "group_create",
+            wire_params({"name": name}, {"title": title, "description": description, "image_url": image_url}),
+            policy,
+        )
 
     async def group_update(
         self,
@@ -248,9 +239,9 @@ class AsyncGroupsService(_AsyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one group from documented keyword fields."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unset({"name": name, "title": title, "description": description, "image_url": image_url}))
-        return await self._invoke_mutation("group_update", params, policy)
+        return await self._invoke_mutation(
+            "group_update", _fields_params(id, name, title, description, image_url), policy
+        )
 
     async def group_patch(
         self,
@@ -263,9 +254,9 @@ class AsyncGroupsService(_AsyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Patch selected group fields without replacing the record."""
-        params: dict[str, object] = {"id": id}
-        params.update(_drop_unset({"name": name, "title": title, "description": description, "image_url": image_url}))
-        return await self._invoke_mutation("group_patch", params, policy)
+        return await self._invoke_mutation(
+            "group_patch", _fields_params(id, name, title, description, image_url), policy
+        )
 
     async def group_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
         """Soft-delete one group to state=deleted on the standard tier."""
@@ -279,8 +270,9 @@ class AsyncGroupsService(_AsyncNativeService):
         self, *, id: str, username: str, role: str, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Grant one user a role within a group."""
-        params: dict[str, object] = {"id": id, "username": username, "role": role}
-        return await self._invoke_mutation("group_member_create", params, policy)
+        return await self._invoke_mutation(
+            "group_member_create", {"id": id, "username": username, "role": role}, policy
+        )
 
     async def group_member_delete(
         self, *, id: str, username: str, policy: MutationPolicy | None = None
@@ -292,6 +284,6 @@ class AsyncGroupsService(_AsyncNativeService):
         return await _async_typed_read(self._client, _GROUP_GROUP, action, params)
 
     async def _invoke_mutation(
-        self, action: str, params: dict[str, object], policy: MutationPolicy | None
+        self, action: str, params: WireParams, policy: MutationPolicy | None
     ) -> CKANMutationResult:
         return await _async_typed_mutation(self._client, _GROUP_GROUP, action, params, policy, _mutation_target)

@@ -19,11 +19,13 @@ contract uniform with the other readers.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasluice.data.readers.base import BaseFormatReader
 from datasluice.exceptions import FormatError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class JSONReader(BaseFormatReader):

@@ -81,15 +81,19 @@ def _freeze_json(value: object, path: str = "value") -> object:
             return value
         raise _contract_error(path)
     if isinstance(value, Mapping):
-        frozen: dict[str, object] = {}
-        for key, nested in value.items():
-            if not isinstance(key, str):
-                raise _contract_error(path)
-            frozen[key] = _freeze_json(nested, f"{path}.{key}")
-        return MappingProxyType(frozen)
+        return _freeze_json_object(value, path)
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(nested, path) for nested in value)
     raise _contract_error(path)
+
+
+def _freeze_json_object(value: Mapping[object, object], path: str) -> Mapping[str, object]:
+    frozen: dict[str, object] = {}
+    for key, nested in value.items():
+        if not isinstance(key, str):
+            raise _contract_error(path)
+        frozen[key] = _freeze_json(nested, f"{path}.{key}")
+    return MappingProxyType(frozen)
 
 
 def _thaw_json(value: object) -> object:
@@ -213,7 +217,7 @@ class ArtifactProvenance:
             resource_identity=resource_identity,
             created_at=parsed_created_at,
             materialization_mode=materialization_mode,
-            transforms=cast(tuple[str, ...], tuple(transforms)),
+            transforms=cast("tuple[str, ...]", tuple(transforms)),
         )
 
 

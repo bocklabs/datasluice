@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from datetime import date
+from typing import TYPE_CHECKING
 
 from airflow.sdk import BaseHook
 
 from datasluice.application import DataSluice
 from datasluice.connectors.catalog.ckan import CKANClientSettings, create_sync_client
-from datasluice.contracts.catalog.protocols import SyncCatalogClient
 from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.operations import (
@@ -25,7 +25,10 @@ from datasluice.domain.catalog.operations import (
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.runtime.credentials import credential_from_fields
-from datasluice.runtime.transport.base import CatalogTransport
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import SyncCatalogClient
+    from datasluice.runtime.transport.base import CatalogTransport
 
 _TOKEN_FIELDS = {
     CatalogPlatform.CKAN: "api_token",

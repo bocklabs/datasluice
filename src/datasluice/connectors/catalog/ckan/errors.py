@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.redaction import redact_mapping
 from datasluice.errors.catalog import (
     CatalogConflictError,
@@ -15,6 +15,9 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     UnauthenticatedError,
 )
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.ids import CatalogPlatform
 
 ENVELOPE_MARKER_KEY = "__type"
 

@@ -138,10 +138,9 @@ def _case(value: object, platform: str, declared: frozenset[ReferenceOperationId
 
 def _operation_id(value: object) -> ReferenceOperationId:
     """Parse one portable operation identity from a checked-in object."""
+    operation = None
     if isinstance(value, Mapping):
         operation = value.get("id") if "id" in value else value.get("operation")
-    else:
-        operation = None
     if not isinstance(operation, str) or "/" not in operation:
         raise ValueError("Reference fixture operation IDs must be portable identifiers.")
     platform, name = operation.split("/", 1)

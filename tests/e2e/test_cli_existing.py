@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_PROBE = Path(__file__).resolve().parent / "installed_probe.py"
 
 _RETIRED_COMMANDS = ("search", "inspect", "download", "detect")
 
@@ -142,16 +143,8 @@ def test_installed_version_flag_reports_the_wheel_version(installed_env: dict[st
 def test_bare_install_reports_actionable_live_client_gate_errors(bare_install_env: dict[str, str]) -> None:
     """A real bare install reports the platform extra required by each live client seam."""
     for platform in ("udata", "socrata"):
-        script = (
-            "import importlib\n"
-            f"live = importlib.import_module('datasluice.connectors.catalog.{platform}.live')\n"
-            "try:\n"
-            "    live.create_live_client()\n"
-            "except ImportError as exc:\n"
-            "    print(str(exc))\n"
-        )
         result = subprocess.run(
-            [bare_install_env["python"], "-c", script],
+            [bare_install_env["python"], str(_PROBE), "live-gate-error", platform],
             capture_output=True,
             text=True,
             env={"PATH": str(Path(bare_install_env["venv"]) / "bin"), "HOME": os.environ.get("HOME", "")},
@@ -164,36 +157,7 @@ def test_bare_install_reports_actionable_live_client_gate_errors(bare_install_en
 def test_all_connectors_unlocks_live_client_execution_gates(all_connectors_env: dict[str, str]) -> None:
     """The all-connectors wheel install provides httpx and passes every live-client gate."""
     result = subprocess.run(
-        [
-            all_connectors_env["python"],
-            "-c",
-            "import importlib\n"
-            "import httpx\n"
-            "from datasluice.connectors.catalog.ckan import (\n"
-            "    CKANClientSettings,\n"
-            "    create_sync_client,\n"
-            ")\n"
-            "from datasluice.connectors.catalog.udata import (\n"
-            "    UDataClientSettings,\n"
-            "    create_sync_client as create_udata_sync,\n"
-            ")\n"
-            "client = create_sync_client(CKANClientSettings(base_url='https://demo.ckan.org'))\n"
-            "assert hasattr(client, 'transport')\n"
-            "client.close()\n"
-            "udata_client = create_udata_sync(UDataClientSettings(base_url='http://127.0.0.1:5640'))\n"
-            "assert hasattr(udata_client, 'transport')\n"
-            "udata_client.close()\n"
-            "for platform in ('socrata',):\n"
-            "    module = importlib.import_module(f'datasluice.connectors.catalog.{platform}.live')\n"
-            "    create = module.create_live_client\n"
-            "    try:\n"
-            "        create()\n"
-            "    except NotImplementedError:\n"
-            "        continue\n"
-            "    except ImportError as exc:\n"
-            "        raise AssertionError(f'{platform} extra gate did not unlock') from exc\n"
-            "    raise AssertionError(f'{platform} live seam unexpectedly returned')\n",
-        ],
+        [all_connectors_env["python"], str(_PROBE), "live-gates"],
         capture_output=True,
         text=True,
         env={"PATH": str(Path(all_connectors_env["venv"]) / "bin"), "HOME": os.environ.get("HOME", "")},
@@ -213,9 +177,10 @@ def test_installed_help_advertises_exactly_the_retained_commands(installed_env: 
         assert retired not in result.stdout, f"installed --help must not advertise retired command {retired}"
 
 
-def test_installed_retired_commands_are_not_invokable(installed_env: dict[str, str]) -> None:
+@pytest.mark.parametrize("retired", _RETIRED_COMMANDS)
+def test_installed_retired_commands_are_not_invokable(installed_env: dict[str, str], retired: str) -> None:
     """Former portal-era commands fail resolution instead of redirecting."""
-    result = _run_cli(installed_env, ["search", "https://data.example.test"])
+    result = _run_cli(installed_env, [retired, "https://data.example.test"])
 
     assert result.returncode != 0
     combined = result.stdout + result.stderr

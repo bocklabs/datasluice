@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import datasluice.application as application_module
 from datasluice.application import DataSluice, DirectResourceLocator
 from datasluice.contracts.catalog.protocols import CatalogConnectorContext
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 class _Session:
     _transport = object()
 
-    def open_catalog[T](self, factory: object, context: CatalogConnectorContext) -> T:
-        return cast(Any, factory)(context)
+    def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
+        return factory(context)
 
 
 class _Reader:
@@ -24,7 +27,7 @@ class _Reader:
 
 def test_application_uses_only_explicit_catalog_handoff() -> None:
     """The application delegates caller-owned factory composition unchanged."""
-    context = CatalogConnectorContext(sync_executor=cast(Any, object()), async_executor=cast(Any, object()))
+    context = CatalogConnectorContext(sync_executor=cast("Any", object()), async_executor=cast("Any", object()))
     expected = object()
     data_sluice = DataSluice(session=_Session(), reader=_Reader())
 

@@ -103,7 +103,7 @@ def test_aws_json_secrets_missing_required_fields_are_rejected() -> None:
 
 
 def test_vault_kv_v1_envelopes_are_rejected() -> None:
-    client_factory = cast(VaultClientFactory, lambda url, token: _VaultClient({"data": {"app_token": "vault-token"}}))
+    client_factory = cast("VaultClientFactory", lambda url, token: _VaultClient({"data": {"app_token": "vault-token"}}))
 
     vault_provider = _vault_provider(client_factory=client_factory)
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*"):
@@ -116,7 +116,7 @@ def test_vault_double_nested_secret_discovers_secret_values() -> None:
             {"data": {"data": {"app_token": "vault-app-token", "username": "reader", "password": "vault-password"}}}
         )
 
-    discovered = _vault_provider(client_factory=cast(VaultClientFactory, client_factory)).discover(
+    discovered = _vault_provider(client_factory=cast("VaultClientFactory", client_factory)).discover(
         CatalogPlatform.SOCRATA, {}
     )
 
@@ -143,7 +143,7 @@ def test_vault_provider_passes_configured_url_token_and_requested_path() -> None
         token="vault-token",
         mount_point="secret",
         path="datasluice/ckan",
-        client_factory=cast(VaultClientFactory, client_factory),
+        client_factory=cast("VaultClientFactory", client_factory),
     ).discover(CatalogPlatform.CKAN, {})
 
     credential = discovered[CredentialSource.SECRET_MANAGER]
@@ -167,7 +167,7 @@ def test_secret_manager_failures_are_redacted(source: str, secret: str) -> None:
     provider = (
         AwsSecretsManagerProvider("datasluice/ckan", client_factory=lambda region: _FailingAwsClient())
         if source == "aws"
-        else _vault_provider(client_factory=cast(VaultClientFactory, lambda url, token: _FailingVaultClient()))
+        else _vault_provider(client_factory=cast("VaultClientFactory", lambda url, token: _FailingVaultClient()))
     )
 
     with pytest.raises(CredentialResolutionError, match=r"details redacted: \*\*\*") as exc_info:
