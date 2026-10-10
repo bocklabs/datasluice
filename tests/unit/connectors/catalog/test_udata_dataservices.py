@@ -1084,6 +1084,17 @@ def test_dataservice_async_cancellation_is_never_recorded_as_a_circuit_breaker_f
     assert [event.outcome for event in events.events if "breaker" in event.outcome] == []
 
 
+def test_dataservice_differential_preserves_caller_controlled_archive_state() -> None:
+    """A restored typed record cannot match an archived raw twin."""
+    from tests.integration.connectors.catalog import test_udata_controlled as controlled
+
+    archived = {"id": "raw-record", "archived_at": "2026-10-11T00:00:00+00:00"}
+    restored = {"id": "typed-record", "archived_at": None}
+    assert controlled._dataservice_differential_payload(archived) != controlled._dataservice_differential_payload(
+        restored
+    )
+
+
 def test_dataservice_async_cancelled_mutation_records_a_cancelled_receipt_with_the_exact_target() -> None:
     """The async mutation receipt mirrors sync: `cancelled` against the exact target."""
     client, _ = _dataservice_async_client(asyncio.CancelledError())

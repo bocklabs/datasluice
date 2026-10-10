@@ -4911,8 +4911,10 @@ def _seeded_dataset_id(token: str) -> str:
 
 
 def _dataservice_differential_payload(payload: object) -> object:
+    assert isinstance(payload, Mapping)
     record = _timestamp_free(payload)
     assert isinstance(record, Mapping)
+    record = {**record, "archived_at": payload.get("archived_at")}
     if isinstance(payload, Mapping) and "deleted_at" in payload:
         record = {**record, "deleted_at": payload["deleted_at"] is not None}
     own_values = [
@@ -5031,6 +5033,8 @@ def _exercise_sync_dataservice_relationship_and_feature(
             },
         ),
     )
+    assert result.record is not None
+    assert result.record.payload["archived_at"] == "2026-10-11T00:00:00+00:00"
     result = client.dataservices.feature_dataservice(
         identifier, permissions, _dataservice_mutation_policy("udata/api-v1.feature-dataservice", identifier)
     )
@@ -5151,6 +5155,7 @@ def _exercise_sync_dataservice_lifecycle(token: str, permissions: EffectivePermi
             )
             assert restored.record is not None
             assert restored.record.payload["deleted_at"] is None
+            assert restored.record.payload["archived_at"] is None
         finally:
             _cleanup_controlled_dataservices(token, identifiers, sys.exception())
 
@@ -5202,6 +5207,8 @@ async def _exercise_async_dataservice_relationship_and_feature(
             },
         ),
     )
+    assert result.record is not None
+    assert result.record.payload["archived_at"] == "2026-10-11T00:00:00+00:00"
     result = await client.dataservices.feature_dataservice(
         identifier, permissions, _dataservice_mutation_policy("udata/api-v1.feature-dataservice", identifier)
     )
@@ -5322,6 +5329,7 @@ async def _exercise_async_dataservice_lifecycle(token: str, permissions: Effecti
             )
             assert restored.record is not None
             assert restored.record.payload["deleted_at"] is None
+            assert restored.record.payload["archived_at"] is None
         finally:
             _cleanup_controlled_dataservices(token, identifiers, sys.exception())
 
