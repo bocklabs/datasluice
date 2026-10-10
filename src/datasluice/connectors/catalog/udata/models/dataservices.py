@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.domain.catalog.patches import UNSET, UnsetType
 from datasluice.exceptions import DataSluiceError
 
 if TYPE_CHECKING:
@@ -124,10 +126,10 @@ def _paging(page: int, page_size: int, label: str) -> None:
         raise ValueError(f"uData dataservice {label} page_size must be an integer from 1 through {_MAX_PAGE_SIZE}.")
 
 
-def _optional_text(value: object, label: str, *, required: bool = False) -> None:
+def _optional_text(value: object, label: str, *, required: bool = False, allow_empty: bool = False) -> None:
     if required and (not isinstance(value, str) or not value.strip()):
         raise ValueError(f"uData dataservice {label} must be a non-empty string.")
-    if not required and value is not None and (not isinstance(value, str) or not value.strip()):
+    if not required and value is not None and (not isinstance(value, str) or (not allow_empty and not value.strip())):
         raise ValueError(f"uData dataservice {label} must be a string when supplied.")
 
 
@@ -251,6 +253,8 @@ _DATASERVICE_TEXT = (
     "rate_limiting",
     "rate_limiting_url",
     "availability_url",
+    "authorization_request_url",
+    "access_type_reason",
 )
 _DATASERVICE_URLS = (
     "base_api_url",
@@ -259,14 +263,26 @@ _DATASERVICE_URLS = (
     "business_documentation_url",
     "rate_limiting_url",
     "availability_url",
+    "authorization_request_url",
 )
 _DATASERVICE_FORMATS = ("REST", "WMS", "WSL")
+_ACCESS_TYPES = ("open", "open_with_account", "restricted")
+_ACCESS_REASON_CATEGORIES = (
+    "confidentiality_of_proceedings_of_public_authorities",
+    "international_relations_public_security_or_national_defence",
+    "course_of_justice_or_fair_trial",
+    "confidentiality_of_commercial_or_industrial_information",
+    "intellectual_property_rights",
+    "confidentiality_of_personal_data",
+    "protection_of_voluntary_information_suppliers",
+    "protection_of_environment",
+)
 
 
 def cast_mapping(value: object) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError("uData dataservice value must be a mapping when supplied.")
-    return value  # noqa
+    return value
 
 
 def _validate_availability(availability: object) -> None:
@@ -279,10 +295,10 @@ def _validate_availability(availability: object) -> None:
 def _validated_dataservice_fields(fields: Mapping[str, object], *, required: frozenset[str]) -> None:
     """Validate every documented dataservice field, requiring the named keys when creating."""
     for key in _DATASERVICE_TEXT:
-        _optional_text(fields.get(key), key, required=key in required)
+        _optional_text(fields.get(key), key, required=key in required, allow_empty=key != "title")
     for key in _DATASERVICE_URLS:
         value = fields.get(key)
-        if value is not None and not str(value).lower().startswith(("http://", "https://")):
+        if value is not None and str(value).strip() and not str(value).lower().startswith(("http://", "https://")):
             raise ValueError(f"uData dataservice {key} must be an absolute http(s) URL.")
     _validate_availability(fields.get("availability"))
     if fields.get("format") is not None and fields["format"] not in _DATASERVICE_FORMATS:
@@ -293,140 +309,181 @@ def _validated_dataservice_fields(fields: Mapping[str, object], *, required: fro
         raise ValueError("uData dataservice tags must be a tuple of non-empty strings when supplied.")
     if fields.get("private") is not None and type(fields["private"]) is not bool:
         raise ValueError("uData dataservice private flag must be a boolean when supplied.")
+    _validated_access_fields(fields)
+    _validated_reference_fields(fields)
+
+
+def _validated_access_fields(fields: Mapping[str, object]) -> None:
+    for key, choices in (("access_type", _ACCESS_TYPES), ("access_type_reason_category", _ACCESS_REASON_CATEGORIES)):
+        if fields.get(key) is not None and fields[key] not in choices:
+            raise ValueError(f"uData dataservice {key} must be a stock choice.")
+    for key in ("deleted_at", "archived_at"):
+        value = fields.get(key)
+        if value is not None:
+            if not isinstance(value, str):
+                raise ValueError(f"uData dataservice {key} must be an ISO date-time string or null.")
+            try:
+                datetime.fromisoformat(value)
+            except ValueError:
+                raise ValueError(f"uData dataservice {key} must be an ISO date-time string or null.") from None
+
+
+def _validated_reference_fields(fields: Mapping[str, object]) -> None:
+    for key in ("owner", "organization"):
+        value = fields.get(key)
+        if value is not None:
+            _optional_text(value.get("id") if isinstance(value, Mapping) else value, key, required=True)
+    datasets = fields.get("datasets")
+    if "datasets" in fields and (
+        not isinstance(datasets, tuple) or not all(isinstance(value, str) and value for value in datasets)
+    ):
+        raise ValueError("uData dataservice datasets must be a tuple of identifiers.")
 
 
 def _frozen_nested(instance: DataserviceCreateInput | DataserviceUpdateInput, labels: tuple[str, ...]) -> None:
     """Deep-freeze every supplied nested mapping in place, rejecting non-JSON values."""
     for label in labels:
         value = getattr(instance, label)
-        if value is not None:
+        if value is not UNSET and value is not None and (label == "extras" or isinstance(value, Mapping)):
             object.__setattr__(instance, label, _frozen_mapping(cast_mapping(value), f"dataservice {label}"))
 
 
 def _frozen_contact_points(instance: DataserviceCreateInput | DataserviceUpdateInput) -> None:
     """Deep-freeze the supplied contact-point tuple in place, rejecting non-mapping members."""
     points = instance.contact_points
-    if points is None or points == ():
+    if points is UNSET or points == ():
         return
-    if not isinstance(points, tuple) or not all(isinstance(point, Mapping) for point in points):
-        raise ValueError("uData dataservice contact points must be a tuple of mappings when supplied.")
+    if not isinstance(points, tuple):
+        raise ValueError("uData dataservice contact points must be a tuple of references when supplied.")
+    for point in points:
+        _optional_text(point.get("id") if isinstance(point, Mapping) else point, "contact point", required=True)
     object.__setattr__(
-        instance, "contact_points", tuple(_frozen_mapping(point, "dataservice contact point") for point in points)
+        instance,
+        "contact_points",
+        tuple(
+            _frozen_mapping(point, "dataservice contact point") if isinstance(point, Mapping) else point
+            for point in points
+        ),
     )
+
+
+def _frozen_access_audiences(instance: DataserviceCreateInput | DataserviceUpdateInput) -> None:
+    audiences = instance.access_audiences
+    if audiences is UNSET or audiences is None:
+        return
+    if not isinstance(audiences, tuple) or not all(isinstance(item, Mapping) for item in audiences):
+        raise ValueError("uData dataservice access audiences must be a tuple of mappings.")
+    roles: set[str | None] = set()
+    for audience in audiences:
+        role = audience.get("role")
+        condition = audience.get("condition")
+        if (
+            set(audience) - {"role", "condition"}
+            or role not in ("local_authority_and_administration", "company_and_association", "private", None)
+            or condition not in ("yes", "no", "under_condition", None)
+            or role in roles
+        ):
+            raise ValueError("uData dataservice access audience choices must be stock and roles distinct.")
+        roles.add(role)
+    object.__setattr__(
+        instance, "access_audiences", tuple(_frozen_mapping(item, "access audience") for item in audiences)
+    )
+
+
+def _dataservice_payload(instance: DataserviceCreateInput | DataserviceUpdateInput) -> dict[str, object]:
+    return {
+        name: _thaw_json(getattr(instance, name))
+        for name in instance.__dataclass_fields__
+        if getattr(instance, name) is not UNSET
+    }
 
 
 @dataclass(frozen=True, slots=True)
 class DataserviceCreateInput:
-    """Presence-aware create payload for POST /api/1/dataservices/."""
+    """Presence-aware create payload for stock dataservices."""
 
     title: str
-    base_api_url: str
-    acronym: str | None = None
-    description: str | None = None
-    machine_documentation_url: str | None = None
-    technical_documentation_url: str | None = None
-    business_documentation_url: str | None = None
-    rate_limiting: str | None = None
-    rate_limiting_url: str | None = None
-    availability: float | None = None
-    availability_url: str | None = None
-    format: str | None = None
-    license: str | None = None
-    tags: tuple[str, ...] = ()
-    private: bool | None = None
-    organization: Mapping[str, str] | None = None
-    access_type: Mapping[str, object] | None = None
-    contact_points: tuple[Mapping[str, object], ...] = ()
-    extras: Mapping[str, object] | None = None
+    base_api_url: str | None | UnsetType = UNSET
+    acronym: str | None | UnsetType = UNSET
+    description: str | None | UnsetType = UNSET
+    machine_documentation_url: str | None | UnsetType = UNSET
+    technical_documentation_url: str | None | UnsetType = UNSET
+    business_documentation_url: str | None | UnsetType = UNSET
+    rate_limiting: str | None | UnsetType = UNSET
+    rate_limiting_url: str | None | UnsetType = UNSET
+    availability: float | None | UnsetType = UNSET
+    availability_url: str | None | UnsetType = UNSET
+    format: str | None | UnsetType = UNSET
+    license: str | None | UnsetType = UNSET
+    tags: tuple[str, ...] | None | UnsetType = UNSET
+    private: bool | None | UnsetType = UNSET
+    organization: str | Mapping[str, str] | None | UnsetType = UNSET
+    access_type: Literal["open", "open_with_account", "restricted"] | None | UnsetType = UNSET
+    contact_points: tuple[str | Mapping[str, object], ...] | UnsetType = UNSET
+    extras: Mapping[str, object] | None | UnsetType = UNSET
+    deleted_at: str | None | UnsetType = UNSET
+    archived_at: str | None | UnsetType = UNSET
+    datasets: tuple[str, ...] | UnsetType = UNSET
+    owner: str | Mapping[str, str] | None | UnsetType = UNSET
+    access_audiences: tuple[Mapping[str, str], ...] | None | UnsetType = UNSET
+    authorization_request_url: str | None | UnsetType = UNSET
+    access_type_reason_category: str | None | UnsetType = UNSET
+    access_type_reason: str | None | UnsetType = UNSET
 
     def __post_init__(self) -> None:
-        _validated_dataservice_fields(
-            {name: getattr(self, name) for name in self.__dataclass_fields__},
-            required=frozenset({"title", "base_api_url"}),
-        )
-        _frozen_nested(self, ("organization", "access_type", "extras"))
+        supplied = {name: getattr(self, name) for name in self.__dataclass_fields__ if getattr(self, name) is not UNSET}
+        _validated_dataservice_fields(supplied, required=frozenset({"title"}))
+        _frozen_nested(self, ("organization", "owner", "extras"))
         _frozen_contact_points(self)
+        _frozen_access_audiences(self)
 
     def payload(self) -> dict[str, object]:
-        body: dict[str, object] = {"title": self.title, "base_api_url": self.base_api_url}
-        for key in ("acronym", "description", "rate_limiting"):
-            value = getattr(self, key)
-            if value is not None:
-                body[key] = value
-        for key in _DATASERVICE_URLS[1:]:
-            value = getattr(self, key)
-            if value is not None:
-                body[key] = value
-        for key in ("availability", "format", "license", "private"):
-            value = getattr(self, key)
-            if value is not None:
-                body[key] = value
-        if self.tags:
-            body["tags"] = list(self.tags)
-        if self.organization is not None:
-            body["organization"] = _thaw_json(self.organization)
-        if self.access_type is not None:
-            body["access_type"] = _thaw_json(self.access_type)
-        if self.contact_points:
-            body["contact_points"] = [_thaw_json(point) for point in self.contact_points]
-        if self.extras is not None:
-            body["extras"] = _thaw_json(self.extras)
-        return body
+        return _dataservice_payload(self)
 
 
 @dataclass(frozen=True, slots=True)
 class DataserviceUpdateInput:
-    """Presence-aware patch payload for PATCH /api/1/dataservices/<id>/."""
+    """Presence-aware patch payload for stock dataservices."""
 
-    title: str | None = None
-    base_api_url: str | None = None
-    acronym: str | None = None
-    description: str | None = None
-    machine_documentation_url: str | None = None
-    technical_documentation_url: str | None = None
-    business_documentation_url: str | None = None
-    rate_limiting: str | None = None
-    rate_limiting_url: str | None = None
-    availability: float | None = None
-    availability_url: str | None = None
-    format: str | None = None
-    license: str | None = None
-    tags: tuple[str, ...] | None = None
-    private: bool | None = None
-    organization: Mapping[str, str] | None = None
-    access_type: Mapping[str, object] | None = None
-    contact_points: tuple[Mapping[str, object], ...] | None = None
-    extras: Mapping[str, object] | None = None
+    title: str | UnsetType = UNSET
+    base_api_url: str | None | UnsetType = UNSET
+    acronym: str | None | UnsetType = UNSET
+    description: str | None | UnsetType = UNSET
+    machine_documentation_url: str | None | UnsetType = UNSET
+    technical_documentation_url: str | None | UnsetType = UNSET
+    business_documentation_url: str | None | UnsetType = UNSET
+    rate_limiting: str | None | UnsetType = UNSET
+    rate_limiting_url: str | None | UnsetType = UNSET
+    availability: float | None | UnsetType = UNSET
+    availability_url: str | None | UnsetType = UNSET
+    format: str | None | UnsetType = UNSET
+    license: str | None | UnsetType = UNSET
+    tags: tuple[str, ...] | None | UnsetType = UNSET
+    private: bool | None | UnsetType = UNSET
+    organization: str | Mapping[str, str] | None | UnsetType = UNSET
+    access_type: Literal["open", "open_with_account", "restricted"] | None | UnsetType = UNSET
+    contact_points: tuple[str | Mapping[str, object], ...] | UnsetType = UNSET
+    extras: Mapping[str, object] | None | UnsetType = UNSET
+    deleted_at: str | None | UnsetType = UNSET
+    archived_at: str | None | UnsetType = UNSET
+    datasets: tuple[str, ...] | UnsetType = UNSET
+    owner: str | Mapping[str, str] | None | UnsetType = UNSET
+    access_audiences: tuple[Mapping[str, str], ...] | None | UnsetType = UNSET
+    authorization_request_url: str | None | UnsetType = UNSET
+    access_type_reason_category: str | None | UnsetType = UNSET
+    access_type_reason: str | None | UnsetType = UNSET
 
     def __post_init__(self) -> None:
-        if all(getattr(self, name) is None for name in self.__dataclass_fields__):
+        supplied = {name: getattr(self, name) for name in self.__dataclass_fields__ if getattr(self, name) is not UNSET}
+        if not supplied:
             raise ValueError("uData dataservice updates require at least one field.")
-        _validated_dataservice_fields(
-            {name: getattr(self, name) for name in self.__dataclass_fields__},
-            required=frozenset(),
-        )
-        _frozen_nested(self, ("organization", "access_type", "extras"))
+        _validated_dataservice_fields(supplied, required=frozenset({"title"}) if "title" in supplied else frozenset())
+        _frozen_nested(self, ("organization", "owner", "extras"))
         _frozen_contact_points(self)
+        _frozen_access_audiences(self)
 
     def payload(self) -> dict[str, object]:
-        body: dict[str, object] = {}
-        for key in _DATASERVICE_TEXT:
-            value = getattr(self, key)
-            if value is not None:
-                body[key] = value
-        for key in ("availability", "format", "license", "private"):
-            value = getattr(self, key)
-            if value is not None:
-                body[key] = value
-        if self.tags is not None:
-            body["tags"] = list(self.tags)
-        for key in ("organization", "access_type", "extras"):
-            value = getattr(self, key)
-            if value is not None:
-                body[key] = _thaw_json(value)
-        if self.contact_points is not None:
-            body["contact_points"] = [_thaw_json(point) for point in self.contact_points]
-        return body
+        return _dataservice_payload(self)
 
 
 @dataclass(frozen=True, slots=True)

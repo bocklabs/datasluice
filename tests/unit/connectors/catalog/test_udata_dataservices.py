@@ -41,6 +41,7 @@ from datasluice.errors.catalog import (
     CatalogUnavailableError,
     CatalogValidationError,
     ForbiddenError,
+    NativeCatalogError,
 )
 from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
@@ -272,11 +273,72 @@ def test_dataservice_identifier_encoding_happens_once() -> None:
     assert wire.get_dataservice_request("a b") == ("GET", f"{DATASERVICES}/a%20b/", {}, None)
 
 
-def test_dataservice_create_requires_a_title_and_a_base_api_url() -> None:
+def test_dataservice_create_requires_only_the_stock_title() -> None:
     with pytest.raises(ValueError):
         DataserviceCreateInput(title=" ", base_api_url="https://example.com/api")
-    with pytest.raises(ValueError):
-        DataserviceCreateInput(title="An API", base_api_url=" ")
+    assert wire.create_dataservice_request(DataserviceCreateInput(title="An API"))[3] == {"title": "An API"}
+
+
+def test_dataservice_write_fields_preserve_access_shapes_lifecycle_and_explicit_null() -> None:
+    expected = {
+        "access_type": "restricted",
+        "access_audiences": [{"role": "private", "condition": "under_condition"}],
+        "authorization_request_url": "https://example.com/access",
+        "access_type_reason_category": "intellectual_property_rights",
+        "access_type_reason": "Review contract",
+        "datasets": ["dataset-1"],
+        "owner": "user-1",
+        "deleted_at": None,
+        "archived_at": "2026-10-11T00:00:00+00:00",
+        "license": None,
+        "organization": None,
+        "description": "",
+    }
+    update = DataserviceUpdateInput(
+        access_type="restricted",
+        access_audiences=({"role": "private", "condition": "under_condition"},),
+        authorization_request_url="https://example.com/access",
+        access_type_reason_category="intellectual_property_rights",
+        access_type_reason="Review contract",
+        datasets=("dataset-1",),
+        owner="user-1",
+        deleted_at=None,
+        archived_at="2026-10-11T00:00:00+00:00",
+        license=None,
+        organization=None,
+        description="",
+    )
+    assert wire.update_dataservice_request("ds-1", update)[3] == expected
+    assert DataserviceUpdateInput(license=None).payload() == {"license": None}
+    assert DataserviceCreateInput(title="An API", access_type="restricted").payload() == {
+        "title": "An API",
+        "access_type": "restricted",
+    }
+
+
+def test_dataservice_cleanup_attempts_both_records_and_preserves_primary_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.integration.connectors.catalog import test_udata_controlled as controlled
+
+    deleted: list[str] = []
+
+    def raw_request(_token: str, method: str, path: str) -> tuple[int, object, dict[str, str]]:
+        if method == "GET":
+            return 200, {"deleted_at": None}, {}
+        deleted.append(path)
+        return (503 if len(deleted) == 1 else 204), None, {}
+
+    monkeypatch.setattr(controlled, "_direct_request", raw_request)
+    primary = AssertionError("original differential failure")
+    with pytest.raises(AssertionError, match="original differential failure") as error:
+        try:
+            raise primary
+        finally:
+            controlled._cleanup_controlled_dataservices("", ["typed-record", "raw-record"], primary)
+    assert error.value is primary
+    assert deleted == ["/api/1/dataservices/typed-record/", "/api/1/dataservices/raw-record/"]
+    assert "ValueError" in primary.__notes__[0]
 
 
 def test_dataservice_update_requires_at_least_one_field() -> None:
@@ -377,6 +439,8 @@ def test_dataservice_url_fields_reject_a_non_http_url(url_field: str) -> None:
         ("availability", -1),
         ("availability", "99"),
         ("format", "SOAP"),
+        ("access_type", "closed"),
+        ("archived_at", "not-a-date"),
         ("tags", ("ok", "")),
         ("private", "yes"),
         ("license", " "),
@@ -391,17 +455,17 @@ def test_dataservice_field_validation_rejects_documented_type_violations(field: 
 
 
 def test_dataservice_nested_inputs_are_deep_frozen_and_json_safe() -> None:
-    """Nested organization, access-type, contact-point, and extras values freeze and reject non-JSON data."""
+    """Reference mappings and extras freeze and reject non-JSON data."""
     client_input = DataserviceCreateInput(
         title="An API",
         base_api_url="https://example.com",
         organization={"id": "org-1"},
-        contact_points=({"email": "a@example.com"},),
+        contact_points=({"id": "contact-1"},),
         extras={"nested": {"k": "v"}},
     )
     with pytest.raises(TypeError):
         cast("dict[str, object]", client_input.extras)["nested"] = "changed"  # type: ignore[assignment]
-    assert client_input.payload()["contact_points"] == [{"email": "a@example.com"}]
+    assert client_input.payload()["contact_points"] == [{"id": "contact-1"}]
     with pytest.raises(ValueError, match="JSON-safe"):
         DataserviceCreateInput(**cast("Any", {**_BASE, "extras": {"bad": {1, 2}}}))
 
@@ -579,19 +643,61 @@ def test_rows254_255_follower_mutations_match_exact_wire() -> None:
 class _RdfRouter(SyncRouteRouter):
     """Answer the site probe and one RDF route with an explicit status, body, and headers."""
 
-    def __init__(self, path: str, status: int, *, body: bytes, headers: dict[str, str]) -> None:
+    def __init__(
+        self, path: str, status: int, *, body: bytes, headers: dict[str, str], canonical_id: str | None = None
+    ) -> None:
         super().__init__(with_site_route({}))
         self.requests = []
         self._route = ("GET", path)
         self._status = status
         self._body = body
         self._headers = headers
+        self._canonical_id = canonical_id
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         self.requests.append(request)
         if (request.method, urlsplit(request.url).path) == self._route:
             return RuntimeResponse(self._status, self._headers, self._body)
+        if self._canonical_id is not None and urlsplit(request.url).path == self._route[1].removesuffix("/rdf") + "/":
+            return RuntimeResponse(
+                200, {"Content-Type": "application/json"}, json.dumps({"id": self._canonical_id}).encode()
+            )
         return RuntimeResponse(200, {"Content-Type": "application/json"}, b'{"id": "site", "version": "17.6.0"}')
+
+
+@pytest.mark.parametrize("redirect_id", ["507f1f77bcf86cd799439011", "507f1f77bcf86cd799439012"])
+def test_dataservice_rdf_slug_redirect_uses_resolved_canonical_id_in_both_modes(
+    monkeypatch: pytest.MonkeyPatch,
+    redirect_id: str,
+) -> None:
+    canonical_id = "507f1f77bcf86cd799439011"
+    router = _RdfRouter(
+        f"{DATASERVICES}/an-api/rdf",
+        302,
+        body=b"",
+        headers={"Location": f"{ORIGIN}{DATASERVICES}/{redirect_id}/rdf.ttl"},
+        canonical_id=canonical_id,
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        if redirect_id != canonical_id:
+            with pytest.raises(NativeCatalogError, match="does not identify"):
+                client.dataservices.rdf_dataservice("an-api")
+        else:
+            receipt = cast("MutationReceipt", client.dataservices.rdf_dataservice("an-api"))
+            assert receipt.target.value == canonical_id
+    async_router = async_route_table(with_site_route({}))
+    monkeypatch.setattr(async_router, "response_for", router.send)
+
+    async def run() -> None:
+        async with async_client(async_router, UDATA_CREDENTIAL) as client:
+            if redirect_id != canonical_id:
+                with pytest.raises(NativeCatalogError, match="does not identify"):
+                    await client.dataservices.rdf_dataservice("an-api")
+            else:
+                receipt = cast("MutationReceipt", await client.dataservices.rdf_dataservice("an-api"))
+                assert receipt.target.value == canonical_id
+
+    asyncio.run(run())
 
 
 def test_rows97_98_rdf_routes_match_exact_paths_and_bounded_documents() -> None:

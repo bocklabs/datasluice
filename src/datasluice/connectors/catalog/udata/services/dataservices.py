@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from functools import partial
 from typing import TYPE_CHECKING, cast
+from urllib.parse import unquote, urlsplit
 
 from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceCreateInput,
@@ -209,10 +211,14 @@ class SyncDataservicesService(SyncCatalogService):
             method=method, path=path, owning_operation=operation, raw_text=True, redirect_mode=True
         )
         if status in {301, 302, 303, 307, 308}:
+            headers = cast("dict[str, str]", text_or_headers)
+            match = re.fullmatch(_DATASERVICE_RDF_PATTERN, urlsplit(_header(headers, "location") or "").path)
+            if match and unquote(match.group(1)) != dataservice_id:
+                dataservice_id = _record_id(self.get_dataservice(dataservice_id).payload, dataservice_id)
             return _rdf_redirect_receipt(
                 operation,
                 dataservice_id,
-                cast("dict[str, str]", text_or_headers),
+                headers,
                 status,
                 self._client._origin,
                 _DATASERVICE_RDF_PATTERN,
@@ -434,10 +440,14 @@ class AsyncDataservicesService(AsyncCatalogService):
             method=method, path=path, owning_operation=operation, raw_text=True, redirect_mode=True
         )
         if status in {301, 302, 303, 307, 308}:
+            headers = cast("dict[str, str]", text_or_headers)
+            match = re.fullmatch(_DATASERVICE_RDF_PATTERN, urlsplit(_header(headers, "location") or "").path)
+            if match and unquote(match.group(1)) != dataservice_id:
+                dataservice_id = _record_id((await self.get_dataservice(dataservice_id)).payload, dataservice_id)
             return _rdf_redirect_receipt(
                 operation,
                 dataservice_id,
-                cast("dict[str, str]", text_or_headers),
+                headers,
                 status,
                 self._client._origin,
                 _DATASERVICE_RDF_PATTERN,

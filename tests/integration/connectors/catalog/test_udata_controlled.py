@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
@@ -17,7 +18,7 @@ from importlib import resources
 from inspect import isawaitable
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
@@ -40,6 +41,12 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
     DiscussionCreateInput,
     DiscussionSearchQuery,
     DiscussionUpdateInput,
+)
+from datasluice.connectors.catalog.udata.models.dataservices import (
+    DataserviceCreateInput,
+    DataserviceDatasetLinkInput,
+    DataserviceMutationResult,
+    DataserviceUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
 from datasluice.connectors.catalog.udata.models.oauth import (
@@ -89,13 +96,11 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import CatalogError
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
-
-if TYPE_CHECKING:
-    from datasluice.domain.catalog.receipts import MutationReceipt
 
 type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -4905,249 +4910,420 @@ def _seeded_dataset_id(token: str) -> str:
     return str(items[0]["id"])
 
 
-def _assert_dataservice_receipt_matches_raw(name: str, raw_status: int, receipt: MutationReceipt) -> None:
-    """Assert one mutation receipt reports the operation and status the raw route returned."""
-    assert str(receipt.operation) == name, name
-    assert receipt.audit_metadata["status_code"] == raw_status, (name, raw_status)
+def _dataservice_differential_payload(payload: object) -> object:
+    record = _timestamp_free(payload)
+    assert isinstance(record, Mapping)
+    if isinstance(payload, Mapping) and "deleted_at" in payload:
+        record = {**record, "deleted_at": payload["deleted_at"] is not None}
+    own_values = [
+        (value, marker)
+        for value, marker in ((record.get("id"), "<own-id>"), (record.get("slug"), "<own-slug>"))
+        if isinstance(value, str) and value
+    ]
+
+    def normalize(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {key: normalize(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [normalize(item) for item in value]
+        if isinstance(value, str):
+            for own_value, marker in own_values:
+                value = value.replace(own_value, marker)
+        return value
+
+    return normalize(record)
 
 
-def _exercise_sync_dataservice_relationship_and_feature(
-    client: Any, token: str, permissions: EffectivePermissions, dataservice_id: str
+def _assert_dataservice_mutation_matches_raw(
+    operation: str, typed: DataserviceMutationResult, raw: tuple[int, object, dict[str, str]]
 ) -> None:
-    """Attach a dataset, patch, transition the featured flag, and unlink the dataset."""
-    from datasluice.connectors.catalog.udata.models.dataservices import (
-        DataserviceDatasetLinkInput,
-        DataserviceUpdateInput,
-    )
-
-    dataset_id = _seeded_dataset_id(token)
-    added = client.dataservices.dataservice_datasets_add(
-        dataservice_id,
-        DataserviceDatasetLinkInput((dataset_id,)),
-        permissions,
-        _dataservice_mutation_policy("udata/api-v1.dataservice-datasets-create", dataservice_id),
-    )
-    raw_status, _, _ = _direct_request(
-        token, "POST", f"/api/1/dataservices/{dataservice_id}/datasets/", body=[{"id": dataset_id}]
-    )
-    assert raw_status == 201, raw_status
-    _assert_dataservice_receipt_matches_raw("udata/api-v1.dataservice-datasets-create", raw_status, added.receipt)
-    assert added.record is not None
-    linked = added.record.payload["datasets"]
-    assert isinstance(linked, Mapping), linked
-    assert linked["total"] >= 1, linked
-    link_status, raw_after_link, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
-    assert link_status == 200
-    assert isinstance(raw_after_link, Mapping), raw_after_link
-    assert _plain_mapping(added.record.payload)["datasets"] == raw_after_link["datasets"]
-
-    updated = client.dataservices.update_dataservice(
-        dataservice_id,
-        DataserviceUpdateInput(description="Controlled evidence update"),
-        permissions,
-        _dataservice_mutation_policy("udata/api-v1.update-dataservice", dataservice_id),
-    )
-    assert updated.record is not None
-    assert _plain_mapping(updated.record.payload)["description"] == "Controlled evidence update"
-    raw_patch, _, _ = _direct_request(
-        token, "PATCH", f"/api/1/dataservices/{dataservice_id}/", body={"description": "Controlled evidence update"}
-    )
-    assert raw_patch == 200, raw_patch
-    _assert_dataservice_receipt_matches_raw("udata/api-v1.update-dataservice", raw_patch, updated.receipt)
-
-    featured = client.dataservices.feature_dataservice(
-        dataservice_id, permissions, _dataservice_mutation_policy("udata/api-v1.feature-dataservice", dataservice_id)
-    )
-    assert featured.record is not None
-    assert _plain_mapping(featured.record.payload)["featured"] is True
-    unfeatured = client.dataservices.unfeature_dataservice(
-        dataservice_id,
-        permissions,
-        _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", dataservice_id),
-    )
-    assert unfeatured.record is not None
-    assert _plain_mapping(unfeatured.record.payload)["featured"] is False
-
-    removed = client.dataservices.dataservice_dataset_remove(
-        dataservice_id,
-        dataset_id,
-        permissions,
-        _dataservice_mutation_policy(
-            "udata/api-v1.dataservice-dataset-delete", f"{dataservice_id}:{dataset_id}", destructive=True
-        ),
-    )
-    assert removed.receipt.target.value == f"{dataservice_id}:{dataset_id}"
-    _assert_dataservice_receipt_matches_raw("udata/api-v1.dataservice-dataset-delete", 204, removed.receipt)
-    # The typed call removed the link first, so the stock route now answers its own 404.
-    raw_remove, _, _ = _direct_request(token, "DELETE", f"/api/1/dataservices/{dataservice_id}/datasets/{dataset_id}/")
-    assert raw_remove == 404, raw_remove
+    assert str(typed.receipt.operation) == operation
+    assert typed.receipt.audit_metadata["status_code"] == raw[0]
+    assert typed.receipt.outcome == "succeeded"
+    if typed.record is None:
+        assert raw[1] is None
+    else:
+        assert _dataservice_differential_payload(typed.record.payload) == _dataservice_differential_payload(raw[1])
 
 
-def _exercise_sync_dataservice_followers(token: str, permissions: EffectivePermissions, dataservice_id: str) -> None:
-    """Follow and unfollow the controlled dataservice, tolerating an absent follow state."""
-    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))) as client:
-        followed = client.dataservices.follow_dataservice(
-            dataservice_id, permissions, _dataservice_mutation_policy("udata/api-v1.follow-dataservice", dataservice_id)
-        )
-        # Stock follow is 201 when it creates the follow and 200 when it already exists, so the
-        # typed receipt is compared to the status of its own dispatch, not of a second call.
-        assert followed.receipt.audit_metadata["status_code"] in {200, 201}, followed.receipt
-        raw_follow, _, _ = _direct_request(token, "POST", f"/api/1/dataservices/{dataservice_id}/followers/")
-        assert raw_follow == 200, raw_follow
-        unfollowed = client.dataservices.unfollow_dataservice(
-            dataservice_id,
-            permissions,
-            _dataservice_mutation_policy("udata/api-v1.unfollow-dataservice", dataservice_id, destructive=True),
-        )
-        assert unfollowed.receipt.outcome in {"succeeded", "failed"}
+def _cleanup_controlled_dataservice(token: str, identifier: str) -> None:
+    status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{identifier}/")
+    if status == 200:
+        if not isinstance(payload, Mapping):
+            raise ValueError("Controlled dataservice cleanup read returned an invalid object.")
+        if (
+            payload.get("deleted_at") is None
+            and _direct_request(token, "DELETE", f"/api/1/dataservices/{identifier}/")[0] != 204
+        ):
+            raise ValueError("Controlled dataservice cleanup delete did not succeed.")
+    elif status not in {404, 410}:
+        raise ValueError("Controlled dataservice cleanup read returned an unexpected status.")
 
 
-def _assert_controlled_dataservice_deleted(token: str, dataservice_id: str) -> None:
-    """Assert the stock soft delete no longer serves the controlled dataservice as a live record."""
-    status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
-    assert status in {200, 404, 410}, status
+def _cleanup_controlled_dataservices(token: str, identifiers: list[str], primary: BaseException | None) -> None:
+    errors: list[Exception] = []
+    for identifier in identifiers:
+        try:
+            _cleanup_controlled_dataservice(token, identifier)
+        except (AssertionError, OSError, ValueError) as error:
+            errors.append(error)
+    if errors:
+        if primary is not None:
+            primary.add_note(
+                "Controlled dataservice cleanup failed: " + ", ".join(type(error).__name__ for error in errors)
+            )
+        else:
+            raise ExceptionGroup("Controlled dataservice cleanup failed", errors)
+
+
+def _assert_controlled_dataservice_deleted(token: str, identifier: str) -> None:
+    status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{identifier}/")
+    assert status in {200, 404, 410}
     if status == 200:
         assert isinstance(payload, Mapping)
         assert payload.get("deleted_at") is not None
 
 
-def _exercise_sync_dataservice_lifecycle(token: str, permissions: EffectivePermissions, title: str) -> None:
-    """Drive every assigned dataservice mutation over the synchronous client, then clean up."""
-    from datasluice.connectors.catalog.udata.models.dataservices import DataserviceCreateInput
+def _exercise_sync_dataservice_relationship_and_feature(
+    client: SyncUDataClient, token: str, permissions: EffectivePermissions, identifier: str, raw_id: str
+) -> None:
+    dataset_id = _seeded_dataset_id(token)
+    result = client.dataservices.dataservice_datasets_add(
+        identifier,
+        DataserviceDatasetLinkInput((dataset_id,)),
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.dataservice-datasets-create", identifier),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.dataservice-datasets-create",
+        result,
+        _direct_request(token, "POST", f"/api/1/dataservices/{raw_id}/datasets/", body=[{"id": dataset_id}]),
+    )
+    result = client.dataservices.update_dataservice(
+        identifier,
+        DataserviceUpdateInput(
+            description="",
+            license=None,
+            organization=None,
+            archived_at="2026-10-11T00:00:00+00:00",
+            access_type_reason_category="intellectual_property_rights",
+            authorization_request_url="https://example.com/access",
+            access_type_reason="Controlled evidence",
+        ),
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.update-dataservice", identifier),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.update-dataservice",
+        result,
+        _direct_request(
+            token,
+            "PATCH",
+            f"/api/1/dataservices/{raw_id}/",
+            body={
+                "description": "",
+                "license": None,
+                "organization": None,
+                "archived_at": "2026-10-11T00:00:00+00:00",
+                "access_type_reason_category": "intellectual_property_rights",
+                "authorization_request_url": "https://example.com/access",
+                "access_type_reason": "Controlled evidence",
+            },
+        ),
+    )
+    result = client.dataservices.feature_dataservice(
+        identifier, permissions, _dataservice_mutation_policy("udata/api-v1.feature-dataservice", identifier)
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.feature-dataservice",
+        result,
+        _direct_request(token, "POST", f"/api/1/dataservices/{raw_id}/featured/"),
+    )
+    result = client.dataservices.unfeature_dataservice(
+        identifier, permissions, _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", identifier)
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.unfeature-dataservice",
+        result,
+        _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/featured/"),
+    )
+    result = client.dataservices.dataservice_dataset_remove(
+        identifier,
+        dataset_id,
+        permissions,
+        _dataservice_mutation_policy(
+            "udata/api-v1.dataservice-dataset-delete", f"{identifier}:{dataset_id}", destructive=True
+        ),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.dataservice-dataset-delete",
+        result,
+        _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/datasets/{dataset_id}/"),
+    )
 
+
+def _exercise_sync_dataservice_followers(
+    client: SyncUDataClient, token: str, permissions: EffectivePermissions, identifier: str, raw_id: str
+) -> None:
+    result = client.dataservices.follow_dataservice(
+        identifier, permissions, _dataservice_mutation_policy("udata/api-v1.follow-dataservice", identifier)
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.follow-dataservice",
+        result,
+        _direct_request(token, "POST", f"/api/1/dataservices/{raw_id}/followers/"),
+    )
+    result = client.dataservices.unfollow_dataservice(
+        identifier,
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.unfollow-dataservice", identifier, destructive=True),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.unfollow-dataservice",
+        result,
+        _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/followers/"),
+    )
+
+
+def _exercise_sync_dataservice_lifecycle(token: str, permissions: EffectivePermissions, title: str) -> None:
     credential = UDataCredential(api_key=token)
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
-        created = client.dataservices.create_dataservice(
-            DataserviceCreateInput(title=title, base_api_url="https://example.com/api"),
-            permissions,
-            _dataservice_mutation_policy("udata/api-v1.create-dataservice", title),
-        )
-        assert created.record is not None
-        dataservice_id = str(created.record.payload["id"])
-        assert created.receipt.outcome == "succeeded"
-        assert created.receipt.target.value == dataservice_id
-        # The stock create is 201 and answers the server-assigned id, which the receipt must carry.
-        raw_status, raw_created, _ = _direct_request(
-            token,
-            "POST",
-            "/api/1/dataservices/",
-            body={"title": f"{title} raw", "base_api_url": "https://example.com/api"},
-        )
-        assert raw_status == 201, raw_status
-        _assert_dataservice_receipt_matches_raw("udata/api-v1.create-dataservice", raw_status, created.receipt)
-        # The raw create above makes a second disposable record; remove it so the next pass starts clean.
-        assert isinstance(raw_created, Mapping)
-        raw_status, _, _ = _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_created['id']}/")
-        assert raw_status == 204, raw_status
+        identifiers: list[str] = []
         try:
-            raw_read = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
-            assert raw_read[0] == 200
-            # The two responses are two requests, so only the server's millisecond-precision
-            # timestamps can differ; every other documented field must match exactly.
-            assert _timestamp_free(created.record.payload) == _timestamp_free(raw_read[1])
-            _exercise_sync_dataservice_relationship_and_feature(client, token, permissions, dataservice_id)
-            _exercise_sync_dataservice_followers(token, permissions, dataservice_id)
-            deleted = client.dataservices.delete_dataservice(
-                dataservice_id,
+            created = client.dataservices.create_dataservice(
+                DataserviceCreateInput(
+                    title=title,
+                    description="Initial controlled description",
+                    access_type="restricted",
+                    access_audiences=({"role": "private", "condition": "under_condition"},),
+                ),
                 permissions,
-                _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
+                _dataservice_mutation_policy("udata/api-v1.create-dataservice", title),
             )
-            assert deleted.receipt.outcome == "succeeded"
-            _assert_controlled_dataservice_deleted(token, dataservice_id)
+            assert created.record is not None
+            typed_body, identifier = _assert_created_response(201, _plain_mapping(created.record.payload), identifiers)
+            raw = _direct_request(
+                token,
+                "POST",
+                "/api/1/dataservices/",
+                body={
+                    "title": title,
+                    "description": "Initial controlled description",
+                    "access_type": "restricted",
+                    "access_audiences": [{"role": "private", "condition": "under_condition"}],
+                },
+            )
+            _, raw_id = _assert_created_response(raw[0], raw[1], identifiers)
+            _assert_dataservice_mutation_matches_raw("udata/api-v1.create-dataservice", created, raw)
+            assert created.receipt.target.value == identifier
+            for target in (identifier, str(typed_body["slug"])):
+                redirect = client.dataservices.rdf_dataservice(target)
+                assert isinstance(redirect, MutationReceipt)
+                assert redirect.target.value == identifier
+                status, _, _ = _direct_request(token, "GET", f"/api/1/dataservices/{target}/rdf")
+                assert redirect.audit_metadata["status_code"] == status
+            _exercise_sync_dataservice_relationship_and_feature(client, token, permissions, identifier, raw_id)
+            _exercise_sync_dataservice_followers(client, token, permissions, identifier, raw_id)
+            deleted = client.dataservices.delete_dataservice(
+                identifier,
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.delete-dataservice", identifier, destructive=True),
+            )
+            _assert_dataservice_mutation_matches_raw(
+                "udata/api-v1.delete-dataservice",
+                deleted,
+                _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/"),
+            )
+            _assert_controlled_dataservice_deleted(token, identifier)
+            _assert_controlled_dataservice_deleted(token, raw_id)
+            restored = client.dataservices.update_dataservice(
+                identifier,
+                DataserviceUpdateInput(deleted_at=None, archived_at=None),
+                permissions,
+                _dataservice_mutation_policy("udata/api-v1.update-dataservice", identifier),
+            )
+            _assert_dataservice_mutation_matches_raw(
+                "udata/api-v1.update-dataservice",
+                restored,
+                _direct_request(
+                    token, "PATCH", f"/api/1/dataservices/{raw_id}/", body={"deleted_at": None, "archived_at": None}
+                ),
+            )
+            assert restored.record is not None
+            assert restored.record.payload["deleted_at"] is None
         finally:
-            status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
-            if status == 200 and isinstance(payload, Mapping) and payload.get("deleted_at") is None:
-                client.dataservices.delete_dataservice(
-                    dataservice_id,
-                    permissions,
-                    _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
-                )
+            _cleanup_controlled_dataservices(token, identifiers, sys.exception())
+
+
+async def _exercise_async_dataservice_relationship_and_feature(
+    client: AsyncUDataClient, token: str, permissions: EffectivePermissions, identifier: str, raw_id: str
+) -> None:
+    dataset_id = _seeded_dataset_id(token)
+    result = await client.dataservices.dataservice_datasets_add(
+        identifier,
+        DataserviceDatasetLinkInput((dataset_id,)),
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.dataservice-datasets-create", identifier),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.dataservice-datasets-create",
+        result,
+        _direct_request(token, "POST", f"/api/1/dataservices/{raw_id}/datasets/", body=[{"id": dataset_id}]),
+    )
+    result = await client.dataservices.update_dataservice(
+        identifier,
+        DataserviceUpdateInput(
+            description="",
+            license=None,
+            organization=None,
+            archived_at="2026-10-11T00:00:00+00:00",
+            access_type_reason_category="intellectual_property_rights",
+            authorization_request_url="https://example.com/access",
+            access_type_reason="Controlled evidence",
+        ),
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.update-dataservice", identifier),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.update-dataservice",
+        result,
+        _direct_request(
+            token,
+            "PATCH",
+            f"/api/1/dataservices/{raw_id}/",
+            body={
+                "description": "",
+                "license": None,
+                "organization": None,
+                "archived_at": "2026-10-11T00:00:00+00:00",
+                "access_type_reason_category": "intellectual_property_rights",
+                "authorization_request_url": "https://example.com/access",
+                "access_type_reason": "Controlled evidence",
+            },
+        ),
+    )
+    result = await client.dataservices.feature_dataservice(
+        identifier, permissions, _dataservice_mutation_policy("udata/api-v1.feature-dataservice", identifier)
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.feature-dataservice",
+        result,
+        _direct_request(token, "POST", f"/api/1/dataservices/{raw_id}/featured/"),
+    )
+    result = await client.dataservices.unfeature_dataservice(
+        identifier, permissions, _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", identifier)
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.unfeature-dataservice",
+        result,
+        _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/featured/"),
+    )
+    result = await client.dataservices.dataservice_dataset_remove(
+        identifier,
+        dataset_id,
+        permissions,
+        _dataservice_mutation_policy(
+            "udata/api-v1.dataservice-dataset-delete", f"{identifier}:{dataset_id}", destructive=True
+        ),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.dataservice-dataset-delete",
+        result,
+        _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/datasets/{dataset_id}/"),
+    )
+
+
+async def _exercise_async_dataservice_followers(
+    client: AsyncUDataClient, token: str, permissions: EffectivePermissions, identifier: str, raw_id: str
+) -> None:
+    result = await client.dataservices.follow_dataservice(
+        identifier, permissions, _dataservice_mutation_policy("udata/api-v1.follow-dataservice", identifier)
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.follow-dataservice",
+        result,
+        _direct_request(token, "POST", f"/api/1/dataservices/{raw_id}/followers/"),
+    )
+    result = await client.dataservices.unfollow_dataservice(
+        identifier,
+        permissions,
+        _dataservice_mutation_policy("udata/api-v1.unfollow-dataservice", identifier, destructive=True),
+    )
+    _assert_dataservice_mutation_matches_raw(
+        "udata/api-v1.unfollow-dataservice",
+        result,
+        _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/followers/"),
+    )
 
 
 async def _exercise_async_dataservice_lifecycle(token: str, permissions: EffectivePermissions, title: str) -> None:
-    """Repeat the full dataservice mutation lifecycle over the asynchronous client."""
-    from datasluice.connectors.catalog.udata.models.dataservices import (
-        DataserviceCreateInput,
-        DataserviceDatasetLinkInput,
-        DataserviceUpdateInput,
-    )
-
     credential = UDataCredential(api_key=token)
     async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
-        created = await client.dataservices.create_dataservice(
-            DataserviceCreateInput(title=title, base_api_url="https://example.com/api"),
-            permissions,
-            _dataservice_mutation_policy("udata/api-v1.create-dataservice", title),
-        )
-        assert created.record is not None
-        dataservice_id = str(created.record.payload["id"])
+        identifiers: list[str] = []
         try:
-            dataset_id = _seeded_dataset_id(token)
-            added = await client.dataservices.dataservice_datasets_add(
-                dataservice_id,
-                DataserviceDatasetLinkInput((dataset_id,)),
+            created = await client.dataservices.create_dataservice(
+                DataserviceCreateInput(
+                    title=title,
+                    description="Initial controlled description",
+                    access_type="restricted",
+                    access_audiences=({"role": "private", "condition": "under_condition"},),
+                ),
                 permissions,
-                _dataservice_mutation_policy("udata/api-v1.dataservice-datasets-create", dataservice_id),
+                _dataservice_mutation_policy("udata/api-v1.create-dataservice", title),
             )
-            assert added.receipt.outcome == "succeeded"
-            updated = await client.dataservices.update_dataservice(
-                dataservice_id,
-                DataserviceUpdateInput(description="Controlled evidence update"),
-                permissions,
-                _dataservice_mutation_policy("udata/api-v1.update-dataservice", dataservice_id),
+            assert created.record is not None
+            typed_body, identifier = _assert_created_response(201, _plain_mapping(created.record.payload), identifiers)
+            raw = _direct_request(
+                token,
+                "POST",
+                "/api/1/dataservices/",
+                body={
+                    "title": title,
+                    "description": "Initial controlled description",
+                    "access_type": "restricted",
+                    "access_audiences": [{"role": "private", "condition": "under_condition"}],
+                },
             )
-            assert updated.record is not None
-            featured = await client.dataservices.feature_dataservice(
-                dataservice_id,
+            _, raw_id = _assert_created_response(raw[0], raw[1], identifiers)
+            _assert_dataservice_mutation_matches_raw("udata/api-v1.create-dataservice", created, raw)
+            assert created.receipt.target.value == identifier
+            for target in (identifier, str(typed_body["slug"])):
+                redirect = await client.dataservices.rdf_dataservice(target)
+                assert isinstance(redirect, MutationReceipt)
+                assert redirect.target.value == identifier
+                status, _, _ = _direct_request(token, "GET", f"/api/1/dataservices/{target}/rdf")
+                assert redirect.audit_metadata["status_code"] == status
+            await _exercise_async_dataservice_relationship_and_feature(client, token, permissions, identifier, raw_id)
+            await _exercise_async_dataservice_followers(client, token, permissions, identifier, raw_id)
+            deleted = await client.dataservices.delete_dataservice(
+                identifier,
                 permissions,
-                _dataservice_mutation_policy("udata/api-v1.feature-dataservice", dataservice_id),
+                _dataservice_mutation_policy("udata/api-v1.delete-dataservice", identifier, destructive=True),
             )
-            assert featured.record is not None
-            assert _plain_mapping(featured.record.payload)["featured"] is True
-            unfeatured = await client.dataservices.unfeature_dataservice(
-                dataservice_id,
-                permissions,
-                _dataservice_mutation_policy("udata/api-v1.unfeature-dataservice", dataservice_id),
+            _assert_dataservice_mutation_matches_raw(
+                "udata/api-v1.delete-dataservice",
+                deleted,
+                _direct_request(token, "DELETE", f"/api/1/dataservices/{raw_id}/"),
             )
-            assert unfeatured.record is not None
-            assert _plain_mapping(unfeatured.record.payload)["featured"] is False
-            followed = await client.dataservices.follow_dataservice(
-                dataservice_id,
+            _assert_controlled_dataservice_deleted(token, identifier)
+            _assert_controlled_dataservice_deleted(token, raw_id)
+            restored = await client.dataservices.update_dataservice(
+                identifier,
+                DataserviceUpdateInput(deleted_at=None, archived_at=None),
                 permissions,
-                _dataservice_mutation_policy("udata/api-v1.follow-dataservice", dataservice_id),
+                _dataservice_mutation_policy("udata/api-v1.update-dataservice", identifier),
             )
-            assert followed.receipt.outcome == "succeeded"
-            assert followed.receipt.audit_metadata["status_code"] in {200, 201}, followed.receipt
-            unfollowed_ds = await client.dataservices.unfollow_dataservice(
-                dataservice_id,
-                permissions,
-                _dataservice_mutation_policy("udata/api-v1.unfollow-dataservice", dataservice_id, destructive=True),
-            )
-            assert unfollowed_ds.receipt.outcome == "succeeded"
-            removed = await client.dataservices.dataservice_dataset_remove(
-                dataservice_id,
-                dataset_id,
-                permissions,
-                _dataservice_mutation_policy(
-                    "udata/api-v1.dataservice-dataset-delete", f"{dataservice_id}:{dataset_id}", destructive=True
+            _assert_dataservice_mutation_matches_raw(
+                "udata/api-v1.update-dataservice",
+                restored,
+                _direct_request(
+                    token, "PATCH", f"/api/1/dataservices/{raw_id}/", body={"deleted_at": None, "archived_at": None}
                 ),
             )
-            assert removed.receipt.outcome == "succeeded"
-            deleted = await client.dataservices.delete_dataservice(
-                dataservice_id,
-                permissions,
-                _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
-            )
-            assert deleted.receipt.outcome == "succeeded"
-            _assert_controlled_dataservice_deleted(token, dataservice_id)
+            assert restored.record is not None
+            assert restored.record.payload["deleted_at"] is None
         finally:
-            status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
-            if status == 200 and isinstance(payload, Mapping) and payload.get("deleted_at") is None:
-                await client.dataservices.delete_dataservice(
-                    dataservice_id,
-                    permissions,
-                    _dataservice_mutation_policy("udata/api-v1.delete-dataservice", dataservice_id, destructive=True),
-                )
+            _cleanup_controlled_dataservices(token, identifiers, sys.exception())
 
 
 def test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up() -> None:
