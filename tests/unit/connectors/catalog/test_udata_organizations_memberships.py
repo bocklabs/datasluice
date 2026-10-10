@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from io import BytesIO
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
-from datasluice.connectors.catalog.udata.mapping import NativePage, UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
     OrganizationCreateInput,
@@ -43,12 +41,17 @@ from datasluice.contracts.catalog.native.udata import (
 )
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from datasluice.connectors.catalog.udata.mapping import NativePage, UDataPageEnvelope
+    from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 
 SHAPED_PAGE_SENTINEL = cast("UDataPageEnvelope", object())
 
@@ -335,7 +338,7 @@ def test_organization_inputs_reject_non_json_field_values_with_value_error() -> 
 @pytest.mark.parametrize(
     "assignment",
     [
-        pytest.param({"dataset": datetime(2026, 1, 1)}, id="datetime"),
+        pytest.param({"dataset": datetime(2026, 1, 1, tzinfo=UTC)}, id="datetime"),
         pytest.param({"dataset": object()}, id="bare-object"),
         pytest.param({1: "dataset"}, id="non-string-key"),
     ],
@@ -630,7 +633,7 @@ def test_organization_identifiers_reject_quote_and_control_characters() -> None:
     """Organization ids must satisfy the same segment policy as the sibling uData families."""
     for identifier in ('a"b', "a'b", "a\nb", "a/b", ".", "..", "", 4):
         with pytest.raises(CatalogValidationError):
-            wire.get_organization_request(cast(str, identifier))
+            wire.get_organization_request(cast("str", identifier))
 
 
 def test_resource_reorder_schema_violation_reaches_the_typed_catalog_surface() -> None:

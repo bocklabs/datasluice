@@ -7,12 +7,13 @@ fixture lands in 04-03 which extends ``tests/helpers/http_server.py``.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import pyarrow as pa
 
 

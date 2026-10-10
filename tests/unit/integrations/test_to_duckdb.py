@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from datasluice.data.batch_stream import BatchStream
+
 pytest.importorskip("pyarrow")
 pytest.importorskip("duckdb")
 
@@ -25,8 +27,6 @@ except ImportError:  # RED phase: module not yet importable
 
 if to_duckdb is None:
     pytest.skip("to_duckdb not yet implemented (RED -> GREEN)", allow_module_level=True)
-
-from datasluice.data.batch_stream import BatchStream
 
 
 def test_to_duckdb_returns_named_relation() -> None:

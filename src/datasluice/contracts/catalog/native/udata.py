@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
-from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope
-from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
+    from threading import Event
+
     from datasluice.connectors.catalog.udata.models.activity_discussions import (
         ActivityQuery,
         CommentInput,
@@ -18,6 +15,16 @@ if TYPE_CHECKING:
         DiscussionMutationResult,
         DiscussionSearchQuery,
         DiscussionUpdateInput,
+    )
+    from datasluice.connectors.catalog.udata.models.contact_visualization import (
+        ContactPointCreateInput,
+        ContactPointUpdateInput,
+        ContactVisualizationMutationResult,
+        VisualizationCreateInput,
+        VisualizationImageInput,
+        VisualizationListQuery,
+        VisualizationPage,
+        VisualizationUpdateInput,
     )
     from datasluice.connectors.catalog.udata.models.dataservices import (
         DataserviceCreateInput,
@@ -28,6 +35,22 @@ if TYPE_CHECKING:
         DataserviceMutationResult,
         DataserviceSearchQuery,
         DataserviceUpdateInput,
+    )
+    from datasluice.connectors.catalog.udata.models.harvest import (
+        HarvestBulkPreview,
+        HarvestBulkResult,
+        HarvestBulkTargets,
+        HarvestJobItemsQuery,
+        HarvestJobQuery,
+        HarvestJobWaitResult,
+        HarvestMutationResult,
+        HarvestPage,
+        HarvestPreviewResult,
+        HarvestScheduleInput,
+        HarvestSourceInput,
+        HarvestSourceQuery,
+        HarvestValidationInput,
+        UDataJobHandle,
     )
     from datasluice.connectors.catalog.udata.models.oauth import (
         OAuthAuthorizeDecision,
@@ -88,6 +111,22 @@ if TYPE_CHECKING:
         SuggestQuery,
         TaxonomyMutationResult,
     )
+    from datasluice.connectors.catalog.udata.models.topics import (
+        TopicCreateInput,
+        TopicElementInput,
+        TopicElementsCreateInput,
+        TopicElementsQuery,
+        TopicListQuery,
+        TopicMutationResult,
+        TopicSearchQuery,
+        TopicUpdateInput,
+    )
+    from datasluice.connectors.catalog.udata.models.transfers import (
+        TransferListQuery,
+        TransferMutationResult,
+        TransferRequestInput,
+        TransferResponseInput,
+    )
     from datasluice.connectors.catalog.udata.models.users import (
         ApiTokenCreateInput,
         ApiTokenCreationResult,
@@ -100,6 +139,11 @@ if TYPE_CHECKING:
         UserSuggestQuery,
         UserUpdateInput,
     )
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.domain.catalog.auth import EffectivePermissions
+    from datasluice.domain.catalog.receipts import BulkCheckpoint, MutationReceipt
+    from datasluice.domain.catalog.resilience import TimeBudget
+    from datasluice.domain.catalog.safety import BulkExecutionPolicy, MutationPolicy
     from datasluice.domain.catalog.udata import (
         SiteCatalogQuery,
         SiteDataserviceCsvQuery,
@@ -111,6 +155,7 @@ if TYPE_CHECKING:
         SiteProfile,
         SiteReuseCsvQuery,
     )
+    from datasluice.errors.catalog import NativeCatalogError
 
 type UDataResultItem = NativeRecord
 type UDataResult = ResultEnvelope[UDataResultItem]
@@ -1583,6 +1628,508 @@ class AsyncUDataTaxonomiesService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataHarvestService(Protocol):
+    """Typed synchronous harvest source, job, and bounded admin bulk operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_sources(self, query: HarvestSourceQuery, permissions: EffectivePermissions) -> HarvestPage: ...
+    def get_source(self, source_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    def preview_source(self, source_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    def list_jobs(self, source_id: str, query: HarvestJobQuery, permissions: EffectivePermissions) -> HarvestPage: ...
+    def get_job(self, job_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    def list_job_items(
+        self, job_id: str, query: HarvestJobItemsQuery, permissions: EffectivePermissions
+    ) -> HarvestPage: ...
+    def backends(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    def create_source(
+        self,
+        client_input: HarvestSourceInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    def update_source(
+        self,
+        source_id: str,
+        client_input: HarvestSourceInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    def delete_source(
+        self,
+        source_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    def validate_source(
+        self,
+        source_id: str,
+        client_input: HarvestValidationInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    def run_source(
+        self,
+        source_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    def schedule_source(
+        self,
+        source_id: str,
+        client_input: HarvestScheduleInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    def unschedule_source(
+        self,
+        source_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    def preview_source_config(
+        self,
+        client_input: HarvestSourceInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestPreviewResult: ...
+    def preview_bulk(self, action: str, targets: HarvestBulkTargets) -> HarvestBulkPreview: ...
+    def wait_for_job(
+        self,
+        handle: UDataJobHandle,
+        permissions: EffectivePermissions,
+        *,
+        budget: TimeBudget | None = None,
+        clock: Callable[[], float] = ...,
+        sleeper: Callable[[float], None] = ...,
+    ) -> HarvestJobWaitResult: ...
+    def run_bulk(
+        self,
+        action: str,
+        targets: HarvestBulkTargets,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        *,
+        execution_policy: BulkExecutionPolicy | None = None,
+        checkpoint_sink: Callable[[BulkCheckpoint], object],
+        checkpoint: BulkCheckpoint | None = None,
+        whole_run_budget: TimeBudget | None = None,
+        item_budget: TimeBudget | None = None,
+        cancel_event: Event | None = None,
+        clock: Callable[[], float] = ...,
+    ) -> HarvestBulkResult: ...
+
+
+@runtime_checkable
+class AsyncUDataHarvestService(Protocol):
+    """Typed asynchronous harvest source, job, and bounded admin bulk operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_sources(self, query: HarvestSourceQuery, permissions: EffectivePermissions) -> HarvestPage: ...
+    async def get_source(self, source_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    async def preview_source(self, source_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    async def list_jobs(
+        self, source_id: str, query: HarvestJobQuery, permissions: EffectivePermissions
+    ) -> HarvestPage: ...
+    async def get_job(self, job_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    async def list_job_items(
+        self, job_id: str, query: HarvestJobItemsQuery, permissions: EffectivePermissions
+    ) -> HarvestPage: ...
+    async def backends(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    async def create_source(
+        self,
+        client_input: HarvestSourceInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    async def update_source(
+        self,
+        source_id: str,
+        client_input: HarvestSourceInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    async def delete_source(
+        self,
+        source_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    async def validate_source(
+        self,
+        source_id: str,
+        client_input: HarvestValidationInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    async def run_source(
+        self,
+        source_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    async def schedule_source(
+        self,
+        source_id: str,
+        client_input: HarvestScheduleInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    async def unschedule_source(
+        self,
+        source_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestMutationResult: ...
+    async def preview_source_config(
+        self,
+        client_input: HarvestSourceInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> HarvestPreviewResult: ...
+    def preview_bulk(self, action: str, targets: HarvestBulkTargets) -> HarvestBulkPreview: ...
+    async def wait_for_job(
+        self,
+        handle: UDataJobHandle,
+        permissions: EffectivePermissions,
+        *,
+        budget: TimeBudget | None = None,
+        clock: Callable[[], float] = ...,
+        sleeper: Callable[[float], Awaitable[None]] = ...,
+    ) -> HarvestJobWaitResult: ...
+    async def run_bulk(
+        self,
+        action: str,
+        targets: HarvestBulkTargets,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+        *,
+        execution_policy: BulkExecutionPolicy | None = None,
+        checkpoint_sink: Callable[[BulkCheckpoint], object],
+        checkpoint: BulkCheckpoint | None = None,
+        whole_run_budget: TimeBudget | None = None,
+        item_budget: TimeBudget | None = None,
+        cancel_event: object | None = None,
+        clock: Callable[[], float] = ...,
+    ) -> HarvestBulkResult: ...
+
+
+@runtime_checkable
+class SyncUDataTopicsService(Protocol):
+    """Typed synchronous topic, topic-element, and featured-state operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def search_topics(self, query: TopicSearchQuery | None = None) -> MappingRecord: ...
+    def list_topics(self, query: TopicListQuery | None = None) -> MappingRecord: ...
+    def get_topic(self, topic_id: str) -> MappingRecord: ...
+    def topic_elements(self, topic_id: str, query: TopicElementsQuery | None = None) -> MappingRecord: ...
+    def create_topic(
+        self,
+        client_input: TopicCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def update_topic(
+        self,
+        topic_id: str,
+        client_input: TopicUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def delete_topic(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def topic_elements_create(
+        self,
+        topic_id: str,
+        client_input: TopicElementsCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def topic_elements_delete(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def topic_element_update(
+        self,
+        topic_id: str,
+        element_id: str,
+        client_input: TopicElementInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def topic_element_delete(
+        self,
+        topic_id: str,
+        element_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def feature_topic(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    def unfeature_topic(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataTopicsService(Protocol):
+    """Typed asynchronous topic, topic-element, and featured-state operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def search_topics(self, query: TopicSearchQuery | None = None) -> MappingRecord: ...
+    async def list_topics(self, query: TopicListQuery | None = None) -> MappingRecord: ...
+    async def get_topic(self, topic_id: str) -> MappingRecord: ...
+    async def topic_elements(self, topic_id: str, query: TopicElementsQuery | None = None) -> MappingRecord: ...
+    async def create_topic(
+        self,
+        client_input: TopicCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def update_topic(
+        self,
+        topic_id: str,
+        client_input: TopicUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def delete_topic(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def topic_elements_create(
+        self,
+        topic_id: str,
+        client_input: TopicElementsCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def topic_elements_delete(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def topic_element_update(
+        self,
+        topic_id: str,
+        element_id: str,
+        client_input: TopicElementInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def topic_element_delete(
+        self,
+        topic_id: str,
+        element_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def feature_topic(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+    async def unfeature_topic(
+        self,
+        topic_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TopicMutationResult: ...
+
+
+@runtime_checkable
+class SyncUDataTransfersService(Protocol):
+    """Typed synchronous dataset ownership-transfer operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_transfers(
+        self, query: TransferListQuery, permissions: EffectivePermissions
+    ) -> tuple[MappingRecord, ...]: ...
+    def get_transfer(self, transfer_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    def request_transfer(
+        self,
+        client_input: TransferRequestInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TransferMutationResult: ...
+    def respond_to_transfer(
+        self,
+        transfer_id: str,
+        client_input: TransferResponseInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TransferMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataTransfersService(Protocol):
+    """Typed asynchronous dataset ownership-transfer operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_transfers(
+        self, query: TransferListQuery, permissions: EffectivePermissions
+    ) -> tuple[MappingRecord, ...]: ...
+    async def get_transfer(self, transfer_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    async def request_transfer(
+        self,
+        client_input: TransferRequestInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TransferMutationResult: ...
+    async def respond_to_transfer(
+        self,
+        transfer_id: str,
+        client_input: TransferResponseInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> TransferMutationResult: ...
+
+
+@runtime_checkable
+class SyncUDataContactVisualizationService(Protocol):
+    """Typed synchronous contact-point and visualization operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_visualizations(self, query: VisualizationListQuery | None = None) -> VisualizationPage: ...
+    def create_visualization(
+        self,
+        client_input: VisualizationCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    def get_visualization(self, visualization_id: str) -> MappingRecord: ...
+    def update_visualization(
+        self,
+        visualization_id: str,
+        client_input: VisualizationUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    def delete_visualization(
+        self,
+        visualization_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    def visualization_image(
+        self,
+        visualization_id: str,
+        image: VisualizationImageInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    def create_contact_point(
+        self,
+        client_input: ContactPointCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    def get_contact_point(self, contact_point_id: str) -> MappingRecord: ...
+    def update_contact_point(
+        self,
+        contact_point_id: str,
+        client_input: ContactPointUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    def delete_contact_point(
+        self,
+        contact_point_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    def contact_point_roles(self) -> tuple[MappingRecord, ...]: ...
+
+
+@runtime_checkable
+class AsyncUDataContactVisualizationService(Protocol):
+    """Typed asynchronous contact-point and visualization operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    async def list_visualizations(self, query: VisualizationListQuery | None = None) -> VisualizationPage: ...
+    async def create_visualization(
+        self,
+        client_input: VisualizationCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    async def get_visualization(self, visualization_id: str) -> MappingRecord: ...
+    async def update_visualization(
+        self,
+        visualization_id: str,
+        client_input: VisualizationUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    async def delete_visualization(
+        self,
+        visualization_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    async def visualization_image(
+        self,
+        visualization_id: str,
+        image: VisualizationImageInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    async def create_contact_point(
+        self,
+        client_input: ContactPointCreateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    async def get_contact_point(self, contact_point_id: str) -> MappingRecord: ...
+    async def update_contact_point(
+        self,
+        contact_point_id: str,
+        client_input: ContactPointUpdateInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    async def delete_contact_point(
+        self,
+        contact_point_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> ContactVisualizationMutationResult: ...
+    async def contact_point_roles(self) -> tuple[MappingRecord, ...]: ...
+
+
+@runtime_checkable
 class SyncUDataUsersTokensService(Protocol):
     """Named synchronous stock user and token operations."""
 
@@ -1892,6 +2439,15 @@ class SyncUDataServices(Protocol):
     def taxonomies(self) -> SyncUDataTaxonomiesService: ...
 
     @property
+    def topics(self) -> SyncUDataTopicsService: ...
+
+    @property
+    def transfers(self) -> SyncUDataTransfersService: ...
+
+    @property
+    def contact_visualization(self) -> SyncUDataContactVisualizationService: ...
+
+    @property
     def activity_discussions(self) -> SyncUDataActivityDiscussionsService: ...
 
     @property
@@ -1901,7 +2457,7 @@ class SyncUDataServices(Protocol):
     def geography(self) -> SyncUDataService: ...
 
     @property
-    def harvest_moderation_admin(self) -> SyncUDataService: ...
+    def harvest_moderation_admin(self) -> SyncUDataHarvestService: ...
 
     @property
     def extensions(self) -> SyncUDataService: ...
@@ -1945,6 +2501,15 @@ class AsyncUDataServices(Protocol):
     def taxonomies(self) -> AsyncUDataTaxonomiesService: ...
 
     @property
+    def topics(self) -> AsyncUDataTopicsService: ...
+
+    @property
+    def transfers(self) -> AsyncUDataTransfersService: ...
+
+    @property
+    def contact_visualization(self) -> AsyncUDataContactVisualizationService: ...
+
+    @property
     def activity_discussions(self) -> AsyncUDataActivityDiscussionsService: ...
 
     @property
@@ -1954,7 +2519,7 @@ class AsyncUDataServices(Protocol):
     def geography(self) -> AsyncUDataService: ...
 
     @property
-    def harvest_moderation_admin(self) -> AsyncUDataService: ...
+    def harvest_moderation_admin(self) -> AsyncUDataHarvestService: ...
 
     @property
     def extensions(self) -> AsyncUDataService: ...

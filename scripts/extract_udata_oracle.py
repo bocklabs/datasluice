@@ -8,9 +8,11 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 PINNED_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})

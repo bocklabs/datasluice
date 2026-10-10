@@ -16,7 +16,6 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import activity_discussions as wire
 from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import NativeCatalogError
 
 from .taxonomies import (
@@ -30,6 +29,7 @@ from .taxonomies import (
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.domain.catalog.models import MappingRecord
 
 _mutation = partial(
     _run_mutation,

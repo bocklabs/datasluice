@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.resources import (
     ResourceCreateInput,
     ResourceMutationResult,
@@ -17,7 +16,6 @@ from datasluice.connectors.catalog.udata.wire import datasets as dataset_wire
 from datasluice.connectors.catalog.udata.wire import resources as wire
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import (
@@ -39,6 +37,8 @@ from .datasets import (
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+    from datasluice.domain.catalog.models import NativeRecord
 
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from collections.abc import Sequence
-from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -29,6 +27,10 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import ForbiddenError
 from datasluice.runtime.redaction import redact_for_output
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
 
 _STATUS_KEYS = frozenset(
     {"ckan_version", "error_emails_to", "extensions", "locale_default", "site_description", "site_title", "site_url"}
@@ -335,7 +337,7 @@ def test_per_target_parameterization_runs_each_target_against_its_own_payload() 
         constructed.append(client)
         return client
 
-    records = run_drift_checks([demo_target, dgu_target], client_factory=cast(DriftClientFactory, construct))
+    records = run_drift_checks([demo_target, dgu_target], client_factory=cast("DriftClientFactory", construct))
     assert [record.outcome for record in records] == ["matched", "matched"]
     assert constructed[0].datasets.requested_ids == ["demo-sample"]
     assert constructed[1].datasets.requested_ids == ["dgu-harvest-set"]

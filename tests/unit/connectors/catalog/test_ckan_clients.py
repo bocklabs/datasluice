@@ -6,8 +6,7 @@ import asyncio
 import importlib.util
 import inspect
 import json
-from collections.abc import Callable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
@@ -43,6 +42,9 @@ from datasluice.domain.catalog.profiles import (
 )
 from datasluice.errors.catalog import CatalogValidationError, UnauthenticatedError, UnsupportedCapabilityError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 DATASTORE_OPERATION_ID = "ckan/datastore-extension.query-and-record-crud"

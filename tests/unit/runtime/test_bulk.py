@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from collections.abc import AsyncGenerator, Callable, Generator
 from threading import Event, Lock
 from time import sleep
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -18,6 +17,9 @@ from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.domain.catalog.safety import BulkExecutionPolicy
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.bulk import AsyncBulkExecutor, BulkExecutor, BulkSummary
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Callable, Generator
 
 
 def _plan(*values: str) -> BulkPlan:
@@ -156,7 +158,7 @@ def test_sync_item_failures_convert_to_failed_receipts_and_counted() -> None:
         if item.value == "explodes":
             raise RuntimeError("dispatch failed")
         if item.value == "wrong-type":
-            return cast(MutationReceipt, object())
+            return cast("MutationReceipt", object())
         return _receipt(item)
 
     outcomes = list(BulkExecutor(execute, checkpoint_sink=lambda checkpoint: None).stream(plan))
@@ -178,7 +180,7 @@ def test_async_item_failures_convert_to_failed_receipts_and_counted() -> None:
             if item.value == "explodes":
                 raise RuntimeError("dispatch failed")
             if item.value == "wrong-type":
-                return cast(MutationReceipt, object())
+                return cast("MutationReceipt", object())
             return _receipt(item)
 
         return [

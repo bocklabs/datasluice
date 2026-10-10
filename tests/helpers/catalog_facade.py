@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 from datetime import date
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogOperationExecutor,
@@ -12,7 +12,6 @@ from datasluice.contracts.catalog.protocols import (
     CatalogOperationRequest,
     SyncCatalogOperationExecutor,
 )
-from datasluice.domain.catalog.models import ResultEnvelope
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -33,12 +32,15 @@ from datasluice.domain.catalog.profiles import (
     RoleClassification,
 )
 
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.models import ResultEnvelope
+
 SOURCE_ACCESSED_AT = date(2026, 8, 15)
 
 
 class SyncExecutor:
     def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
-        return cast(ResultEnvelope[object], object())
+        return cast("ResultEnvelope[object]", object())
 
     def close(self) -> None:
         return None
@@ -46,7 +48,7 @@ class SyncExecutor:
 
 class AsyncExecutor:
     async def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
-        return cast(ResultEnvelope[object], object())
+        return cast("ResultEnvelope[object]", object())
 
     async def aclose(self) -> None:
         return None
@@ -134,11 +136,11 @@ def facade_context(
 
 
 def context_missing_sync_executor(profile: EffectiveCapabilityProfile) -> CatalogConnectorContext:
-    return facade_context(profile, sync_executor=cast(SyncCatalogOperationExecutor, object()))
+    return facade_context(profile, sync_executor=cast("SyncCatalogOperationExecutor", object()))
 
 
 def context_invalid_async_executor(profile: EffectiveCapabilityProfile) -> CatalogConnectorContext:
-    return facade_context(profile, async_executor=cast(AsyncCatalogOperationExecutor, object()))
+    return facade_context(profile, async_executor=cast("AsyncCatalogOperationExecutor", object()))
 
 
 def assert_retained_projections(context: CatalogConnectorContext, projections: ServiceProjections) -> None:

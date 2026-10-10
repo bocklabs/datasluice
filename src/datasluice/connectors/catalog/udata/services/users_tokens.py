@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenCreationResult,
@@ -40,10 +39,12 @@ from .datasets import (
     _safe_target_value,
 )
 from .organizations_memberships import _attach, _org_receipt
-from .taxonomies import Request, Response
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+
+    from .taxonomies import Request, Response
 
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None
@@ -492,20 +493,20 @@ class SyncUsersTokensService:
         self, client_input: UserUpdateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(_WriteRoute("update_me", permissions, body=client_input, mutation_policy=mutation_policy)),
         )
 
     def delete_me(self, permissions: Permissions, mutation_policy: Policy = None) -> UserMutationResult:
         return cast(
-            UserMutationResult, self._write(_WriteRoute("delete_me", permissions, mutation_policy=mutation_policy))
+            "UserMutationResult", self._write(_WriteRoute("delete_me", permissions, mutation_policy=mutation_policy))
         )
 
     def my_avatar(
         self, client_input: UserAvatarInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(_WriteRoute("my_avatar", permissions, body=client_input, mutation_policy=mutation_policy)),
         )
 
@@ -513,7 +514,7 @@ class SyncUsersTokensService:
         self, client_input: ApiTokenCreateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> ApiTokenCreationResult:
         return cast(
-            ApiTokenCreationResult,
+            "ApiTokenCreationResult",
             self._write(
                 _WriteRoute("create_api_token", permissions, body=client_input, mutation_policy=mutation_policy)
             ),
@@ -523,7 +524,7 @@ class SyncUsersTokensService:
         self, token_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(
                 _WriteRoute("revoke_api_token", permissions, identifier=token_id, mutation_policy=mutation_policy)
             ),
@@ -533,7 +534,7 @@ class SyncUsersTokensService:
         self, invitation_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(
                 _WriteRoute(
                     "accept_org_invitation",
@@ -548,7 +549,7 @@ class SyncUsersTokensService:
         self, invitation_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(
                 _WriteRoute(
                     "refuse_org_invitation",
@@ -563,7 +564,7 @@ class SyncUsersTokensService:
         self, client_input: UserCreateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(_WriteRoute("create_user", permissions, body=client_input, mutation_policy=mutation_policy)),
         )
 
@@ -571,7 +572,7 @@ class SyncUsersTokensService:
         self, user_id: str, client_input: UserAvatarInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(
                 _WriteRoute(
                     "user_avatar",
@@ -587,7 +588,7 @@ class SyncUsersTokensService:
         self, user_id: str, client_input: UserUpdateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(
                 _WriteRoute(
                     "update_user",
@@ -607,7 +608,7 @@ class SyncUsersTokensService:
         options: UserDeleteOptions | None = None,
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(
                 _WriteRoute(
                     "delete_user",
@@ -623,7 +624,7 @@ class SyncUsersTokensService:
         self, user_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(
                 _WriteRoute("rotate_user_password", permissions, identifier=user_id, mutation_policy=mutation_policy)
             ),
@@ -631,7 +632,7 @@ class SyncUsersTokensService:
 
     def follow_user(self, user_id: str, permissions: Permissions, mutation_policy: Policy = None) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(_WriteRoute("follow_user", permissions, identifier=user_id, mutation_policy=mutation_policy)),
         )
 
@@ -639,7 +640,7 @@ class SyncUsersTokensService:
         self, user_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             self._write(_WriteRoute("unfollow_user", permissions, identifier=user_id, mutation_policy=mutation_policy)),
         )
 
@@ -731,7 +732,7 @@ class AsyncUsersTokensService:
         self, client_input: UserUpdateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute("update_me", permissions, body=client_input, mutation_policy=mutation_policy)
             ),
@@ -739,7 +740,7 @@ class AsyncUsersTokensService:
 
     async def delete_me(self, permissions: Permissions, mutation_policy: Policy = None) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(_WriteRoute("delete_me", permissions, mutation_policy=mutation_policy)),
         )
 
@@ -747,7 +748,7 @@ class AsyncUsersTokensService:
         self, client_input: UserAvatarInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute("my_avatar", permissions, body=client_input, mutation_policy=mutation_policy)
             ),
@@ -757,7 +758,7 @@ class AsyncUsersTokensService:
         self, client_input: ApiTokenCreateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> ApiTokenCreationResult:
         return cast(
-            ApiTokenCreationResult,
+            "ApiTokenCreationResult",
             await self._write(
                 _WriteRoute("create_api_token", permissions, body=client_input, mutation_policy=mutation_policy)
             ),
@@ -767,7 +768,7 @@ class AsyncUsersTokensService:
         self, token_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute("revoke_api_token", permissions, identifier=token_id, mutation_policy=mutation_policy)
             ),
@@ -777,7 +778,7 @@ class AsyncUsersTokensService:
         self, invitation_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute(
                     "accept_org_invitation",
@@ -792,7 +793,7 @@ class AsyncUsersTokensService:
         self, invitation_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute(
                     "refuse_org_invitation",
@@ -807,7 +808,7 @@ class AsyncUsersTokensService:
         self, client_input: UserCreateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute("create_user", permissions, body=client_input, mutation_policy=mutation_policy)
             ),
@@ -817,7 +818,7 @@ class AsyncUsersTokensService:
         self, user_id: str, client_input: UserAvatarInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute(
                     "user_avatar",
@@ -833,7 +834,7 @@ class AsyncUsersTokensService:
         self, user_id: str, client_input: UserUpdateInput, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute(
                     "update_user",
@@ -853,7 +854,7 @@ class AsyncUsersTokensService:
         options: UserDeleteOptions | None = None,
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute(
                     "delete_user",
@@ -869,7 +870,7 @@ class AsyncUsersTokensService:
         self, user_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute("rotate_user_password", permissions, identifier=user_id, mutation_policy=mutation_policy)
             ),
@@ -879,7 +880,7 @@ class AsyncUsersTokensService:
         self, user_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute("follow_user", permissions, identifier=user_id, mutation_policy=mutation_policy)
             ),
@@ -889,7 +890,7 @@ class AsyncUsersTokensService:
         self, user_id: str, permissions: Permissions, mutation_policy: Policy = None
     ) -> UserMutationResult:
         return cast(
-            UserMutationResult,
+            "UserMutationResult",
             await self._write(
                 _WriteRoute("unfollow_user", permissions, identifier=user_id, mutation_policy=mutation_policy)
             ),

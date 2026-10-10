@@ -10,7 +10,7 @@ refuses pre-dispatch without a confirmed destructive policy through the shared
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
@@ -21,12 +21,16 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncOrganizationService,
 )
 from datasluice.connectors.catalog.ckan.mapping import MEMBER, PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.services._shared import WireParams, detail_params, drop_unset, wire_params
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _ORGANIZATION_GROUP = "organizations"
 

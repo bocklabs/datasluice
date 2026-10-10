@@ -44,11 +44,14 @@ import re
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from tests.helpers.import_purity import assert_import_pulls_no_distributions
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC_ROOT = REPO_ROOT / "src"
@@ -806,6 +809,13 @@ POSTS_REPORTS_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v1.read-notification",
     }
 )
+# TOPIC_ROUTE_OPERATION_IDS is deliberately absent from LOCKED_EXTRA_OPERATION_IDS and from
+# the NATIVE_OPERATION_MEMBERS merge above, for the same reason as the taxonomy set: topic
+# routes are approved operations only, so they carry no locked INTEGRATE row, no fixture
+# case, and no native Protocol member. Adding either would break the
+# mapped_ids == integrate_ids equality asserted by
+# test_every_integrate_operation_has_both_native_protocol_modes. The contact-point and
+# visualization set below follows that same approved-route convention.
 OAUTH_ROUTE_OPERATION_IDS = frozenset(
     {
         "udata/oauth.access-token",
@@ -891,6 +901,55 @@ LOCKED_EXTRA_OPERATION_IDS = (
     | DATASERVICE_ROUTE_OPERATION_IDS
 )
 
+TOPIC_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v2.list-topics",
+        "udata/api-v2.search-topics",
+        "udata/api-v2.get-topic",
+        "udata/api-v2.create-topic",
+        "udata/api-v2.update-topic",
+        "udata/api-v2.delete-topic",
+        "udata/api-v2.topic-elements",
+        "udata/api-v2.topic-elements-create",
+        "udata/api-v2.topic-elements-delete",
+        "udata/api-v2.topic-element-update",
+        "udata/api-v2.topic-element-delete",
+        "udata/api-v2.feature-topic",
+        "udata/api-v2.unfeature-topic",
+    }
+)
+# TRANSFER_ROUTE_OPERATION_IDS carries the same deliberate omissions as the taxonomy set:
+# transfer routes are approved operations only, so they carry no locked INTEGRATE row, no
+# fixture case, and no native Protocol member in NATIVE_OPERATION_MEMBERS. The family is
+# typed through SyncUDataTransfersService/AsyncUDataTransfersService instead.
+TRANSFER_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-transfers",
+        "udata/api-v1.request-transfer",
+        "udata/api-v1.get-transfer",
+        "udata/api-v1.respond-to-transfer",
+    }
+)
+# CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS carries the same deliberate omissions as the
+# taxonomy set: contact-point and visualization routes are approved operations only, so they
+# carry no locked INTEGRATE row, no fixture case, and no native Protocol member in
+# NATIVE_OPERATION_MEMBERS. The family is typed through
+# SyncUDataContactVisualizationService/AsyncUDataContactVisualizationService instead.
+CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-visualizations",
+        "udata/api-v1.create-visualization",
+        "udata/api-v1.get-visualization",
+        "udata/api-v1.update-visualization",
+        "udata/api-v1.delete-visualization",
+        "udata/api-v1.visualization-image",
+        "udata/api-v1.create-contact-point",
+        "udata/api-v1.get-contact-point",
+        "udata/api-v1.update-contact-point",
+        "udata/api-v1.delete-contact-point",
+        "udata/api-v1.contact-point-roles",
+    }
+)
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
     "udata": (
         LOCKED_DATASET_ROUTE_OPERATIONS
@@ -900,6 +959,17 @@ PLATFORM_APPROVED_ROUTE_OPERATIONS = {
         | REUSE_ROUTE_OPERATION_IDS
         | POSTS_REPORTS_ROUTE_OPERATION_IDS
         | SPATIAL_ROUTE_OPERATION_IDS
+        | TOPIC_ROUTE_OPERATION_IDS
+        | TRANSFER_ROUTE_OPERATION_IDS
+        | CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS
+        | frozenset(
+            {
+                "udata/api-v1.access-type-reason-categories",
+                "udata/api-v1.suggest-tags",
+                "udata/api-v1.avatar",
+                "udata/api-v2.captchetat",
+            }
+        )
     ),
 }
 
@@ -1051,7 +1121,6 @@ def _certificate_parts(platform: str):
 
     from datasluice.contracts.catalog import certify_catalog_report, load_reference_fixture_set
     from datasluice.contracts.catalog.fakes import AsyncReferenceConnector, SyncReferenceConnector
-    from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
     from datasluice.contracts.catalog.runner import catalog_contract_cases, run_catalog_contract
     from datasluice.domain.catalog.extensions import (
         ActivationPolicy,
@@ -1077,8 +1146,8 @@ def _certificate_parts(platform: str):
     cases = catalog_contract_cases(fixture_set)
     report = run_catalog_contract(
         cases,
-        sync_client=cast(SyncCatalogClient, SyncReferenceConnector(fixture_set)),
-        async_client=cast(AsyncCatalogClient, AsyncReferenceConnector(fixture_set)),
+        sync_client=cast("SyncCatalogClient", SyncReferenceConnector(fixture_set)),
+        async_client=cast("AsyncCatalogClient", AsyncReferenceConnector(fixture_set)),
         fixture_set=fixture_set,
     )
     operation_id = OperationId(platform=platform, service="catalog", method="get")
@@ -1471,7 +1540,6 @@ def _platform_runner_evidence_violations(platform: str, integrate_ids: frozenset
 
     from datasluice.contracts.catalog import catalog_contract_cases, load_reference_fixture_set, run_catalog_contract
     from datasluice.contracts.catalog.fakes import AsyncReferenceConnector, SyncReferenceConnector
-    from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 
     expected = _platform_operation_ids(integrate_ids, platform)
     violations: list[str] = []
@@ -1481,8 +1549,8 @@ def _platform_runner_evidence_violations(platform: str, integrate_ids: frozenset
     cases = catalog_contract_cases(fixture_set)
     report = run_catalog_contract(
         cases,
-        sync_client=cast(SyncCatalogClient, SyncReferenceConnector(fixture_set)),
-        async_client=cast(AsyncCatalogClient, AsyncReferenceConnector(fixture_set)),
+        sync_client=cast("SyncCatalogClient", SyncReferenceConnector(fixture_set)),
+        async_client=cast("AsyncCatalogClient", AsyncReferenceConnector(fixture_set)),
         fixture_set=fixture_set,
     )
     if not report.is_compliant:
@@ -1614,7 +1682,8 @@ def test_public_catalog_models_are_frozen_typed_values() -> None:
         for name, value in vars(module).items():
             if dataclasses.is_dataclass(value) and value.__module__ == module.__name__:
                 params = getattr(value, "__dataclass_params__", None)
-                assert params is not None and params.frozen, f"{module_name}.{name} must be frozen"
+                assert params is not None, f"{module_name}.{name} must be a dataclass"
+                assert params.frozen, f"{module_name}.{name} must be frozen"
                 checked += 1
     assert checked >= 50, f"expected the full public model corpus, checked {checked}"
     from dataclasses import FrozenInstanceError

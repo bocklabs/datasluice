@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.models.oauth import (
@@ -15,8 +15,10 @@ from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthTokenResult,
 )
 from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 PLATFORM = CatalogPlatform.UDATA
 FORM_MEDIA_TYPE = "application/x-www-form-urlencoded"

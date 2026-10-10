@@ -14,7 +14,7 @@ from datasluice.connectors.catalog.udata.models.resources import (
     UPLOAD_STREAM_OPERATION,
     MidStreamUploadError,
     ResourceUploadInput,
-    UploadDeadlineExceeded,
+    UploadDeadlineExceededError,
 )
 from datasluice.connectors.catalog.udata.wire import resources as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
@@ -32,7 +32,7 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     NativeCatalogError,
 )
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure, UploadStream
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError, UploadStream
 
 
 class _InterruptingTransport:
@@ -87,18 +87,18 @@ class _CloseFailingSource(BytesIO):
 def test_mid_stream_deadline_exceeded_is_ambiguous_like_any_other_os_error() -> None:
     """A deadline exhaustion is an OSError, so it settles ambiguously like the byte ceiling.
 
-    ``MidStreamUploadError`` and ``UploadDeadlineExceeded`` both subclass ``OSError``, so the
+    ``MidStreamUploadError`` and ``UploadDeadlineExceededError`` both subclass ``OSError``, so the
     settlement check must test the base class. Narrowing it to the connector-local subclass
     would silently downgrade a bare transport ``OSError`` to ``failed`` after dispatch, which
     claims the target is unchanged when bytes may already be on the wire.
     """
     from datasluice.connectors.catalog.udata.models.resources import (
         MidStreamUploadError,
-        UploadDeadlineExceeded,
+        UploadDeadlineExceededError,
     )
 
     assert issubclass(MidStreamUploadError, OSError)
-    assert issubclass(UploadDeadlineExceeded, MidStreamUploadError)
+    assert issubclass(UploadDeadlineExceededError, MidStreamUploadError)
 
     credential = UDataCredential(api_key="local-test-key")
     permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)
@@ -355,7 +355,7 @@ def test_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one_shot(
             data = request.files[0].data
             assert not isinstance(data, bytes)
             data.read(1)
-            raise TransportFailure("connection reset mid upload")
+            raise TransportError("connection reset mid upload")
 
     client = SyncUDataClient(
         MidStreamReset(),
@@ -367,7 +367,7 @@ def test_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one_shot(
     )
     upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
 
-    with client, pytest.raises(TransportFailure):
+    with client, pytest.raises(TransportError):
         client._dataset_call(
             method="POST",
             path="/api/1/datasets/dataset/upload/",
@@ -393,7 +393,7 @@ def test_async_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one
             data = request.files[0].data
             assert not isinstance(data, bytes)
             data.read(1)
-            raise TransportFailure("connection reset mid upload")
+            raise TransportError("connection reset mid upload")
 
     client = AsyncUDataClient(
         AsyncMidStreamReset(),
@@ -407,7 +407,7 @@ def test_async_retry_opted_in_upload_is_attempted_once_because_the_stream_is_one
 
     async def run() -> None:
         async with client:
-            with pytest.raises(TransportFailure):
+            with pytest.raises(TransportError):
                 await client._dataset_call_async(
                     method="POST",
                     path="/api/1/datasets/dataset/upload/",
@@ -526,9 +526,9 @@ def _budget(total: float) -> TimeBudget:
 
 def test_upload_input_rejects_an_untyped_budget_and_a_non_callable_clock() -> None:
     with pytest.raises(TypeError, match="uData upload time budgets must use TimeBudget"):
-        ResourceUploadInput(BytesIO(b"a"), "data.csv", 1, budget=cast(Any, object()))
+        ResourceUploadInput(BytesIO(b"a"), "data.csv", 1, budget=cast("Any", object()))
     with pytest.raises(TypeError, match="uData upload sources require a monotonic clock callable"):
-        ResourceUploadInput(BytesIO(b"a"), "data.csv", 1, clock=cast(Any, "now"))
+        ResourceUploadInput(BytesIO(b"a"), "data.csv", 1, clock=cast("Any", "now"))
 
 
 def test_upload_source_exactly_at_its_byte_ceiling_streams_every_byte_and_reports_end_of_file() -> None:
@@ -555,7 +555,7 @@ def test_upload_source_over_its_byte_ceiling_fails_on_bytes_and_not_on_the_deadl
         while part.data.read():
             pass
 
-    assert not isinstance(raised.value, UploadDeadlineExceeded)
+    assert not isinstance(raised.value, UploadDeadlineExceededError)
     assert source.tell() == 4
     assert clock.now == 1.0
 
@@ -567,7 +567,7 @@ def test_streaming_deadline_takes_precedence_over_the_byte_ceiling_once_it_is_ex
     upload = ResourceUploadInput(source, "data.csv", 3, budget=_budget(1.0), clock=clock)
     clock.advance(10.0)
 
-    with pytest.raises(UploadDeadlineExceeded) as raised:
+    with pytest.raises(UploadDeadlineExceededError) as raised:
         part = upload.part()
         assert not isinstance(part.data, bytes)
         while part.data.read():
@@ -597,7 +597,7 @@ def test_streaming_deadline_stops_a_slow_drip_that_stays_under_the_byte_ceiling(
         owns_transport=False,
     )
 
-    with client, pytest.raises(UploadDeadlineExceeded) as raised:
+    with client, pytest.raises(UploadDeadlineExceededError) as raised:
         client.resources.upload(
             "dataset",
             ResourceUploadInput(source, "data.csv", 64, budget=_budget(2.0), clock=clock),
@@ -653,7 +653,7 @@ def test_streaming_deadline_failure_still_closes_the_borrowed_source_exactly_onc
     clock.advance(10.0)
 
     data: UploadStream | None = None
-    with pytest.raises(UploadDeadlineExceeded):
+    with pytest.raises(UploadDeadlineExceededError):
         part = upload.part()
         candidate = part.data
         assert not isinstance(candidate, bytes)

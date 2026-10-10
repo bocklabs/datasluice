@@ -8,11 +8,12 @@ input.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from io import RawIOBase
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from _typeshed import WriteableBuffer
 
 

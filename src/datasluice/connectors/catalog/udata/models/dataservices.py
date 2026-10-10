@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _LIST_FILTERS = (
     "tag",
@@ -266,6 +269,13 @@ def cast_mapping(value: object) -> Mapping[str, object]:
     return value  # noqa
 
 
+def _validate_availability(availability: object) -> None:
+    if availability is not None and not (
+        isinstance(availability, int | float) and not isinstance(availability, bool) and 0 <= availability <= 100
+    ):
+        raise ValueError("uData dataservice availability must be a number between 0 and 100.")
+
+
 def _validated_dataservice_fields(fields: Mapping[str, object], *, required: frozenset[str]) -> None:
     """Validate every documented dataservice field, requiring the named keys when creating."""
     for key in _DATASERVICE_TEXT:
@@ -274,11 +284,7 @@ def _validated_dataservice_fields(fields: Mapping[str, object], *, required: fro
         value = fields.get(key)
         if value is not None and not str(value).lower().startswith(("http://", "https://")):
             raise ValueError(f"uData dataservice {key} must be an absolute http(s) URL.")
-    availability = fields.get("availability")
-    if availability is not None and (
-        isinstance(availability, bool) or not isinstance(availability, int | float) or not 0 <= availability <= 100
-    ):
-        raise ValueError("uData dataservice availability must be a number between 0 and 100.")
+    _validate_availability(fields.get("availability"))
     if fields.get("format") is not None and fields["format"] not in _DATASERVICE_FORMATS:
         raise ValueError("uData dataservice format is not a stock choice.")
     _optional_text(fields.get("license"), "license")

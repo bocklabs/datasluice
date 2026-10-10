@@ -9,17 +9,19 @@ transport and in both httpx loops.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from typing import Any, cast
-from urllib.request import Request
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
 
 from datasluice.domain import CredentialScope
-from datasluice.runtime.transport.base import RuntimeRequest, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, TransportError
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 from tests.helpers.httpx_probe import UPLOAD_PARTS, AsyncProbe, SyncProbe
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from urllib.request import Request
 
 _ALLOWED_SCOPE = CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True)
 _BODY = b'{"token": "redirect-body-secret"}'
@@ -73,7 +75,7 @@ class _RecordingOpener:
 @pytest.mark.parametrize("status", [307, 308])
 def test_httpx_cross_origin_body_redirect_refuses_even_with_scope_opt_in(status: int) -> None:
     with SyncProbe(_hop(status, allow_target=False), credential_scope=_ALLOWED_SCOPE) as probe:
-        with pytest.raises(TransportFailure, match="different redirect origin") as excinfo:
+        with pytest.raises(TransportError, match="different redirect origin") as excinfo:
             probe.send(RuntimeRequest("POST", f"https://{_ORIGIN}/start", dict(_HEADERS), _BODY))
 
         assert len(probe.requests) == 1
@@ -85,7 +87,7 @@ def test_httpx_cross_origin_body_redirect_refuses_even_with_scope_opt_in(status:
 @pytest.mark.parametrize("status", [307, 308])
 def test_httpx_cross_origin_multipart_redirect_refuses_even_with_scope_opt_in(status: int) -> None:
     with SyncProbe(_hop(status, allow_target=False), credential_scope=_ALLOWED_SCOPE) as probe:
-        with pytest.raises(TransportFailure, match="different redirect origin"):
+        with pytest.raises(TransportError, match="different redirect origin"):
             probe.send(RuntimeRequest("POST", f"https://{_ORIGIN}/start", dict(_HEADERS), files=UPLOAD_PARTS))
 
         assert len(probe.requests) == 1
@@ -97,7 +99,7 @@ def test_async_httpx_cross_origin_body_redirect_refuses_even_with_scope_opt_in(s
 
     async def send() -> None:
         async with probe:
-            with pytest.raises(TransportFailure, match="different redirect origin"):
+            with pytest.raises(TransportError, match="different redirect origin"):
                 await probe.send(RuntimeRequest("POST", f"https://{_ORIGIN}/start", dict(_HEADERS), _BODY))
 
     asyncio.run(send())
@@ -109,9 +111,9 @@ def test_async_httpx_cross_origin_body_redirect_refuses_even_with_scope_opt_in(s
 def test_urllib_cross_origin_body_redirect_refuses_even_with_scope_opt_in(status: int) -> None:
     opener = _RecordingOpener([_FakeResponse(status, {"Location": "https://other.test/next"})])
     transport = UrllibCatalogTransport(credential_scope=_ALLOWED_SCOPE)
-    cast(Any, transport)._opener = opener
+    cast("Any", transport)._opener = opener
 
-    with pytest.raises(TransportFailure, match="different redirect origin") as excinfo:
+    with pytest.raises(TransportError, match="different redirect origin") as excinfo:
         transport.send(RuntimeRequest("POST", f"https://{_ORIGIN}/start", dict(_HEADERS), _BODY))
 
     assert len(opener.requests) == 1
@@ -134,7 +136,7 @@ def test_httpx_scope_opt_in_still_relays_authorization_once_the_body_is_dropped(
 def test_urllib_scope_opt_in_still_relays_authorization_once_the_body_is_dropped() -> None:
     opener = _RecordingOpener([_FakeResponse(302, {"Location": "https://other.test/next"}), _FakeResponse(200, {})])
     transport = UrllibCatalogTransport(credential_scope=_ALLOWED_SCOPE)
-    cast(Any, transport)._opener = opener
+    cast("Any", transport)._opener = opener
 
     transport.send(RuntimeRequest("POST", f"https://{_ORIGIN}/start", dict(_HEADERS), _BODY))
 

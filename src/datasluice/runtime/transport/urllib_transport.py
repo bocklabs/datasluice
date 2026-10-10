@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import ssl
-from collections.abc import Iterator, Mapping
-from email.message import Message
 from http.client import HTTPException, HTTPMessage
-from typing import IO
+from typing import IO, TYPE_CHECKING
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import (
@@ -19,7 +17,6 @@ from urllib.request import (
     Request,
 )
 
-from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport._shared import (
@@ -35,8 +32,14 @@ from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
-    TransportFailure,
+    TransportError,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+    from email.message import Message
+
+    from datasluice.domain import CredentialScope
 
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 
@@ -103,9 +106,9 @@ class UrllibCatalogTransport(CatalogTransport):
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         """Send one request, following bounded and sanitized redirects."""
         if self._closed:
-            raise TransportFailure("The urllib catalog transport is closed.")
+            raise TransportError("The urllib catalog transport is closed.")
         if request.files:
-            raise TransportFailure(
+            raise TransportError(
                 "Multipart requests require the httpx transport; install datasluice[http] or inject an httpx transport."
             )
         current = request
@@ -117,7 +120,7 @@ class UrllibCatalogTransport(CatalogTransport):
             if next_request is None:
                 return _runtime_response(status, headers, body)
             current = next_request
-        raise TransportFailure("Catalog redirect limit exceeded.")
+        raise TransportError("Catalog redirect limit exceeded.")
 
     def _read_current(self, request: RuntimeRequest) -> tuple[int, dict[str, str], bytes]:
         try:
@@ -141,9 +144,9 @@ class UrllibCatalogTransport(CatalogTransport):
             finally:
                 exc.close()
         except HTTPException as exc:
-            raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
+            raise TransportError("urllib lost the catalog connection mid-response.") from exc
         except OSError as exc:
-            raise TransportFailure("urllib could not complete the catalog request.") from exc
+            raise TransportError("urllib could not complete the catalog request.") from exc
 
     def _redirect_request(
         self, request: RuntimeRequest, status: int, headers: Mapping[str, str]
@@ -154,11 +157,11 @@ class UrllibCatalogTransport(CatalogTransport):
         try:
             next_url = urljoin(request.url, location)
         except ValueError as exc:
-            raise TransportFailure(
+            raise TransportError(
                 f"urllib received an unusable redirect target {_redacted_redirect_url(location)!r}."
             ) from exc
         if urlsplit(next_url).scheme.lower() not in ALLOWED_REDIRECT_SCHEMES:
-            raise TransportFailure(f"Refusing to follow non-HTTP redirect to {_redacted_redirect_url(next_url)!r}.")
+            raise TransportError(f"Refusing to follow non-HTTP redirect to {_redacted_redirect_url(next_url)!r}.")
         return _next_redirect_request(request, status, next_url, self._credential_scope, "urllib")
 
     def close(self) -> None:
@@ -168,9 +171,9 @@ class UrllibCatalogTransport(CatalogTransport):
     def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
         """Open one no-follow response without pre-buffering its body."""
         if self._closed:
-            raise TransportFailure("The urllib catalog transport is closed.")
+            raise TransportError("The urllib catalog transport is closed.")
         if request.files:
-            raise TransportFailure(
+            raise TransportError(
                 "Multipart requests require the httpx transport; install datasluice[http] or inject an httpx transport."
             )
         if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
@@ -187,16 +190,16 @@ class UrllibCatalogTransport(CatalogTransport):
             status = exc.code
             headers = _header_map(exc.headers)
         except HTTPException as exc:
-            raise TransportFailure("urllib lost the catalog connection before streaming its response.") from exc
+            raise TransportError("urllib lost the catalog connection before streaming its response.") from exc
         except OSError as exc:
-            raise TransportFailure("urllib could not open the catalog response stream.") from exc
+            raise TransportError("urllib could not open the catalog response stream.") from exc
 
         def chunks() -> Iterator[bytes]:
             try:
                 while chunk := response.read(64 * 1024):
                     yield chunk
             except (HTTPException, OSError) as exc:
-                raise TransportFailure("urllib lost the catalog connection mid-response.") from exc
+                raise TransportError("urllib lost the catalog connection mid-response.") from exc
 
         return RuntimeStreamResponse(
             status_code=status,
@@ -223,18 +226,18 @@ def _read_response_body(response: object, max_bytes: int | None) -> bytes:
     """Read a response body with an optional incremental byte ceiling."""
     read = getattr(response, "read", None)
     if not callable(read):
-        raise TransportFailure("urllib returned a response without a readable body.")
+        raise TransportError("urllib returned a response without a readable body.")
     if max_bytes is None:
         body = read()
         if not isinstance(body, bytes):
-            raise TransportFailure("urllib returned a non-byte catalog response body.")
+            raise TransportError("urllib returned a non-byte catalog response body.")
         return body
     parts: list[bytes] = []
     size = 0
     while True:
         chunk = read(64 * 1024)
         if not isinstance(chunk, bytes):
-            raise TransportFailure("urllib yielded a non-byte catalog response chunk.")
+            raise TransportError("urllib yielded a non-byte catalog response chunk.")
         if not chunk:
             return b"".join(parts)
         size += len(chunk)

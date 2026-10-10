@@ -19,13 +19,14 @@ same resource.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from datasluice.exceptions import DataSluiceError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from datasluice.domain import Resource
 
 

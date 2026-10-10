@@ -5,14 +5,16 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.ckan.errors import map_envelope_error
 from datasluice.connectors.catalog.ckan.results import CKANTokenResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PageInfo, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import NativeCatalogError
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
 
 PLATFORM = CatalogPlatform.CKAN
 

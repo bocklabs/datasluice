@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl
 
 import pytest
@@ -28,10 +29,8 @@ from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
-from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
 from datasluice.runtime.events import EventEmitter, ListSink
-from datasluice.runtime.transport.base import RuntimeRequest
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
 from tests.helpers.udata_test_support import (
     UDATA_ORIGIN,
@@ -43,6 +42,10 @@ from tests.helpers.udata_test_support import (
     mutation_policy,
     sync_client,
 )
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.safety import MutationPolicy
+    from datasluice.runtime.transport.base import RuntimeRequest
 
 ORIGIN = UDATA_ORIGIN
 _JSON = "application/json"

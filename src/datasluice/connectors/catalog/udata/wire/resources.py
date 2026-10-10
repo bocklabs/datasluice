@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import NativePageMetadata, UDataPageEnvelope, parse_native_page
-from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUpdateInput
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, PageInfo, PlatformMetadata, _freeze_json
 from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUpdateInput
 
 RESOURCE_OPERATION = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete"
 RESOURCE_READ_OPERATION = "udata/api-v1.resource-reads"
@@ -205,12 +207,12 @@ def parse_resource(payload: object) -> NativeRecord:
             platform="udata",
             safe_action=RESOURCE_SCHEMA_SAFE_ACTION,
         )
-    identifier = cast(str, payload["id"])
+    identifier = cast("str", payload["id"])
     return NativeRecord(
         platform=CatalogPlatform.UDATA,
         resource_kind=ResourceKind.RESOURCE,
         id=CatalogId(platform=CatalogPlatform.UDATA, resource_kind=ResourceKind.RESOURCE, value=identifier),
-        payload=cast(Mapping[str, object], _freeze_json(dict(payload), "udata.resource")),
+        payload=cast("Mapping[str, object]", _freeze_json(dict(payload), "udata.resource")),
     )
 
 
@@ -224,12 +226,12 @@ def parse_v2_dataset(payload: object) -> NativeRecord:
             platform="udata",
             safe_action="Verify the response against the pinned uData v2 dataset schema.",
         )
-    identifier = cast(str, payload["id"])
+    identifier = cast("str", payload["id"])
     return NativeRecord(
         platform=CatalogPlatform.UDATA,
         resource_kind=ResourceKind.DATASET,
         id=CatalogId(platform=CatalogPlatform.UDATA, resource_kind=ResourceKind.DATASET, value=identifier),
-        payload=cast(Mapping[str, object], _freeze_json(dict(payload), "udata.v2.dataset")),
+        payload=cast("Mapping[str, object]", _freeze_json(dict(payload), "udata.v2.dataset")),
     )
 
 

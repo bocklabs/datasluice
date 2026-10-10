@@ -25,7 +25,7 @@ if importlib.util.find_spec("datasluice.cli.open") is None:
         pytest.fail("streaming open CLI contracts pending GREEN phase", pytrace=False)
     pytest.skip("streaming open CLI contracts pending GREEN phase", allow_module_level=True)
 
-open_command = cast(Any, importlib.import_module("datasluice.cli.open"))
+open_command = cast("Any", importlib.import_module("datasluice.cli.open"))
 open_app = typer.Typer()
 open_app.command()(open_command.open)
 runner = CliRunner()

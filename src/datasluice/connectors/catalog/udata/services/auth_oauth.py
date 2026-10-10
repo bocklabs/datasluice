@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models.oauth import (
@@ -20,7 +19,6 @@ from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRO
 from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
@@ -29,7 +27,10 @@ from .datasets import _enforce_mutation_policy, _error_status, _mutation_outcome
 from .organizations_memberships import _attach, _org_receipt
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None

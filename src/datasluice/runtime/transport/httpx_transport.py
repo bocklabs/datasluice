@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urljoin, urlsplit
 
-from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.transport._shared import (
@@ -23,9 +21,14 @@ from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
-    TransportFailure,
+    TransportError,
     drop_body_transfer_headers,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterator
+
+    from datasluice.domain import CredentialScope
 
 
 def _require_plain_http_target(url: str) -> None:
@@ -60,7 +63,7 @@ def _redirect_request(
         next_url = urljoin(request.url, location)
         _require_plain_http_target(next_url)
     except ValueError as exc:
-        raise TransportFailure(
+        raise TransportError(
             f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
         ) from exc
     return _next_redirect_request(request, status, next_url, credential_scope, "httpx")
@@ -83,7 +86,7 @@ async def _runtime_response_async(response: Any, request: RuntimeRequest, httpx:
         try:
             body = await _read_body_async(response, request.max_response_bytes)
         except httpx.HTTPError as exc:
-            raise TransportFailure("httpx could not read the catalog response.") from exc
+            raise TransportError("httpx could not read the catalog response.") from exc
         return RuntimeResponse(
             response.status_code,
             dict(response.headers),
@@ -145,7 +148,7 @@ class _HttpxTransportBase:
             timeout=httpx.Timeout(connect=budget.connect, read=budget.read, write=budget.write, pool=10.0),
             limits=httpx.Limits(),
             verify=policy.verify,
-            transport=cast(Any, transport),
+            transport=cast("Any", transport),
             follow_redirects=False,
         )
         self._max_redirects = max_redirects
@@ -154,7 +157,7 @@ class _HttpxTransportBase:
 
     def _assert_open(self) -> None:
         if self._closed:
-            raise TransportFailure(f"The {self._label} catalog transport is closed.")
+            raise TransportError(f"The {self._label} catalog transport is closed.")
 
     def _assert_streamable(self, request: RuntimeRequest) -> None:
         self._assert_open()
@@ -172,14 +175,14 @@ class _HttpxTransportBase:
         try:
             yield from response.iter_bytes()
         except self._httpx.HTTPError as exc:
-            raise TransportFailure("httpx could not read the catalog response stream.") from exc
+            raise TransportError("httpx could not read the catalog response stream.") from exc
 
     async def _stream_chunks_async(self, response: Any) -> AsyncIterator[bytes]:
         try:
             async for chunk in response.aiter_bytes():
                 yield chunk
         except self._httpx.HTTPError as exc:
-            raise TransportFailure("httpx could not read the catalog response stream.") from exc
+            raise TransportError("httpx could not read the catalog response stream.") from exc
 
 
 class HttpxCatalogTransport(_HttpxTransportBase):
@@ -218,7 +221,7 @@ class HttpxCatalogTransport(_HttpxTransportBase):
                     follow_redirects=False,
                 )
             except self._httpx.HTTPError as exc:
-                raise TransportFailure("httpx could not complete the catalog request.") from exc
+                raise TransportError("httpx could not complete the catalog request.") from exc
             location = _follow_location(current, response)
             if location is None:
                 return _runtime_response(response, current)
@@ -226,7 +229,7 @@ class HttpxCatalogTransport(_HttpxTransportBase):
                 current = _redirect_request(current, response.status_code, location, self._credential_scope)
             finally:
                 response.close()
-        raise TransportFailure("Catalog redirect limit exceeded.")
+        raise TransportError("Catalog redirect limit exceeded.")
 
     def close(self) -> None:
         """Close the httpx pool once."""
@@ -240,7 +243,7 @@ class HttpxCatalogTransport(_HttpxTransportBase):
         try:
             response = self._client.send(_build_request(self._client, request), stream=True, follow_redirects=False)
         except self._httpx.HTTPError as exc:
-            raise TransportFailure("httpx could not open the catalog response stream.") from exc
+            raise TransportError("httpx could not open the catalog response stream.") from exc
         status_code, headers, retry_after = self._stream_metadata(response)
         return RuntimeStreamResponse(
             status_code=status_code,
@@ -287,7 +290,7 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
                     follow_redirects=False,
                 )
             except self._httpx.HTTPError as exc:
-                raise TransportFailure("httpx could not complete the catalog request.") from exc
+                raise TransportError("httpx could not complete the catalog request.") from exc
             location = _follow_location(current, response)
             if location is None:
                 return await _runtime_response_async(response, current, self._httpx)
@@ -295,7 +298,7 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
                 current = _redirect_request(current, response.status_code, location, self._credential_scope)
             finally:
                 await response.aclose()
-        raise TransportFailure("Catalog redirect limit exceeded.")
+        raise TransportError("Catalog redirect limit exceeded.")
 
     async def aclose(self) -> None:
         """Close the asynchronous httpx pool once."""
@@ -311,7 +314,7 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
                 _build_request(self._client, request), stream=True, follow_redirects=False
             )
         except self._httpx.HTTPError as exc:
-            raise TransportFailure("httpx could not open the catalog response stream.") from exc
+            raise TransportError("httpx could not open the catalog response stream.") from exc
         status_code, headers, retry_after = self._stream_metadata(response)
         return AsyncRuntimeStreamResponse(
             status_code=status_code,

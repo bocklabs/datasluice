@@ -9,14 +9,16 @@ declaring which fsspec backends provide an atomic rename.
 from __future__ import annotations
 
 import threading
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from datasluice.domain import Artifact, SyncState
 from datasluice.exceptions import SyncStateConflictError
 from datasluice.sync.state_store import _UNSET, FileStateStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_cas_loser_raises(tmp_path: Path) -> None:

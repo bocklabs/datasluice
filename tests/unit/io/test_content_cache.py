@@ -20,8 +20,7 @@ import concurrent.futures
 import hashlib
 import sqlite3
 import time
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import patch
 
 import pytest
@@ -29,6 +28,9 @@ import pytest
 from datasluice.exceptions import DownloadError
 from datasluice.io.content_cache import STALE_WRITING_THRESHOLD_SECONDS, ContentCache
 from datasluice.ports.cache import CachePort
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_content_cache_satisfies_cache_port_protocol(tmp_path: Path) -> None:
@@ -316,9 +318,8 @@ def test_writer_crash_mid_two_phase_rolls_back_metadata(tmp_path: Path) -> None:
     """Crash during a (content write) rolls back the 'writing' metadata row."""
     cache = ContentCache(str(tmp_path / "cache"))
 
-    with patch.object(cache._fs, "pipe_file", side_effect=OSError("disk full")):
-        with pytest.raises(DownloadError):
-            cache.put("k", b"data")
+    with patch.object(cache._fs, "pipe_file", side_effect=OSError("disk full")), pytest.raises(DownloadError):
+        cache.put("k", b"data")
 
     conn = sqlite3.connect(cache._db_path)
     try:
@@ -338,9 +339,9 @@ def test_mv_failure_cleans_orphan_temp_file(tmp_path: Path) -> None:
     with (
         patch.object(cache._fs, "pipe_file", wraps=original_pipe),
         patch.object(cache._fs, "mv", side_effect=OSError("injected move failure")),
+        pytest.raises(DownloadError),
     ):
-        with pytest.raises(DownloadError):
-            cache.put("k", b"data")
+        cache.put("k", b"data")
 
     entries = cache._fs.find(cache.cache_dir)
     orphans = [path for path in entries if ".tmp." in path.rsplit("/", 1)[-1]]

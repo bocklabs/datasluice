@@ -2,18 +2,20 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import (
     RedirectPolicy,
     RuntimeRequest,
-    TransportFailure,
+    TransportError,
     drop_body_transfer_headers,
     redirect_method_and_body,
     strip_sensitive_redirect_headers,
 )
+
+if TYPE_CHECKING:
+    from datasluice.domain import CredentialScope
 
 ALLOWED_REDIRECT_SCHEMES = frozenset({"http", "https"})
 _CREDENTIAL_PARTS = (
@@ -78,7 +80,7 @@ def _retains_credentials(scope: CredentialScope | None, current_url: str, next_u
 
 def _enforce_body_limit(size: int, max_bytes: int) -> None:
     if size > max_bytes:
-        raise TransportFailure("The catalog response exceeds its configured byte limit.")
+        raise TransportError("The catalog response exceeds its configured byte limit.")
 
 
 def _next_redirect_request(
@@ -93,7 +95,7 @@ def _next_redirect_request(
         headers = strip_sensitive_redirect_headers(headers)
     method, body, files = redirect_method_and_body(request.method, status, request.body, request.files)
     if (body is not None or files) and _origin(request.url) != _origin(next_url):
-        raise TransportFailure(
+        raise TransportError(
             f"{label} refused to relay a request body to a different redirect origin "
             f"{_redacted_redirect_url(next_url)!r}."
         )

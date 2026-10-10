@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
-from datasluice.domain.catalog.models import MappingRecord
-from datasluice.domain.catalog.receipts import MutationReceipt
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.models import MappingRecord
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 
 @dataclass(frozen=True, slots=True)

@@ -15,7 +15,7 @@ from datasluice.errors.catalog import BudgetExhaustedError, CatalogUnavailableEr
 from datasluice.runtime.capability import EffectiveCapabilityCache, ProbeRunner
 from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
 
 
@@ -152,8 +152,8 @@ def test_retry_loop_surfaces_terminal_transport_failure() -> None:
         sleep=lambda _: None,
     )
 
-    with pytest.raises(TransportFailure):
-        loop.run(lambda: (_ for _ in ()).throw(TransportFailure("offline")))
+    with pytest.raises(TransportError):
+        loop.run(lambda: (_ for _ in ()).throw(TransportError("offline")))
 
 
 class _SequenceTransport:
@@ -218,7 +218,7 @@ def test_capability_cache_exposes_its_probe_runner_read_only() -> None:
         def probe(self, operation_id: object) -> object:
             raise AssertionError("probing is not expected in this test")
 
-    runner = cast(ProbeRunner, _Runner())
+    runner = cast("ProbeRunner", _Runner())
     cache = EffectiveCapabilityCache(_profile(), runner)
 
     assert cache.probe_runner is runner

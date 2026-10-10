@@ -5,15 +5,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.auth import SecretValue
 from datasluice.domain.catalog.models import ResultEnvelope, _freeze_json, _thaw_json
-from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.operations import OperationId
 
 _MUTATION_TIERS = frozenset({"read", "standard", "destructive"})
 

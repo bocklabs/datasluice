@@ -145,7 +145,7 @@ def test_catalog_models_are_immutable_and_versioned() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         _assign(record, "name", "Other")
     with pytest.raises(TypeError):
-        cast(dict[str, object], record.extensions)["example.org"] = {}
+        cast("dict[str, object]", record.extensions)["example.org"] = {}
 
 
 def test_resource_access_kind_not_overridable() -> None:

@@ -26,7 +26,6 @@ from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, PlatformMetadata
 from datasluice.domain.catalog.operations import OperationId
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
@@ -37,10 +36,11 @@ from datasluice.errors.catalog import (
     attach_catalog_metadata,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
-from datasluice.runtime.transport.base import TransportFailure
+from datasluice.runtime.transport.base import TransportError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _CREATE_OPERATION = "<create>"
 
@@ -203,7 +203,7 @@ def _error_status(error: BaseException, response: object | None = None) -> int:
         return status
     metadata = getattr(error, "metadata", None)
     if isinstance(metadata, Mapping) and isinstance(metadata.get("status_code"), int):
-        return cast(int, metadata["status_code"])
+        return cast("int", metadata["status_code"])
     response_status = getattr(response, "status_code", None)
     return response_status if isinstance(response_status, int) else 0
 
@@ -217,7 +217,7 @@ def _mutation_outcome(error: BaseException, response: object | None = None) -> s
     response_status = getattr(response, "status_code", None)
     if isinstance(response_status, int) and 200 <= response_status < 300:
         return "ambiguous"
-    if isinstance(error, TransportFailure):
+    if isinstance(error, TransportError):
         return "ambiguous"
     error_status = _error_status(error, response)
     if 300 <= error_status < 400:
@@ -712,7 +712,7 @@ class SyncDatasetsService:
         )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, text), "application/atom+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", text), "application/atom+xml", response_media_type=negotiated, operation=operation
         )
 
     def get(self, dataset_id: str) -> NativeRecord:
@@ -814,13 +814,13 @@ class SyncDatasetsService:
             return _redirect_receipt(
                 operation,
                 dataset_id,
-                cast(Mapping[str, str], text_or_headers),
+                cast("Mapping[str, str]", text_or_headers),
                 status,
                 self._client._origin,
             )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
         )
 
     def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord:
@@ -832,7 +832,7 @@ class SyncDatasetsService:
         )
         negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
         return wire.parse_text_document(
-            cast(bytes, body), wire.media_type_for_format(fmt), response_media_type=negotiated, operation=operation
+            cast("bytes", body), wire.media_type_for_format(fmt), response_media_type=negotiated, operation=operation
         )
 
     def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]:
@@ -1058,7 +1058,7 @@ class AsyncDatasetsService:
         )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, body), "application/atom+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", body), "application/atom+xml", response_media_type=negotiated, operation=operation
         )
 
     async def get(self, dataset_id: str) -> NativeRecord:
@@ -1159,13 +1159,13 @@ class AsyncDatasetsService:
             return _redirect_receipt(
                 operation,
                 dataset_id,
-                cast(Mapping[str, str], text_or_headers),
+                cast("Mapping[str, str]", text_or_headers),
                 status,
                 self._client._origin,
             )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
         )
 
     async def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord:
@@ -1177,7 +1177,7 @@ class AsyncDatasetsService:
         )
         negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
         return wire.parse_text_document(
-            cast(bytes, body), negotiated.split(";")[0].strip(), response_media_type=negotiated, operation=operation
+            cast("bytes", body), negotiated.split(";")[0].strip(), response_media_type=negotiated, operation=operation
         )
 
     async def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]:

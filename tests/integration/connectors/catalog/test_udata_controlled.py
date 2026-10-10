@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -16,7 +17,7 @@ from importlib import resources
 from inspect import isawaitable
 from io import BytesIO
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
@@ -88,11 +89,13 @@ from datasluice.contracts.catalog.protocols import CatalogOperationGuard, Catalo
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import CatalogError
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
@@ -3710,9 +3713,11 @@ def test_controlled_oauth_rejects_unconfirmed_destructive_revocation() -> None:
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
-    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
-        with pytest.raises(CatalogError) as denial:
-            client.auth_oauth.revoke_token(OAuthRevokeRequest(token="controlled-absent-token"), permissions)
+    with (
+        create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client,
+        pytest.raises(CatalogError) as denial,
+    ):
+        client.auth_oauth.revoke_token(OAuthRevokeRequest(token="controlled-absent-token"), permissions)
     assert denial.value.metadata.get("status_code") is None
 
 
@@ -4045,25 +4050,19 @@ def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
             assert followed.receipt.operation == "udata/api-v1.follow-reuse"
 
             followers_page = client.reuses.list_reuse_followers(reuse_id, ReuseFollowersQuery())
-            followers_payload = cast(Mapping[str, object], _plain_json(followers_page.payload))
+            followers_payload = cast("Mapping[str, object]", _plain_json(followers_page.payload))
             total = followers_payload["total"]
             assert isinstance(total, int)
             assert total >= 1
         finally:
-            try:
+            with contextlib.suppress(CatalogError):
                 client.reuses.unfollow_reuse(reuse_id, permissions, policy("udata/api-v1.unfollow-reuse", reuse_id))
-            except CatalogError:
-                pass
-            try:
+            with contextlib.suppress(CatalogError):
                 client.reuses.unfeature_reuse(reuse_id, permissions, policy("udata/api-v1.unfeature-reuse", reuse_id))
-            except CatalogError:
-                pass
-            try:
+            with contextlib.suppress(CatalogError):
                 client.reuses.delete_reuse_badge(
                     reuse_id, "badger", permissions, policy("udata/api-v1.delete-reuse-badge", reuse_id)
                 )
-            except CatalogError:
-                pass
             deleted = client.reuses.delete_reuse(reuse_id, permissions, policy("udata/api-v1.delete-reuse", reuse_id))
             assert deleted.record is None
         status, _, _ = _direct_request("", "GET", f"/api/1/reuses/{reuse_id}/")
@@ -4220,22 +4219,14 @@ def _controlled_member_notifications(member_token: str) -> tuple[object, object,
 
 def _cancel_evidence_invitation(token: str, invitation_id: str) -> None:
     """Cancel the disposable evidence organization invitation, tolerating a refusal from the deployment."""
-    try:
-        _direct_request(
-            token,
-            "POST",
-            f"/api/1/organizations/evidence-organization/membership/{invitation_id}/cancel/",
-        )
-    except CatalogError:
-        pass
+    with contextlib.suppress(CatalogError):
+        _direct_request(token, "POST", f"/api/1/organizations/evidence-organization/membership/{invitation_id}/cancel/")
 
 
 def _mark_controlled_notification_read(member_token: str, notification_id: str) -> None:
     """Mark the disposable notification handled again, tolerating a refusal from the deployment."""
-    try:
+    with contextlib.suppress(CatalogError):
         _direct_request(member_token, "POST", f"/api/1/notifications/{notification_id}/read/", body={})
-    except CatalogError:
-        pass
 
 
 def _assert_controlled_post_deleted(post_id: str) -> None:
@@ -4359,26 +4350,22 @@ def _cleanup_sync_controlled_post_run(
     if notification_id is not None:
         _mark_controlled_notification_read(member_token, notification_id)
     if report_id is not None:
-        try:
+        with contextlib.suppress(CatalogError):
             client.posts_reports.update_report(
                 report_id,
                 ReportUpdateInput(dismissed_at="2026-09-27T00:00:00+00:00"),
                 permissions,
                 _posts_reports_mutation_policy("udata/api-v1.update-report", report_id),
             )
-        except CatalogError:
-            pass
-    try:
-        client.posts_reports.unpublish_post(
-            post_id, permissions, _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id)
+        with contextlib.suppress(CatalogError):
+            client.posts_reports.unpublish_post(
+                post_id, permissions, _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id)
+            )
+        deleted = client.posts_reports.delete_post(
+            post_id,
+            permissions,
+            _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
         )
-    except CatalogError:
-        pass
-    deleted = client.posts_reports.delete_post(
-        post_id,
-        permissions,
-        _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
-    )
     assert deleted.record is None
 
 
@@ -4533,26 +4520,22 @@ async def _cleanup_async_controlled_post_run(
     if invitation_id is not None:
         _cancel_evidence_invitation(token, invitation_id)
     if report_id is not None:
-        try:
+        with contextlib.suppress(CatalogError):
             await client.posts_reports.update_report(
                 report_id,
                 ReportUpdateInput(dismissed_at="2026-09-27T00:00:00+00:00"),
                 permissions,
                 _posts_reports_mutation_policy("udata/api-v1.update-report", report_id),
             )
-        except CatalogError:
-            pass
-    try:
-        await client.posts_reports.unpublish_post(
-            post_id, permissions, _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id)
+        with contextlib.suppress(CatalogError):
+            await client.posts_reports.unpublish_post(
+                post_id, permissions, _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id)
+            )
+        deleted = await client.posts_reports.delete_post(
+            post_id,
+            permissions,
+            _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
         )
-    except CatalogError:
-        pass
-    deleted = await client.posts_reports.delete_post(
-        post_id,
-        permissions,
-        _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
-    )
     assert deleted.record is None
 
 
@@ -4844,8 +4827,10 @@ def _assert_dataservice_read_matches_raw(
         return
     if isinstance(payload, bytes):
         body = _plain_mapping(typed.payload)
-        assert isinstance(body["size_bytes"], int) and body["size_bytes"] > 0, name
-        assert isinstance(body["sha256"], str) and len(body["sha256"]) == 64, name
+        assert isinstance(body["size_bytes"], int)
+        assert body["size_bytes"] > 0, name
+        assert isinstance(body["sha256"], str)
+        assert len(body["sha256"]) == 64, name
         expected = headers.get("content-type", "application/octet-stream").split(";")[0].lower()
         assert body["media_type"] == expected, name
         assert "body" not in body, name
@@ -4914,7 +4899,9 @@ def _seeded_dataset_id(token: str) -> str:
     assert status == 200
     assert isinstance(payload, Mapping)
     items = payload.get("data")
-    assert isinstance(items, list) and items and isinstance(items[0], Mapping)
+    assert isinstance(items, list)
+    assert items
+    assert isinstance(items[0], Mapping)
     return str(items[0]["id"])
 
 

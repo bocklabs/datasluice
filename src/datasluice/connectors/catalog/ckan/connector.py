@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from types import TracebackType
+from typing import TYPE_CHECKING
 
-from datasluice.contracts.catalog.native.ckan import AsyncCKANServices, SyncCKANServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     AsyncManagedExecutor,
@@ -12,7 +11,12 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogClient,
     SyncManagedExecutor,
 )
-from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from datasluice.contracts.catalog.native.ckan import AsyncCKANServices, SyncCKANServices
+    from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 
 class CKANConnector:

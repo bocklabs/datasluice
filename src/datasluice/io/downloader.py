@@ -7,15 +7,15 @@ from typing import TYPE_CHECKING
 
 from datasluice._uri import sanitize_uri
 from datasluice.exceptions import DownloadError
-from datasluice.io.cache import FileCache
 from datasluice.io.local import ensure_dir, safe_filename, save_bytes
-from datasluice.io.storage import Storage
 from datasluice.logging import get_logger
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, TransportFailure
+from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, TransportError
 from datasluice.runtime.transport.user_agent import build_user_agent
 
 if TYPE_CHECKING:
     from datasluice.domain.resource import Resource
+    from datasluice.io.cache import FileCache
+    from datasluice.io.storage import Storage
 
 logger = get_logger("io.downloader")
 
@@ -104,7 +104,7 @@ class Downloader:
             response = self.transport.send(
                 RuntimeRequest(method="GET", url=url, headers={"User-Agent": build_user_agent()})
             )
-        except TransportFailure as exc:
+        except TransportError as exc:
             raise DownloadError(f"Download for {sanitize_uri(url)!r} failed: {exc}") from exc
         if not 200 <= response.status_code < 300:
             raise DownloadError(f"Download for {sanitize_uri(url)!r} returned HTTP {response.status_code}")

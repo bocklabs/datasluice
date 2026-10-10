@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from time import monotonic
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -33,8 +33,11 @@ from datasluice.domain.catalog.profiles import EvidenceProvenance, ProbeEvidence
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.capability import AsyncProbeRunner, EffectiveCapabilityCache, ProbeRunner
 from datasluice.runtime.events import EventEmitter, ListSink
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from tests.helpers.capture_transport import failure_body, success_body
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ORIGIN = "https://127.0.0.1:8443"
 DISCOVERY_OPERATION_ID = OperationId("ckan", "action-api-v3", "discovery-help-and-status")
@@ -495,7 +498,7 @@ def test_transport_failure_mid_sweep_is_contained_as_a_missed_row() -> None:
 
         def probe(self, operation_id: OperationId) -> ProbeEvidence:
             if operation_id == failing:
-                raise TransportFailure("loopback connection reset")
+                raise TransportError("loopback connection reset")
             return self._delegate.probe(operation_id)
 
     transport = _CannedTransport(_status_body(extensions=[]))

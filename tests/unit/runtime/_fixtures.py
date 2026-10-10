@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from typing import TYPE_CHECKING
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.operations import (
@@ -18,7 +19,9 @@ from datasluice.domain.catalog.operations import (
     OperationTier,
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 
 class _Transport:

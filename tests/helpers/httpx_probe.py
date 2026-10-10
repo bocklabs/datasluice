@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from types import TracebackType
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import httpx
 
-from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
     RuntimeRequest,
@@ -18,6 +16,11 @@ from datasluice.runtime.transport.httpx_transport import (
     AsyncHttpxCatalogTransport,
     HttpxCatalogTransport,
 )
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from datasluice.domain import CredentialScope
 
 Responder = Callable[[httpx.Request], httpx.Response]
 Match = Callable[[httpx.Request], bool]

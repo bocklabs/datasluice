@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from datasluice.contracts.catalog.protocols import CatalogConnectorContext
@@ -23,14 +22,14 @@ from datasluice.runtime.defaults import create_default_async_transport, create_d
 from datasluice.runtime.events import EventEmitter, EventSink
 from datasluice.runtime.plugin_manager import PluginManager
 from datasluice.runtime.resilience import BreakerRegistry
-from datasluice.runtime.transport.base import CatalogTransport
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile, EffectiveCapabilityProfile
     from datasluice.ports import CachePort, StateStore, StoragePort
     from datasluice.runtime.clients import AsyncCatalogTransport
+    from datasluice.runtime.transport.base import CatalogTransport
     from datasluice.sync.sync import SyncOutcome
 
 logger = get_logger("session")

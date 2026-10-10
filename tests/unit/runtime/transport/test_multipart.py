@@ -9,12 +9,10 @@ from typing import Any, cast
 
 import pytest
 
-httpx = pytest.importorskip("httpx")
-
 from datasluice.runtime.transport.base import (
     RedirectPolicy,
     RuntimeRequest,
-    TransportFailure,
+    TransportError,
     UploadPart,
     UploadStream,
 )
@@ -28,6 +26,8 @@ from tests.helpers.httpx_probe import (
     fixed,
     redirect_to,
 )
+
+httpx = pytest.importorskip("httpx")
 
 _PARTS = UPLOAD_PARTS
 _STREAMED = BytesIO(b"a,b\n")
@@ -53,7 +53,7 @@ def _assign(target: object, field: str, value: object) -> None:
 
 def stream_part(source: BytesIO) -> UploadPart:
     return UploadPart(
-        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast(UploadStream, source)
+        field_name="upload", file_name="data.csv", content_type="text/csv", data=cast("UploadStream", source)
     )
 
 
@@ -118,9 +118,9 @@ def test_upload_part_requires_a_stream_to_be_both_readable_and_closeable() -> No
             return None
 
     with pytest.raises(ValueError, match="bytes or a closeable byte stream"):
-        UploadPart(field_name="upload", data=cast(UploadStream, _ReadableOnly()))
+        UploadPart(field_name="upload", data=cast("UploadStream", _ReadableOnly()))
     with pytest.raises(ValueError, match="bytes or a closeable byte stream"):
-        UploadPart(field_name="upload", data=cast(UploadStream, _CloseableOnly()))
+        UploadPart(field_name="upload", data=cast("UploadStream", _CloseableOnly()))
 
 
 def test_reprs_render_field_names_and_lengths_but_never_part_bytes() -> None:
@@ -258,7 +258,7 @@ def test_urllib_rejects_multipart_with_actionable_message_naming_the_extra() -> 
     transport = UrllibCatalogTransport()
     try:
         request = RuntimeRequest("POST", "https://example.test/upload", files=_PARTS)
-        with pytest.raises(TransportFailure, match=r"datasluice\[http\]") as excinfo:
+        with pytest.raises(TransportError, match=r"datasluice\[http\]") as excinfo:
             transport.send(request)
     finally:
         transport.close()

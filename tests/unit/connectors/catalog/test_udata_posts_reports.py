@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -27,10 +26,7 @@ from datasluice.connectors.catalog.udata.services.posts_reports import (
     SyncPostsReportsService,
 )
 from datasluice.connectors.catalog.udata.wire import posts_reports as wire
-from datasluice.domain.catalog.auth import UDataCredential
-from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError
-from datasluice.runtime.transport.base import RuntimeRequest
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
     UDATA_CREDENTIAL,
@@ -45,6 +41,13 @@ from tests.helpers.udata_test_support import (
     udata_page,
     with_site_route,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from datasluice.domain.catalog.auth import UDataCredential
+    from datasluice.domain.catalog.models import MappingRecord
+    from datasluice.runtime.transport.base import RuntimeRequest
 
 ORIGIN = UDATA_ORIGIN
 PERMISSIONS = UDATA_PERMISSIONS
@@ -210,7 +213,7 @@ def test_post_reads_decode_native_pages_and_documents() -> None:
         assert thawing_payload(client.posts_reports.list_reports().payload) == udata_page(_report())
         assert thawing_payload(client.posts_reports.get_report("report-1").payload) == _report()
         reasons: tuple[MappingRecord, ...] = client.posts_reports.list_reports_reasons()
-        assert cast(Mapping[str, object], thawing_payload(reasons[0].payload))["value"] == "spam"
+        assert cast("Mapping[str, object]", thawing_payload(reasons[0].payload))["value"] == "spam"
         assert thawing_payload(client.posts_reports.list_notifications(PERMISSIONS).payload) == udata_page(_report())
     post_requests = [r for r in router.requests if "/posts/" in r.url]
     assert post_requests[0].method == "GET"
@@ -385,15 +388,14 @@ def test_report_and_notification_mutations_match_exact_wire_and_receipt_targets(
 
 def test_post_image_rejects_invalid_upload_before_dispatch() -> None:
     router = atom_sync_route_table(with_site_route({}))
-    with sync_client(router, UDATA_CREDENTIAL) as client:
-        with pytest.raises(ValueError):
-            client.posts_reports.post_image(
-                "post-1",
-                cast(bytes, "not-bytes"),
-                "image/png",
-                ADMIN_PERMISSIONS,
-                mutation_policy(wire.POST_IMAGE_OPERATION, "post-1"),
-            )
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ValueError):
+        client.posts_reports.post_image(
+            "post-1",
+            cast("bytes", "not-bytes"),
+            "image/png",
+            ADMIN_PERMISSIONS,
+            mutation_policy(wire.POST_IMAGE_OPERATION, "post-1"),
+        )
     assert router.requests == []
 
 

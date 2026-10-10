@@ -6,8 +6,7 @@ import importlib
 import inspect
 import subprocess
 import sys
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -23,6 +22,9 @@ from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 from datasluice.sync._identity import canonical_identity
 from datasluice.sync.state_store import InMemoryStateStore
 from tests.helpers.http_server import MockResponse, start_test_server
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytest.importorskip("dlt")
 duckdb = pytest.importorskip("duckdb")
@@ -143,13 +145,13 @@ def test_source_requires_explicit_typed_client_and_query() -> None:
 
     assert tuple(signature.parameters)[:2] == ("client", "query")
     assert "portal" not in signature.parameters
-    typed_value = cast(Any, "https://portal.example.test")
+    typed_value = cast("Any", "https://portal.example.test")
     query = _query()
     with pytest.raises(TypeError, match="SyncCatalogClient"):
         datasluice_source(typed_value, query)
     reference_dlt_connector = _ReferenceDltConnector(())
-    typed_value_2 = cast(SyncCatalogClient, reference_dlt_connector)
-    typed_value_3 = cast(Any, "search")
+    typed_value_2 = cast("SyncCatalogClient", reference_dlt_connector)
+    typed_value_3 = cast("Any", "search")
     with pytest.raises(TypeError, match="CatalogOperationRequest"):
         datasluice_source(typed_value_2, typed_value_3)
 
@@ -157,19 +159,19 @@ def test_source_requires_explicit_typed_client_and_query() -> None:
 def test_source_requires_a_client_exposing_the_public_transport_accessor() -> None:
     """A protocol-compatible client without a public transport accessor is rejected early."""
     transportless_dlt_connector = _TransportlessDltConnector()
-    typed_value = cast(SyncCatalogClient, transportless_dlt_connector)
+    typed_value = cast("SyncCatalogClient", transportless_dlt_connector)
     query = _query()
     with pytest.raises(TypeError, match="transport"):
         datasluice_source(typed_value, query)
 
     null_transport_dlt_connector = _NullTransportDltConnector(())
-    typed_value_2 = cast(SyncCatalogClient, null_transport_dlt_connector)
+    typed_value_2 = cast("SyncCatalogClient", null_transport_dlt_connector)
     query_2 = _query()
     with pytest.raises(TypeError, match="transport"):
         datasluice_source(typed_value_2, query_2)
 
     invalid_transport_dlt_connector = _InvalidTransportDltConnector(())
-    typed_value_3 = cast(SyncCatalogClient, invalid_transport_dlt_connector)
+    typed_value_3 = cast("SyncCatalogClient", invalid_transport_dlt_connector)
     query_3 = _query()
     with pytest.raises(TypeError, match="transport"):
         datasluice_source(typed_value_3, query_3)
@@ -185,7 +187,7 @@ def test_source_uses_reference_connector_resources(tmp_path: Path) -> None:
         assert isinstance(connector, SyncCatalogClient)
         pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "reference_source")
 
-        _extract_and_load(pipeline, datasluice_source(cast(SyncCatalogClient, connector), _query()))
+        _extract_and_load(pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query()))
 
         with duckdb.connect(str(db_path)) as connection:
             rows = connection.execute(f'SELECT id, name FROM "{dataset_name}"."my_resource_csv" ORDER BY id').fetchall()
@@ -215,7 +217,7 @@ def test_two_resources_share_one_transport_that_stays_usable_after_extraction(tm
     try:
         pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "shared_transport")
 
-        _extract_and_load(pipeline, datasluice_source(cast(SyncCatalogClient, connector), _query()))
+        _extract_and_load(pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query()))
 
         with duckdb.connect(str(db_path)) as connection:
             rows = connection.execute(
@@ -249,7 +251,9 @@ def test_source_seeds_and_mirrors_load_committed_state(tmp_path: Path) -> None:
         store = InMemoryStateStore()
         pipeline, _, _ = _make_pipeline(tmp_path, "state_roundtrip")
 
-        _extract_and_load(pipeline, datasluice_source(cast(SyncCatalogClient, connector), _query(), state_store=store))
+        _extract_and_load(
+            pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query(), state_store=store)
+        )
         mirror_dlt_state(pipeline, store)
 
         identity = canonical_identity(
@@ -279,7 +283,7 @@ def test_source_rejects_missing_resource_url() -> None:
     )
 
     reference_dlt_connector = _ReferenceDltConnector((missing_url,))
-    typed_value = cast(SyncCatalogClient, reference_dlt_connector)
+    typed_value = cast("SyncCatalogClient", reference_dlt_connector)
     query = _query()
     with pytest.raises(ValueError, match="direct URL"):
         datasluice_source(typed_value, query)

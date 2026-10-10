@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -17,7 +18,6 @@ from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKAN
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
-from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
     CredentialClassification,
     ProbeEvidence,
@@ -26,6 +26,9 @@ from datasluice.domain.catalog.profiles import (
 )
 from datasluice.errors.catalog import ForbiddenError, UnsupportedCapabilityError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.operations import OperationId
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 ACTIVITY_ID = "ckan/action-api-v3.activity"

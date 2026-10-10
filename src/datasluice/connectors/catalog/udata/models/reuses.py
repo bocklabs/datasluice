@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _REUSE_FILTERS = ("q", "dataset", "featured", "topic", "type", "tag", "organization", "organization_badge", "owner")
 _REUSE_BOOLEAN_FILTERS = ("featured",)
@@ -194,10 +197,8 @@ def _validate_tags(value: object, *, required: bool = False) -> None:
     if value is None and not required:
         return
     if not isinstance(value, tuple):
-        valid = False
-    else:
-        valid = all(isinstance(tag, str) and tag for tag in value)
-    if not valid:
+        raise ValueError("uData reuse tags must be a tuple of non-empty strings when supplied.")
+    if not all(isinstance(tag, str) and tag for tag in value):
         raise ValueError("uData reuse tags must be a tuple of non-empty strings when supplied.")
 
 

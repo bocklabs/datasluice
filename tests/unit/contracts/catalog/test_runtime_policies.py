@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import asdict
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -16,6 +15,9 @@ from datasluice.domain.catalog.safety import (
     IdempotencyPolicy,
     MutationPolicy,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def test_destructive_and_retry_work_require_explicit_safe_policies() -> None:
@@ -166,11 +168,11 @@ def test_structured_event_sequences_are_truncated_and_redacted_recursively() -> 
         metadata={"notes": ["n" * 512, {"api_key": "secret", "depth": ["d" * 512]}]},
     )
 
-    notes = cast(tuple[object, ...], event.metadata["notes"])
+    notes = cast("tuple[object, ...]", event.metadata["notes"])
     assert notes[0] == "n" * 256
-    nested = cast(Mapping[str, object], notes[1])
+    nested = cast("Mapping[str, object]", notes[1])
     assert nested["api_key"] == "***"
-    assert cast(tuple[object, ...], nested["depth"])[0] == "d" * 256
+    assert cast("tuple[object, ...]", nested["depth"])[0] == "d" * 256
 
     with pytest.raises(ValueError, match="sequence exceeds the entry limit"):
         StructuredEvent(name="catalog.request", metadata={"notes": ["x"] * 33})

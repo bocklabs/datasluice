@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, cast
 
@@ -23,17 +24,17 @@ from datasluice.connectors.catalog.ckan.clients import (
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import UploadPart
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _RESOURCE_GROUP = "resources"
 _UPLOAD_FIELD = "upload"
@@ -67,8 +68,7 @@ def _buffer_upload(source: str | os.PathLike[str] | BinaryIO, *, max_bytes: int 
         CatalogValidationError: If the source exceeds the ceiling before any
             transport work begins.
     """
-    handle = open(source, "rb") if isinstance(source, str | os.PathLike) else source
-    try:
+    with open(source, "rb") if isinstance(source, str | os.PathLike) else nullcontext(source) as handle:
         chunks: list[bytes] = []
         total = 0
         while chunk := handle.read(_CHUNK_SIZE):
@@ -76,9 +76,6 @@ def _buffer_upload(source: str | os.PathLike[str] | BinaryIO, *, max_bytes: int 
             if max_bytes is not None and total > max_bytes:
                 raise _ceiling_error(total, max_bytes)
             chunks.append(chunk)
-    finally:
-        if isinstance(source, str | os.PathLike):
-            handle.close()
     return b"".join(chunks)
 
 
@@ -212,7 +209,7 @@ class SyncResourcesService(_SyncResourceService):
         files = _resolve_files(params, upload, client._max_upload_bytes)
         operation = CatalogOperationRequest(operation_id=owning_id, payload=params, mutation_policy=effective)
         guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
-        envelope = cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry, files=files))
+        envelope = cast("ResultEnvelope[CKANResultItem]", client._dispatch(operation, guard, entry=entry, files=files))
         receipt = build_mutation_receipt(
             owning_id, _receipt_target(entry.name, params, envelope), effective, "succeeded", {"action": entry.name}
         )
@@ -312,7 +309,7 @@ class AsyncResourcesService(_AsyncResourceService):
         operation = CatalogOperationRequest(operation_id=owning_id, payload=params, mutation_policy=effective)
         guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
         envelope = cast(
-            ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry, files=files)
+            "ResultEnvelope[CKANResultItem]", await client._dispatch(operation, guard, entry=entry, files=files)
         )
         receipt = build_mutation_receipt(
             owning_id, _receipt_target(entry.name, params, envelope), effective, "succeeded", {"action": entry.name}

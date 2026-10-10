@@ -247,7 +247,7 @@ class RuntimeStreamResponse:
     def __iter__(self) -> Iterator[bytes]:
         for chunk in self.chunks:
             if not isinstance(chunk, bytes):
-                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+                raise TransportError("The catalog transport yielded a non-byte stream chunk.")
             if chunk:
                 yield chunk
 
@@ -306,7 +306,7 @@ class AsyncRuntimeStreamResponse:
     async def __aiter__(self) -> AsyncIterator[bytes]:
         async for chunk in self.chunks:
             if not isinstance(chunk, bytes):
-                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+                raise TransportError("The catalog transport yielded a non-byte stream chunk.")
             if chunk:
                 yield chunk
 
@@ -333,7 +333,7 @@ class AsyncRuntimeStreamResponse:
                 await result
 
 
-class TransportFailure(RuntimeError):
+class TransportError(RuntimeError):
     """A connectivity failure distinct from an HTTP status outcome."""
 
 

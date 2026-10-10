@@ -6,15 +6,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from datasluice.connectors.catalog.ckan.clients import create_sync_client
 from datasluice.connectors.catalog.ckan.probes import LineState, version_line_state
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ResultEnvelope, ValueRecord
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.redaction import redact_for_output
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
 
 type Ordering = Literal["platform-deterministic", "canonicalized"]
 

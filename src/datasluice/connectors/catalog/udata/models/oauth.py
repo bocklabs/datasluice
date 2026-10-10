@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from datasluice.domain.catalog.receipts import MutationReceipt
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 # The four grants uData 17.6.0 registers on its AuthorizationServer.
 GRANT_TYPES = frozenset({"authorization_code", "client_credentials", "password", "refresh_token"})

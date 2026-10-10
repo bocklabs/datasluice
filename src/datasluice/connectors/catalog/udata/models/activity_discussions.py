@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _ACTIVITY_FILTERS = ("organization", "user", "related_to")
 

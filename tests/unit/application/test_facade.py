@@ -7,8 +7,7 @@ canonical catalog construction through an explicit
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -21,11 +20,15 @@ from datasluice.contracts.catalog.protocols import (
 )
 from datasluice.domain import Resource
 from datasluice.domain.catalog.auth import CredentialResolver
-from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.exceptions import StreamClosedError
 from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+    from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 
 
 class _Transport:
@@ -61,8 +64,8 @@ class _AsyncExecutor:
 def _catalog_context() -> CatalogConnectorContext:
     """Build one canonical context from structural executor doubles."""
     return CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, _SyncExecutor()),
-        async_executor=cast(AsyncCatalogOperationExecutor, _AsyncExecutor()),
+        sync_executor=cast("SyncCatalogOperationExecutor", _SyncExecutor()),
+        async_executor=cast("AsyncCatalogOperationExecutor", _AsyncExecutor()),
     )
 
 
@@ -160,7 +163,7 @@ def test_facade_rejects_portal_shaped_catalog_contexts() -> None:
         base_url = "https://data.example.gov"
 
     data_sluice = DataSluice(session=DataSluiceSession(transport=_Transport()))
-    portal_context = cast(CatalogConnectorContext, _PortalShapedContext())
+    portal_context = cast("CatalogConnectorContext", _PortalShapedContext())
     with pytest.raises(TypeError, match="CatalogConnectorContext"):
         data_sluice.open_catalog(lambda received: received, portal_context)
 
@@ -230,7 +233,7 @@ def test_closed_facade_rejects_catalog_and_data_plane_work(monkeypatch: pytest.M
 def test_closed_facade_rejects_credential_and_client_surfaces() -> None:
     """Closed-state guards raise the same typed error on credentials and both clients."""
     data_sluice = DataSluice(session=_MinimalSession())
-    profile = cast(DeclaredCapabilityProfile, object())
+    profile = cast("DeclaredCapabilityProfile", object())
     data_sluice.close()
 
     with pytest.raises(StreamClosedError, match="DataSluice is closed"):

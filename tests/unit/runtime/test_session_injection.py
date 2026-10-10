@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
-from collections.abc import Callable
 from datetime import date
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -37,8 +36,11 @@ from datasluice.domain.catalog.operations import (
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.runtime.session import DataSluiceSession
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from datasluice.sync import InMemoryStateStore
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class _StubTransport:
@@ -126,8 +128,8 @@ class _AsyncExecutor:
 def _catalog_context() -> CatalogConnectorContext:
     """Build one canonical context from structural executor doubles."""
     return CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, _SyncExecutor()),
-        async_executor=cast(AsyncCatalogOperationExecutor, _AsyncExecutor()),
+        sync_executor=cast("SyncCatalogOperationExecutor", _SyncExecutor()),
+        async_executor=cast("AsyncCatalogOperationExecutor", _AsyncExecutor()),
     )
 
 
@@ -259,12 +261,12 @@ def test_session_aclose_disposes_owned_default_transports_idempotently() -> None
     asyncio.run(dispose_twice())
 
     request = RuntimeRequest("GET", "https://example.test/")
-    with pytest.raises(TransportFailure, match="closed"):
+    with pytest.raises(TransportError, match="closed"):
         session._transport.send(request)
     if session._async_transport is not None:
         request_2 = RuntimeRequest("GET", "https://example.test/")
         coroutine = session._async_transport.send(request_2)
-        with pytest.raises(TransportFailure, match="closed"):
+        with pytest.raises(TransportError, match="closed"):
             asyncio.run(coroutine)
     session.close()
     session.close()
@@ -378,6 +380,6 @@ def test_open_catalog_rejects_portal_shaped_context() -> None:
         base_url = "https://data.example.gov"
 
     session = DataSluiceSession(transport=_StubTransport())
-    portal_context = cast(CatalogConnectorContext, _PortalShapedContext())
+    portal_context = cast("CatalogConnectorContext", _PortalShapedContext())
     with pytest.raises(TypeError, match="CatalogConnectorContext"):
         session.open_catalog(lambda received: received, portal_context)

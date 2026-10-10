@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 INFRASTRUCTURE_ENDPOINT_SUFFIXES = (".doc", ".specs")
 INFRASTRUCTURE_PATHS = frozenset(

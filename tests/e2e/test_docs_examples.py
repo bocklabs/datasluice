@@ -22,13 +22,15 @@ from __future__ import annotations
 import importlib
 import re
 import socket
-from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 

@@ -34,7 +34,7 @@ from datasluice.errors.catalog import (
     UnsupportedCapabilityError,
 )
 from datasluice.runtime.clients import SyncCatalogClient, _credential_scope
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from datasluice.runtime.transport.user_agent import build_user_agent
 from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
 
@@ -60,7 +60,7 @@ class _FailingTransport:
 
     def send(self, request: RuntimeRequest) -> RuntimeResponse:
         self.requests.append(request)
-        raise TransportFailure("connection refused")
+        raise TransportError("connection refused")
 
     def close(self) -> None:
         self.close_count += 1
@@ -339,7 +339,7 @@ def test_undeclared_mutation_policy_defaults_retry_safety_by_http_method() -> No
     profile = _profile()
     client = SyncCatalogClient(post_transport, profile)
     guard = _guard(post_method_operation)
-    with pytest.raises(TransportFailure):
+    with pytest.raises(TransportError):
         client.datasets.get(post_request, guard)
     assert len(post_transport.requests) == 1
 
@@ -347,7 +347,7 @@ def test_undeclared_mutation_policy_defaults_retry_safety_by_http_method() -> No
     profile_2 = _profile()
     client_2 = SyncCatalogClient(get_transport, profile_2, retry_sleep=lambda _: None)
     guard_2 = _guard()
-    with pytest.raises(TransportFailure):
+    with pytest.raises(TransportError):
         client_2.datasets.get(get_request, guard_2)
     assert len(get_transport.requests) == 3
 

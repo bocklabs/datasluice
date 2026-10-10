@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.errors.catalog import NativeCatalogError
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.ids import CatalogPlatform
 
 APPROVED_TEXT_MEDIA_TYPES = frozenset(
     {

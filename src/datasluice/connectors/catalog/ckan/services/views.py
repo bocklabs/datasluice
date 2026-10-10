@@ -22,15 +22,15 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncNativeService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.services._shared import WireParams, drop_unset, wire_params
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _GROUP = "views"
 _VIEW = ResourceKind("view")

@@ -8,11 +8,10 @@ import hashlib
 import inspect
 import json
 import secrets
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from threading import RLock
 from time import monotonic, time
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import urlencode, urlsplit
 
 from datasluice.domain.catalog.auth import OAuthFlow, SecretValue
@@ -36,6 +35,9 @@ from datasluice.runtime.constants import (
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.resilience import BreakerRegistry, DeadlineMonitor, RetryLoop
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
 
 _OAUTH_REFRESH_OPERATION = "oauth.refresh"
 _OAUTH_TOKEN_OPERATION = "oauth.token"
@@ -195,14 +197,14 @@ class ClientCredentialsFlow:
         """Synchronously exchange client credentials through the runtime transport."""
         if _is_async_transport(self._transport):
             raise TypeError("The synchronous OAuth flow requires a synchronous runtime transport.")
-        transport = cast(CatalogTransport, self._transport)
+        transport = cast("CatalogTransport", self._transport)
         return _credential(transport.send(self._request()))
 
     async def fetch_async(self) -> OAuthCredential:
         """Asynchronously exchange client credentials through the async runtime transport."""
         if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")
-        transport = cast(AsyncTokenTransport, self._transport)
+        transport = cast("AsyncTokenTransport", self._transport)
         return _credential(await transport.send(self._request()))
 
 
@@ -256,14 +258,14 @@ class AuthorizationCodeFlow:
         """Synchronously exchange an authorization code through the runtime transport."""
         if _is_async_transport(self._transport):
             raise TypeError("The synchronous OAuth flow requires a synchronous runtime transport.")
-        transport = cast(CatalogTransport, self._transport)
+        transport = cast("CatalogTransport", self._transport)
         return _credential(transport.send(self._request(code)))
 
     async def exchange_async(self, code: str) -> OAuthCredential:
         """Asynchronously exchange an authorization code through the async runtime transport."""
         if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")
-        transport = cast(AsyncTokenTransport, self._transport)
+        transport = cast("AsyncTokenTransport", self._transport)
         return _credential(await transport.send(self._request(code)))
 
 
@@ -415,7 +417,7 @@ class RefreshingCredentialProvider:
         return refreshed
 
     def _refresh_sync(self) -> OAuthCredential:
-        transport = cast(CatalogTransport, self._transport)
+        transport = cast("CatalogTransport", self._transport)
         key, before = self._refresh_admission()
         deadline = self._refresh_deadline()
         try:
@@ -440,7 +442,7 @@ class RefreshingCredentialProvider:
             return self._credential
 
     async def _refresh_async(self) -> OAuthCredential:
-        transport = cast(AsyncTokenTransport, self._transport)
+        transport = cast("AsyncTokenTransport", self._transport)
         key, before = self._refresh_admission()
         deadline = self._refresh_deadline()
         try:

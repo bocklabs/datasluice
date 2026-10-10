@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import dataclasses
 import types
-from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from datasluice.exceptions import ConnectorNotFoundError
 from datasluice.runtime.plugin_manager import PluginFailure, PluginManager
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 CANONICAL_CONNECTOR_IDS = frozenset({"datasluice/ckan", "datasluice/udata", "datasluice/socrata"})
 
@@ -28,7 +30,7 @@ def _assign(target: object, field: str, value: object) -> None:
 def test_entry_point_discovery_lists_namespaced_canonical_ids() -> None:
     pm = PluginManager()
     connectors = set(pm.list_connectors())
-    assert CANONICAL_CONNECTOR_IDS <= connectors
+    assert connectors >= CANONICAL_CONNECTOR_IDS
     assert "datagouv" not in connectors
     assert "ckan" not in connectors
     assert "socrata" not in connectors

@@ -12,11 +12,11 @@ import secrets
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
+from typing import TYPE_CHECKING
 
 import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
-from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     UserCreateInput,
@@ -33,6 +33,9 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogUnavailableError, CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 
 ORIGIN = "http://127.0.0.1:5640"
 SITE = {"id": "site", "title": "uData", "version": "17.6.0"}
@@ -123,8 +126,8 @@ def test_users_tokens_contract_exposes_every_assigned_method_in_both_modes() -> 
     assert hasattr(SyncUDataClient, "users_tokens")
     assert hasattr(AsyncUDataClient, "users_tokens")
     module = importlib.import_module("datasluice.connectors.catalog.udata.services.users_tokens")
-    assert ASSIGNED_METHODS <= set(dir(module.SyncUsersTokensService))
-    assert ASSIGNED_METHODS <= set(dir(module.AsyncUsersTokensService))
+    assert set(dir(module.SyncUsersTokensService)) >= ASSIGNED_METHODS
+    assert set(dir(module.AsyncUsersTokensService)) >= ASSIGNED_METHODS
 
 
 @pytest.mark.parametrize(

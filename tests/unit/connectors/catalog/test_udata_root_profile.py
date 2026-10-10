@@ -8,12 +8,10 @@ import io
 import json
 import os
 import sys
-from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import replace
-from pathlib import Path
 from types import FunctionType, ModuleType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -59,8 +57,12 @@ from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
-    TransportFailure,
+    TransportError,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable, Generator, Mapping
+    from pathlib import Path
 
 _ORIGIN = "http://127.0.0.1:5640"
 _SITE_URL = f"{_ORIGIN}/api/1/site/"
@@ -228,7 +230,9 @@ def test_controlled_async_reap_uses_a_bounded_cleanup_timeout() -> None:
         raise TimeoutError
 
     async def run() -> None:
-        await udata_clients._terminate_controlled_process(cast(Any, process), wait_for=bounded_wait, clock=lambda: 0.0)
+        await udata_clients._terminate_controlled_process(
+            cast("Any", process), wait_for=bounded_wait, clock=lambda: 0.0
+        )
 
     asyncio.run(run())
 
@@ -963,14 +967,14 @@ class _ControlledProgramOpener:
 def _controlled_urllib_modules(opener: _ControlledProgramOpener) -> dict[str, ModuleType]:
     """Build the fake ``urllib`` module trio the canned program imports."""
     fake_request = ModuleType("urllib.request")
-    fake_request_module = cast(Any, fake_request)
+    fake_request_module = cast("Any", fake_request)
     fake_request_module.Request = _ControlledProgramRequest
     fake_request_module.HTTPRedirectHandler = _ControlledProgramRedirectHandler
     fake_request_module.build_opener = lambda *_: opener
     fake_error = ModuleType("urllib.error")
-    cast(Any, fake_error).HTTPError = type("FakeHTTPError", (Exception,), {})
+    cast("Any", fake_error).HTTPError = type("FakeHTTPError", (Exception,), {})
     fake_urllib = ModuleType("urllib")
-    fake_urllib_module = cast(Any, fake_urllib)
+    fake_urllib_module = cast("Any", fake_urllib)
     fake_urllib_module.__path__ = []
     fake_urllib_module.request = fake_request
     fake_urllib_module.error = fake_error
@@ -1060,7 +1064,7 @@ def _record_controlled_patch_body(input_data: bytes, patch_bodies: list[dict[str
     assert request_payload["token"] == "site-key"
     body = request_payload["body"]
     assert isinstance(body, dict)
-    patch_bodies.append(cast(dict[str, object], body))
+    patch_bodies.append(cast("dict[str, object]", body))
 
 
 def _controlled_site_reply(
@@ -1130,7 +1134,7 @@ def _controlled_command_reply(
 
 def _replace_closure_cell(function: Callable[..., object], name: str, value: object, stack: ExitStack) -> None:
     """Swap one closure cell for the duration of the exit stack."""
-    function_type = cast(FunctionType, function)
+    function_type = cast("FunctionType", function)
     cells = dict(zip(function_type.__code__.co_freevars, function_type.__closure__ or (), strict=True))
     cell = cells[name]
     previous = cell.cell_contents
@@ -1144,7 +1148,7 @@ def _controlled_process_setup(
     """Bind the canned controlled-stack docker and program replies onto the real transport types."""
     container_ids, image_specs, image_ids = _controlled_service_indexes()
     controlled_patch_bodies: list[dict[str, object]] = []
-    cast(Any, transport)._controlled_patch_bodies = controlled_patch_bodies
+    cast("Any", transport)._controlled_patch_bodies = controlled_patch_bodies
 
     def sync_command(
         args: tuple[str, ...],
@@ -1183,10 +1187,10 @@ def _controlled_process_setup(
     async_operations = udata_clients._make_controlled_async_operations(async_command)
 
     _replace_closure_cell(
-        cast(Callable[..., object], sync_type.__init__), "trusted_sync_operations", sync_operations, stack
+        cast("Callable[..., object]", sync_type.__init__), "trusted_sync_operations", sync_operations, stack
     )
     _replace_closure_cell(
-        cast(Callable[..., object], async_type.__init__), "trusted_async_operations", async_operations, stack
+        cast("Callable[..., object]", async_type.__init__), "trusted_async_operations", async_operations, stack
     )
 
 
@@ -1312,7 +1316,7 @@ def _sync_client(
                 stack.close()
                 closed = True
 
-    cast(Any, client).close = close
+    cast("Any", client).close = close
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -1389,7 +1393,7 @@ def _async_client(
                 stack.close()
                 closed = True
 
-    cast(Any, client).aclose = aclose
+    cast("Any", client).aclose = aclose
     if emitter is not None:
         client._emitter = emitter
     return transport, client
@@ -1430,7 +1434,7 @@ def test_row183_get_site_decodes_a_lossless_typed_profile() -> None:
     assert profile.title == "uData"
     assert profile.version == "17.6.0"
     assert profile.payload["portal_extension"] == {"enabled": True}
-    profile_payload = cast(dict[str, object], profile.to_dict()["payload"])
+    profile_payload = cast("dict[str, object]", profile.to_dict()["payload"])
     assert profile_payload["metrics"] == {"datasets": 1}
     assert [request.url for request in transport.requests] == [_SITE_URL, _SITE_URL]
 
@@ -1457,7 +1461,7 @@ def test_row184_set_site_uses_patch_presence_and_exact_confirmation() -> None:
     assert isinstance(result, SiteMutationResult)
     assert result.profile is not None
     assert result.profile.title == "Changed"
-    assert cast(Any, transport)._controlled_patch_bodies == [{"title": "Changed", "configs": None}]
+    assert cast("Any", transport)._controlled_patch_bodies == [{"title": "Changed", "configs": None}]
     assert result.receipt.outcome == "succeeded"
     assert result.receipt.target.value == "site"
     assert result.receipt.audit_metadata["controlled_evidence_digest"] == _controlled_evidence().digest
@@ -1482,16 +1486,16 @@ def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_ov
         called = True
         raise AssertionError("mutable controlled helper was invoked")
 
-    with client:
-        with (
-            patch.object(udata_clients, "_controlled_command", replacement),
-            patch.object(udata_clients, "_controlled_patch_response", replacement),
-        ):
-            result = client.root_profile.set_site(
-                SitePatchInput(title="Changed"),
-                permissions=_PERMISSIONS,
-                mutation_policy=_site_policy(),
-            )
+    with (
+        client,
+        patch.object(udata_clients, "_controlled_command", replacement),
+        patch.object(udata_clients, "_controlled_patch_response", replacement),
+    ):
+        result = client.root_profile.set_site(
+            SitePatchInput(title="Changed"),
+            permissions=_PERMISSIONS,
+            mutation_policy=_site_policy(),
+        )
 
     assert result.receipt.outcome == "succeeded"
     assert called is False
@@ -1787,7 +1791,7 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
 
             def chunks() -> Generator[bytes]:
                 yield b"id\n"
-                raise TransportFailure("stream interrupted")
+                raise TransportError("stream interrupted")
 
             return RuntimeStreamResponse(
                 200,
@@ -1805,7 +1809,7 @@ def test_root_export_emits_failure_only_after_stream_consumption_fails() -> None
         emitter=EventEmitter(sinks=(events.append,)),
         owns_transport=False,
     )
-    with client, pytest.raises(TransportFailure):
+    with client, pytest.raises(TransportError):
         client.root_profile.datasets_csv()
 
     assert events[-1].outcome == "failed"
@@ -1919,7 +1923,7 @@ def test_rdf_xml_aliases_are_supported(fmt: str) -> None:
 
 
 def test_route_specific_csv_query_models_do_not_share_dataset_filters() -> None:
-    typed_value = cast(Any, SiteOrganizationCsvQuery)
+    typed_value = cast("Any", SiteOrganizationCsvQuery)
     with pytest.raises(TypeError):
         typed_value(name="org", page_size=2)
     with pytest.raises(ValueError):
@@ -2062,10 +2066,10 @@ def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
 
 def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport() -> None:
     transport = RouterTransport(_routes())
-    typed_value = cast(Any, udata_clients._ControlledSyncTransport)
+    typed_value = cast("Any", udata_clients._ControlledSyncTransport)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         typed_value(transport=transport)
-    typed_value_2 = cast(Any, UDataClientSettings)
+    typed_value_2 = cast("Any", UDataClientSettings)
     object_2 = object()
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         typed_value_2(
@@ -2102,7 +2106,7 @@ def test_service_helper_override_cannot_bypass_transport_registry(monkeypatch: p
     monkeypatch.setattr(root_service, "_controlled_sync_revalidate", lambda *args, **kwargs: True)
     monkeypatch.setattr(root_service, "_controlled_sync_evidence_digest", lambda _: _controlled_evidence().digest)
 
-    client_type = cast(Any, type(client))
+    client_type = cast("Any", type(client))
     with pytest.raises(AttributeError, match="factory-owned"):
         client_type._mutation_dispatch_gate = object()
 
@@ -2234,7 +2238,7 @@ def test_root_profile_wire_operations_use_the_existing_broad_capability_identity
 
 def test_root_profile_models_are_typed_and_immutable() -> None:
     profile = SiteProfile.from_payload(_site_body())
-    typed_value = cast(dict[str, object], profile.payload)
+    typed_value = cast("dict[str, object]", profile.payload)
     with pytest.raises(TypeError):
         dict.__setitem__(typed_value, "title", "changed")
 

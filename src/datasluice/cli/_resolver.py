@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from datasluice.application import DataSluice, DirectResourceLocator
-from datasluice.domain import Resource
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from datasluice.domain import Resource
 
 
 def parse_locator(

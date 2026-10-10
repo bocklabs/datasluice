@@ -8,6 +8,34 @@
     "fixture_fingerprint": "5a939bc987b0e95d025ed073a1909abca7af3323805c8cfc1f465d559f5d8a7e",
     "operations": [
         {
+            "id": "udata/api-v1.access-type-reason-categories",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "read-only-public-probe"
+        },
+        {
+            "id": "udata/api-v1.suggest-tags",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "read-only-public-probe"
+        },
+        {
+            "id": "udata/api-v1.avatar",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "read-only-public-probe"
+        },
+        {
+            "id": "udata/api-v2.captchetat",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "read-only-public-probe"
+        },
+        {
             "id": "udata/api-v1.accept-membership",
             "capability": "authenticated",
             "authentication": "authenticated",
@@ -1503,6 +1531,202 @@
             "capability": "authenticated",
             "authentication": "authenticated",
             "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.list-topics",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v2.search-topics",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v2.get-topic",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v2.create-topic",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.update-topic",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.delete-topic",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.topic-elements",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v2.topic-elements-create",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.topic-elements-delete",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.topic-element-update",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.topic-element-delete",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.feature-topic",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v2.unfeature-topic",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.list-transfers",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.request-transfer",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.get-transfer",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.respond-to-transfer",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.list-visualizations",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.get-visualization",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.create-visualization",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-visualization",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.delete-visualization",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.visualization-image",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.get-contact-point",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.contact-point-roles",
+            "capability": "core",
+            "authentication": "public",
+            "mutation": "read",
+            "evidence_requirement": "anonymous-read"
+        },
+        {
+            "id": "udata/api-v1.create-contact-point",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-contact-point",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.delete-contact-point",
+            "capability": "authenticated",
+            "authentication": "authenticated",
+            "mutation": "delete",
             "evidence_requirement": "controlled-environment-only"
         }
     ]

@@ -27,7 +27,7 @@ def _envelope_item(item: object) -> dict[str, object]:
     to_dict = getattr(item, "to_dict", None)
     if not callable(to_dict):
         raise _contract_error("result_envelope.items")
-    return cast(dict[str, object], to_dict())
+    return cast("dict[str, object]", to_dict())
 
 
 def _contract_error(path: str) -> DataSluiceError:
@@ -95,7 +95,7 @@ def _redacted_record_value(value: object, *, _depth: int) -> object:
     if _depth >= MAX_METADATA_DEPTH:
         return TRUNCATED
     if isinstance(value, Mapping):
-        return redact_record_payload(cast(Mapping[str, object], value), _depth=_depth)
+        return redact_record_payload(cast("Mapping[str, object]", value), _depth=_depth)
     if isinstance(value, list | tuple):
         return [_redacted_record_value(nested, _depth=_depth + 1) for nested in value]
     return redact_string(repr(value))
@@ -133,7 +133,7 @@ def redact_record_payload(value: Mapping[str, object], *, _depth: int = 0) -> di
 
 
 def _redacted_thawed(value: Mapping[str, object]) -> dict[str, object]:
-    return redact_record_payload(cast(Mapping[str, object], _thaw_json(value)))
+    return redact_record_payload(cast("Mapping[str, object]", _thaw_json(value)))
 
 
 def _freeze_extensions(value: object) -> Mapping[str, object]:

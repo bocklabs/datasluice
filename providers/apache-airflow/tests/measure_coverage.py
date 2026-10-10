@@ -18,6 +18,10 @@ import contextlib
 import io
 import os
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from coverage import Coverage
 
 FAIL_UNDER = 80.00
 
@@ -50,8 +54,6 @@ def _provider_dir() -> str:
 
 
 def _reported_total(cov: object) -> float:
-    from coverage import Coverage
-
     cov_obj: Coverage = cov
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

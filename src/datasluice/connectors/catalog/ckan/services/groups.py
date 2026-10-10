@@ -10,7 +10,6 @@ capability claims.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
@@ -22,15 +21,17 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncNativeService,
 )
 from datasluice.connectors.catalog.ckan.mapping import GROUP, PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.services._shared import WireParams, detail_params, drop_unset, wire_params
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.ids import CatalogId
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _GROUP_GROUP = "groups"
 

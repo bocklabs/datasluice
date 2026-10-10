@@ -9,15 +9,17 @@ from dataclasses import dataclass
 from inspect import isawaitable
 from threading import Event
 from time import monotonic
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from datasluice.domain.catalog.ids import CatalogId
 from datasluice.domain.catalog.receipts import BulkCheckpoint, BulkItemReceipt, BulkPlan, MutationReceipt
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.domain.catalog.safety import BulkExecutionPolicy
 from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError
 from datasluice.runtime.constants import DEFAULT_BULK_MAX_PARALLELISM
 from datasluice.runtime.resilience import DeadlineMonitor
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.ids import CatalogId
 
 
 class CheckpointSink(Protocol):
@@ -96,6 +98,7 @@ class _BulkProgress:
     dispatches: int = 0
     next_emit: int = 0
     last_persisted_count: int = -1
+    last_persisted_stop_reason: str | None = None
 
     def ordered_receipts(self) -> list[BulkItemReceipt]:
         receipts = []
@@ -399,7 +402,10 @@ class _BulkExecutorState[T]:
 
     def _finish_stop_state(self, plan: BulkPlan, progress: _BulkProgress, monitor: DeadlineMonitor | None) -> bool:
         self._refresh_stop_state(plan, progress, monitor, check_budget=False)
-        return progress.stop_reason is not None and progress.last_persisted_count != len(progress.completed)
+        return progress.stop_reason is not None and (
+            progress.last_persisted_count != len(progress.completed)
+            or progress.last_persisted_stop_reason != progress.stop_reason
+        )
 
     def _terminal_summary(
         self, plan: BulkPlan, progress: _BulkProgress, monitor: DeadlineMonitor | None, started_at: float
@@ -476,6 +482,7 @@ class BulkExecutor(_BulkExecutorState[MutationReceipt]):
         self._record_completed(plan, progress, index, result, monitor)
         self._persist(plan, progress.completed, cancellation_requested=progress.stop_reason == "cancelled")
         progress.last_persisted_count = len(progress.completed)
+        progress.last_persisted_stop_reason = progress.stop_reason
 
     def _drain_sync(
         self,
@@ -616,6 +623,7 @@ class AsyncBulkExecutor(_BulkExecutorState[Awaitable[MutationReceipt]]):
             cancellation_requested=progress.stop_reason == "cancelled",
         )
         progress.last_persisted_count = len(progress.completed)
+        progress.last_persisted_stop_reason = progress.stop_reason
 
     async def _finish_progress(self, plan: BulkPlan, progress: _BulkProgress, monitor: DeadlineMonitor | None) -> None:
         if self._finish_stop_state(plan, progress, monitor):

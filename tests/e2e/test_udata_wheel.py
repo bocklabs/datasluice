@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -78,6 +79,7 @@ def test_wheel_import_proves_the_tracer_path_from_installed_content(built_wheel:
         text=True,
         timeout=120,
         cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(unpacked) + os.pathsep + os.environ.get("PYTHONPATH", "")},
     )
     assert completed.returncode == 0, completed.stderr
     assert "TRACER_OK" in completed.stdout

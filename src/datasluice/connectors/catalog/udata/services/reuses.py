@@ -19,7 +19,6 @@ from datasluice.connectors.catalog.udata.models.reuses import (
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import reuses as wire
 from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import NativeCatalogError
 
 from .datasets import _header
@@ -39,6 +38,7 @@ from .taxonomies import (
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.domain.catalog.models import MappingRecord
 
 _mutation = partial(
     _run_mutation,
@@ -92,7 +92,7 @@ class SyncReusesService(SyncCatalogService):
             method=method, path=path, owning_operation=operation, raw_text=True
         )
         return wire.parse_text_document(
-            cast(bytes, text),
+            cast("bytes", text),
             wire._ATOM_MEDIA_TYPE,
             response_media_type=_header(response.headers, "content-type"),
             operation=operation,
@@ -357,7 +357,7 @@ class AsyncReusesService(AsyncCatalogService):
             method=method, path=path, owning_operation=operation, raw_text=True
         )
         return wire.parse_text_document(
-            cast(bytes, text),
+            cast("bytes", text),
             wire._ATOM_MEDIA_TYPE,
             response_media_type=_header(response.headers, "content-type"),
             operation=operation,

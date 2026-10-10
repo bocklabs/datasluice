@@ -62,7 +62,7 @@ def test_raw_materialize_returns_one_canonical_artifact(tmp_path: Path) -> None:
     assert artifact.content_digest == artifact.blob_digest
     assert artifact.provenance.created_at == created_at
     payload_dict = artifact.to_dict()
-    provenance = cast(dict[str, object], payload_dict["provenance"])
+    provenance = cast("dict[str, object]", payload_dict["provenance"])
     assert provenance["materialization_mode"] == "raw"
 
 
@@ -102,24 +102,24 @@ def test_artifact_codec_deeply_freezes_and_freshly_thaws_values() -> None:
     artifact = Artifact.from_dict(_fixture())
     first = artifact.to_dict()
     second = artifact.to_dict()
-    first_metadata = cast(dict[str, object], first["metadata"])
-    first_extensions = cast(dict[str, object], first["extensions"])
-    second_metadata = cast(dict[str, object], second["metadata"])
-    second_extensions = cast(dict[str, object], second["extensions"])
+    first_metadata = cast("dict[str, object]", first["metadata"])
+    first_extensions = cast("dict[str, object]", first["extensions"])
+    second_metadata = cast("dict[str, object]", second["metadata"])
+    second_extensions = cast("dict[str, object]", second["extensions"])
 
     assert isinstance(first_metadata, dict)
     assert isinstance(first_extensions, dict)
     assert isinstance(second_metadata, dict)
     assert isinstance(second_extensions, dict)
     first_metadata["record_count"] = 99
-    first_extension = cast(dict[str, object], first_extensions["org.datasluice.contract"])
-    second_extension = cast(dict[str, object], second_extensions["org.datasluice.contract"])
+    first_extension = cast("dict[str, object]", first_extensions["org.datasluice.contract"])
+    second_extension = cast("dict[str, object]", second_extensions["org.datasluice.contract"])
     first_extension["fixture"] = "changed"
 
     assert second_metadata["record_count"] == 2
     assert second_extension["fixture"] == "artifact"
     with pytest.raises(TypeError):
-        cast(dict[str, object], artifact.metadata)["record_count"] = 99
+        cast("dict[str, object]", artifact.metadata)["record_count"] = 99
 
 
 @pytest.mark.parametrize(
@@ -137,7 +137,7 @@ def test_artifact_codec_deeply_freezes_and_freshly_thaws_values() -> None:
 def test_artifact_codec_rejects_invalid_core_values_without_echoing_them(path: str, value: object) -> None:
     payload = _fixture()
     if path == "provenance.created_at":
-        provenance = cast(dict[str, object], payload["provenance"])
+        provenance = cast("dict[str, object]", payload["provenance"])
         provenance["created_at"] = value
     elif path == "unexpected":
         payload[path] = value

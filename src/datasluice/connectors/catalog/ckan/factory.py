@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.ckan.connector import CKANConnector
-from datasluice.contracts.catalog.native.ckan import AsyncCKANServices, SyncCKANServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     AsyncCatalogOperationExecutor,
@@ -13,7 +12,10 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogClient,
     SyncCatalogOperationExecutor,
 )
-from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.ckan import AsyncCKANServices, SyncCKANServices
+    from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 _CKAN_PROFILE_VERSION = "2.11.5"
 _CKAN_API_VERSION = "Action API v3"
@@ -37,10 +39,10 @@ def create_ckan_connector(ctx: CatalogConnectorContext) -> CKANConnector:
     profile = _require_ckan_profile(ctx.effective_profile)
     return CKANConnector(
         context=ctx,
-        normalized_sync=cast(SyncCatalogClient, ctx.normalized_sync),
-        normalized_async=cast(AsyncCatalogClient, ctx.normalized_async),
-        native_sync=cast(SyncCKANServices, ctx.native_sync),
-        native_async=cast(AsyncCKANServices, ctx.native_async),
+        normalized_sync=cast("SyncCatalogClient", ctx.normalized_sync),
+        normalized_async=cast("AsyncCatalogClient", ctx.normalized_async),
+        native_sync=cast("SyncCKANServices", ctx.native_sync),
+        native_async=cast("AsyncCKANServices", ctx.native_async),
         effective_profile=profile,
     )
 

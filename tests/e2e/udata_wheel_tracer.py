@@ -1,16 +1,12 @@
-import json, secrets, sys
+import asyncio
+import json
+import secrets
+import sys
 from io import BytesIO
 from typing import cast
 
-sys.path.insert(0, sys.argv[1])
 import datasluice
-
-assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 from datasluice.connectors.catalog.udata.clients import create_async_client, create_sync_client, declared_udata_profile
-from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
-from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
-from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
-from datasluice.connectors.catalog.udata.models.reuses import ReuseCreateInput, ReuseSuggestQuery
 from datasluice.connectors.catalog.udata.models.activity_discussions import (
     ActivityQuery,
     CommentInput,
@@ -18,6 +14,13 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
     DiscussionSearchQuery,
     DiscussionUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
+from datasluice.connectors.catalog.udata.models.oauth import (
+    OAuthClientRequest,
+    OAuthRevokeRequest,
+    OAuthTokenRequest,
+)
+from datasluice.connectors.catalog.udata.models.organizations import OrganizationCreateInput, OrganizationUpdateInput
 from datasluice.connectors.catalog.udata.models.posts_reports import (
     NotificationQuery,
     PostListQuery,
@@ -25,13 +28,10 @@ from datasluice.connectors.catalog.udata.models.posts_reports import (
     ReportCreateInput,
     ReportUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUploadInput
+from datasluice.connectors.catalog.udata.models.reuses import ReuseCreateInput, ReuseSuggestQuery
 from datasluice.connectors.catalog.udata.models.spatial import SpatialDatasetQuery, SpatialSuggestQuery
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery
-from datasluice.connectors.catalog.udata.models.oauth import (
-    OAuthClientRequest,
-    OAuthRevokeRequest,
-    OAuthTokenRequest,
-)
 from datasluice.connectors.catalog.udata.models.users import ApiTokenCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
@@ -41,6 +41,8 @@ from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeResponse, RuntimeStreamResponse
+
+assert datasluice.__file__ and datasluice.__file__.startswith(sys.argv[1])
 
 op_id = next(
     op for op in declared_udata_profile().operations if op.method == "dataset-list-search-show-create-update-delete"
@@ -506,7 +508,7 @@ assert client.activity_discussions.activity(ActivityQuery()).payload["total"] ==
 assert client.activity_discussions.list_discussions().payload["id"] == "wheel-discussion"
 assert client.activity_discussions.get_discussion("wheel-discussion").payload["title"] == "Wheel discussion"
 assert (
-    cast(dict[str, object], client.activity_discussions.search_discussions(DiscussionSearchQuery()).payload["meta"])[
+    cast("dict[str, object]", client.activity_discussions.search_discussions(DiscussionSearchQuery()).payload["meta"])[
         "total"
     ]
     == 0
@@ -680,8 +682,6 @@ assert deleted_reuse.record is None
 assert deleted_reuse.receipt.audit_metadata["status_code"] == 204
 client.close()
 
-import asyncio
-
 async_transport = AsyncTransport()
 async_credential = UDataCredential(api_key="wheel-key")
 async_client = create_async_client(
@@ -797,7 +797,7 @@ async def run_async():
         wheel_discussion = await active.activity_discussions.get_discussion("wheel-discussion")
         assert wheel_discussion.payload["id"] == "wheel-discussion"
         wheel_search = await active.activity_discussions.search_discussions(DiscussionSearchQuery())
-        assert cast(dict[str, object], wheel_search.payload["meta"])["total"] == 0
+        assert cast("dict[str, object]", wheel_search.payload["meta"])["total"] == 0
         assert (
             await active.activity_discussions.create_discussion(
                 DiscussionCreateInput(title="t", comment="c", subject={"id": "abc", "class": "Dataset"}),

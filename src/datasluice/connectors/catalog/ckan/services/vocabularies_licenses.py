@@ -22,16 +22,16 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncNativeService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM, TAG, VOCABULARY
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _VOCABULARY_GROUP = "vocabularies_licenses"
 

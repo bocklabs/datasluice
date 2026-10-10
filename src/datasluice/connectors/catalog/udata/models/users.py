@@ -6,13 +6,16 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
-from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, _thaw_json
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
 _WEBSITE_REQUIRED = "uData user website must be an HTTP URL."

@@ -24,10 +24,13 @@ import sys
 import tempfile
 import tomllib
 import zipfile
-from email.message import Message
 from email.parser import Parser
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
+
+if TYPE_CHECKING:
+    from email.message import Message
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

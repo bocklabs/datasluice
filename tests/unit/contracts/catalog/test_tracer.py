@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from datasluice.contracts.catalog.fakes import AsyncReferenceConnector, SyncReferenceConnector
-from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 from datasluice.contracts.catalog.report import ComplianceReport
 from datasluice.contracts.catalog.runner import (
     CatalogContractCase,
     UnsupportedCatalogOperationError,
     run_catalog_contract,
 )
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 
 
 def test_catalog_contract_runs_dataset_get_in_both_modes_and_returns_json_report() -> None:
@@ -24,8 +26,8 @@ def test_catalog_contract_runs_dataset_get_in_both_modes_and_returns_json_report
 
     report = run_catalog_contract(
         CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),
-        sync_client=cast(SyncCatalogClient, sync_client),
-        async_client=cast(AsyncCatalogClient, async_client),
+        sync_client=cast("SyncCatalogClient", sync_client),
+        async_client=cast("AsyncCatalogClient", async_client),
     )
 
     assert [outcome.mode for outcome in report.outcomes] == ["sync", "async"]
@@ -59,8 +61,8 @@ def test_unavailable_case_is_rejected_before_either_fake_dispatches() -> None:
     async_client = AsyncReferenceConnector(capability="unavailable")
 
     catalog_contract_case = CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset")
-    typed_value = cast(SyncCatalogClient, sync_client)
-    typed_value_2 = cast(AsyncCatalogClient, async_client)
+    typed_value = cast("SyncCatalogClient", sync_client)
+    typed_value_2 = cast("AsyncCatalogClient", async_client)
     with pytest.raises(UnsupportedCatalogOperationError) as exc_info:
         run_catalog_contract(catalog_contract_case, sync_client=typed_value, async_client=typed_value_2)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -20,6 +20,9 @@ from datasluice.errors.catalog import CatalogConflictError, CatalogUnavailableEr
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.mutation import MutationDispatchRequest, MutationEnforcer, build_mutation_receipt
 from datasluice.runtime.transport.base import RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _target() -> CatalogId:

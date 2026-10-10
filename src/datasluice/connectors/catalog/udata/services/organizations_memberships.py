@@ -24,7 +24,6 @@ from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRO
 from datasluice.connectors.catalog.udata.wire import organizations as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
@@ -47,6 +46,7 @@ from .datasets import (
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.domain.catalog.models import MappingRecord, NativeRecord
 
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None
@@ -255,7 +255,7 @@ def _document(
             sha256=hashlib.sha256(b"").hexdigest(),
             location=location,
         )
-    body = cast(bytes, value)
+    body = cast("bytes", value)
     return SiteDocument(
         endpoint=path,
         media_type=media_type,
@@ -296,7 +296,7 @@ async def _document_async(
             sha256=hashlib.sha256(b"").hexdigest(),
             location=location,
         )
-    body = cast(bytes, value)
+    body = cast("bytes", value)
     return SiteDocument(
         endpoint=path,
         media_type=media_type,

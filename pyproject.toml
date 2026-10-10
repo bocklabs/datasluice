@@ -94,19 +94,13 @@ select = [
     "I",   # isort
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
+    "ERA",
+    "DTZ",
+    "SIM",
+    "TC",
+    "N",
+    "INP"
 ]
-
-[tool.ruff.lint.per-file-ignores]
-# Skip-guarded suites import optional dependencies after pytest.importorskip
-# guards, so imports legitimately follow executable statements there.
-"tests/unit/integrations/*" = ["E402"]
-"tests/unit/data/*" = ["E402"]
-"tests/unit/io/*" = ["E402"]
-"tests/unit/runtime/transport/*" = ["E402"]
-"tests/unit/runtime/test_transport_httpx.py" = ["E402"]
-"tests/unit/transforms/*" = ["E402"]
-# The wheel tracer installs a wheel into a subprocess and needs raw import order.
-"tests/e2e/udata_wheel_tracer.py" = ["E401", "E402", "I001"]
 
 [tool.coverage.run]
 branch = true

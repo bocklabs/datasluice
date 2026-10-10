@@ -217,7 +217,7 @@ class ArtifactProvenance:
             resource_identity=resource_identity,
             created_at=parsed_created_at,
             materialization_mode=materialization_mode,
-            transforms=cast(tuple[str, ...], tuple(transforms)),
+            transforms=cast("tuple[str, ...]", tuple(transforms)),
         )
 
 

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -24,6 +23,9 @@ from datasluice.domain.catalog import (
 from datasluice.domain.catalog.models import MappingRecord
 from datasluice.domain.catalog.redaction import MAX_TEXT_LENGTH, REDACTED
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _CREDENTIAL_PAYLOAD: dict[str, object] = {
     "id": "dataset-1",
@@ -95,14 +97,14 @@ def test_native_and_normalized_records_are_recursively_immutable_and_thaw_to_fre
     assert isinstance(native.payload["tags"], tuple)
     assert isinstance(dataset.extensions, MappingProxyType)
     with pytest.raises(TypeError):
-        cast(dict[str, object], native.payload)["state"] = "active"
+        cast("dict[str, object]", native.payload)["state"] = "active"
     with pytest.raises(dataclasses.FrozenInstanceError):
         _assign(dataset, "name", "Other")
 
     serialized = native.to_dict()
-    serialized_payload = cast(dict[str, list[dict[str, str]]], serialized["payload"])
+    serialized_payload = cast("dict[str, list[dict[str, str]]]", serialized["payload"])
     serialized_payload["tags"][0]["name"] = "changed"
-    native_payload = cast(Mapping[str, tuple[Mapping[str, str], ...]], native.payload)
+    native_payload = cast("Mapping[str, tuple[Mapping[str, str], ...]]", native.payload)
     assert native_payload["tags"][0]["name"] == "climate"
     assert NativeRecord.from_dict(native.to_dict()) == native
     assert DatasetRecord.from_dict(dataset.to_dict()) == dataset
@@ -179,18 +181,18 @@ def _credential_record() -> NativeRecord:
 def test_native_record_serialization_redacts_credential_payload_and_extension_keys() -> None:
     serialized = _credential_record().to_dict()
 
-    payload = cast(dict[str, object], serialized["payload"])
-    extensions = cast(dict[str, object], serialized["extensions"])
+    payload = cast("dict[str, object]", serialized["payload"])
+    extensions = cast("dict[str, object]", serialized["extensions"])
     for key in ("token", "api_key", "password", "body"):
         assert payload[key] == REDACTED, f"payload.{key} must serialize as the shared redacted marker"
     for key in ("token", "api_key", "password", "body"):
-        assert cast(dict[str, object], extensions["portal.test"])[key] == REDACTED
+        assert cast("dict[str, object]", extensions["portal.test"])[key] == REDACTED
 
 
 def test_native_record_serialization_scrubs_credential_shaped_content_at_every_depth() -> None:
     serialized = _credential_record().to_dict()
 
-    payload = cast(dict[str, object], serialized["payload"])
+    payload = cast("dict[str, object]", serialized["payload"])
     assert payload["nested"] == {"client_secret": REDACTED, "safe": "kept"}
     assert payload["rows"] == [{"credential": REDACTED, "name": "kept"}]
     assert "live-bearer-plaintext" not in str(serialized)
@@ -213,7 +215,7 @@ def test_native_record_serialization_keeps_every_non_credential_field_without_an
         payload=payload,
     )
 
-    serialized = cast(dict[str, object], record.to_dict()["payload"])
+    serialized = cast("dict[str, object]", record.to_dict()["payload"])
     assert serialized == payload
     assert len(serialized) == 64
 
@@ -226,9 +228,9 @@ def test_native_record_serialization_redacts_credential_content_smuggled_into_a_
         payload={"description": "see https://portal.test/?token=live-query-plaintext for access"},
     )
 
-    serialized = cast(dict[str, object], record.to_dict()["payload"])
-    assert "live-query-plaintext" not in cast(str, serialized["description"])
-    assert REDACTED in cast(str, serialized["description"])
+    serialized = cast("dict[str, object]", record.to_dict()["payload"])
+    assert "live-query-plaintext" not in cast("str", serialized["description"])
+    assert REDACTED in cast("str", serialized["description"])
 
 
 def test_native_record_serialization_bounds_retained_text_length() -> None:
@@ -239,14 +241,14 @@ def test_native_record_serialization_bounds_retained_text_length() -> None:
         payload={"description": "x" * (MAX_TEXT_LENGTH * 4)},
     )
 
-    serialized = cast(dict[str, object], record.to_dict()["payload"])
-    assert len(cast(str, serialized["description"])) == MAX_TEXT_LENGTH
+    serialized = cast("dict[str, object]", record.to_dict()["payload"])
+    assert len(cast("str", serialized["description"])) == MAX_TEXT_LENGTH
 
 
 def test_mapping_record_serialization_redacts_credential_keys_and_keeps_the_rest() -> None:
     record = MappingRecord(payload=_CREDENTIAL_PAYLOAD)
 
-    payload = cast(dict[str, object], record.to_dict()["payload"])
+    payload = cast("dict[str, object]", record.to_dict()["payload"])
     for key in ("token", "api_key", "password", "body"):
         assert payload[key] == REDACTED
     assert payload["id"] == "dataset-1"

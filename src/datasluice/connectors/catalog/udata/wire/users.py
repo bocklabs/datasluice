@@ -285,7 +285,7 @@ def parse_user_page(payload: object, *, operation: str) -> UDataPageEnvelope:
     return UDataPageEnvelope(
         items=tuple(replace(item, payload=_redacted_user_payload(item.payload)) for item in envelope.items),
         page=envelope.page,
-        platform=cast(PlatformMetadata, envelope.platform),
+        platform=cast("PlatformMetadata", envelope.platform),
         native_page=envelope.native_page,
     )
 

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import stat
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from datasluice.exceptions import ChecksumMismatchError
 from datasluice.io import compute_sha256, ensure_dir, safe_filename, verify_checksum
 from datasluice.io.storage import LocalStorage
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_compute_sha256(tmp_path: Path) -> None:

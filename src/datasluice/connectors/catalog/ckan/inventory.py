@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib import resources
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 MANIFEST_RESOURCE = "action_manifest.json"
 _MANIFEST_PACKAGE = "datasluice.connectors.catalog.ckan"

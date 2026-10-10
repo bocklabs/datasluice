@@ -200,7 +200,7 @@ def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATAS
     from datasluice.connectors.catalog.udata.wire.datasets import _validate_dataset_fields
 
     _validate_dataset_fields(item, operation=operation, detail=False)
-    identifier = cast(str, item["id"])
+    identifier = cast("str", item["id"])
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
 from datasluice.connectors.catalog.udata.models.oauth import OAuthConsentOutcome, OAuthTokenResult
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogError
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
 
 
 def oauth_mutation_policy(name: str) -> MutationPolicy:

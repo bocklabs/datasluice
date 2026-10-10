@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -45,6 +44,9 @@ from tests.helpers.udata_test_support import (
     udata_page,
     with_site_route,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 ORIGIN = UDATA_ORIGIN
 PERMISSIONS = UDATA_PERMISSIONS
@@ -167,7 +169,7 @@ def test_reuse_reads_match_exact_wire_and_preserve_native_envelopes() -> None:
         assert thawed(client.reuses.list_v2().payload) == udata_page(_reuse())
         assert thawed(client.reuses.search_v2(ReuseSearchQuery(q="x")).payload) == udata_page(_reuse())
         followers = client.reuses.list_reuse_followers("reuse-1", ReuseFollowersQuery(user="u1"))
-        assert cast(Mapping[str, object], thawed(followers.payload))["total"] == 1
+        assert cast("Mapping[str, object]", thawed(followers.payload))["total"] == 1
     reuse_requests = [r for r in router.requests if "/reuses/" in r.url]
     assert reuse_requests[0].method == "GET"
     assert reuse_requests[0].url == f"{ORIGIN}/api/1/reuses/?page=1&page_size=20"

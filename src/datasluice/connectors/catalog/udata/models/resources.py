@@ -54,7 +54,7 @@ class MidStreamUploadError(OSError):
     """A bounded upload source failed after the request already started sending bytes."""
 
 
-class UploadDeadlineExceeded(MidStreamUploadError):
+class UploadDeadlineExceededError(MidStreamUploadError):
     """A bounded upload source exhausted its streaming time budget mid-request.
 
     The byte ceiling alone does not bound how long a source may hold the
@@ -106,7 +106,7 @@ class _BoundedSource:
         try:
             self._deadline.assert_dispatchable(self._operation, self._platform)
         except BudgetExhaustedError as exhausted:
-            raise UploadDeadlineExceeded(
+            raise UploadDeadlineExceededError(
                 "uData upload source exceeded its streaming time budget.",
                 budget_seconds=exhausted.budget_seconds,
                 elapsed_seconds=exhausted.elapsed_seconds,

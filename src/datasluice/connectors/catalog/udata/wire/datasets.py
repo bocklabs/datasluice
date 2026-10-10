@@ -4,20 +4,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import _DATASETS_OPERATION_ID, PLATFORM
-from datasluice.connectors.catalog.udata.models.datasets import (
-    DatasetCreateInput,
-    DatasetDeleteOptions,
-    DatasetExtrasDelete,
-    DatasetExtrasUpdate,
-    DatasetListQuery,
-    DatasetSearchQuery,
-    DatasetSuggestQuery,
-    DatasetUpdateInput,
-)
 from datasluice.connectors.catalog.udata.wire._text_document import (
     APPROVED_TEXT_MEDIA_TYPES,
     bound_text_document,
@@ -25,6 +15,18 @@ from datasluice.connectors.catalog.udata.wire._text_document import (
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, _freeze_json, redact_record_payload
 from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.models.datasets import (
+        DatasetCreateInput,
+        DatasetDeleteOptions,
+        DatasetExtrasDelete,
+        DatasetExtrasUpdate,
+        DatasetListQuery,
+        DatasetSearchQuery,
+        DatasetSuggestQuery,
+        DatasetUpdateInput,
+    )
 
 _PINNED_SOURCE_ORACLE_ACTION = "Verify the response against the pinned source oracle."
 _RDF_XML_MEDIA_TYPE = "application/rdf+xml"
@@ -301,7 +303,7 @@ def _validate_dataset_list(field: str, value: object, *, operation: str) -> None
 
 
 def _native_dataset(payload: Mapping[str, object]) -> NativeRecord:
-    identifier = cast(str, payload["id"])
+    identifier = cast("str", payload["id"])
     known = {key: value for key, value in payload.items() if key in _DATASET_DETAIL_FIELDS}
     unknown = {key: value for key, value in payload.items() if key not in _DATASET_DETAIL_FIELDS}
     return NativeRecord(

@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -32,7 +31,7 @@ from datasluice.connectors.catalog.udata.services.spatial import (
 from datasluice.connectors.catalog.udata.wire import spatial as wire
 from datasluice.errors.catalog import CatalogNotFoundError, CatalogUnavailableError, CatalogValidationError
 from datasluice.runtime.events import EventEmitter, ListSink
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from tests.helpers.udata_test_support import (
     UDATA_CREDENTIAL,
     UDATA_ORIGIN,
@@ -45,6 +44,9 @@ from tests.helpers.udata_test_support import (
     thawed,
     with_site_route,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 ORIGIN = UDATA_ORIGIN
 _SPATIAL = "/api/1/spatial"
@@ -192,8 +194,8 @@ def test_spatial_zone_identifier_encoding_happens_once() -> None:
 
 
 def test_spatial_queries_reject_invalid_input_before_dispatch() -> None:
-    non_empty_string = cast(str, 1)
-    non_integer = cast(int, "3")
+    non_empty_string = cast("str", 1)
+    non_integer = cast("int", "3")
     non_positive = 0
     with pytest.raises(ValueError):
         SpatialSuggestQuery(q="")
@@ -274,9 +276,8 @@ def test_spatial_missing_zone_maps_to_a_typed_not_found_error() -> None:
     router = sync_route_table(
         with_site_route({("GET", f"{ORIGIN}{_SPATIAL}/zone/missing/"): (404, {"message": "Not found"})})
     )
-    with sync_client(router, UDATA_CREDENTIAL) as client:
-        with pytest.raises(CatalogNotFoundError):
-            client.spatial.spatial_zone("missing")
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(CatalogNotFoundError):
+        client.spatial.spatial_zone("missing")
 
 
 def test_spatial_async_mode_matches_sync_exact_wire() -> None:
@@ -293,7 +294,7 @@ def test_spatial_async_mode_matches_sync_exact_wire() -> None:
         async with async_client(router, UDATA_CREDENTIAL) as client:
             assert thawed((await client.spatial.suggest_zones(SpatialSuggestQuery(q="ab")))[0].payload) == _suggestion()
             coverage = await client.spatial.spatial_coverage("country:fr")
-            assert cast(Mapping[str, object], thawed(coverage.payload))["type"] == "FeatureCollection"
+            assert cast("Mapping[str, object]", thawed(coverage.payload))["type"] == "FeatureCollection"
 
     asyncio.run(run())
     spatial_requests = [r for r in router.requests if "/spatial/" in r.url]
@@ -403,15 +404,17 @@ def test_spatial_sync_cancellation_leaves_post_state_ready_and_closes_the_owned_
 def test_spatial_sync_cancellation_never_closes_a_borrowed_transport() -> None:
     """A borrowed transport survives the same interrupted read and the context exit untouched."""
     transport = _CancellingSyncTransport(("GET", _LEVELS_URL), KeyboardInterrupt(), _LEVELS_BODY)
-    with SyncUDataClient(
-        transport,
-        declared_udata_profile(),
-        origin=ORIGIN,
-        credentials=UDATA_CREDENTIAL,
-        owns_transport=False,
-    ) as client:
-        with pytest.raises(KeyboardInterrupt):
-            client.spatial.spatial_levels()
+    with (
+        SyncUDataClient(
+            transport,
+            declared_udata_profile(),
+            origin=ORIGIN,
+            credentials=UDATA_CREDENTIAL,
+            owns_transport=False,
+        ) as client,
+        pytest.raises(KeyboardInterrupt),
+    ):
+        client.spatial.spatial_levels()
     assert transport.close_count == 0
 
 
@@ -432,9 +435,9 @@ def test_spatial_sync_cancellation_is_never_recorded_as_a_circuit_breaker_failur
 
 def test_spatial_transport_failures_still_open_the_circuit_before_the_next_read() -> None:
     """The breaker is live for this family: genuine transport failures still fail the following read closed."""
-    client, transport = _spatial_interrupting_sync(TransportFailure("no route"))
+    client, transport = _spatial_interrupting_sync(TransportError("no route"))
 
-    with pytest.raises(TransportFailure):
+    with pytest.raises(TransportError):
         client.spatial.spatial_levels()
 
     transport.armed = False

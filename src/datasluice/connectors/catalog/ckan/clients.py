@@ -12,14 +12,13 @@ from functools import lru_cache
 from importlib import resources
 from time import monotonic, sleep
 from types import MappingProxyType, TracebackType
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Self, cast, overload
 
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEntry, ActionInventory
 from datasluice.connectors.catalog.ckan.mapping import parse_action_envelope, shape_result_envelope
 from datasluice.connectors.catalog.ckan.rate_limits import resolve_rate_policy
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings, normalize_origin
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import (
@@ -78,7 +77,7 @@ from datasluice.runtime.transport.base import (
     CatalogTransport,
     RuntimeRequest,
     RuntimeResponse,
-    TransportFailure,
+    TransportError,
     UploadPart,
 )
 
@@ -103,6 +102,7 @@ if TYPE_CHECKING:
         AsyncVocabulariesLicensesService,
         SyncVocabulariesLicensesService,
     )
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
 
 PLATFORM = CatalogPlatform.CKAN
 _ACTION_PATH = "/api/3/action/"
@@ -180,14 +180,14 @@ def _sync_typed_read(
     client: SyncCKANClient, group: str, action: str, params: dict[str, object]
 ) -> ResultEnvelope[CKANResultItem]:
     entry, operation, guard = _typed_action_request(client, group, action, params)
-    return cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
+    return client._dispatch(operation, guard, entry=entry)
 
 
 async def _async_typed_read(
     client: AsyncCKANClient, group: str, action: str, params: dict[str, object]
 ) -> ResultEnvelope[CKANResultItem]:
     entry, operation, guard = _typed_action_request(client, group, action, params)
-    return cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
+    return await client._dispatch(operation, guard, entry=entry)
 
 
 def _typed_mutation_request(
@@ -232,7 +232,7 @@ def _sync_typed_mutation(
     target: _MutationTarget,
 ) -> CKANMutationResult:
     entry, effective, operation, guard = _typed_mutation_request(client, group, action, params, policy)
-    result = cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
+    result = client._dispatch(operation, guard, entry=entry)
     return _typed_mutation_result(entry, params, effective, result, target)
 
 
@@ -245,7 +245,7 @@ async def _async_typed_mutation(
     target: _MutationTarget,
 ) -> CKANMutationResult:
     entry, effective, operation, guard = _typed_mutation_request(client, group, action, params, policy)
-    result = cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
+    result = await client._dispatch(operation, guard, entry=entry)
     return _typed_mutation_result(entry, params, effective, result, target)
 
 
@@ -446,15 +446,37 @@ class SyncCKANClient:
             ),
         )
 
+    @overload
     def _dispatch(
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
         *,
         entry: ActionEntry,
-        decoder: Callable[[CKANResultItem], object] | None = None,
+        decoder: None = None,
         files: tuple[UploadPart, ...] = (),
-    ) -> ResultEnvelope[object]:
+    ) -> ResultEnvelope[CKANResultItem]: ...
+
+    @overload
+    def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T],
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T]: ...
+
+    def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T] | None = None,
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T] | ResultEnvelope[CKANResultItem]:
         if self._closed:
             raise RuntimeError("The synchronous CKAN client is closed.")
         _enforce_caller_guards(operation, guard)
@@ -496,7 +518,7 @@ class SyncCKANClient:
             before = self._breakers.inspect(key)
             try:
                 response = self._transport.send(request)
-            except TransportFailure:
+            except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
@@ -531,8 +553,8 @@ class SyncCKANClient:
         )
         if decoder is not None:
             items = tuple(decoder(item) for item in result.items)
-            return ResultEnvelope(items=cast("tuple[object]", items), page=result.page)
-        return cast("ResultEnvelope[object]", result)
+            return ResultEnvelope(items=items, page=result.page)
+        return result
 
     def _decode(
         self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse
@@ -791,15 +813,37 @@ class AsyncCKANClient:
             ),
         )
 
+    @overload
     async def _dispatch(
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
         *,
         entry: ActionEntry,
-        decoder: Callable[[CKANResultItem], object] | None = None,
+        decoder: None = None,
         files: tuple[UploadPart, ...] = (),
-    ) -> ResultEnvelope[object]:
+    ) -> ResultEnvelope[CKANResultItem]: ...
+
+    @overload
+    async def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T],
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T]: ...
+
+    async def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T] | None = None,
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T] | ResultEnvelope[CKANResultItem]:
         if self._closed:
             raise RuntimeError("The asynchronous CKAN client is closed.")
         _enforce_caller_guards(operation, guard)
@@ -841,7 +885,7 @@ class AsyncCKANClient:
             before = self._breakers.inspect(key)
             try:
                 response = await self._transport.send(request)
-            except TransportFailure:
+            except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
@@ -876,8 +920,8 @@ class AsyncCKANClient:
         )
         if decoder is not None:
             items = tuple(decoder(item) for item in result.items)
-            return ResultEnvelope(items=cast("tuple[object]", items), page=result.page)
-        return cast("ResultEnvelope[object]", result)
+            return ResultEnvelope(items=items, page=result.page)
+        return result
 
     def _decode(
         self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse
@@ -991,14 +1035,11 @@ class _SyncFamilyService[T]:
 
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a normalized get through the owning client."""
-        return cast(
-            ResultEnvelope[T],
-            self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("get"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("get"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
@@ -1009,21 +1050,18 @@ class _SyncFamilyService[T]:
                 payload={**operation.payload, "all_fields": True},
                 mutation_policy=operation.mutation_policy,
             )
-        return cast(
-            ResultEnvelope[T],
-            self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("list"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("list"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     def _invoke(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[CKANResultItem]:
         entry = self._client._registry_entry(operation.payload.get("action"), self._family, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], self._client._dispatch(operation, guard, entry=entry))
+        return self._client._dispatch(operation, guard, entry=entry)
 
     def _backing(self, verb: str) -> ActionEntry:
         action = _NORMALIZED_BACKING[(self._family, verb)]
@@ -1097,14 +1135,11 @@ class _AsyncFamilyService[T]:
 
     async def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a normalized get through the owning client."""
-        return cast(
-            ResultEnvelope[T],
-            await self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("get"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return await self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("get"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     async def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
@@ -1115,21 +1150,18 @@ class _AsyncFamilyService[T]:
                 payload={**operation.payload, "all_fields": True},
                 mutation_policy=operation.mutation_policy,
             )
-        return cast(
-            ResultEnvelope[T],
-            await self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("list"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return await self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("list"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     async def _invoke(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[CKANResultItem]:
         entry = self._client._registry_entry(operation.payload.get("action"), self._family, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], await self._client._dispatch(operation, guard, entry=entry))
+        return await self._client._dispatch(operation, guard, entry=entry)
 
     def _backing(self, verb: str) -> ActionEntry:
         action = _NORMALIZED_BACKING[(self._family, verb)]
@@ -1276,7 +1308,7 @@ class _SyncNativeService:
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[CKANResultItem]:
         entry = self._client._registry_entry(operation.payload.get("action"), self._group, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], self._client._dispatch(operation, guard, entry=entry))
+        return self._client._dispatch(operation, guard, entry=entry)
 
 
 class _SyncDiscoveryService(_SyncNativeService):
@@ -1303,7 +1335,7 @@ class _SyncDiscoveryService(_SyncNativeService):
             )
         operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=payload)
         guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=self._client._profile)
-        return cast(ResultEnvelope[CKANResultItem], self._client._dispatch(operation, guard, entry=entry))
+        return self._client._dispatch(operation, guard, entry=entry)
 
 
 class _AsyncNativeService:
@@ -1396,7 +1428,7 @@ class _AsyncNativeService:
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[CKANResultItem]:
         entry = self._client._registry_entry(operation.payload.get("action"), self._group, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], await self._client._dispatch(operation, guard, entry=entry))
+        return await self._client._dispatch(operation, guard, entry=entry)
 
 
 class _AsyncDiscoveryService(_AsyncNativeService):
@@ -1423,7 +1455,7 @@ class _AsyncDiscoveryService(_AsyncNativeService):
             )
         operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=payload)
         guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=self._client._profile)
-        return cast(ResultEnvelope[CKANResultItem], await self._client._dispatch(operation, guard, entry=entry))
+        return await self._client._dispatch(operation, guard, entry=entry)
 
 
 def _enforce_caller_guards(operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> None:
@@ -1435,10 +1467,10 @@ def _enforce_caller_guards(operation: CatalogOperationRequest, guard: CatalogOpe
     guard.require_allowed()
 
 
-def _normalized_decoder(family: str, record_decoder: Callable[[object], object]) -> Callable[[CKANResultItem], object]:
+def _normalized_decoder[T](family: str, record_decoder: Callable[[object], T]) -> Callable[[CKANResultItem], T]:
     converter = _CONVERTERS[family]
 
-    def decode(item: CKANResultItem) -> object:
+    def decode(item: CKANResultItem) -> T:
         return record_decoder(converter(item))
 
     return decode
@@ -1593,8 +1625,8 @@ def _default_probe_runners(
 
     profile = declared_ckan_profile()
     if inspect.iscoroutinefunction(getattr(transport, "send", None)):
-        return None, CKANAsyncProbeRunner(cast(AsyncCatalogTransport, transport), origin, profile)
-    return CKANProbeRunner(cast(CatalogTransport, transport), origin, profile), None
+        return None, CKANAsyncProbeRunner(cast("AsyncCatalogTransport", transport), origin, profile)
+    return CKANProbeRunner(cast("CatalogTransport", transport), origin, profile), None
 
 
 def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
@@ -1605,7 +1637,7 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
         transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(CatalogTransport, override)
+        transport = cast("CatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], CatalogTransport]", override)
@@ -1634,7 +1666,7 @@ def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
         transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(AsyncCatalogTransport, override)
+        transport = cast("AsyncCatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], AsyncCatalogTransport]", override)

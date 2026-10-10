@@ -5,14 +5,13 @@ from __future__ import annotations
 import importlib
 from dataclasses import replace
 from datetime import date
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 import datasluice.contracts.catalog as catalog
 from datasluice.contracts.catalog.fakes import AsyncReferenceConnector, SyncReferenceConnector
 from datasluice.contracts.catalog.fixtures import ReferenceFixtureSet, load_reference_fixture_set
-from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 from datasluice.contracts.catalog.runner import catalog_contract_cases, run_catalog_contract
 from datasluice.domain.catalog.extensions import (
     ActivationPolicy,
@@ -33,6 +32,9 @@ from datasluice.domain.catalog.operations import (
     OperationTier,
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 
 
 def _profile(fixture_set: ReferenceFixtureSet) -> DeclaredCapabilityProfile:
@@ -91,8 +93,8 @@ def _manifest(
 def _report(fixture_set: ReferenceFixtureSet):
     return run_catalog_contract(
         catalog_contract_cases(fixture_set),
-        sync_client=cast(SyncCatalogClient, SyncReferenceConnector(fixture_set)),
-        async_client=cast(AsyncCatalogClient, AsyncReferenceConnector(fixture_set)),
+        sync_client=cast("SyncCatalogClient", SyncReferenceConnector(fixture_set)),
+        async_client=cast("AsyncCatalogClient", AsyncReferenceConnector(fixture_set)),
         fixture_set=fixture_set,
     )
 

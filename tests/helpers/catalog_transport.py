@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 from dataclasses import dataclass
-from http.client import HTTPResponse
+from typing import TYPE_CHECKING
 from urllib.parse import SplitResult, urlsplit
 from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from http.client import HTTPResponse
 
 
 def _loopback_url(url: str) -> SplitResult:

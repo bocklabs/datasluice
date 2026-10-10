@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from collections.abc import AsyncIterator, Callable, Mapping
 from importlib import resources
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import pytest
@@ -37,6 +36,9 @@ from datasluice.runtime.transport.base import (
     RuntimeResponse,
     RuntimeStreamResponse,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Callable, Mapping
 
 _ROOT_CONTRACT_RESOURCE = resources.files("datasluice.contracts").joinpath("catalog/fixtures/udata/root_profile.json")
 _ORIGIN = "http://127.0.0.1:5640"
@@ -197,8 +199,8 @@ def _site_response(headers: dict[str, str] | None = None) -> RuntimeResponse:
 
 
 def _fixture_row_responder(row: dict[str, object]) -> Callable[[RuntimeRequest], RuntimeResponse]:
-    expected_path = cast(str, row["path"]).replace("<format>", "json")
-    row_number = cast(int, row["row"])
+    expected_path = cast("str", row["path"]).replace("<format>", "json")
+    row_number = cast("int", row["row"])
 
     def responder(request: RuntimeRequest) -> RuntimeResponse:
         request_path = urlsplit(request.url).path
@@ -295,11 +297,11 @@ async def _async_fixture_operation(client: AsyncUDataClient, operation: str) -> 
         "udata.v1.SiteJsonLdContext_get": service.jsonld_context,
     }
     result = operations[operation]()
-    return await cast(Any, result)
+    return await cast("Any", result)
 
 
 def _root_read_rows() -> list[dict[str, object]]:
-    rows = cast(list[dict[str, object]], _root_contract()["rows"])
+    rows = cast("list[dict[str, object]]", _root_contract()["rows"])
     return [row for row in rows if not row.get("controlled_only", False)]
 
 
@@ -325,8 +327,8 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
 
 
 def test_root_profile_rows_are_exhaustively_declared() -> None:
-    rows = cast(list[dict[str, object]], _root_contract()["rows"])
-    assert {cast(int, item["row"]) for item in rows} == ROOT_ROW_NUMBERS
+    rows = cast("list[dict[str, object]]", _root_contract()["rows"])
+    assert {cast("int", item["row"]) for item in rows} == ROOT_ROW_NUMBERS
     assert [row for row in rows if row.get("controlled_only")] == [
         {
             "row": 184,
@@ -342,20 +344,20 @@ def test_root_profile_rows_are_exhaustively_declared() -> None:
 
 
 def test_root_profile_failure_cells_are_exhaustively_declared() -> None:
-    failures = cast(list[dict[str, object]], _root_contract()["failure_cases"])
-    assert {cast(str, item["id"]) for item in failures} == ROOT_FAILURE_IDS
+    failures = cast("list[dict[str, object]]", _root_contract()["failure_cases"])
+    assert {cast("str", item["id"]) for item in failures} == ROOT_FAILURE_IDS
 
 
 @pytest.mark.parametrize("row", sorted(ROOT_ROW_NUMBERS))
 def test_root_profile_row_has_declared_evidence(row: int) -> None:
-    rows = cast(list[dict[str, object]], _root_contract()["rows"])
-    assert any(cast(int, item["row"]) == row for item in rows)
+    rows = cast("list[dict[str, object]]", _root_contract()["rows"])
+    assert any(cast("int", item["row"]) == row for item in rows)
 
 
 @pytest.mark.parametrize("row", _root_read_rows(), ids=lambda row: f"row-{row['row']}")
 def test_root_contract_executes_each_non_mutating_service_row_in_both_modes(row: dict[str, object]) -> None:
-    operation = cast(str, row["operation"])
-    expected_path = cast(str, row["path"]).replace("<format>", "json")
+    operation = cast("str", row["operation"])
+    expected_path = cast("str", row["path"]).replace("<format>", "json")
     sync_transport, sync_client = _sync_root_client(_fixture_row_responder(row))
     with sync_client:
         sync_value = _sync_fixture_operation(sync_client, operation)
@@ -371,22 +373,22 @@ def test_root_contract_executes_each_non_mutating_service_row_in_both_modes(row:
     for transport in (sync_transport, async_transport):
         assert [(request.method, urlsplit(request.url).path) for request in transport.requests] == [
             ("GET", _SITE_PATH),
-            (cast(str, row["method"]), expected_path),
+            (cast("str", row["method"]), expected_path),
         ]
-    assert cast(Any, sync_value).to_dict() == cast(Any, async_value).to_dict()
+    assert cast("Any", sync_value).to_dict() == cast("Any", async_value).to_dict()
 
-    row_number = cast(int, row["row"])
+    row_number = cast("int", row["row"])
     if row_number == 183:
-        assert cast(Any, sync_value).id == "site"
+        assert cast("Any", sync_value).id == "site"
     elif row_number == 185:
-        assert cast(Any, sync_value).location == "/api/1/site/catalog.json"
+        assert cast("Any", sync_value).location == "/api/1/site/catalog.json"
     elif row_number == 186:
-        assert cast(Any, sync_value).location == "/api/1/site/catalog.json?page=1&page_size=100"
+        assert cast("Any", sync_value).location == "/api/1/site/catalog.json?page=1&page_size=100"
     else:
         expected_media_type = "application/ld+json" if row_number in {187, 195} else "text/csv"
-        assert cast(Any, sync_value).media_type == expected_media_type
-        assert cast(Any, sync_value).size_bytes > 0
-        assert "body" not in cast(Any, sync_value).to_dict()
+        assert cast("Any", sync_value).media_type == expected_media_type
+        assert cast("Any", sync_value).size_bytes > 0
+        assert "body" not in cast("Any", sync_value).to_dict()
     if row_number in {187, 188, 189, 190, 191, 192, 193, 194}:
         assert sync_transport.stream_close_count == async_transport.stream_close_count == 1
 
@@ -420,12 +422,12 @@ def _declared_scalar_filter_value(key: str, choices: Mapping[str, list[str]]) ->
 def _declared_schema_filters(schema: Mapping[str, object]) -> dict[str, object]:
     """Build the filter map that exercises every declared key of one query schema."""
     filters: dict[str, object] = {}
-    for key in cast(list[str], schema.get("repeatable", [])):
+    for key in cast("list[str]", schema.get("repeatable", [])):
         filters[key] = ("one", "two")
-    for key in cast(list[str], schema.get("boolean", [])):
+    for key in cast("list[str]", schema.get("boolean", [])):
         filters[key] = True
-    choices = cast(dict[str, list[str]], schema.get("choices", {}))
-    for key in cast(list[str], schema.get("scalar", [])):
+    choices = cast("dict[str, list[str]]", schema.get("choices", {}))
+    for key in cast("list[str]", schema.get("scalar", [])):
         if key in {"q", "sort"}:
             continue
         filters[key] = _declared_scalar_filter_value(key, choices)
@@ -435,9 +437,9 @@ def _declared_schema_filters(schema: Mapping[str, object]) -> dict[str, object]:
 def _declared_query_kwargs(schema: Mapping[str, object], filters: dict[str, object], sort: str) -> dict[str, object]:
     """Return the constructor keyword arguments the declared schema requires."""
     kwargs: dict[str, object] = {"filters": filters}
-    scalar_keys = cast(list[str], schema.get("scalar", []))
+    scalar_keys = cast("list[str]", schema.get("scalar", []))
     if "defaults" in schema:
-        defaults = cast(dict[str, int], schema["defaults"])
+        defaults = cast("dict[str, int]", schema["defaults"])
         kwargs.update(page=defaults["page"], page_size=defaults["page_size"])
     if "q" in scalar_keys:
         kwargs["q"] = "query"
@@ -449,9 +451,9 @@ def _declared_query_kwargs(schema: Mapping[str, object], filters: dict[str, obje
 def _declared_query_keys(schema: Mapping[str, object]) -> set[str]:
     """Return the exact query-parameter key set the declared schema documents."""
     keys = {
-        *cast(list[str], schema.get("repeatable", [])),
-        *cast(list[str], schema.get("boolean", [])),
-        *cast(list[str], schema.get("scalar", [])),
+        *cast("list[str]", schema.get("repeatable", [])),
+        *cast("list[str]", schema.get("boolean", [])),
+        *cast("list[str]", schema.get("scalar", [])),
     }
     if "defaults" in schema:
         keys.update({"page", "page_size"})
@@ -469,8 +471,8 @@ def _assert_query_schema_preserves_cardinality(query_type: Any, sort: str, schem
 def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> None:
     """Each declared query schema emits exactly the parameters the contract documents."""
     document = _root_contract()
-    rows = cast(list[dict[str, object]], document["rows"])
-    schemas = {cast(int, row["row"]): row.get("query_schema") for row in rows}
+    rows = cast("list[dict[str, object]]", document["rows"])
+    schemas = {cast("int", row["row"]): row.get("query_schema") for row in rows}
     assert schemas[186] == "dataset_catalog"
     assert schemas[187] == "dataset_catalog"
     assert schemas[188] == "dataset_csv"
@@ -491,7 +493,7 @@ def test_root_contract_query_schemas_preserve_only_documented_cardinality() -> N
         "reuse_csv": (SiteReuseCsvQuery, "title"),
         "dataservice_csv": (SiteDataserviceCsvQuery, "title"),
     }
-    query_schemas = cast(dict[str, dict[str, object]], document["query_schemas"])
+    query_schemas = cast("dict[str, dict[str, object]]", document["query_schemas"])
     for schema_name, (query_type, sort) in query_types.items():
         _assert_query_schema_preserves_cardinality(query_type, sort, query_schemas[schema_name])
 
@@ -648,18 +650,18 @@ def _assert_async_parity() -> None:
         async with async_client:
             return await async_client.root_profile.get()
 
-    assert sync_profile.to_dict() == cast(Any, asyncio.run(async_profile())).to_dict()
+    assert sync_profile.to_dict() == cast("Any", asyncio.run(async_profile())).to_dict()
     assert [request.url for request in sync_transport.requests] == [request.url for request in async_transport.requests]
 
 
 @pytest.mark.parametrize(
     "failure",
-    cast(list[dict[str, object]], _root_contract()["failure_cases"]),
-    ids=lambda failure: cast(str, failure["id"]),
+    cast("list[dict[str, object]]", _root_contract()["failure_cases"]),
+    ids=lambda failure: cast("str", failure["id"]),
 )
 def test_root_contract_failure_cells_execute_the_declared_sync_async_behavior(failure: dict[str, object]) -> None:
     """Every declared root failure cell runs the sync/async behaviour the contract names."""
-    failure_id = cast(str, failure["id"])
+    failure_id = cast("str", failure["id"])
     assert failure["modes"] == ["sync", "async"]
 
     if failure_id == "root_invalid_format_pre_dispatch":

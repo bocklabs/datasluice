@@ -8,7 +8,7 @@ import math
 import re
 from codecs import getincrementaldecoder
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Never
+from typing import TYPE_CHECKING, Any, Never
 from urllib.parse import SplitResult, parse_qsl, quote, urlencode, urljoin, urlsplit
 
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
@@ -25,7 +25,9 @@ from datasluice.domain.catalog.udata import (
     SiteReuseCsvQuery,
 )
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
-from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
+
+if TYPE_CHECKING:
+    from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
 
 _RDF_XML_MEDIA_TYPE = "application/rdf+xml"
 _TURTLE_MEDIA_TYPE = "application/x-turtle"

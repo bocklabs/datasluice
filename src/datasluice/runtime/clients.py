@@ -7,11 +7,9 @@ import json
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from time import monotonic, sleep
-from types import TracebackType
-from typing import Any, Protocol, Self, cast
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast
 from urllib.parse import urlsplit
 
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import (
     CKANCredential,
     CredentialResolver,
@@ -60,9 +58,14 @@ from datasluice.runtime.transport.base import (
     CatalogTransport,
     RuntimeRequest,
     RuntimeResponse,
-    TransportFailure,
+    TransportError,
 )
 from datasluice.runtime.transport.user_agent import build_user_agent
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 
 
 class AsyncCatalogTransport(Protocol):
@@ -150,7 +153,7 @@ def _refreshed_credential(credentials: object | None) -> object | None:
         return _refreshed_credential(credentials.explicit)
     resolve = getattr(credentials, "resolve", None)
     if callable(resolve):
-        return cast(Callable[[], object], resolve)()
+        return cast("Callable[[], object]", resolve)()
     return credentials
 
 
@@ -161,10 +164,10 @@ async def _refreshed_credential_async(credentials: object | None) -> object | No
         return await _refreshed_credential_async(credentials.explicit)
     resolve_async = getattr(credentials, "resolve_async", None)
     if callable(resolve_async):
-        return await cast(Callable[[], Awaitable[object]], resolve_async)()
+        return await cast("Callable[[], Awaitable[object]]", resolve_async)()
     resolve = getattr(credentials, "resolve", None)
     if callable(resolve):
-        return cast(Callable[[], object], resolve)()
+        return cast("Callable[[], object]", resolve)()
     return credentials
 
 
@@ -178,12 +181,12 @@ def _circuit_open_error(operation: CatalogOperationRequest) -> CatalogUnavailabl
     )
 
 
-def _result(
+def _result[T](
     operation: CatalogOperationRequest,
     response: RuntimeResponse,
-    decoder: Callable[[object], object],
+    decoder: Callable[[object], T],
     record_response: Callable[[ProbeResponseClass], object] | None = None,
-) -> ResultEnvelope[object]:
+) -> ResultEnvelope[T]:
     if not 200 <= response.status_code < 300:
         response_class = {
             401: ProbeResponseClass.UNAUTHORIZED,
@@ -352,9 +355,9 @@ class _ClientState[T]:
         finally:
             _release_abandoned_trial(self._breakers, key, state.recorded)
 
-    def _decode(
-        self, operation: CatalogOperationRequest, decoder: Callable[[object], object], response: RuntimeResponse
-    ) -> ResultEnvelope[object]:
+    def _decode[RecordT](
+        self, operation: CatalogOperationRequest, decoder: Callable[[object], RecordT], response: RuntimeResponse
+    ) -> ResultEnvelope[RecordT]:
         return _result(
             operation,
             response,
@@ -465,12 +468,12 @@ class SyncCatalogClient(_ClientState[CatalogTransport]):
         """Return the synchronous organization service projection."""
         return _SyncService(self, OrganizationRecord.from_dict)
 
-    def _dispatch(
+    def _dispatch[T](
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
-        decoder: Callable[[object], object],
-    ) -> ResultEnvelope[object]:
+        decoder: Callable[[object], T],
+    ) -> ResultEnvelope[T]:
         self._assert_open()
         _enforce_guards(operation, guard)
         effective = self._capabilities.resolve(operation.operation_id)
@@ -486,7 +489,7 @@ class SyncCatalogClient(_ClientState[CatalogTransport]):
             before = self._breakers.inspect(key)
             try:
                 response = self._transport.send(request)
-            except TransportFailure:
+            except TransportError:
                 self._record_transport_failure(operation, key, state, before)
                 raise
             return self._record_response(operation, key, state, before, response)
@@ -499,11 +502,11 @@ class SyncCatalogClient(_ClientState[CatalogTransport]):
 
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Dispatch a dataset get operation."""
-        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, guard, DatasetRecord.from_dict))
+        return self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
         """Dispatch a dataset list operation."""
-        return cast(ResultEnvelope[DatasetRecord], self._dispatch(operation, guard, DatasetRecord.from_dict))
+        return self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     def close(self) -> None:
         """Close the client and its owned transport exactly once."""
@@ -587,12 +590,12 @@ class AsyncCatalogClient(_ClientState[AsyncCatalogTransport]):
         """Return the asynchronous organization service projection."""
         return _AsyncService(self, OrganizationRecord.from_dict)
 
-    async def _dispatch(
+    async def _dispatch[T](
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
-        decoder: Callable[[object], object],
-    ) -> ResultEnvelope[object]:
+        decoder: Callable[[object], T],
+    ) -> ResultEnvelope[T]:
         self._assert_open()
         _enforce_guards(operation, guard)
         effective = await self._capabilities.resolve_async(operation.operation_id)
@@ -609,7 +612,7 @@ class AsyncCatalogClient(_ClientState[AsyncCatalogTransport]):
             before = self._breakers.inspect(key)
             try:
                 response = await self._transport.send(request)
-            except TransportFailure:
+            except TransportError:
                 self._record_transport_failure(operation, key, state, before)
                 raise
             return self._record_response(operation, key, state, before, response)
@@ -624,13 +627,13 @@ class AsyncCatalogClient(_ClientState[AsyncCatalogTransport]):
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[DatasetRecord]:
         """Dispatch an asynchronous dataset get operation."""
-        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, guard, DatasetRecord.from_dict))
+        return await self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     async def list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[DatasetRecord]:
         """Dispatch an asynchronous dataset list operation."""
-        return cast(ResultEnvelope[DatasetRecord], await self._dispatch(operation, guard, DatasetRecord.from_dict))
+        return await self._dispatch(operation, guard, DatasetRecord.from_dict)
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""
@@ -699,11 +702,11 @@ class _SyncService[T]:
 
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a get operation through the owning client."""
-        return cast(ResultEnvelope[T], self._client._dispatch(operation, guard, self._decoder))
+        return self._client._dispatch(operation, guard, self._decoder)
 
     def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a list operation through the owning client."""
-        return cast(ResultEnvelope[T], self._client._dispatch(operation, guard, self._decoder))
+        return self._client._dispatch(operation, guard, self._decoder)
 
 
 class _AsyncService[T]:
@@ -717,8 +720,8 @@ class _AsyncService[T]:
 
     async def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch an asynchronous get operation through the owning client."""
-        return cast(ResultEnvelope[T], await self._client._dispatch(operation, guard, self._decoder))
+        return await self._client._dispatch(operation, guard, self._decoder)
 
     async def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch an asynchronous list operation through the owning client."""
-        return cast(ResultEnvelope[T], await self._client._dispatch(operation, guard, self._decoder))
+        return await self._client._dispatch(operation, guard, self._decoder)

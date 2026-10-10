@@ -305,16 +305,11 @@ def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None
     destination = f"file://{tmp_path}/pre-move"
     fs = _FailBeforeSelectedMoveFS(open_filesystem(destination), "00000000000000000001.parquet")
 
-    with patch("datasluice.io.filesystem.open_filesystem", return_value=fs):
-        with pytest.raises(DataSluiceError, match="injected pre-shard-move failure"):
-            list(
-                sync_resources(
-                    [resource],
-                    state_store=store,
-                    reader=reader,
-                    destination_uri=destination,
-                )
-            )
+    with (
+        patch("datasluice.io.filesystem.open_filesystem", return_value=fs),
+        pytest.raises(DataSluiceError, match="injected pre-shard-move failure"),
+    ):
+        list(sync_resources([resource], state_store=store, reader=reader, destination_uri=destination))
 
     state = store.get(canonical_identity(resource))
     assert state is not None

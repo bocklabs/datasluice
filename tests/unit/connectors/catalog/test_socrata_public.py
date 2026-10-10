@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
-from datasluice.contracts.catalog.protocols import CatalogConnectorContext
 from datasluice.domain.catalog.operations import AuthClass, OperationTier
-from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 from tests.helpers.catalog_facade import (
     ProfileSpec,
     assert_no_transport_escape_hatch,
@@ -16,6 +16,10 @@ from tests.helpers.catalog_facade import (
     effective_profile,
     facade_context,
 )
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import CatalogConnectorContext
+    from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 SOCRATA_PROFILE_SPEC = ProfileSpec(
     platform="socrata",

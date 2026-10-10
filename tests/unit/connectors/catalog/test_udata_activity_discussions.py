@@ -1,7 +1,7 @@
 """Exact wire and safety coverage for the uData activity and discussion family.
 
 Expectations are transcribed from the pinned uData 17.6.0 source
-(`udata.core.activity.api`, `udata.core.disccussions.api`, and
+(`udata.core.activity.api`, `udata.core.discussions.api`, and
 `udata.core.discussions.apiv2` at commit 0546582), not from the
 production request builders.
 """
@@ -350,7 +350,7 @@ def test_discussion_mutations_return_redacted_receipts_with_exact_targets() -> N
     assert comment_edited.receipt.operation == wire.EDIT_DISCUSSION_COMMENT_OPERATION
     assert deleted.receipt.operation == wire.DELETE_DISCUSSION_OPERATION
     assert comment_deleted.receipt.operation == wire.DELETE_DISCUSSION_COMMENT_OPERATION
-    metadata = cast(dict[str, object], comment_edited.receipt.to_dict()["audit_metadata"])
+    metadata = cast("dict[str, object]", comment_edited.receipt.to_dict()["audit_metadata"])
     assert metadata["target_valid"] is True
     assert b"secret-key" not in json.dumps(comment_edited.receipt.to_dict()).encode()
 
@@ -458,8 +458,9 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
         b'{"version": "17.6.0", "id": "site", "title": "uData", "feed_size": 0, '
         b'"keywords": [], "metrics": {"widgets": NaN}}'
     )
-    with pytest.raises(NativeCatalogError) as raised:
-        with sync_client(
+    with (
+        pytest.raises(NativeCatalogError) as raised,
+        sync_client(
             sync_route_table(
                 {
                     ("GET", f"{ORIGIN}/api/1/site/"): (200, nan_site),
@@ -467,16 +468,16 @@ def test_non_finite_decoding_fails_typed_without_raw_body() -> None:
                 }
             ),
             None,
-        ) as client:
-            client.activity_discussions.activity(ActivityQuery())
+        ) as client,
+    ):
+        client.activity_discussions.activity(ActivityQuery())
     assert "NaN" not in repr(raised.value) + str(raised.value.__dict__)
 
 
 def test_pre_dispatch_rejection_carries_a_redacted_receipt_and_dispatches_nothing() -> None:
     router = sync_route_table(with_site_route({}))
-    with sync_client(router, UDATA_CREDENTIAL) as client:
-        with pytest.raises(ForbiddenError) as rejected:
-            client.activity_discussions.delete_discussion("discussion-1", PERMISSIONS)
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as rejected:
+        client.activity_discussions.delete_discussion("discussion-1", PERMISSIONS)
     receipt = rejected.value.__dict__["mutation_receipt"]
     assert receipt.operation == wire.DELETE_DISCUSSION_OPERATION
     assert receipt.target.value == "discussion-1"
@@ -513,12 +514,12 @@ def test_interrupted_discussion_mutation_is_not_misreported_as_failed(monkeypatc
     def interrupt(**kwargs: object) -> tuple[int, object, object]:
         raise KeyboardInterrupt
 
-    with pytest.raises(KeyboardInterrupt) as stopped:
-        with sync_client(sync_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
-            monkeypatch.setattr(client, "_dataset_call", interrupt)
-            client.activity_discussions.delete_discussion(
-                "discussion-1",
-                PERMISSIONS,
-                _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1"),
-            )
+    with (
+        pytest.raises(KeyboardInterrupt) as stopped,
+        sync_client(sync_route_table(with_site_route({})), UDATA_CREDENTIAL) as client,
+    ):
+        monkeypatch.setattr(client, "_dataset_call", interrupt)
+        client.activity_discussions.delete_discussion(
+            "discussion-1", PERMISSIONS, _policy(wire.DELETE_DISCUSSION_OPERATION, "discussion-1")
+        )
     assert stopped.value.__dict__["mutation_receipt"].outcome == "cancelled"

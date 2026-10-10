@@ -9,13 +9,13 @@ from datasluice.connectors.catalog.udata.models.spatial import (
     SpatialSuggestQuery,
 )
 from datasluice.connectors.catalog.udata.wire import spatial as wire
-from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import NativeCatalogError
 
 from .taxonomies import AsyncCatalogService, SyncCatalogService
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.domain.catalog.models import MappingRecord
 
 
 class SyncSpatialService(SyncCatalogService):

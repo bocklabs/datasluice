@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -18,8 +19,10 @@ from datasluice.domain.catalog.models import NativeRecord, ValueRecord
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogValidationError
-from datasluice.runtime.transport.base import RuntimeRequest
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
+
+if TYPE_CHECKING:
+    from datasluice.runtime.transport.base import RuntimeRequest
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 

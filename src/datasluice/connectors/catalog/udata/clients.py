@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -17,7 +18,6 @@ from functools import lru_cache, partial
 from importlib import resources
 from pathlib import Path
 from time import monotonic, sleep
-from types import TracebackType
 from typing import TYPE_CHECKING, Self, TypedDict, Unpack, cast
 from urllib.parse import SplitResult, urlsplit
 
@@ -36,12 +36,8 @@ from datasluice.connectors.catalog.udata.probes import (
 )
 from datasluice.connectors.catalog.udata.settings import LOOPBACK_HOSTS, UDataClientSettings
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.contracts.catalog.native.udata import UDataResultItem
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, SecretValue, UDataCredential
 from datasluice.domain.catalog.auth import credential_scope as _credential_scope
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -98,12 +94,14 @@ from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
-    TransportFailure,
+    TransportError,
     UploadPart,
 )
 from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     from datasluice.connectors.catalog.udata.services.activity_discussions import (
         AsyncActivityDiscussionsService as _AsyncActivityDiscussionsService,
     )
@@ -133,6 +131,12 @@ if TYPE_CHECKING:
     )
     from datasluice.connectors.catalog.udata.services.datasets import (
         SyncDatasetsService as _SyncDatasetsService,
+    )
+    from datasluice.connectors.catalog.udata.services.harvest import (
+        AsyncHarvestService as _AsyncHarvestService,
+    )
+    from datasluice.connectors.catalog.udata.services.harvest import (
+        SyncHarvestService as _SyncHarvestService,
     )
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
         AsyncOrganizationsMembershipsService as _AsyncOrganizationsMembershipsService,
@@ -176,12 +180,28 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.taxonomies import (
         SyncTaxonomiesService as _SyncTaxonomiesService,
     )
+    from datasluice.connectors.catalog.udata.services.topics import (
+        AsyncTopicsService as _AsyncTopicsService,
+    )
+    from datasluice.connectors.catalog.udata.services.topics import (
+        SyncTopicsService as _SyncTopicsService,
+    )
+    from datasluice.connectors.catalog.udata.services.transfers import (
+        AsyncTransfersService as _AsyncTransfersService,
+    )
+    from datasluice.connectors.catalog.udata.services.transfers import (
+        SyncTransfersService as _SyncTransfersService,
+    )
     from datasluice.connectors.catalog.udata.services.users_tokens import (
         AsyncUsersTokensService as _AsyncUsersTokensService,
     )
     from datasluice.connectors.catalog.udata.services.users_tokens import (
         SyncUsersTokensService as _SyncUsersTokensService,
     )
+    from datasluice.contracts.catalog.native.udata import UDataResultItem
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.observability import TLSPolicy
 
 _CONTROLLED_UDATA_LOCAL_DOCKER_CONTEXT = "Controlled uData evidence requires a local Unix Docker context."
 _CONTROLLED_STACK_IDENTITY_TIMEOUT = "The controlled uData stack identity check timed out."
@@ -212,7 +232,7 @@ _PAGER_PARAMS = frozenset({"page", "page_size"})
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
-_CONTROLLED_DOCKERFILE_SHA256 = "a94687e5a97585c598cfe7a9755ed30e46659cc5fd34b62c334fa447dc5ddf0a"
+_CONTROLLED_DOCKERFILE_SHA256 = "13d638063ae43c7617dd7d0a1252c854e400b9093bae6daa01eeb7a996746e80"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
 _CONTROLLED_UDATA_VERSION = "17.6.0"
 _CONTROLLED_UDATA_IMAGE_SPEC = ("udata-evidence-udata", "", "udata-evidence-udata")
@@ -720,10 +740,8 @@ def _current_controlled_sync_runtime(
 
 
 def _terminate_controlled_process_sync(process_id: int, runtime: _ControlledSyncRuntime) -> None:
-    try:
+    with contextlib.suppress(OSError):
         runtime.kill(process_id, runtime.sigkill)
-    except OSError:
-        pass
     reap_deadline = runtime.monotonic() + runtime.reap_timeout_seconds
     while True:
         try:
@@ -1013,10 +1031,8 @@ async def _terminate_controlled_process(
 ) -> None:
     if process is None or process.returncode is not None:
         return
-    try:
+    with contextlib.suppress(OSError):
         process.kill()
-    except OSError:
-        pass
     reap_deadline = clock() + reap_timeout
     remaining = reap_deadline - clock()
     if remaining <= 0:
@@ -1101,7 +1117,7 @@ async def _read_controlled_output_async(
             await runtime.terminate(process)
             raise runtime.error(timeout_message)
         try:
-            chunk = cast(bytes, await runtime.wait_for(process.stdout.read(65536), timeout=remaining))
+            chunk = cast("bytes", await runtime.wait_for(process.stdout.read(65536), timeout=remaining))
         except TimeoutError:
             await runtime.terminate(process)
             raise runtime.error(timeout_message) from None
@@ -1153,7 +1169,7 @@ async def _run_controlled_command_async(
             raise runtime.error(timeout_message)
         try:
             process = cast(
-                asyncio.subprocess.Process,
+                "asyncio.subprocess.Process",
                 await runtime.wait_for(
                     runtime.create_subprocess_exec(
                         *command,
@@ -2265,10 +2281,10 @@ def _build_controlled_sync_transport(
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
             transport = object.__new__(transport_type)
             try:
-                cast(Callable[..., None], initializer)(transport, tls_policy=tls_policy, budget=budget)
+                cast("Callable[..., None]", initializer)(transport, tls_policy=tls_policy, budget=budget)
                 verification = trusted_sync_operations.verify(transport)
             except SETTLEMENT_ERRORS:
-                cast(Callable[[HttpxCatalogTransport], None], close)(transport)
+                cast("Callable[[HttpxCatalogTransport], None]", close)(transport)
                 raise
             registry.set(
                 self,
@@ -2285,22 +2301,22 @@ def _build_controlled_sync_transport(
             state = _registry_state(registry, self)
             if state is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
-            return cast(Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeResponse], send)(
-                cast(HttpxCatalogTransport, state[0]), request
+            return cast("Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeResponse]", send)(
+                cast("HttpxCatalogTransport", state[0]), request
             )
 
         def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
             state = _registry_state(registry, self)
             if state is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
-            return cast(Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeStreamResponse], send_stream)(
-                cast(HttpxCatalogTransport, state[0]), request
+            return cast("Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeStreamResponse]", send_stream)(
+                cast("HttpxCatalogTransport", state[0]), request
             )
 
         def close(self) -> None:
             state = _registry_state(registry, self)
             if state is not None:
-                cast(Callable[[HttpxCatalogTransport], None], close)(cast(HttpxCatalogTransport, state[0]))
+                cast("Callable[[HttpxCatalogTransport], None]", close)(cast("HttpxCatalogTransport", state[0]))
 
     return _ControlledSyncTransport
 
@@ -2321,7 +2337,7 @@ def _build_controlled_async_transport(
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
             transport = object.__new__(transport_type)
-            cast(Callable[..., None], initializer)(transport, tls_policy=tls_policy, budget=budget)
+            cast("Callable[..., None]", initializer)(transport, tls_policy=tls_policy, budget=budget)
             registry.set(self, (transport, None, 0.0, trusted_async_operations, None))
 
         async def verify(self) -> None:
@@ -2331,8 +2347,8 @@ def _build_controlled_async_transport(
             try:
                 verification = await state[3].verify(state[0])
             except ASYNC_SETTLEMENT_ERRORS:
-                await cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], close)(
-                    cast(AsyncHttpxCatalogTransport, state[0])
+                await cast("Callable[[AsyncHttpxCatalogTransport], Awaitable[None]]", close)(
+                    cast("AsyncHttpxCatalogTransport", state[0])
                 )
                 registry.discard(self)
                 raise
@@ -2345,24 +2361,24 @@ def _build_controlled_async_transport(
             state = _registry_state(registry, self)
             if state is None or state[1] is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
-            return await cast(Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[RuntimeResponse]], send)(
-                cast(AsyncHttpxCatalogTransport, state[0]), request
-            )
+            return await cast(
+                "Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[RuntimeResponse]]", send
+            )(cast("AsyncHttpxCatalogTransport", state[0]), request)
 
         async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
             state = _registry_state(registry, self)
             if state is None or state[1] is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
             return await cast(
-                Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]],
+                "Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]]",
                 send_stream,
-            )(cast(AsyncHttpxCatalogTransport, state[0]), request)
+            )(cast("AsyncHttpxCatalogTransport", state[0]), request)
 
         async def aclose(self) -> None:
             state = _registry_state(registry, self)
             if state is not None:
-                await cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], close)(
-                    cast(AsyncHttpxCatalogTransport, state[0])
+                await cast("Callable[[AsyncHttpxCatalogTransport], Awaitable[None]]", close)(
+                    cast("AsyncHttpxCatalogTransport", state[0])
                 )
 
     return _ControlledAsyncTransport
@@ -2636,7 +2652,7 @@ class _SyncStreamGuard:
         if self.settled:
             return
         self.settled = True
-        if isinstance(error, TransportFailure):
+        if isinstance(error, TransportError):
             before = self.client._breakers.inspect(self.key)
             after = self.client._breakers.record_transport_failure(self.key)
             self.client._emit_breaker_change(self.owning_id, before.open, after.open)
@@ -2724,7 +2740,7 @@ class _AsyncStreamGuard:
         if self.settled:
             return
         self.settled = True
-        if isinstance(error, TransportFailure):
+        if isinstance(error, TransportError):
             before = self.client._breakers.inspect(self.key)
             after = self.client._breakers.record_transport_failure(self.key)
             self.client._emit_breaker_change(self.owning_id, before.open, after.open)
@@ -2863,7 +2879,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._site_gate = SiteVersionGate(
                 pinned_version=pinned,
                 origin=self._origin,
-                transport=cast(CatalogTransport, transport),
+                transport=cast("CatalogTransport", transport),
                 ttl_seconds=settings.capability_cache_ttl,
                 clock=clock,
             )
@@ -2871,7 +2887,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._site_gate = AsyncSiteVersionGate(
                 pinned_version=pinned,
                 origin=self._origin,
-                transport=cast(AsyncCatalogTransport, transport),
+                transport=cast("AsyncCatalogTransport", transport),
                 ttl_seconds=settings.capability_cache_ttl,
                 clock=clock,
             )
@@ -3299,6 +3315,16 @@ class SyncUDataClient(_UDataClientCore):
         return SyncTaxonomiesService(self)
 
     @property
+    def topics(self) -> _SyncTopicsService:
+        """Expose the complete typed topic and topic-element service."""
+        return SyncTopicsService(self)
+
+    @property
+    def transfers(self) -> _SyncTransfersService:
+        """Expose the complete typed dataset ownership-transfer service."""
+        return SyncTransfersService(self)
+
+    @property
     def activity_discussions(self) -> _SyncActivityDiscussionsService:
         """Expose the complete typed activity and discussion service."""
         return SyncActivityDiscussionsService(self)
@@ -3317,6 +3343,11 @@ class SyncUDataClient(_UDataClientCore):
     def auth_oauth(self) -> _SyncAuthOAuthService:
         """Expose the typed OAuth and authentication service."""
         return SyncAuthOAuthService(self)
+
+    @property
+    def harvest_moderation_admin(self) -> _SyncHarvestService:
+        """Expose the typed harvest source, job, and bounded admin bulk service."""
+        return SyncHarvestService(self)
 
     @property
     def contact_visualization(self) -> _SyncContactVisualizationService:
@@ -3353,8 +3384,8 @@ class SyncUDataClient(_UDataClientCore):
             if controlled:
                 response = _dispatch_sync(self, self._transport, request, credential, json_body, origin=self._origin)
             else:
-                response = cast(CatalogTransport, self._transport).send(request)
-        except TransportFailure:
+                response = cast("CatalogTransport", self._transport).send(request)
+        except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
             self._emit_breaker_change(owning_id, before.open, after.open)
@@ -3526,7 +3557,7 @@ class SyncUDataClient(_UDataClientCore):
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        sync_transport = cast(CatalogTransport, self._transport)
+        sync_transport = cast("CatalogTransport", self._transport)
         send_stream = getattr(sync_transport, "send_stream", None)
         if not callable(send_stream):
             raise CatalogValidationError(
@@ -3549,8 +3580,8 @@ class SyncUDataClient(_UDataClientCore):
         try:
             before = self._breakers.inspect(key)
             try:
-                response = cast(RuntimeStreamResponse, send_stream(request))
-            except TransportFailure:
+                response = cast("RuntimeStreamResponse", send_stream(request))
+            except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 settled = True
@@ -3560,7 +3591,7 @@ class SyncUDataClient(_UDataClientCore):
             try:
                 self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
                 if response.status_code in {301, 302, 303, 307, 308}:
-                    _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
+                    _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
                     return response
             except SETTLEMENT_ERRORS as error:
                 self._emit(owning_id, "failed")
@@ -3606,7 +3637,7 @@ class SyncUDataClient(_UDataClientCore):
             )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        sync_transport = cast(CatalogTransport, self._transport)
+        sync_transport = cast("CatalogTransport", self._transport)
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -3625,7 +3656,7 @@ class SyncUDataClient(_UDataClientCore):
             before = self._breakers.inspect(key)
             try:
                 response = sync_transport.send(request)
-            except TransportFailure:
+            except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
@@ -3665,7 +3696,7 @@ class SyncUDataClient(_UDataClientCore):
         if not self._closed:
             self._closed = True
             if self._owns_transport:
-                cast(CatalogTransport, self._transport).close()
+                cast("CatalogTransport", self._transport).close()
 
     def __enter__(self) -> Self:
         """Enter the client context."""
@@ -3772,6 +3803,16 @@ class AsyncUDataClient(_UDataClientCore):
         return AsyncTaxonomiesService(self)
 
     @property
+    def topics(self) -> _AsyncTopicsService:
+        """Expose the complete typed topic and topic-element service."""
+        return AsyncTopicsService(self)
+
+    @property
+    def transfers(self) -> _AsyncTransfersService:
+        """Expose the complete typed dataset ownership-transfer service."""
+        return AsyncTransfersService(self)
+
+    @property
     def activity_discussions(self) -> _AsyncActivityDiscussionsService:
         """Expose the complete typed activity and discussion service."""
         return AsyncActivityDiscussionsService(self)
@@ -3790,6 +3831,11 @@ class AsyncUDataClient(_UDataClientCore):
     def auth_oauth(self) -> _AsyncAuthOAuthService:
         """Expose the typed OAuth and authentication service."""
         return AsyncAuthOAuthService(self)
+
+    @property
+    def harvest_moderation_admin(self) -> _AsyncHarvestService:
+        """Expose the typed harvest source, job, and bounded admin bulk service."""
+        return AsyncHarvestService(self)
 
     @property
     def contact_visualization(self) -> _AsyncContactVisualizationService:
@@ -3835,7 +3881,7 @@ class AsyncUDataClient(_UDataClientCore):
             )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        async_transport = cast(AsyncCatalogTransport, self._transport)
+        async_transport = cast("AsyncCatalogTransport", self._transport)
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -3858,7 +3904,7 @@ class AsyncUDataClient(_UDataClientCore):
             before = self._breakers.inspect(key)
             try:
                 response = await async_transport.send(request)
-            except TransportFailure:
+            except TransportError:
                 recorded = True
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
@@ -3917,8 +3963,8 @@ class AsyncUDataClient(_UDataClientCore):
                     self, self._transport, request, credential, json_body, origin=self._origin
                 )
             else:
-                response = await cast(AsyncCatalogTransport, self._transport).send(request)
-        except TransportFailure:
+                response = await cast("AsyncCatalogTransport", self._transport).send(request)
+        except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
             self._emit_breaker_change(owning_id, before.open, after.open)
@@ -4092,7 +4138,7 @@ class AsyncUDataClient(_UDataClientCore):
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        async_transport = cast(AsyncCatalogTransport, self._transport)
+        async_transport = cast("AsyncCatalogTransport", self._transport)
         send_stream = getattr(async_transport, "send_stream", None)
         if not callable(send_stream):
             raise CatalogValidationError(
@@ -4115,8 +4161,8 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             before = self._breakers.inspect(key)
             try:
-                response = cast(AsyncRuntimeStreamResponse, await send_stream(request))
-            except TransportFailure:
+                response = cast("AsyncRuntimeStreamResponse", await send_stream(request))
+            except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 settled = True
@@ -4126,7 +4172,7 @@ class AsyncUDataClient(_UDataClientCore):
             try:
                 self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
                 if response.status_code in {301, 302, 303, 307, 308}:
-                    _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
+                    _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
                     return response
             except ASYNC_SETTLEMENT_ERRORS as error:
                 self._emit(owning_id, "failed")
@@ -4145,7 +4191,7 @@ class AsyncUDataClient(_UDataClientCore):
         if not self._closed:
             self._closed = True
             if self._owns_transport:
-                await cast(AsyncCatalogTransport, self._transport).aclose()
+                await cast("AsyncCatalogTransport", self._transport).aclose()
 
     async def __aenter__(self) -> Self:
         """Enter the async client context."""
@@ -4169,7 +4215,7 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
         transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(CatalogTransport, override)
+        transport = cast("CatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], CatalogTransport]", override)
@@ -4200,7 +4246,7 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
         transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(AsyncCatalogTransport, override)
+        transport = cast("AsyncCatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], AsyncCatalogTransport]", override)
@@ -4291,6 +4337,10 @@ def _load_services():
         SyncDataservicesService,
     )
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.udata.services.harvest import (
+        AsyncHarvestService,
+        SyncHarvestService,
+    )
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
         AsyncOrganizationsMembershipsService,
         SyncOrganizationsMembershipsService,
@@ -4312,6 +4362,14 @@ def _load_services():
     from datasluice.connectors.catalog.udata.services.taxonomies import (
         AsyncTaxonomiesService,
         SyncTaxonomiesService,
+    )
+    from datasluice.connectors.catalog.udata.services.topics import (
+        AsyncTopicsService,
+        SyncTopicsService,
+    )
+    from datasluice.connectors.catalog.udata.services.transfers import (
+        AsyncTransfersService,
+        SyncTransfersService,
     )
     from datasluice.connectors.catalog.udata.services.users_tokens import (
         AsyncUsersTokensService,
@@ -4345,6 +4403,12 @@ def _load_services():
         SyncAuthOAuthService,
         AsyncContactVisualizationService,
         SyncContactVisualizationService,
+        AsyncTransfersService,
+        SyncTransfersService,
+        AsyncTopicsService,
+        SyncTopicsService,
+        AsyncHarvestService,
+        SyncHarvestService,
     )
 
 
@@ -4375,4 +4439,10 @@ def _load_services():
     SyncAuthOAuthService,
     AsyncContactVisualizationService,
     SyncContactVisualizationService,
+    AsyncTransfersService,
+    SyncTransfersService,
+    AsyncTopicsService,
+    SyncTopicsService,
+    AsyncHarvestService,
+    SyncHarvestService,
 ) = _load_services()

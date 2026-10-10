@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from datasluice.connectors.catalog.udata.settings import normalize_origin
 from datasluice.domain.catalog.auth import credential_scope
 from datasluice.errors.catalog import CatalogUnavailableError, NativeCatalogError, map_catalog_error
-from datasluice.runtime.clients import AsyncCatalogTransport
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from datasluice.runtime.clients import AsyncCatalogTransport
 
 SITE_PATH = "/api/1/site/"
 SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"

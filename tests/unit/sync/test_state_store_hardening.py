@@ -50,9 +50,11 @@ def _assert_rejected_before_pipe(
 ) -> None:
     prior_raw = store.read_raw(key)
     original_pipe = store._fs.pipe_file
-    with patch.object(store._fs, "pipe_file", wraps=original_pipe) as pipe_file:
-        with pytest.raises(StateStoreError) as exc_info:
-            store.put(key, state)
+    with (
+        patch.object(store._fs, "pipe_file", wraps=original_pipe) as pipe_file,
+        pytest.raises(StateStoreError) as exc_info,
+    ):
+        store.put(key, state)
     pipe_file.assert_not_called()
     assert store.read_raw(key) == prior_raw
     message = str(exc_info.value)
@@ -258,7 +260,7 @@ def test_arbitrary_cursor_mapping_is_rejected_before_write(file_store: FileState
         _assert_rejected_before_pipe(
             file_store,
             key,
-            SyncState(cursor=cast(Any, cursor)),
+            SyncState(cursor=cast("Any", cursor)),
             secret_fragments=(opaque_value,),
         )
         assert file_store.get(key) == prior
@@ -445,9 +447,9 @@ def test_move_failure_preserves_prior_complete_state(file_store: FileStateStore)
     with (
         patch.object(file_store._fs, "pipe_file", wraps=original_pipe) as pipe_file,
         patch.object(file_store._fs, "mv", side_effect=OSError("injected move failure")),
+        pytest.raises(StateStoreError, match="Failed to publish durable state envelope"),
     ):
-        with pytest.raises(StateStoreError, match="Failed to publish durable state envelope"):
-            file_store.put(key, new_state)
+        file_store.put(key, new_state)
 
     pipe_file.assert_called_once()
     assert file_store.get(key) == old_state

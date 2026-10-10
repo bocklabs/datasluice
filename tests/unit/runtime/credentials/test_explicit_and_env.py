@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -19,6 +19,9 @@ from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.runtime.credentials import discover_enabled
 from datasluice.runtime.credentials.environment import EnvironmentCredentialProvider
 from datasluice.runtime.credentials.explicit import explicit_resolver
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def test_explicit_credentials_win_over_discovered_keychain_credentials() -> None:

@@ -50,7 +50,7 @@ class Facade:
 
 
 def _open_data_sluice() -> DataSluice:
-    return cast(DataSluice, Facade())
+    return cast("DataSluice", Facade())
 
 
 def main() -> int:

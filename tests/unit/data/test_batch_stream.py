@@ -125,10 +125,10 @@ def test_iterable_bytes_io_read() -> None:
         _byte_module = importlib.import_module("datasluice.data._byte_source")
     except ImportError:
         pytest.skip("IterableBytesIO not yet implemented")
-    IterableBytesIO = _byte_module.IterableBytesIO
+    iterable_bytes_io = _byte_module.IterableBytesIO
 
     source = [b"hello ", b"world", b"!"]
-    bio = IterableBytesIO(source)
+    bio = iterable_bytes_io(source)
     assert bio.readable() is True
     assert bio.seekable() is False
     assert bio.writable() is False
@@ -147,10 +147,10 @@ def test_iterable_bytes_io_chunks() -> None:
         _byte_module = importlib.import_module("datasluice.data._byte_source")
     except ImportError:
         pytest.skip("IterableBytesIO not yet implemented")
-    IterableBytesIO = _byte_module.IterableBytesIO
+    iterable_bytes_io = _byte_module.IterableBytesIO
 
     source = [b"ab", b"cd", b"ef"]
-    bio = IterableBytesIO(source)
+    bio = iterable_bytes_io(source)
     assert bio.read(3) == b"abc"
     assert bio.read(3) == b"def"
     assert bio.read() == b""

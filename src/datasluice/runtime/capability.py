@@ -6,14 +6,12 @@ import asyncio
 import inspect
 import math
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
-from typing import Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 from urllib.parse import urlsplit, urlunsplit
 
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard
-from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import (
     CredentialClassification,
@@ -34,6 +32,11 @@ from datasluice.errors.catalog import (
     UnsupportedCapabilityError,
 )
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from datasluice.domain.catalog.auth import EffectivePermissions
 
 
 @runtime_checkable
@@ -446,7 +449,7 @@ class EffectiveCapabilityCache:
             result = runner.probe(operation_id)
             if inspect.isawaitable(result):
                 raise TypeError("Synchronous capability runners cannot return awaitables.")
-            evidence = cast(ProbeEvidence, result)
+            evidence = cast("ProbeEvidence", result)
             self._validate_evidence(operation_id, evidence, credential_scope=credential_scope)
         except CatalogValidationError:
             raise

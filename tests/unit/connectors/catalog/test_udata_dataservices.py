@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import pytest
@@ -36,7 +35,6 @@ from datasluice.connectors.catalog.udata.services.dataservices import (
     SyncDataservicesService,
 )
 from datasluice.connectors.catalog.udata.wire import dataservices as wire
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import (
     CatalogNotFoundError,
     CatalogUnavailableError,
@@ -44,7 +42,7 @@ from datasluice.errors.catalog import (
     ForbiddenError,
 )
 from datasluice.runtime.events import EventEmitter, ListSink
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
     UDATA_CREDENTIAL,
@@ -62,6 +60,11 @@ from tests.helpers.udata_test_support import (
     udata_page,
     with_site_route,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 ORIGIN = UDATA_ORIGIN
 _BASE: dict[str, object] = {"title": "An API", "base_api_url": "https://example.com"}
@@ -304,7 +307,7 @@ def test_dataservice_queries_reject_invalid_input_before_dispatch() -> None:
     with pytest.raises(ValueError):
         DataserviceDatasetLinkInput(("dataset-1", ""))
     with pytest.raises(ValueError):
-        DataserviceDeleteOptions(send_legal_notice=cast(bool, "yes"))
+        DataserviceDeleteOptions(send_legal_notice=cast("bool", "yes"))
 
 
 @pytest.mark.parametrize("oversized", [101, 1_000, 10**9])
@@ -341,7 +344,7 @@ def test_dataservice_paging_accepts_the_exact_ceiling_boundary() -> None:
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
         page = client.dataservices.list_dataservices(DataserviceListQuery(page_size=100))
-        assert cast(Mapping[str, object], thawed(page.payload))["page_size"] == 100
+        assert cast("Mapping[str, object]", thawed(page.payload))["page_size"] == 100
     assert [r.url for r in router.requests if "/dataservices" in r.url] == [
         f"{ORIGIN}{DATASERVICES}/?page=1&page_size=100"
     ]
@@ -361,9 +364,9 @@ def test_dataservice_paging_accepts_the_exact_ceiling_boundary() -> None:
 def test_dataservice_url_fields_reject_a_non_http_url(url_field: str) -> None:
     """Upstream types every one of these as a URLField, so a non-http value is refused before dispatch."""
     with pytest.raises(ValueError, match="absolute http"):
-        DataserviceCreateInput(**cast(Any, {**_BASE, url_field: "ftp://x/y"}))
+        DataserviceCreateInput(**cast("Any", {**_BASE, url_field: "ftp://x/y"}))
     with pytest.raises(ValueError, match="absolute http"):
-        DataserviceUpdateInput(**cast(Any, {url_field: "ftp://x/y"}))
+        DataserviceUpdateInput(**cast("Any", {url_field: "ftp://x/y"}))
 
 
 @pytest.mark.parametrize(
@@ -381,9 +384,9 @@ def test_dataservice_url_fields_reject_a_non_http_url(url_field: str) -> None:
 def test_dataservice_field_validation_rejects_documented_type_violations(field: str, value: object) -> None:
     """Each documented constraint is enforced on both the create and the patch input."""
     with pytest.raises(ValueError):
-        DataserviceCreateInput(**cast(Any, {**_BASE, field: value}))
+        DataserviceCreateInput(**cast("Any", {**_BASE, field: value}))
     with pytest.raises(ValueError):
-        DataserviceUpdateInput(**cast(Any, {field: value}))
+        DataserviceUpdateInput(**cast("Any", {field: value}))
 
 
 def test_dataservice_nested_inputs_are_deep_frozen_and_json_safe() -> None:
@@ -396,10 +399,10 @@ def test_dataservice_nested_inputs_are_deep_frozen_and_json_safe() -> None:
         extras={"nested": {"k": "v"}},
     )
     with pytest.raises(TypeError):
-        cast(dict[str, object], client_input.extras)["nested"] = "changed"  # type: ignore[assignment]
+        cast("dict[str, object]", client_input.extras)["nested"] = "changed"  # type: ignore[assignment]
     assert client_input.payload()["contact_points"] == [{"email": "a@example.com"}]
     with pytest.raises(ValueError, match="JSON-safe"):
-        DataserviceCreateInput(**cast(Any, {**_BASE, "extras": {"bad": {1, 2}}}))
+        DataserviceCreateInput(**cast("Any", {**_BASE, "extras": {"bad": {1, 2}}}))
 
 
 def test_every_dataservice_read_dispatches_under_its_own_operation_identity() -> None:
@@ -418,14 +421,16 @@ def test_every_dataservice_read_dispatches_under_its_own_operation_identity() ->
         )
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
-        assert cast(Mapping[str, object], thawed(client.dataservices.list_dataservices().payload))["total"] == 1
+        assert cast("Mapping[str, object]", thawed(client.dataservices.list_dataservices().payload))["total"] == 1
         assert thawed(client.dataservices.get_dataservice("ds-1").payload) == _dataservice()
         assert client.dataservices.recent_dataservices_atom_feed().payload["media_type"] == "application/atom+xml"
         assert (
-            cast(Mapping[str, object], thawed(client.dataservices.list_dataservice_followers("ds-1").payload))["total"]
+            cast("Mapping[str, object]", thawed(client.dataservices.list_dataservice_followers("ds-1").payload))[
+                "total"
+            ]
             == 1
         )
-        assert cast(Mapping[str, object], thawed(client.dataservices.search_dataservices().payload))["total"] == 1
+        assert cast("Mapping[str, object]", thawed(client.dataservices.search_dataservices().payload))["total"] == 1
     read_requests = [r for r in router.requests if "dataservices" in r.url]
     assert [(r.method, r.url) for r in read_requests] == [
         ("GET", f"{ORIGIN}{DATASERVICES}/?page=1&page_size=20"),
@@ -441,7 +446,7 @@ def test_dataservice_public_reads_succeed_without_any_credential() -> None:
         with_site_route({("GET", f"{ORIGIN}{DATASERVICES}/?page=1&page_size=20"): (200, udata_page(_dataservice()))})
     )
     with anonymous_sync_client(router) as client:
-        assert cast(Mapping[str, object], thawed(client.dataservices.list_dataservices().payload))["total"] == 1
+        assert cast("Mapping[str, object]", thawed(client.dataservices.list_dataservices().payload))["total"] == 1
     read_request = next(r for r in router.requests if "/dataservices/" in r.url)
     assert "X-API-KEY" not in dict(read_request.headers)
 
@@ -593,7 +598,7 @@ def test_rows97_98_rdf_routes_match_exact_paths_and_bounded_documents() -> None:
         f"{DATASERVICES}/ds-1/rdf", 302, body=b"", headers={"Location": f"{ORIGIN}{DATASERVICES}/ds-1/rdf.ttl"}
     )
     with sync_client(redirect_router, UDATA_CREDENTIAL) as client:
-        receipt = cast(MutationReceipt, client.dataservices.rdf_dataservice("ds-1"))
+        receipt = cast("MutationReceipt", client.dataservices.rdf_dataservice("ds-1"))
         assert str(receipt.operation) == wire.RDF_DATASERVICE_OPERATION
         assert receipt.target.value == "ds-1"
         assert receipt.outcome == "skipped"
@@ -630,9 +635,8 @@ def test_dataservice_mutation_failure_yields_redacted_receipt_with_exact_target(
 
 def test_dataservice_destructive_delete_fails_closed_without_a_confirmed_policy() -> None:
     router = atom_sync_route_table(with_site_route({}))
-    with sync_client(router, UDATA_CREDENTIAL) as client:
-        with pytest.raises(ForbiddenError):
-            client.dataservices.delete_dataservice("ds-1", EDIT_ONLY_PERMISSIONS, None)
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError):
+        client.dataservices.delete_dataservice("ds-1", EDIT_ONLY_PERMISSIONS, None)
     assert [r for r in router.requests if "/dataservices" in r.url] == []
 
 
@@ -647,9 +651,8 @@ def test_dataservice_missing_target_maps_to_a_typed_not_found_error() -> None:
     router = sync_route_table(
         with_site_route({("GET", f"{ORIGIN}{DATASERVICES}/missing/"): (404, {"message": "Not found"})})
     )
-    with sync_client(router, UDATA_CREDENTIAL) as client:
-        with pytest.raises(CatalogNotFoundError):
-            client.dataservices.get_dataservice("missing")
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(CatalogNotFoundError):
+        client.dataservices.get_dataservice("missing")
 
 
 def test_dataservice_async_mode_matches_sync_exact_wire() -> None:
@@ -665,7 +668,7 @@ def test_dataservice_async_mode_matches_sync_exact_wire() -> None:
     async def run() -> None:
         async with async_client(router, UDATA_CREDENTIAL) as client:
             page = await client.dataservices.list_dataservices()
-            assert cast(Mapping[str, object], thawed(page.payload))["total"] == 1
+            assert cast("Mapping[str, object]", thawed(page.payload))["total"] == 1
             featured = await client.dataservices.feature_dataservice(
                 "ds-1", ADMIN_PERMISSIONS, _policy(wire.FEATURE_DATASERVICE_OPERATION, "ds-1")
             )
@@ -780,7 +783,7 @@ def test_dataservice_sync_cancellation_leaves_post_state_ready_and_closes_the_ow
     assert transport.close_count == 0
 
     transport.armed = False
-    assert cast(Mapping[str, object], thawed(client.dataservices.list_dataservices().payload))["total"] == 1
+    assert cast("Mapping[str, object]", thawed(client.dataservices.list_dataservices().payload))["total"] == 1
 
     client.close()
     client.close()
@@ -790,15 +793,17 @@ def test_dataservice_sync_cancellation_leaves_post_state_ready_and_closes_the_ow
 def test_dataservice_sync_cancellation_never_closes_a_borrowed_transport() -> None:
     """A borrowed transport survives the same interrupted read and the context exit untouched."""
     transport = _CancellingSyncTransport(("GET", _LIST_URL), KeyboardInterrupt(), mutation=("DELETE", _DELETE_URL))
-    with SyncUDataClient(
-        transport,
-        declared_udata_profile(),
-        origin=ORIGIN,
-        credentials=UDATA_CREDENTIAL,
-        owns_transport=False,
-    ) as client:
-        with pytest.raises(KeyboardInterrupt):
-            client.dataservices.list_dataservices()
+    with (
+        SyncUDataClient(
+            transport,
+            declared_udata_profile(),
+            origin=ORIGIN,
+            credentials=UDATA_CREDENTIAL,
+            owns_transport=False,
+        ) as client,
+        pytest.raises(KeyboardInterrupt),
+    ):
+        client.dataservices.list_dataservices()
     assert transport.close_count == 0
 
 
@@ -812,16 +817,16 @@ def test_dataservice_sync_cancellation_is_never_recorded_as_a_circuit_breaker_fa
             client.dataservices.list_dataservices()
 
     transport.armed = False
-    assert cast(Mapping[str, object], thawed(client.dataservices.list_dataservices().payload))["total"] == 1
+    assert cast("Mapping[str, object]", thawed(client.dataservices.list_dataservices().payload))["total"] == 1
     assert [event.outcome for event in events.events if "breaker" in event.outcome] == []
     client.close()
 
 
 def test_dataservice_transport_failures_still_open_the_circuit_before_the_next_read() -> None:
     """The breaker is live for this family: genuine transport failures still fail the following read closed."""
-    client, transport = _dataservice_sync_client(TransportFailure("no route"))
+    client, transport = _dataservice_sync_client(TransportError("no route"))
 
-    with pytest.raises(TransportFailure):
+    with pytest.raises(TransportError):
         client.dataservices.list_dataservices()
 
     transport.armed = False
@@ -862,7 +867,7 @@ def test_dataservice_async_cancellation_leaves_post_state_ready_and_closes_the_o
 
         transport.armed = False
         page = await client.dataservices.list_dataservices()
-        assert cast(Mapping[str, object], thawed(page.payload))["total"] == 1
+        assert cast("Mapping[str, object]", thawed(page.payload))["total"] == 1
 
         await client.aclose()
         await client.aclose()
@@ -904,7 +909,7 @@ def test_dataservice_async_cancellation_is_never_recorded_as_a_circuit_breaker_f
                 await client.dataservices.list_dataservices()
         transport.armed = False
         page = await client.dataservices.list_dataservices()
-        assert cast(Mapping[str, object], thawed(page.payload))["total"] == 1
+        assert cast("Mapping[str, object]", thawed(page.payload))["total"] == 1
         await client.aclose()
 
     asyncio.run(run())

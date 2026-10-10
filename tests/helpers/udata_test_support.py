@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
@@ -10,10 +11,12 @@ from datasluice.connectors.catalog.udata.clients import (
 )
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
+    from datasluice.runtime.events import EventEmitter, ListSink
 
 UDATA_ORIGIN = "http://127.0.0.1:5640"
 UDATA_SITE = {"feed_size": 0, "id": "site", "keywords": [], "metrics": {}, "title": "uData", "version": "17.6.0"}

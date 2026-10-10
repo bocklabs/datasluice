@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Never, cast
+from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.clients import (
@@ -22,7 +22,6 @@ from datasluice.connectors.catalog.udata.wire import root_profile as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform
 from datasluice.domain.catalog.operations import OperationId
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.domain.catalog.udata import (
     ROOT_OPERATION,
@@ -47,7 +46,10 @@ from datasluice.errors.catalog import (
     attach_catalog_metadata,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
-from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse, TransportFailure
+from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse, TransportError
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _JSON_MEDIA_TYPE = "application/json"
 
@@ -162,7 +164,7 @@ def _error_status(error: BaseException, response: object | None = None) -> int:
         return status
     metadata = getattr(error, "metadata", None)
     if isinstance(metadata, Mapping) and isinstance(metadata.get("status_code"), int):
-        return cast(int, metadata["status_code"])
+        return cast("int", metadata["status_code"])
     response_status = getattr(response, "status_code", None)
     return response_status if isinstance(response_status, int) else 0
 
@@ -176,7 +178,7 @@ def _mutation_outcome(error: BaseException, response: object | None = None) -> s
     response_status = getattr(response, "status_code", None)
     if isinstance(response_status, int) and 200 <= response_status < 300:
         return "ambiguous"
-    if isinstance(error, TransportFailure):
+    if isinstance(error, TransportError):
         return "ambiguous"
     if _error_status(error, response) == 0 and isinstance(
         error, (UnauthenticatedError, ForbiddenError, CatalogValidationError)
@@ -323,9 +325,9 @@ def _decode_profile(payload: object) -> SiteProfile:
 def _decode_patch(payload: object, response: object) -> SiteProfile | None:
     if getattr(response, "body", b""):
         wire.response_media_type(
-            cast(Mapping[str, str], getattr(response, "headers", {})),
+            cast("Mapping[str, str]", getattr(response, "headers", {})),
             operation=SET_SITE_OPERATION,
-            status_code=cast(int, getattr(response, "status_code", 0)),
+            status_code=cast("int", getattr(response, "status_code", 0)),
             expected_media_type=_JSON_MEDIA_TYPE,
         )
     return None if payload is None else wire.parse_site_profile(payload, operation=SET_SITE_OPERATION)
@@ -341,7 +343,7 @@ def _parse_redirect(
 ) -> SiteDocument:
     return wire.parse_redirect(
         status_code=status,
-        headers=cast(Mapping[str, str], value),
+        headers=cast("Mapping[str, str]", value),
         endpoint=endpoint,
         origin=origin,
         expected_path=expected_path,
@@ -778,7 +780,7 @@ class SyncRootProfileService:
                 emit_success=False,
             )
             return wire.parse_jsonld_context(
-                cast(bytes, body),
+                cast("bytes", body),
                 endpoint=path,
                 response_media_type=wire.response_media_type(
                     response.headers,
@@ -1017,7 +1019,7 @@ class AsyncRootProfileService:
                 emit_success=False,
             )
             return wire.parse_jsonld_context(
-                cast(bytes, body),
+                cast("bytes", body),
                 endpoint=path,
                 response_media_type=wire.response_media_type(
                     response.headers,

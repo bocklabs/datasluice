@@ -1,3 +1,7 @@
+ci:
+  skip: [pylint]
+
+
 repos:
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.21.2
@@ -84,3 +88,14 @@ repos:
     hooks:
       - id: check-ast
       - id: check-docstring-first
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: "0.26"
+    hooks:
+      - id: validate-pyproject
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        args: [--ignore-words-list=blocs]

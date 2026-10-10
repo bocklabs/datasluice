@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
 from io import BytesIO
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -37,6 +36,9 @@ from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class _Router:
@@ -875,11 +877,11 @@ def test_approved_text_media_type_remediation_lists_the_approved_set() -> None:
             approved_media_types=APPROVED_TEXT_MEDIA_TYPES,
             list_approved_action=True,
         )
-    safe_action = cast(dict[str, object], raised.value.metadata)["safe_action"]
-    assert cast(str, safe_action).startswith("Request one of the approved media types: ")
-    assert "text/html" not in cast(str, safe_action)
+    safe_action = cast("dict[str, object]", raised.value.metadata)["safe_action"]
+    assert cast("str", safe_action).startswith("Request one of the approved media types: ")
+    assert "text/html" not in cast("str", safe_action)
     for approved in APPROVED_TEXT_MEDIA_TYPES:
-        assert approved in cast(str, safe_action)
+        assert approved in cast("str", safe_action)
 
 
 def test_stream_guard_annotations_omit_generator_parameter_defaults() -> None:

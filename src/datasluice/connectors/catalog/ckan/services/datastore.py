@@ -13,7 +13,6 @@ dialects alike) flow verbatim per D-04.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
@@ -25,15 +24,17 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncNativeService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
 from datasluice.connectors.catalog.ckan.services._shared import WireParams, wire_params
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _GROUP = "datastore"
 

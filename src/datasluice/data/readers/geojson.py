@@ -18,11 +18,13 @@ swap in shapely if richer WKT coverage is needed.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasluice.data.readers.base import BaseFormatReader
 from datasluice.exceptions import FormatError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class GeoJSONReader(BaseFormatReader):

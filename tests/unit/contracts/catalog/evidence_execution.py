@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterable, Mapping
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+    from pathlib import Path
 
 CLIENT_CONSTRUCTORS = {"create_sync_client": "sync", "create_async_client": "async"}
 CLIENT_FAMILIES = {"auth_oauth", "taxonomies", "users_tokens", "organizations_memberships"}

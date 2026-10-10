@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasluice.domain import SyncState
 from datasluice.runtime.plugin_manager import PluginManager
 from datasluice.sync import FileStateStore, InMemoryStateStore
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class _StateStoreSpy:

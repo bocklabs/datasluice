@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
 from datasluice.cli._output import diagnostic_console, render_json, render_jsonl_rows, result_console
 from datasluice.cli._resolver import open_data_sluice, parse_locator, resolve_one_resource
 from datasluice.exceptions import DataSluiceError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
 
 DEFAULT_PREVIEW_ROWS = 20
 

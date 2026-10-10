@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _POST_SORTS = ("created_at", "modified", "published", "name", "headline", "content")
 _POST_SEARCH_SORTS = ("created", "last_modified", "published")

@@ -45,6 +45,10 @@ _EXPECTED_OPERATION_IDS = {
     "udata/api-v2.search-discussions",
     "udata/api-v1.harvest-moderation-and-admin-operations",
     "udata/deployment-plugin-and-configuration-dependent-routes",
+    "udata/api-v1.access-type-reason-categories",
+    "udata/api-v1.suggest-tags",
+    "udata/api-v1.avatar",
+    "udata/api-v2.captchetat",
 }
 _RESOURCE_ROUTE_OPERATION_IDS = {
     "udata/api-v1.dataset-resource-create-update-reorder-upload-delete-create",
@@ -214,6 +218,46 @@ _SPATIAL_ROUTE_OPERATION_IDS = {
 }
 
 
+_TOPIC_ROUTE_OPERATION_IDS = {
+    "udata/api-v2.list-topics",
+    "udata/api-v2.search-topics",
+    "udata/api-v2.get-topic",
+    "udata/api-v2.create-topic",
+    "udata/api-v2.update-topic",
+    "udata/api-v2.delete-topic",
+    "udata/api-v2.topic-elements",
+    "udata/api-v2.topic-elements-create",
+    "udata/api-v2.topic-elements-delete",
+    "udata/api-v2.topic-element-update",
+    "udata/api-v2.topic-element-delete",
+    "udata/api-v2.feature-topic",
+    "udata/api-v2.unfeature-topic",
+}
+
+
+_TRANSFER_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-transfers",
+    "udata/api-v1.request-transfer",
+    "udata/api-v1.get-transfer",
+    "udata/api-v1.respond-to-transfer",
+}
+
+
+_CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-visualizations",
+    "udata/api-v1.create-visualization",
+    "udata/api-v1.get-visualization",
+    "udata/api-v1.update-visualization",
+    "udata/api-v1.delete-visualization",
+    "udata/api-v1.visualization-image",
+    "udata/api-v1.create-contact-point",
+    "udata/api-v1.get-contact-point",
+    "udata/api-v1.update-contact-point",
+    "udata/api-v1.delete-contact-point",
+    "udata/api-v1.contact-point-roles",
+}
+
+
 _OAUTH_ROUTE_OPERATION_IDS = {
     "udata/oauth.access-token",
     "udata/oauth.authorize",
@@ -347,6 +391,9 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _POSTS_REPORTS_ROUTE_OPERATION_IDS
         | _SPATIAL_ROUTE_OPERATION_IDS
         | _DATASERVICE_ROUTE_OPERATION_IDS
+        | _TOPIC_ROUTE_OPERATION_IDS
+        | _TRANSFER_ROUTE_OPERATION_IDS
+        | _CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 

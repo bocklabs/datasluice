@@ -8,13 +8,15 @@ and never crashes session creation.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasluice.exceptions import ConnectorNotFoundError
 from datasluice.logging import get_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = get_logger("runtime.plugin_manager")
 

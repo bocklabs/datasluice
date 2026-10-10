@@ -6,6 +6,7 @@ import hmac
 import logging
 import secrets
 from io import BytesIO
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,7 +17,6 @@ from datasluice.connectors.catalog.udata.models.users import (
     UserAvatarInput,
 )
 from datasluice.connectors.catalog.udata.services import users_tokens as users_tokens_service
-from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import (
     CatalogConflictError,
@@ -39,6 +39,9 @@ from tests.unit.connectors.catalog.test_udata_users_tokens import (
     _Router,
     _routes,
 )
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.operations import OperationId
 
 
 @pytest.mark.parametrize("async_mode", [False, True])
@@ -156,9 +159,10 @@ def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> Non
             pytest.fail("One-time token entered a retained failure value.")
         traceback = error.__traceback__
         while traceback is not None:
-            if str(traceback.tb_frame.f_globals.get("__name__", "")).startswith("datasluice"):
-                if plaintext in repr(traceback.tb_frame.f_locals):
-                    pytest.fail("One-time token entered a connector failure frame.")
+            if str(traceback.tb_frame.f_globals.get("__name__", "")).startswith("datasluice") and plaintext in repr(
+                traceback.tb_frame.f_locals
+            ):
+                pytest.fail("One-time token entered a connector failure frame.")
             traceback = traceback.tb_next
         revoked = client.users_tokens.revoke_api_token(
             receipt.target.value,
@@ -335,9 +339,10 @@ def test_interruption_after_token_decode_discards_reveal_once_result(monkeypatch
     assert receipt.target.value == "token-id"
     traceback = raised.value.__traceback__
     while traceback is not None:
-        if str(traceback.tb_frame.f_globals.get("__name__", "")).startswith("datasluice"):
-            if plaintext in repr(traceback.tb_frame.f_locals):
-                pytest.fail("Interrupted token plaintext remained in a connector traceback frame.")
+        if str(traceback.tb_frame.f_globals.get("__name__", "")).startswith("datasluice") and plaintext in repr(
+            traceback.tb_frame.f_locals
+        ):
+            pytest.fail("Interrupted token plaintext remained in a connector traceback frame.")
         traceback = traceback.tb_next
 
 
