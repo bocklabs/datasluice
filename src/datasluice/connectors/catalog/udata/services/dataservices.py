@@ -40,13 +40,13 @@ _mutation = partial(
     _run_mutation,
     SETTLEMENT_ERRORS,
     DataserviceMutationResult,
-    ResourceKind.DATASET,
+    ResourceKind("dataservice"),
 )
 _mutation_async = partial(
     _run_mutation_async,
     ASYNC_SETTLEMENT_ERRORS,
     DataserviceMutationResult,
-    ResourceKind.DATASET,
+    ResourceKind("dataservice"),
 )
 
 

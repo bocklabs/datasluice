@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -468,6 +469,7 @@ def test_dataservice_create_update_and_delete_match_exact_wire_and_receipts() ->
             _policy(wire.CREATE_DATASERVICE_OPERATION, "An API"),
         )
         assert created.receipt.target.value == "dataservice-1"
+        assert created.receipt.target.resource_kind.value == "dataservice"
         assert created.receipt.outcome == "succeeded"
         updated = client.dataservices.update_dataservice(
             "ds-1",
@@ -601,6 +603,7 @@ def test_rows97_98_rdf_routes_match_exact_paths_and_bounded_documents() -> None:
         receipt = cast("MutationReceipt", client.dataservices.rdf_dataservice("ds-1"))
         assert str(receipt.operation) == wire.RDF_DATASERVICE_OPERATION
         assert receipt.target.value == "ds-1"
+        assert receipt.target.resource_kind.value == "dataservice"
         assert receipt.outcome == "skipped"
     assert [r.url for r in redirect_router.requests if "/rdf" in r.url] == [f"{ORIGIN}{DATASERVICES}/ds-1/rdf"]
 
@@ -673,6 +676,7 @@ def test_dataservice_async_mode_matches_sync_exact_wire() -> None:
                 "ds-1", ADMIN_PERMISSIONS, _policy(wire.FEATURE_DATASERVICE_OPERATION, "ds-1")
             )
             assert featured.receipt.target.value == "ds-1"
+            assert featured.receipt.target.resource_kind.value == "dataservice"
 
     asyncio.run(run())
     requests = [r for r in router.requests if "dataservices" in r.url]
@@ -735,6 +739,7 @@ class _CancellingAsyncTransport(_InterruptingRoutes):
         self.aclose_count = 0
 
     async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+        await asyncio.sleep(0)
         return self._respond(request)
 
     async def aclose(self) -> None:
@@ -870,6 +875,63 @@ def test_dataservice_async_cancellation_leaves_post_state_ready_and_closes_the_o
         assert cast("Mapping[str, object]", thawed(page.payload))["total"] == 1
 
         await client.aclose()
+        await client.aclose()
+        assert transport.aclose_count == 1
+
+    asyncio.run(run())
+
+
+def test_dataservice_sync_parallel_reads_preserve_results_and_owned_cleanup() -> None:
+    client, transport = _dataservice_sync_client(TimeoutError())
+    transport.armed = False
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pages = list(executor.map(lambda _: client.dataservices.list_dataservices(), range(2)))
+    assert [page.payload["total"] for page in pages] == [1, 1]
+    client.close()
+    assert transport.close_count == 1
+
+
+def test_dataservice_async_parallel_reads_preserve_results_and_owned_cleanup() -> None:
+    client, transport = _dataservice_async_client(TimeoutError())
+    transport.armed = False
+
+    async def run() -> None:
+        pages = await asyncio.gather(client.dataservices.list_dataservices(), client.dataservices.list_dataservices())
+        assert [page.payload["total"] for page in pages] == [1, 1]
+        await client.aclose()
+        assert transport.aclose_count == 1
+
+    asyncio.run(run())
+
+
+def test_dataservice_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> None:
+    client, transport = _dataservice_sync_client(TimeoutError())
+    with pytest.raises(TimeoutError) as stopped:
+        client.dataservices.delete_dataservice(
+            "ds-1", EDIT_ONLY_PERMISSIONS, _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
+        )
+    receipt = stopped.value.__dict__["mutation_receipt"]
+    assert receipt.outcome == "failed"
+    assert receipt.target.value == "ds-1"
+    transport.armed = False
+    assert client.dataservices.list_dataservices().payload["total"] == 1
+    client.close()
+    assert transport.close_count == 1
+
+
+def test_dataservice_async_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> None:
+    client, transport = _dataservice_async_client(TimeoutError())
+
+    async def run() -> None:
+        with pytest.raises(TimeoutError) as stopped:
+            await client.dataservices.delete_dataservice(
+                "ds-1", EDIT_ONLY_PERMISSIONS, _policy(wire.DELETE_DATASERVICE_OPERATION, "ds-1", destructive=True)
+            )
+        receipt = stopped.value.__dict__["mutation_receipt"]
+        assert receipt.outcome == "failed"
+        assert receipt.target.value == "ds-1"
+        transport.armed = False
+        assert (await client.dataservices.list_dataservices()).payload["total"] == 1
         await client.aclose()
         assert transport.aclose_count == 1
 

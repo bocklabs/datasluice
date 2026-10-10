@@ -297,6 +297,8 @@ class Transport:
         response = _content_response(url, method)
         if response is not None:
             return response
+        if url.endswith("/api/1/dataservices/wheel-dataservice/"):
+            return _json({"id": "wheel-dataservice", "title": "Wheel dataservice"})
         if method == "POST":
             return _json(
                 {
@@ -356,6 +358,7 @@ client = create_sync_client(
     UDataClientSettings(base_url="http://127.0.0.1:5640", sync_transport=transport, credential=sync_credential)
 )
 assert client.site_version().version == "17.6.0"
+assert client.dataservices.get_dataservice("wheel-dataservice").payload["id"] == "wheel-dataservice"
 root_profile = client.root_profile.get()
 assert root_profile.id == "s"
 root_export = client.root_profile.datasets_csv()
@@ -691,6 +694,7 @@ async_client = create_async_client(
 
 async def run_async():
     async with async_client as active:
+        assert (await active.dataservices.get_dataservice("wheel-dataservice")).payload["id"] == "wheel-dataservice"
         page = await active.datasets.list()
         root_profile = await active.root_profile.get()
         root_export = await active.root_profile.datasets_csv()
@@ -924,6 +928,7 @@ assert organization_created.receipt.audit_metadata["status_code"] == 201
 recorded = [getattr(r, "url", r) for r in transport.requests]
 expected = [
     "http://127.0.0.1:5640/api/1/site/",
+    "http://127.0.0.1:5640/api/1/dataservices/wheel-dataservice/",
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/site/datasets.csv",
     "http://127.0.0.1:5640/api/1/datasets/",
@@ -992,6 +997,7 @@ expected = [
 assert recorded == expected
 async_recorded = [getattr(r, "url", r) for r in async_transport.requests]
 assert set(async_recorded) == {
+    "http://127.0.0.1:5640/api/1/dataservices/wheel-dataservice/",
     "http://127.0.0.1:5640/api/1/site/",
     "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/1/site/datasets.csv",

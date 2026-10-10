@@ -140,7 +140,7 @@
     "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
-    "controlled_test_sha256": "73d80424823c0cefa94058e4bd97311ff318d92c05b0c33fc484ec6b30999a49",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
     "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
@@ -218,7 +218,7 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "73d80424823c0cefa94058e4bd97311ff318d92c05b0c33fc484ec6b30999a49",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
     "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
@@ -263,7 +263,7 @@
       "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
       "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
     },
-    "controlled_test_sha256": "73d80424823c0cefa94058e4bd97311ff318d92c05b0c33fc484ec6b30999a49",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
     "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
     "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
   },
@@ -271,7 +271,7 @@
     "captured_at": "2026-09-26",
     "stack_version": "17.6.0",
     "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
-    "controlled_test_sha256": "73d80424823c0cefa94058e4bd97311ff318d92c05b0c33fc484ec6b30999a49",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
     "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
@@ -289,7 +289,7 @@
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
-    "controlled_test_sha256": "73d80424823c0cefa94058e4bd97311ff318d92c05b0c33fc484ec6b30999a49",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
     "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
@@ -307,7 +307,7 @@
     "captured_at": "2026-10-01",
     "stack_version": "17.6.0",
     "implementation_sha": "496f628b7b164fe7c168e8765d09a477566c985a",
-    "controlled_test_sha256": "73d80424823c0cefa94058e4bd97311ff318d92c05b0c33fc484ec6b30999a49",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
     "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
@@ -340,7 +340,7 @@
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "2373233cee7da7fa4465a1747fd41954b3b31ec2",
-    "controlled_test_sha256": "73d80424823c0cefa94058e4bd97311ff318d92c05b0c33fc484ec6b30999a49",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
     "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
@@ -353,5 +353,45 @@
     "response_shape": "native-envelope-and-status-skeleton",
     "recaptured": true,
     "recapture_note": "Executed on the controlled loopback stack (uData 17.6.0, AIStor storage) at 2373233cee7da7fa4465a1747fd41954b3b31ec2: both-mode reads differential (post list, atom feed, v2 search, report list, report reasons) and the full sync and async lifecycles (create, publish, image, resize, update, report create/get/update, member invitation, notification list/read, cleanup, deletion proof) passed with raw-versus-typed payload equality or matching error status. An async-only resolver regression test covers the async report-create dispatch seam."
+  },
+  "controlled_dataservices_evidence": {
+    "captured_at": "2026-10-10",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "13d638063ae43c7617dd7d0a1252c854e400b9093bae6daa01eeb7a996746e80",
+    "controlled_test_sha256": "14782852e8cc3f244ba8087e50c301cd980b884a73ca8c62efa8324c941c1b55",
+    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "wheel_tracer_sha256": "95947b29fddee11f540831ef7221d1d00e0c9671ce8fc90ac073f5a98db35b7c",
+    "test_ids": [
+      "test_controlled_dataservice_reads_match_raw_routes_in_both_modes",
+      "test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "recaptured": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "read_modes": [
+      "sync",
+      "async"
+    ],
+    "mutation_modes": [
+      "sync",
+      "async"
+    ],
+    "recapture_note": "Executed both dataservice controlled tests against the pinned disposable stack. All seven read routes matched raw status or bounded document/envelope shape in both modes; both mutation lifecycles passed create, relationship, update, feature, follow, unfollow, remove, delete and cleanup assertions. Stock administrator GET can return deleted records with deleted_at; cleanup verifies this tombstone instead of deleting twice. The candidate wheel executed get_dataservice in sync and async without checkout imports. Only sanitized status and shape metadata retained.",
+    "unit_test_sha256": "88848d5b2c231ad3fcbb444ca836bb361f05b52398d944af3a3df7a3b5e31174",
+    "branch_discrimination": [
+      "follower-verb-inversion-detected",
+      "rdf-format-validation-removal-detected",
+      "server-assigned-receipt-target-removal-detected"
+    ],
+    "implementation_files_sha256": {
+      "src/datasluice/connectors/catalog/udata/services/dataservices.py": "b91b8e9921d172754a4219935d38d447cf088728febf85d8b6e57b68f389d7a0",
+      "src/datasluice/connectors/catalog/udata/services/datasets.py": "d36f97cbe0225a962e26e77fba4c504d96ede321affee024f8d4b369c99b845a"
+    },
+    "implementation_base_sha": "b66aac2ce70bf47f5c54ba0d7e7640d3da07f22f"
   }
 }

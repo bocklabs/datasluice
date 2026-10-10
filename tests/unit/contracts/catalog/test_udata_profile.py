@@ -335,13 +335,13 @@ def _history_is_truncated(revisions: list[str], families: set[str]) -> str:
     return ""
 
 
-def _introducing_commit(family: str, revisions: list[str]) -> str:
-    """Return the first commit whose evidence.json defines ``family``."""
+def _introducing_commit(family: str, revisions: list[str]) -> str | None:
+    """Return the first evidence commit, or None for a new uncommitted family."""
     for revision in revisions:
         document = json.loads(_blob(revision, str(_EVIDENCE_PATH.relative_to(_ROOT))))
         if isinstance(document.get(family), dict):
             return revision
-    raise AssertionError(f"no commit introduces {family}")
+    return None
 
 
 def test_each_controlled_record_digests_the_files_at_its_introducing_commit() -> None:
@@ -365,9 +365,11 @@ def test_each_controlled_record_digests_the_files_at_its_introducing_commit() ->
         for field, path in _PROVENANCE_FILES.items():
             if field not in record:
                 continue
-            expected = hashlib.sha256(_blob(revision, path)).hexdigest()
+            source = _blob(revision, path) if revision is not None else (_ROOT / path).read_bytes()
+            expected = hashlib.sha256(source).hexdigest()
             assert record[field] == expected, (
-                f"{family}.{field} records {record[field][:12]} but {path} at {revision[:12]} hashes to {expected[:12]}"
+                f"{family}.{field} records {record[field][:12]} but {path} at "
+                f"{revision[:12] if revision is not None else 'uncommitted capture'} hashes to {expected[:12]}"
             )
 
 

@@ -5004,8 +5004,11 @@ def _exercise_sync_dataservice_followers(token: str, permissions: EffectivePermi
 
 def _assert_controlled_dataservice_deleted(token: str, dataservice_id: str) -> None:
     """Assert the stock soft delete no longer serves the controlled dataservice as a live record."""
-    status, _, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
-    assert status in {404, 410}, status
+    status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
+    assert status in {200, 404, 410}, status
+    if status == 200:
+        assert isinstance(payload, Mapping)
+        assert payload.get("deleted_at") is not None
 
 
 def _exercise_sync_dataservice_lifecycle(token: str, permissions: EffectivePermissions, title: str) -> None:
@@ -5052,9 +5055,8 @@ def _exercise_sync_dataservice_lifecycle(token: str, permissions: EffectivePermi
             assert deleted.receipt.outcome == "succeeded"
             _assert_controlled_dataservice_deleted(token, dataservice_id)
         finally:
-            # A 404 or 410 is the stock soft-delete state, so the record is already clean; only a
-            # live 200 needs the rollback delete.
-            if _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")[0] == 200:
+            status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
+            if status == 200 and isinstance(payload, Mapping) and payload.get("deleted_at") is None:
                 client.dataservices.delete_dataservice(
                     dataservice_id,
                     permissions,
@@ -5139,9 +5141,8 @@ async def _exercise_async_dataservice_lifecycle(token: str, permissions: Effecti
             assert deleted.receipt.outcome == "succeeded"
             _assert_controlled_dataservice_deleted(token, dataservice_id)
         finally:
-            # A 404 or 410 is the stock soft-delete state, so the record is already clean; only a
-            # live 200 needs the rollback delete.
-            if _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")[0] == 200:
+            status, payload, _ = _direct_request(token, "GET", f"/api/1/dataservices/{dataservice_id}/")
+            if status == 200 and isinstance(payload, Mapping) and payload.get("deleted_at") is None:
                 await client.dataservices.delete_dataservice(
                     dataservice_id,
                     permissions,

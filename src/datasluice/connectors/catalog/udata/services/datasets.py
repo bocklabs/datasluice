@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import unquote, urlsplit
 
@@ -289,7 +290,7 @@ def _rdf_redirect_receipt(
     extension = match.group(2)
     if extension is not None:
         wire.media_type_for_format(extension)
-    return _build_receipt(
+    receipt = _build_receipt(
         operation,
         requested_id,
         None,
@@ -297,6 +298,7 @@ def _rdf_redirect_receipt(
         status_code=status_code,
         mutation="rdf_redirect",
     )
+    return replace(receipt, target=replace(receipt.target, resource_kind=ResourceKind(subject)))
 
 
 def _redirect_receipt(
