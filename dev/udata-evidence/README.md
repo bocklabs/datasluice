@@ -27,6 +27,16 @@ The pins in the `uv pip install` line are load-bearing for the pinned udata comm
 
 All pins resolve in one `uv pip install` invocation together with `/opt/udata`, so an unsatisfiable constraint between udata and these packages fails the build loudly instead of being silently resolved by a second transaction.
 
+## Seeding controlled credentials
+
+Mint the three controlled evidence roles (admin, organization_admin, member) with one in-container exec so the plaintext crosses the shell boundary exactly once:
+
+```bash
+bash dev/udata-evidence/seeds/bootstrap_tokens.sh /tmp/udata-evidence-credentials.json
+```
+
+The credentials file is written atomically with mode 0600, and the script refuses any destination inside the repository so issued tokens can never be committed.
+
 ## Source and review provenance
 
 Extract source-only route signatures from a detached checkout at `0546582058d84706812a1c37387576efc4e5ad1f` with `uv run python scripts/extract_udata_oracle.py --source-root /path/to/udata --source-output /tmp/udata-source.json`. Reconcile that output only with separately captured Swagger and controlled URL-map documents; a disagreement blocks the preflight.

@@ -84,6 +84,48 @@ class _CloseFailingSource(BytesIO):
         super().close()
 
 
+def test_mid_stream_deadline_exceeded_is_ambiguous_like_any_other_os_error() -> None:
+    """A deadline exhaustion is an OSError, so it settles ambiguously like the byte ceiling.
+
+    ``MidStreamUploadError`` and ``UploadDeadlineExceeded`` both subclass ``OSError``, so the
+    settlement check must test the base class. Narrowing it to the connector-local subclass
+    would silently downgrade a bare transport ``OSError`` to ``failed`` after dispatch, which
+    claims the target is unchanged when bytes may already be on the wire.
+    """
+    from datasluice.connectors.catalog.udata.models.resources import (
+        MidStreamUploadError,
+        UploadDeadlineExceeded,
+    )
+
+    assert issubclass(MidStreamUploadError, OSError)
+    assert issubclass(UploadDeadlineExceeded, MidStreamUploadError)
+
+    credential = UDataCredential(api_key="local-test-key")
+    permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)
+    transport = _InterruptingTransport()
+    source = BytesIO(b"abc")
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        credentials=credential,
+        owns_transport=False,
+    )
+    policy = MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True,
+            operation=wire.UPLOAD_NEW_OPERATION,
+            target="dataset",
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    )
+
+    with client, pytest.raises(OSError) as raised:
+        client.resources.upload("dataset", ResourceUploadInput(source, "data.csv", 3), permissions, policy)
+
+    assert raised.value.__dict__["mutation_receipt"].outcome == "ambiguous"
+
+
 def test_mid_stream_failure_is_ambiguous_and_closes_borrowed_source() -> None:
     credential = UDataCredential(api_key="local-test-key")
     permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)

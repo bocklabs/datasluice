@@ -7,7 +7,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, _thaw_json
+from datasluice.domain.catalog.models import (
+    MappingRecord,
+    NativeRecord,
+    _freeze_json,
+    _thaw_json,
+    redact_record_payload,
+)
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
 
@@ -338,7 +344,8 @@ class OrganizationMutationResult:
         ):
             raise ValueError("uData organization result records require typed records.")
         if self.value is not None:
-            object.__setattr__(self, "value", _frozen_mapping(_payload(self.value), "result values"))
+            validated = _frozen_mapping(_payload(self.value), "result values")
+            object.__setattr__(self, "value", _frozen_mapping(redact_record_payload(validated), "result values"))
 
     def to_dict(self) -> dict[str, object]:
         return {

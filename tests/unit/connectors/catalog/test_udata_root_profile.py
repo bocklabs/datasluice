@@ -73,7 +73,7 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
         "udata",
         "udata-evidence-udata",
         "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
-        "udata-evidence-udata@sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+        "udata-evidence-udata",
     ),
     (
         "mongo",
@@ -377,6 +377,142 @@ def test_controlled_dependency_image_identity_rejects_unapproved_identity(mismat
             ("udata-evidence-udata", "sha256:" + "d" * 64, "udata-evidence-udata@sha256:" + "d" * 64),
             udata_clients._controlled_error,
         )
+
+
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    (
+        ("config", "not the approved build"),
+        ("repository", "repository digest is not approved"),
+        ("spec", "not the approved build"),
+    ),
+)
+def test_controlled_service_image_identity_rejects_unapproved_service_identity(mismatch: str, message: str) -> None:
+    container_id = "a" * 64
+    repository = "udata-evidence-udata"
+    approved_image_id = "sha256:" + "c" * 64
+    observed_config_image = repository
+    observed_image_id = approved_image_id
+    observed_repository_digest = repository
+    approved_spec = (repository, "", repository)
+    if mismatch == "config":
+        observed_config_image = "udata-evidence-other"
+    elif mismatch == "repository":
+        observed_repository_digest = "udata-evidence-other"
+    else:
+        approved_spec = (repository, approved_image_id, repository)
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return (
+                json.dumps(container_id) + " " + json.dumps(observed_image_id) + " " + json.dumps(observed_config_image)
+            )
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(observed_image_id) + " " + json.dumps([observed_repository_digest])
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    with pytest.raises(CatalogValidationError, match=message):
+        udata_clients._controlled_service_image_identity(
+            read,
+            "udata",
+            "unix:///tmp/docker.sock",
+            approved_spec,
+            repository,
+            (repository, "", repository),
+            udata_clients._controlled_error,
+        )
+
+
+def test_controlled_service_image_identity_accepts_any_build_id_for_the_pinned_repository() -> None:
+    container_id = "a" * 64
+    repository = "udata-evidence-udata"
+    image_id = "sha256:" + "e" * 64
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(image_id) + " " + json.dumps([repository])
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    _container_id, identity = udata_clients._controlled_service_image_identity(
+        read,
+        "udata",
+        "unix:///tmp/docker.sock",
+        (repository, "", repository),
+        repository,
+        (repository, "", repository),
+        udata_clients._controlled_error,
+    )
+
+    assert identity == f"udata|{repository}|{image_id}|{repository}"
+
+
+@pytest.mark.parametrize("observed", ("17.7.0", "17.6.1", "", "17.6.0.dev0"))
+def test_controlled_stack_rejects_a_service_that_is_not_the_pinned_version(observed: str) -> None:
+    with pytest.raises(CatalogValidationError, match="not the approved build"):
+        udata_clients._require_controlled_version(observed, "17.6.0", udata_clients._controlled_error)
+
+
+@pytest.mark.parametrize("udata_version", ("17.7.0", "17.6.1", ""))
+def test_controlled_client_rejects_a_stack_running_an_unapproved_udata_version(udata_version: str) -> None:
+    transport = RouterTransport(
+        {("GET", _SITE_URL): _json_response(200, _site_body(), {"Content-Type": "application/json"})}
+    )
+    with ExitStack() as stack:
+        _controlled_stack_fixture(stack, transport, udata_version=udata_version)
+        with pytest.raises(CatalogValidationError, match="not the approved build"):
+            udata_clients._ControlledSyncTransport()
+
+
+def test_controlled_client_accepts_a_stack_running_the_pinned_udata_version() -> None:
+    transport = RouterTransport(
+        {("GET", _SITE_URL): _json_response(200, _site_body(), {"Content-Type": "application/json"})}
+    )
+    with ExitStack() as stack:
+        _controlled_stack_fixture(stack, transport)
+        controlled_transport = udata_clients._ControlledSyncTransport()
+        response = controlled_transport.send(RuntimeRequest(method="GET", url=_SITE_URL, headers={}))
+
+    assert response.status_code == 200
+
+
+def test_controlled_service_image_identity_returns_the_pinned_repository_digest() -> None:
+    """A locally rebuilt image carries a fresh image ID, so the identity stays the repository.
+
+    The image ID changes on every `docker compose up --build`, so pinning it made the
+    controlled stack reject its own builds. The repository is the stable identifier, and
+    the Dockerfile/compose digests plus the running version carry the source identity.
+    """
+    container_id = "a" * 64
+    repository = "udata-evidence-udata"
+    image_id = "sha256:" + "f" * 64
+    spec = (repository, "", repository)
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(image_id) + " " + json.dumps([repository])
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    _container_id, identity = udata_clients._controlled_service_image_identity(
+        read,
+        "udata",
+        "unix:///tmp/docker.sock",
+        spec,
+        repository,
+        spec,
+        udata_clients._controlled_error,
+    )
+
+    assert identity == f"udata|{repository}|{image_id}|{repository}"
 
 
 def test_controlled_command_rejects_docker_environment_overrides(
@@ -887,6 +1023,7 @@ def _controlled_container_reply(
     container_ids: Mapping[str, str],
     image_specs: Mapping[str, tuple[str, str, str]],
     image_ids: Mapping[str, str],
+    udata_version: str,
 ) -> str | None:
     """Return the canned reply for a container- or image-level docker command, or None when unmatched."""
     if len(args) == 3 and args[:2] == ("ps", "-q"):
@@ -905,6 +1042,8 @@ def _controlled_container_reply(
         return "0546582058d84706812a1c37387576efc4e5ad1f"
     if args[:3] == ("exec", container_ids["udata"], "printenv"):
         return "unit-test-stack"
+    if args[:4] == ("exec", container_ids["udata"], "python", "-c"):
+        return udata_version
     return None
 
 
@@ -967,12 +1106,13 @@ def _controlled_command_reply(
     direct: bool,
     transport: RouterTransport | AsyncRouterTransport,
     patch_bodies: list[dict[str, object]],
+    udata_version: str,
 ) -> str:
     """Return the canned reply for one controlled docker command."""
     stack_reply = _controlled_stack_reply(args)
     if stack_reply is not None:
         return stack_reply
-    container_reply = _controlled_container_reply(args, container_ids, image_specs, image_ids)
+    container_reply = _controlled_container_reply(args, container_ids, image_specs, image_ids, udata_version)
     if container_reply is not None:
         return container_reply
     if _is_controlled_python_program(args):
@@ -998,7 +1138,9 @@ def _replace_closure_cell(function: Callable[..., object], name: str, value: obj
     stack.callback(setattr, cell, "cell_contents", previous)
 
 
-def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | AsyncRouterTransport) -> None:
+def _controlled_process_setup(
+    stack: ExitStack, transport: RouterTransport | AsyncRouterTransport, udata_version: str = "17.6.0"
+) -> None:
     """Bind the canned controlled-stack docker and program replies onto the real transport types."""
     container_ids, image_specs, image_ids = _controlled_service_indexes()
     controlled_patch_bodies: list[dict[str, object]] = []
@@ -1022,6 +1164,7 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
             direct=direct,
             transport=transport,
             patch_bodies=controlled_patch_bodies,
+            udata_version=udata_version,
         )
 
     async def async_command(
@@ -1045,6 +1188,44 @@ def _controlled_process_setup(stack: ExitStack, transport: RouterTransport | Asy
     _replace_closure_cell(
         cast(Callable[..., object], async_type.__init__), "trusted_async_operations", async_operations, stack
     )
+
+
+def _controlled_stack_fixture(stack: ExitStack, transport: RouterTransport, udata_version: str = "17.6.0") -> None:
+    """Bind the docker commands, stack nonce, and controlled probe behind one stack.
+
+    The httpx client is replaced so the controlled transport's site probe and any
+    request through it resolve against the router instead of a live deployment.
+    """
+    sync_transport = cast("RouterTransport", transport)
+    stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))
+    _controlled_process_setup(stack, transport, udata_version=udata_version)
+    original_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        headers = {
+            {"accept": "Accept", "content-type": "Content-Type", "x-api-key": "X-API-KEY"}.get(key.lower(), key): value
+            for key, value in request.headers.items()
+        }
+        response = sync_transport.send(
+            RuntimeRequest(
+                method=request.method,
+                url=str(request.url),
+                headers=headers,
+                body=request.content or None,
+            )
+        )
+        return httpx.Response(
+            response.status_code,
+            headers=dict(response.headers),
+            content=response.body,
+            request=request,
+        )
+
+    def client_factory(**_: object) -> httpx.Client:
+        return original_client(transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    stack.enter_context(patch.object(httpx, "Client", client_factory))
+    transport.routes[("GET", _SITE_URL)] = _json_response(200, _site_body(), {"Content-Type": "application/json"})
 
 
 def _sync_client(

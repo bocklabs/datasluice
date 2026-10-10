@@ -19,11 +19,16 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationInvitationInput,
     OrganizationListQuery,
     OrganizationMemberInput,
+    OrganizationMutationResult,
     OrganizationRefusalInput,
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
-from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
+from datasluice.connectors.catalog.udata.models.resources import (
+    MidStreamUploadError,
+    ResourceUpdateInput,
+    ResourceUploadInput,
+)
 from datasluice.connectors.catalog.udata.services import datasets as dataset_service
 from datasluice.connectors.catalog.udata.services import organizations_memberships as organization_service
 from datasluice.connectors.catalog.udata.services.organizations_memberships import (
@@ -31,13 +36,16 @@ from datasluice.connectors.catalog.udata.services.organizations_memberships impo
     SyncOrganizationsMembershipsService,
 )
 from datasluice.connectors.catalog.udata.wire import organizations as wire
+from datasluice.connectors.catalog.udata.wire import resources as resource_wire
 from datasluice.contracts.catalog.native.udata import (
     AsyncUDataOrganizationsMembershipsService,
     SyncUDataOrganizationsMembershipsService,
 )
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
-from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord
+from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
@@ -95,6 +103,17 @@ def _policy(operation: str, target: str, *, destructive: bool = False) -> Mutati
     )
 
 
+def test_clients_expose_the_pinned_organization_protocols() -> None:
+    with SyncUDataClient(_Router(_routes({})), declared_udata_profile(), origin=ORIGIN) as sync:
+        assert isinstance(sync.organizations_memberships, SyncUDataOrganizationsMembershipsService)
+
+    async def run() -> None:
+        async with AsyncUDataClient(_AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN) as client:
+            assert isinstance(client.organizations_memberships, AsyncUDataOrganizationsMembershipsService)
+
+    asyncio.run(run())
+
+
 def test_organization_services_are_typed_and_mode_parity_is_preserved() -> None:
     expected = {
         name
@@ -106,17 +125,6 @@ def test_organization_services_are_typed_and_mode_parity_is_preserved() -> None:
         for name in dir(AsyncOrganizationsMembershipsService)
         if not name.startswith("_") and callable(getattr(AsyncOrganizationsMembershipsService, name))
     }
-
-
-def test_clients_expose_organization_protocols() -> None:
-    with SyncUDataClient(_Router(_routes({})), declared_udata_profile(), origin=ORIGIN) as sync:
-        assert isinstance(sync.organizations_memberships, SyncUDataOrganizationsMembershipsService)
-
-    async def run() -> None:
-        async with AsyncUDataClient(_AsyncRouter(_routes({})), declared_udata_profile(), origin=ORIGIN) as client:
-            assert isinstance(client.organizations_memberships, AsyncUDataOrganizationsMembershipsService)
-
-    asyncio.run(run())
 
 
 def test_organization_wire_builders_preserve_exact_paths_and_omission() -> None:
@@ -562,3 +570,113 @@ def test_organization_page_decoders_drop_the_next_cursor_without_a_next_page() -
     )
     extensions = organization.platform.to_dict()["extensions"]
     assert json.loads(json.dumps(extensions)) == {"udata.page": organization.native_page.to_dict()}
+
+
+def test_organization_records_and_extras_redact_credentials_at_construction() -> None:
+    """Retained organization payloads must be redacted before birth, not only on serialize.
+
+    NativeRecord/MappingRecord.to_dict() redacts, but .payload, repr() and the
+    OrganizationMutationResult.value path expose the retained mapping directly, so a
+    credential-shaped server field would otherwise leave the typed surface unredacted.
+    """
+    organization = wire.parse_organization(
+        {
+            "id": "org-1",
+            "name": "Evidence",
+            "api_key": "AKIA-EXAMPLE",
+            "nested": {"password": "hunter2", "kept": 1},
+            "contact": "ops@example.org",
+        }
+    )
+    assert organization.payload["api_key"] == REDACTED
+    assert organization.payload["nested"] == {"password": REDACTED, "kept": 1}
+    assert organization.payload["contact"] == "ops@example.org"
+    assert "AKIA-EXAMPLE" not in repr(organization)
+
+    (mapping,) = wire.parse_records(
+        [{"id": "membership-1", "token": "t-secret"}], operation=wire.LIST_MEMBERSHIP_REQUESTS_OPERATION
+    )
+    assert mapping.payload["token"] == REDACTED
+    assert "t-secret" not in repr(mapping)
+
+    page = wire.parse_page(
+        {"data": [{"id": "dataset-1", "secret": "s-value"}]},
+        operation=wire.LIST_ORGANIZATION_DATASETS_OPERATION,
+        kind=ResourceKind.DATASET,
+    )
+    assert page.items[0].payload["secret"] == REDACTED
+
+    extras = wire.parse_extras({"api_key": "AKIA-EXAMPLE", "nested": {"password": "hunter2", "kept": 1}, "label": "ok"})
+    assert extras["api_key"] == REDACTED
+    assert extras["nested"] == {"password": REDACTED, "kept": 1}
+    assert extras["label"] == "ok"
+
+
+def test_organization_mutation_value_carries_redacted_payload() -> None:
+    """OrganizationMutationResult.value is serialized through _thaw_json, not the record gate."""
+    receipt = MutationReceipt(
+        operation="udata/api-v1.update-organization",
+        outcome="succeeded",
+        target=CatalogId(platform=CatalogPlatform.UDATA, resource_kind=ResourceKind.ORGANIZATION, value="org-1"),
+    )
+    result = OrganizationMutationResult(
+        receipt=receipt,
+        value={"api_key": "AKIA-EXAMPLE", "name": "Evidence"},
+    )
+    assert result.to_dict()["value"] == {"api_key": REDACTED, "name": "Evidence"}
+
+
+def test_organization_identifiers_reject_quote_and_control_characters() -> None:
+    """Organization ids must satisfy the same segment policy as the sibling uData families."""
+    for identifier in ('a"b', "a'b", "a\nb", "a/b", ".", "..", "", 4):
+        with pytest.raises(CatalogValidationError):
+            wire.get_organization_request(cast(str, identifier))
+
+
+def test_resource_reorder_schema_violation_reaches_the_typed_catalog_surface() -> None:
+    """A malformed reorder payload is a typed schema violation, not a bare ValueError.
+
+    SyncResourcesService declares error_type = NativeCatalogError, so a bare
+    ValueError bypasses the error surface callers rely on for server-side
+    schema violations, which every other decode seam raises as CatalogValidationError.
+    """
+    reorder_url = f"{ORIGIN}/api/1/datasets/dataset/resources/"
+    transport = _Router(_routes({("PUT", reorder_url): {"not": "a list"}}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
+    )
+
+    with client, pytest.raises(CatalogValidationError) as raised:
+        client.resources.reorder(
+            "dataset",
+            (ResourceUpdateInput({"id": "resource"}),),
+            PERMISSIONS,
+            _policy(resource_wire.REORDER_OPERATION, "dataset"),
+        )
+
+    assert raised.value.operation == resource_wire.REORDER_OPERATION
+    assert raised.value.platform == CatalogPlatform.UDATA.value
+    assert raised.value.safe_action == resource_wire.RESOURCE_SCHEMA_SAFE_ACTION
+
+
+def test_preflight_upload_value_error_is_not_reported_as_ambiguous() -> None:
+    """Only a bounded-source failure proves bytes reached the transport.
+
+    ResourceUploadInput.part() raises a plain ValueError before dispatch when the
+    source is reused or closed, so classifying every OSError/ValueError as
+    "ambiguous" recorded a successful-rejection audit trail for a write that never
+    left the client.
+    """
+    transport = _Router(_routes({}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
+    )
+    upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
+    upload.part()
+
+    with client, pytest.raises(ValueError) as raised:
+        client.resources.upload("dataset", upload, PERMISSIONS, _policy(resource_wire.UPLOAD_NEW_OPERATION, "dataset"))
+
+    assert not isinstance(raised.value, MidStreamUploadError)
+    assert raised.value.__dict__["mutation_receipt"].outcome == "failed"
+    assert not [request for request in transport.requests if "upload" in request.url]

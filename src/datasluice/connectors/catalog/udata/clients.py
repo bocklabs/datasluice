@@ -208,11 +208,8 @@ _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
 _CONTROLLED_DOCKERFILE_SHA256 = "6d3b4b1fbd47bfc1da08c96d57ef2f402ede125c25839c8323252d10066eba6b"
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
-_CONTROLLED_UDATA_IMAGE_SPEC = (
-    "udata-evidence-udata",
-    "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
-    "udata-evidence-udata@sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
-)
+_CONTROLLED_UDATA_VERSION = "17.6.0"
+_CONTROLLED_UDATA_IMAGE_SPEC = ("udata-evidence-udata", "", "udata-evidence-udata")
 _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
     (
         "mongo",
@@ -1416,21 +1413,19 @@ def _validate_controlled_container_image(
     ):
         raise error_factory("The controlled uData image allowlist is invalid.")
     expected_config_image, expected_image_id, expected_repository_digest = expected_image
-    if service == "udata" and (
-        expected_image != udata_image_spec
-        or expected_config_image != udata_image_repository
-        or config_image != expected_config_image
-    ):
-        raise error_factory(_CONTROLLED_SERVICE_IMAGE_NOT_APPROVED)
-    if service != "udata" and config_image != expected_config_image:
+    if service == "udata":
+        if (
+            expected_image != udata_image_spec
+            or expected_config_image != udata_image_repository
+            or expected_repository_digest != udata_image_repository
+            or config_image != expected_config_image
+        ):
+            raise error_factory(_CONTROLLED_SERVICE_IMAGE_NOT_APPROVED)
+        return config_image, image_id, udata_image_spec[2]
+    if config_image != expected_config_image:
         raise error_factory("A controlled uData dependency image is not approved.")
     if image_id != expected_image_id:
-        message = (
-            _CONTROLLED_SERVICE_IMAGE_NOT_APPROVED
-            if service == "udata"
-            else "The controlled uData dependency image ID is not approved."
-        )
-        raise error_factory(message)
+        raise error_factory("The controlled uData dependency image ID is not approved.")
     return config_image, image_id, expected_repository_digest
 
 
@@ -1557,6 +1552,17 @@ def _controlled_nonce_args(container_id: str) -> tuple[str, ...]:
     return ("exec", container_id, "printenv", "UDATA_EVIDENCE_STACK_NONCE")
 
 
+def _controlled_version_args(container_id: str) -> tuple[str, ...]:
+    """Return the compose exec arguments that read the running uData service version."""
+    return (
+        "exec",
+        container_id,
+        "python",
+        "-c",
+        "from udata.utils import get_udata_version; print(get_udata_version())",
+    )
+
+
 def _require_controlled_source_commit(
     observed: str,
     source_commit: str,
@@ -1575,6 +1581,16 @@ def _require_controlled_nonce(
     """Reject a controlled uData service whose stack nonce drifted from the local evidence nonce."""
     if observed != nonce:
         raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
+
+
+def _require_controlled_version(
+    observed: str,
+    version: str,
+    error_factory: Callable[[str], CatalogValidationError],
+) -> None:
+    """Reject a controlled uData service whose running version is not the pinned build contract."""
+    if observed != version:
+        raise error_factory(_CONTROLLED_SERVICE_IMAGE_NOT_APPROVED)
 
 
 def _controlled_image_identities(
@@ -1617,6 +1633,7 @@ def _verify_controlled_source_and_nonce(
     dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
     udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
+    udata_version: str = _CONTROLLED_UDATA_VERSION,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1666,6 +1683,15 @@ def _verify_controlled_source_and_nonce(
         nonce,
         error_factory,
     )
+    _require_controlled_version(
+        read(
+            *_controlled_version_args(udata_container_id),
+            docker_endpoint=docker_endpoint,
+            direct=True,
+        ),
+        udata_version,
+        error_factory,
+    )
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,
@@ -1685,6 +1711,7 @@ async def _verify_controlled_source_and_nonce_async(
     dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
     udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
+    udata_version: str = _CONTROLLED_UDATA_VERSION,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
     docker_endpoint: str | None = None,
@@ -1740,6 +1767,15 @@ async def _verify_controlled_source_and_nonce_async(
         nonce,
         error_factory,
     )
+    _require_controlled_version(
+        await read(
+            *_controlled_version_args(udata_container_id),
+            docker_endpoint=docker_endpoint,
+            direct=True,
+        ),
+        udata_version,
+        error_factory,
+    )
     return _ControlledSourceIdentity(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         docker_endpoint=docker_endpoint,
@@ -1770,7 +1806,7 @@ def _controlled_peer_evidence(
         not isinstance(payload, Mapping)
         or not isinstance(payload.get("id"), str)
         or not payload["id"]
-        or payload.get("version") != "17.6.0"
+        or payload.get("version") != _CONTROLLED_UDATA_VERSION
     ):
         raise error_factory("The controlled uData peer did not match the seeded site identity.")
     return payload["id"]

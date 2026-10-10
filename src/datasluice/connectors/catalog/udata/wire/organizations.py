@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.mapping import (
     UDataPageEnvelope,
@@ -16,6 +16,7 @@ from datasluice.connectors.catalog.udata.mapping import (
 from datasluice.connectors.catalog.udata.mapping import (
     shape_native_page as _shape_native_page,
 )
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
     MembershipRequestQuery,
@@ -26,7 +27,7 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationUpdateInput,
 )
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, redact_record_payload
 from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = CatalogPlatform.UDATA
@@ -81,23 +82,19 @@ _SCHEMA_SAFE_ACTION = "Verify the response against the pinned uData organization
 
 
 def _required_id(value: object, *, operation: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or any(character in value for character in "/?#")
-        or value in {".", ".."}
-    ):
+    if not isinstance(value, str):
         raise CatalogValidationError(
-            "The uData organization identifier must be one non-dot path segment.",
+            "The uData organization identifier must be a non-empty string.",
             operation=operation,
             platform=PLATFORM.value,
             safe_action="Pass the organization id or slug from a prior typed read.",
         )
+    path_segment(value, operation, "uData organization")
     return value
 
 
 def _segment(value: object, *, operation: str) -> str:
-    return quote(_required_id(value, operation=operation), safe="")
+    return path_segment(_required_id(value, operation=operation), operation, "uData organization")
 
 
 def _query(params: list[tuple[str, str]]) -> str:
@@ -395,12 +392,12 @@ def parse_organization(payload: object, *, operation: str = GET_ORGANIZATION_OPE
         platform=PLATFORM,
         resource_kind=_ORGANIZATION_KIND,
         id=CatalogId(platform=PLATFORM, resource_kind=_ORGANIZATION_KIND, value=identifier),
-        payload=dict(payload),
+        payload=redact_record_payload(payload),
     )
 
 
 def _mapping_record(payload: Mapping[str, object], *, kind: ResourceKind, operation: str) -> MappingRecord:
-    values = dict(payload)
+    values = redact_record_payload(payload)
     values.update({"resource_kind": kind.value, "operation": operation})
     return MappingRecord(payload=MappingProxyType(values))
 
@@ -445,7 +442,7 @@ def parse_page(payload: object, *, operation: str, kind: ResourceKind) -> UDataP
             platform=PLATFORM,
             resource_kind=kind,
             id=CatalogId(platform=PLATFORM, resource_kind=kind, value=_required_record_id(item, operation=operation)),
-            payload=dict(item),
+            payload=redact_record_payload(item),
         )
         for item in page.items
     )
@@ -468,7 +465,7 @@ def parse_extras(payload: object, *, operation: str = GET_ORGANIZATION_EXTRAS_OP
             platform=PLATFORM.value,
             safe_action="Verify the response against the pinned uData extras schema.",
         )
-    return MappingProxyType(dict(payload))
+    return MappingProxyType(redact_record_payload(payload))
 
 
 __all__ = [

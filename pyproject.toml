@@ -83,11 +83,6 @@ datasluice = "datasluice.cli.app:app"
 "datasluice/udata" = "datasluice.connectors.catalog.udata.factory:create_udata_connector"
 "datasluice/socrata" = "datasluice.connectors.catalog.socrata.factory:create_socrata_connector"
 
-[tool.ty]
-
-[tool.ty.src]
-exclude = ["providers", ".claude"]
-
 [tool.ruff]
 line-length = 120
 

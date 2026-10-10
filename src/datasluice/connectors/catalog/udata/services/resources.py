@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
 from datasluice.connectors.catalog.udata.models.resources import (
-    MidStreamUploadError,
     ResourceCreateInput,
     ResourceMutationResult,
     ResourceUpdateInput,
@@ -21,7 +20,11 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import NativeCatalogError, attach_catalog_metadata
+from datasluice.errors.catalog import (
+    CatalogValidationError,
+    NativeCatalogError,
+    attach_catalog_metadata,
+)
 from datasluice.runtime.mutation import build_mutation_receipt
 
 from .datasets import (
@@ -97,7 +100,12 @@ def _reject_receipt(
 def _mutation_result(receipt: MutationReceipt, payload: object, mutation: str) -> Result:
     if mutation == "reordered":
         if not isinstance(payload, list):
-            raise ValueError("The uData resource reorder response must be a list.")
+            raise CatalogValidationError(
+                "The uData resource reorder response must be a list.",
+                operation=wire.REORDER_OPERATION,
+                platform=CatalogPlatform.UDATA.value,
+                safe_action=wire.RESOURCE_SCHEMA_SAFE_ACTION,
+            )
         return ResourceMutationResult(receipt=receipt, records=tuple(wire.parse_resource(item) for item in payload))
     if mutation == "extras_updated" or (mutation == "extras_deleted" and payload is not None):
         return ResourceMutationResult(
@@ -175,7 +183,7 @@ def _resource_mutation(
         outcome = (
             "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
         )
-        if mutation == "uploaded" and isinstance(error, (OSError, MidStreamUploadError)):
+        if mutation == "uploaded" and isinstance(error, OSError):
             outcome = "ambiguous"
         receipt = _receipt(
             policy,
@@ -214,7 +222,7 @@ async def _async_resource_mutation(
         outcome = (
             "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
         )
-        if mutation == "uploaded" and isinstance(error, (OSError, MidStreamUploadError)):
+        if mutation == "uploaded" and isinstance(error, OSError):
             outcome = "ambiguous"
         receipt = _receipt(
             policy,
