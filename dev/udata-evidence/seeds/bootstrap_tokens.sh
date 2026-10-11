@@ -7,7 +7,7 @@ ENV_FILE="${2:-$(cd "$(dirname "$0")/.." && pwd)/.env}"
 EVIDENCE_ORIGIN="${UDATA_EVIDENCE_ORIGIN:-http://127.0.0.1:5640}"
 TOKEN_NAME="datasluice-evidence-capture"
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+REPO_ROOT="$(git -C "$(cd "$(dirname "$0")" && pwd)" rev-parse --show-toplevel 2>/dev/null || true)"
 CREDENTIALS_PATH="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$CREDENTIALS_FILE")"
 if [ -n "$REPO_ROOT" ] && [[ "$CREDENTIALS_PATH" == "$REPO_ROOT"/* ]]; then
   echo "refusing to write credentials inside the repository: ${CREDENTIALS_FILE}" >&2
@@ -52,7 +52,7 @@ PYTHON
 
 issued_json="$(issue_tokens)"
 readarray -t issued_lines <<<"$issued_json"
-if [ "${#issued_lines[@]}" -ne 1 ]; then
+if [ -z "$issued_json" ] || [ "${#issued_lines[@]}" -ne 1 ]; then
   echo "token issuance did not return a single JSON record" >&2
   exit 1
 fi

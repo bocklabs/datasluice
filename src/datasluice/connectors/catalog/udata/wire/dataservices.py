@@ -40,16 +40,18 @@ _DATASERVICE_PATH = "/api/1/dataservices/"
 _DATASERVICE_V2_PATH = "/api/2/dataservices/"
 _ATOM_MEDIA_TYPE = "application/atom+xml"
 _RDF_MEDIA_TYPE = "application/rdf+xml"
+_TURTLE_MEDIA_TYPE = "application/x-turtle"
+_JSON_LD_MEDIA_TYPE = "application/ld+json"
 RDF_FORMAT_MEDIA_TYPES = {
     "rdf": _RDF_MEDIA_TYPE,
     "xml": _RDF_MEDIA_TYPE,
-    "ttl": "text/turtle",
-    "turtle": "text/turtle",
+    "ttl": _TURTLE_MEDIA_TYPE,
+    "turtle": _TURTLE_MEDIA_TYPE,
     "n3": "text/n3",
     "nt": "application/n-triples",
     "trig": "application/trig",
-    "json": "application/ld+json",
-    "json-ld": "application/ld+json",
+    "json": _JSON_LD_MEDIA_TYPE,
+    "jsonld": _JSON_LD_MEDIA_TYPE,
 }
 _PINNED_SCHEMA_ACTION = "Verify the response against the pinned uData 17.6 schema."
 

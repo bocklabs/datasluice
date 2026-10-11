@@ -75,7 +75,7 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
         "udata",
         "udata-evidence-udata",
         "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
-        "udata-evidence-udata",
+        None,
     ),
     (
         "mongo",
@@ -115,7 +115,7 @@ _CONTROLLED_PROGRAM_TIMEOUT_SECONDS = 10
 
 
 def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack") -> Any:
-    image_specs: dict[str, tuple[str, str, str]] = {
+    image_specs: dict[str, tuple[str, str, str | None]] = {
         service: (config_image, image_id, repository_digest)
         for service, config_image, image_id, repository_digest in _TEST_CONTROLLED_IMAGE_SPECS
     }
@@ -387,7 +387,6 @@ def test_controlled_dependency_image_identity_rejects_unapproved_identity(mismat
     ("mismatch", "message"),
     (
         ("config", "not the approved build"),
-        ("repository", "repository digest is not approved"),
         ("spec", "not the approved build"),
     ),
 )
@@ -401,8 +400,6 @@ def test_controlled_service_image_identity_rejects_unapproved_service_identity(m
     approved_spec = (repository, "", repository)
     if mismatch == "config":
         observed_config_image = "udata-evidence-other"
-    elif mismatch == "repository":
-        observed_repository_digest = "udata-evidence-other"
     else:
         approved_spec = (repository, approved_image_id, repository)
 
@@ -440,7 +437,7 @@ def test_controlled_service_image_identity_accepts_any_build_id_for_the_pinned_r
         if args[:2] == ("inspect", "--format"):
             return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
         if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(image_id) + " " + json.dumps([repository])
+            return json.dumps(image_id) + " " + json.dumps(None)
         raise AssertionError(f"unexpected image identity command {args}")
 
     _container_id, identity = udata_clients._controlled_service_image_identity(
@@ -453,7 +450,36 @@ def test_controlled_service_image_identity_accepts_any_build_id_for_the_pinned_r
         udata_clients._controlled_error,
     )
 
-    assert identity == f"udata|{repository}|{image_id}|{repository}"
+    assert identity == f"udata|{repository}|{image_id}|None"
+
+
+def test_controlled_verification_survives_an_empty_repo_digest_list() -> None:
+    """Docker reports an empty RepoDigests for a locally built image, so verification must pass."""
+    container_id = "a" * 64
+    repository = "udata-evidence-udata"
+    image_id = "sha256:" + "c" * 64
+    spec = (repository, "", repository)
+
+    def read(*args: str, **_: object) -> str:
+        if args[:2] == ("ps", "-q"):
+            return container_id
+        if args[:2] == ("inspect", "--format"):
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
+        if args[:3] == ("image", "inspect", "--format"):
+            return json.dumps(image_id) + " " + json.dumps(None)
+        raise AssertionError(f"unexpected image identity command {args}")
+
+    _container_id, identity = udata_clients._controlled_service_image_identity(
+        read,
+        "udata",
+        "unix:///tmp/docker.sock",
+        spec,
+        repository,
+        spec,
+        udata_clients._controlled_error,
+    )
+
+    assert identity.startswith(f"udata|{repository}|{image_id}|")
 
 
 @pytest.mark.parametrize("observed", ("17.7.0", "17.6.1", "", "17.6.0.dev0"))
@@ -485,12 +511,13 @@ def test_controlled_client_accepts_a_stack_running_the_pinned_udata_version() ->
     assert response.status_code == 200
 
 
-def test_controlled_service_image_identity_returns_the_pinned_repository_digest() -> None:
-    """A locally rebuilt image carries a fresh image ID, so the identity stays the repository.
+def test_controlled_service_image_identity_skips_the_repo_digest_for_a_locally_built_image() -> None:
+    """A locally built image has no RepoDigests, so no repository digest may be required.
 
     The image ID changes on every `docker compose up --build`, so pinning it made the
-    controlled stack reject its own builds. The repository is the stable identifier, and
-    the Dockerfile/compose digests plus the running version carry the source identity.
+    controlled stack reject its own builds, and the pinned local image never appears in
+    docker's RepoDigests list at all. The Dockerfile/compose digests plus the running
+    version and the in-container source commit carry the source identity instead.
     """
     container_id = "a" * 64
     repository = "udata-evidence-udata"
@@ -503,7 +530,7 @@ def test_controlled_service_image_identity_returns_the_pinned_repository_digest(
         if args[:2] == ("inspect", "--format"):
             return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
         if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(image_id) + " " + json.dumps([repository])
+            return json.dumps(image_id) + " " + json.dumps(None)
         raise AssertionError(f"unexpected image identity command {args}")
 
     _container_id, identity = udata_clients._controlled_service_image_identity(
@@ -516,7 +543,7 @@ def test_controlled_service_image_identity_returns_the_pinned_repository_digest(
         udata_clients._controlled_error,
     )
 
-    assert identity == f"udata|{repository}|{image_id}|{repository}"
+    assert identity == f"udata|{repository}|{image_id}|None"
 
 
 def test_controlled_command_rejects_docker_environment_overrides(
@@ -995,10 +1022,10 @@ def _execute_controlled_program(program: str, input_data: bytes | None, response
     return output.getvalue().strip()
 
 
-def _controlled_service_indexes() -> tuple[dict[str, str], dict[str, tuple[str, str, str]], dict[str, str]]:
+def _controlled_service_indexes() -> tuple[dict[str, str], dict[str, tuple[str, str, str | None]], dict[str, str]]:
     """Return the canned container ids, image specs, and image ids keyed by service name."""
     container_ids = {service: f"{index:064x}" for index, service in enumerate(_TEST_CONTROLLED_SERVICE_NAMES, 1)}
-    image_specs: dict[str, tuple[str, str, str]] = {
+    image_specs: dict[str, tuple[str, str, str | None]] = {
         service: (config_image, image_id, repository_digest)
         for service, config_image, image_id, repository_digest in _TEST_CONTROLLED_IMAGE_SPECS
     }
@@ -1025,7 +1052,7 @@ def _controlled_service_for(index: Mapping[str, str], value: str) -> str:
 def _controlled_container_reply(
     args: tuple[str, ...],
     container_ids: Mapping[str, str],
-    image_specs: Mapping[str, tuple[str, str, str]],
+    image_specs: Mapping[str, tuple[str, str, str | None]],
     image_ids: Mapping[str, str],
     udata_version: str,
 ) -> str | None:
@@ -1103,7 +1130,7 @@ def _controlled_command_reply(
     args: tuple[str, ...],
     *,
     container_ids: dict[str, str],
-    image_specs: dict[str, tuple[str, str, str]],
+    image_specs: dict[str, tuple[str, str, str | None]],
     image_ids: dict[str, str],
     input_data: bytes | None,
     docker_endpoint: str | None,

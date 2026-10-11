@@ -179,6 +179,8 @@ class SyncAuthOAuthService:
                 emit_success=False,
                 form_body=encoded,
                 omit_credential=not wire.sends_credential(name),
+                raw_text=name == "authorize_post",
+                redirect_mode=name == "authorize_post",
             )
             result = decode(status, payload, _media_type(response.headers if response is not None else {}))
         except SETTLEMENT_ERRORS as error:
@@ -351,6 +353,8 @@ class AsyncAuthOAuthService:
                 emit_success=False,
                 form_body=encoded,
                 omit_credential=not wire.sends_credential(name),
+                raw_text=name == "authorize_post",
+                redirect_mode=name == "authorize_post",
             )
             result = decode(status, payload, _media_type(response.headers if response is not None else {}))
         except ASYNC_SETTLEMENT_ERRORS as error:

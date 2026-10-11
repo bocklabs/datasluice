@@ -31,6 +31,7 @@ from .taxonomies import (
     Response,
     SupportsUpload,
     SyncCatalogService,
+    _dataset_mutate,
     _dataset_upload,
     _run_mutation,
     _run_mutation_async,
@@ -52,6 +53,9 @@ _mutation_async = partial(
     ReuseMutationResult,
     ResourceKind.RESOURCE,
 )
+# The pinned uData 17.6 profile declares both operations capability "admin", so the
+# authorization check must run before I/O like every other admin mutation.
+_ADMIN = frozenset({wire.FEATURE_REUSE_OPERATION, wire.UNFEATURE_REUSE_OPERATION})
 
 
 class SyncReusesService(SyncCatalogService):
@@ -298,6 +302,17 @@ class SyncReusesService(SyncCatalogService):
             lambda: wire.unfollow_reuse_request(reuse_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.UNFOLLOW_REUSE_OPERATION),
             destructive=True,
+        )
+
+    def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
+        return _dataset_mutate(
+            self._client._dataset_call,
+            self._client._resolved_credential(),
+            permissions,
+            policy,
+            operation,
+            request,
+            admin=operation in _ADMIN,
         )
 
     def _mutate_upload(
@@ -563,6 +578,17 @@ class AsyncReusesService(AsyncCatalogService):
             lambda: wire.unfollow_reuse_request(reuse_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.UNFOLLOW_REUSE_OPERATION),
             destructive=True,
+        )
+
+    async def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
+        return await _dataset_mutate(
+            self._client._dataset_call_async,
+            await self._client._resolved_credential_async(),
+            permissions,
+            policy,
+            operation,
+            request,
+            admin=operation in _ADMIN,
         )
 
     async def _mutate_upload(

@@ -55,7 +55,7 @@ class AvatarRequest:
 
     def __post_init__(self) -> None:
         segment(self.identifier, "udata/api-v1.avatar")
-        if not isinstance(self.size, int) or not MIN_AVATAR_SIZE <= self.size <= MAX_AVATAR_SIZE:
+        if type(self.size) is not int or not MIN_AVATAR_SIZE <= self.size <= MAX_AVATAR_SIZE:
             raise ValueError(f"uData avatar size must be an integer from {MIN_AVATAR_SIZE} through {MAX_AVATAR_SIZE}.")
 
 

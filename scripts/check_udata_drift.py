@@ -27,7 +27,6 @@ from datasluice.connectors.catalog.udata.drift import (
 )
 
 EXIT_OK = 0
-EXIT_ERROR = 1
 EXIT_DRIFTED = 2
 EXIT_DISABLED = 3
 
@@ -82,23 +81,27 @@ def main() -> int:
 
     Returns:
         ``0`` when every reviewed read matched, ``2`` when any read drifted, was
-        incompatible, or met an outage, ``3`` while the reviewed allowlist approves
-        no target, and ``1`` on an unexpected failure.
+        incompatible, or met an outage, and ``3`` while the reviewed allowlist
+        approves no target. An unexpected failure exits ``1`` via the
+        interpreter's unhandled exception.
     """
     args = build_parser().parse_args()
+
+    def emit(payload: str) -> None:
+        print(payload)
+        if args.out is not None:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(payload + "\n", encoding="utf-8")
+
     if not APPROVED_TARGETS:
-        print(json.dumps(disabled_payload(), sort_keys=True))
+        emit(json.dumps(disabled_payload(), sort_keys=True))
         return EXIT_OK if args.allow_disabled else EXIT_DISABLED
     try:
         report = run_udata_drift()
     except UDataDriftUnavailableError:
-        print(json.dumps(disabled_payload(), sort_keys=True))
+        emit(json.dumps(disabled_payload(), sort_keys=True))
         return EXIT_OK if args.allow_disabled else EXIT_DISABLED
-    rendered = report.to_json()
-    print(rendered)
-    if args.out is not None:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(rendered + "\n", encoding="utf-8")
+    emit(report.to_json())
     return report_exit_code(report)
 
 

@@ -1419,7 +1419,7 @@ def _validate_controlled_container_image(
     udata_image_repository: str,
     udata_image_spec: tuple[str, str, str],
     error_factory: Callable[[str], CatalogValidationError],
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str | None]:
     inspected_container_id, image_id, config_image = fields
     if (
         inspected_container_id != container_id
@@ -1443,7 +1443,7 @@ def _validate_controlled_container_image(
             or config_image != expected_config_image
         ):
             raise error_factory(_CONTROLLED_SERVICE_IMAGE_NOT_APPROVED)
-        return config_image, image_id, udata_image_spec[2]
+        return config_image, image_id, None
     if config_image != expected_config_image:
         raise error_factory("A controlled uData dependency image is not approved.")
     if image_id != expected_image_id:
@@ -1510,7 +1510,8 @@ def _controlled_service_image_identity(
         2,
         error_factory,
     )
-    _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
+    if expected_repository_digest is not None:
+        _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
 
 
@@ -1560,7 +1561,8 @@ async def _controlled_service_image_identity_async(
         2,
         error_factory,
     )
-    _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
+    if expected_repository_digest is not None:
+        _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
 
 

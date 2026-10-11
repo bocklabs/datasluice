@@ -517,6 +517,25 @@ def test_reuse_badge_and_feature_mutations_match_exact_wire() -> None:
     assert reuse_requests[3].url == f"{ORIGIN}/api/1/reuses/reuse-1/featured/"
 
 
+@pytest.mark.parametrize("method_name", ("feature_reuse", "unfeature_reuse"))
+def test_feature_admin_operations_refuse_non_admin_credentials_before_dispatch(method_name: str) -> None:
+    """The pinned profile marks both operations capability admin, so the role is checked before I/O."""
+    router = atom_sync_route_table(
+        with_site_route(
+            {
+                ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/featured/"): (200, _reuse(featured=True)),
+                ("DELETE", f"{ORIGIN}/api/1/reuses/reuse-1/featured/"): (200, _reuse()),
+            }
+        )
+    )
+    operation = wire.FEATURE_REUSE_OPERATION if method_name == "feature_reuse" else wire.UNFEATURE_REUSE_OPERATION
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        getattr(client.reuses, method_name)("reuse-1", ADMIN_PERMISSIONS, _policy(operation, "reuse-1"))
+        with pytest.raises(ForbiddenError):
+            getattr(client.reuses, method_name)("reuse-1", PERMISSIONS, _policy(operation, "reuse-1"))
+    assert len([r for r in router.requests if "/reuses/" in r.url]) == 1
+
+
 def test_reuse_image_upload_streams_multipart_and_receipts() -> None:
     router = atom_sync_route_table(
         with_site_route({("POST", f"{ORIGIN}/api/1/reuses/reuse-1/image/"): (200, _reuse())})

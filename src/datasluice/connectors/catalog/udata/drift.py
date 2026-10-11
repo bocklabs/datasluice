@@ -690,7 +690,7 @@ def _skipped_record(target: DriftTarget, operation_id: str, reason: str) -> Drif
 def _resolved_targets(targets: Sequence[DriftTarget] | None) -> tuple[DriftTarget, ...]:
     resolved = APPROVED_TARGETS if targets is None else tuple(targets)
     if not resolved:
-        raise UDataDriftUnavailableError(approved_targets=0)
+        raise UDataDriftUnavailableError(approved_targets=len(APPROVED_TARGETS))
     if len(resolved) > MAX_TARGETS_PER_RUN:
         raise CatalogValidationError(
             f"A single drift run cannot exceed {MAX_TARGETS_PER_RUN} reviewed targets.",

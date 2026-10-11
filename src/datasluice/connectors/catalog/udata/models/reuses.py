@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
@@ -347,7 +347,7 @@ class ReuseSuggestQuery:
 class ReuseImageInput:
     """Bounded reuse image upload input; bytes never enter the result record."""
 
-    data: bytes
+    data: bytes = field(repr=False)
     content_type: str
 
     def __post_init__(self) -> None:

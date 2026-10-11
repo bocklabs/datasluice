@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.connectors.catalog.udata.models.reuses import linked_identifier
@@ -88,13 +88,13 @@ def _validated_filters(
 
 
 def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"uData {label} must be a mapping when supplied.")
     try:
         frozen = _freeze_json(dict(value), f"udata.{label}")
     except DataSluiceError as error:
         raise ValueError(f"uData {label} must contain JSON-safe values only.") from error
-    if not isinstance(frozen, Mapping):
-        raise ValueError(f"uData {label} must be a mapping when supplied.")
-    return frozen
+    return cast("Mapping[str, object]", frozen)
 
 
 def _query_params(
