@@ -12,13 +12,17 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import NoReturn
 
 from datasluice.connectors.catalog.udata.drift import (
     APPROVED_TARGETS,
     DRIFT_SCHEMA_VERSION,
+    DRIFTED,
+    INCOMPATIBLE,
     MAX_PAGE_SIZE,
     MAX_READS_PER_RUN,
     MAX_TARGETS_PER_RUN,
+    OUTAGE,
     PINNED_UDATA_VERSION,
     READ_ALLOWLIST,
     DriftReport,
@@ -29,13 +33,21 @@ from datasluice.connectors.catalog.udata.drift import (
 EXIT_OK = 0
 EXIT_DRIFTED = 2
 EXIT_DISABLED = 3
+EXIT_ERROR = 4
 
-ADVISORY_OUTCOMES = frozenset({"drifted", "incompatible", "outage"})
+ADVISORY_OUTCOMES = frozenset({DRIFTED, INCOMPATIBLE, OUTAGE})
+
+
+class _DriftParser(argparse.ArgumentParser):
+    """Parser that keeps usage errors from colliding with the drifted exit status."""
+
+    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:  # noqa: A003
+        super().exit(EXIT_ERROR if status else status, message)
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the single bounded drift invocation accepted by the scheduled workflow."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _DriftParser(description=__doc__)
     parser.add_argument(
         "--out",
         type=Path,
@@ -81,9 +93,9 @@ def main() -> int:
 
     Returns:
         ``0`` when every reviewed read matched, ``2`` when any read drifted, was
-        incompatible, or met an outage, and ``3`` while the reviewed allowlist
-        approves no target. An unexpected failure exits ``1`` via the
-        interpreter's unhandled exception.
+        incompatible, or met an outage, ``3`` while the reviewed allowlist
+        approves no target, and ``4`` when the invocation itself was malformed.
+        An unexpected failure exits ``1`` via the interpreter's unhandled exception.
     """
     args = build_parser().parse_args()
 

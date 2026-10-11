@@ -14,23 +14,31 @@ import pytest
 from datasluice.connectors.catalog.udata.drift import (
     APPROVED_TARGETS,
     DRIFT_SCHEMA_VERSION,
+    DRIFTED,
+    INCOMPATIBLE,
     MAX_PAGE_SIZE,
     MAX_READS_PER_RUN,
     MAX_TARGETS_PER_RUN,
+    OUTAGE,
     PINNED_UDATA_VERSION,
     READ_ALLOWLIST,
     UDataDriftUnavailableError,
     run_udata_drift,
     run_udata_drift_async,
 )
-from scripts.check_udata_drift import main
+from scripts.check_udata_drift import (
+    ADVISORY_OUTCOMES,
+    EXIT_DISABLED,
+    EXIT_ERROR,
+    EXIT_OK,
+    main,
+)
 
 _ROOT = Path(__file__).parents[4]
 _RECORD = _ROOT / ".planning/phases/04-udata-connector/04-DRIFT-TARGETS.md"
 _WORKFLOW = _ROOT / ".github/workflows/catalog-drift.yml"
 
-EXIT_OK = 0
-EXIT_DISABLED = 3
+EXIT_DRIFTED = 2
 
 _DISABLED_REPORT_KEYS = {
     "schema_version",
@@ -90,6 +98,18 @@ def test_t01_allow_disabled_exits_zero_with_the_same_payload() -> None:
     assert disabled_code == EXIT_DISABLED
     assert allowed_code == EXIT_OK
     assert allowed == disabled
+
+
+def test_t02_advisory_outcomes_are_the_drift_module_constants_not_literals() -> None:
+    assert frozenset({DRIFTED, INCOMPATIBLE, OUTAGE}) == ADVISORY_OUTCOMES
+
+
+def test_t01_a_malformed_invocation_does_not_masquerade_as_drift() -> None:
+    with pytest.raises(SystemExit) as raised:
+        _run_entry_point("--no-such-flag")
+
+    assert raised.value.code == EXIT_ERROR
+    assert EXIT_ERROR != EXIT_DRIFTED
 
 
 def test_t01_the_disabled_run_returns_no_report_because_nothing_was_dispatched() -> None:
