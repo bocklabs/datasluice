@@ -883,3 +883,59 @@ def test_harvest_mutations_dispatch_their_exact_operation_in_both_modes(monkeypa
         assert deleted.receipt.operation == HARVEST_OPERATION
 
     asyncio.run(run())
+
+
+def test_inflight_sync_poll_is_bounded_by_the_wait_lease() -> None:
+    from threading import Event
+    from time import monotonic
+
+    from datasluice.connectors.catalog.udata.services.harvest import _wait_for_job
+    from datasluice.domain.catalog.models import MappingRecord
+    from datasluice.runtime.resilience import DeadlineMonitor
+
+    release = Event()
+    finished = Event()
+    budget = TimeBudget(connect=0.05, read=0.05, write=0.05, total=0.05)
+    handle = UDataJobHandle(source_id="source", job_id="job", poll_interval=0, budget=budget)
+
+    def observe(current: UDataJobHandle) -> tuple[UDataJobHandle, MappingRecord]:
+        try:
+            release.wait(timeout=2)
+            return current, MappingRecord({"status": "processing"})
+        finally:
+            finished.set()
+
+    started = monotonic()
+    try:
+        result = _wait_for_job(handle, DeadlineMonitor(budget), observe, lambda delay: None)
+        assert result.handle.exhausted
+        assert result.handle.abandoned
+        assert monotonic() - started < 0.5
+    finally:
+        release.set()
+        assert finished.wait(timeout=2)
+
+
+def test_inflight_async_poll_is_cancelled_at_the_wait_lease() -> None:
+    from datasluice.connectors.catalog.udata.services.harvest import _wait_for_job_async
+    from datasluice.domain.catalog.models import MappingRecord
+    from datasluice.runtime.resilience import DeadlineMonitor
+
+    async def run() -> None:
+        budget = TimeBudget(connect=0.05, read=0.05, write=0.05, total=0.05)
+        handle = UDataJobHandle(source_id="source", job_id="job", poll_interval=0, budget=budget)
+        cancelled = asyncio.Event()
+
+        async def observe(current: UDataJobHandle) -> tuple[UDataJobHandle, MappingRecord]:
+            try:
+                await asyncio.sleep(2)
+                return current, MappingRecord({"status": "processing"})
+            finally:
+                cancelled.set()
+
+        result = await _wait_for_job_async(handle, DeadlineMonitor(budget), observe, asyncio.sleep)
+        assert result.handle.exhausted
+        assert result.handle.abandoned
+        assert cancelled.is_set()
+
+    asyncio.run(run())

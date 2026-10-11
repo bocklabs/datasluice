@@ -28,6 +28,12 @@ _SENSITIVE_QUERY_KEYS = frozenset(
         "x-api-key",
         "x-api-token",
         "x-auth-token",
+        "sig",
+        "x-amz-signature",
+        "x-amz-credential",
+        "x-amz-security-token",
+        "x-goog-signature",
+        "x-goog-credential",
     }
 )
 

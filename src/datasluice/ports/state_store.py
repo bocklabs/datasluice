@@ -41,6 +41,11 @@ class AtomicStateStore(Protocol):
     indivisible within a single process (per-key lock) and declare which fsspec
     backends provide a true atomic rename.
 
+    Sync additionally requires a ``key_lock(key)`` context manager spanning
+    artifact publication and conditional state writes. It must coordinate every
+    writer sharing that state and destination; sync refuses an atomic store
+    without this transaction lock before publishing artifacts.
+
     This is a separate Protocol from :class:`StateStore` so stores that do not
     need CAS remain valid without it — following the established capability-
     Protocol pattern (``StreamingTransport`` / ``ConditionalTransport`` /

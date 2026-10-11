@@ -1,18 +1,8 @@
-"""Buffered-download correctness for the HttpDownload dispatch path.
-
-Both runtime transports return the complete body inside ``RuntimeResponse.body``
-today, so HTTP downloads are fully buffered in memory before the format reader
-sees them. These tests verify chunked-transfer reassembly, parity between the
-httpx and stdlib transports through the buffered ``send()`` seam, and complete
-read correctness for large multi-megabyte bodies (all batches consumed; total
-row count and id-column checksum checked against the fixture). They
-intentionally do NOT verify bounded memory: no peak-RSS subprocess covers
-``HttpDownload`` today — the peak-RSS coverage in ``test_peak_rss.py``
-exercises local byte sources only. Bounded-memory HTTP behavior remains
-unverified until a streaming transport seam exists.
-"""
+"""HTTP streaming correctness and incremental consumption regressions."""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +12,9 @@ from datasluice.data.access import DataPlaneResourceReader
 from datasluice.domain import HttpDownload, Resource
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
 from tests.helpers.http_server import MockResponse, start_test_server
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def _csv_text(rows: int) -> bytes:
@@ -48,8 +41,8 @@ def _read_row_totals(reader: DataPlaneResourceReader, resource: Resource) -> tup
     return table.num_rows, sum(ids)
 
 
-def test_http_download_reads_chunked_response_through_buffered_send_seam() -> None:
-    """A chunked-transfer response is reassembled into one buffered RuntimeResponse body."""
+def test_http_download_reads_chunked_response_through_streaming_seam() -> None:
+    """A chunked-transfer response is decoded through the streaming runtime seam."""
     pytest.importorskip("httpx")
 
     from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
@@ -72,7 +65,7 @@ def test_http_download_reads_chunked_response_through_buffered_send_seam() -> No
 
 
 def test_urllib_runtime_transport_reads_the_resource() -> None:
-    """The stdlib runtime transport reads a resource through the same buffered seam."""
+    """The stdlib transport streams a resource through the same runtime seam."""
     server, base = start_test_server({"/buffered": MockResponse(status=200, body=_csv_text(rows=5), chunk_size=64)})
     try:
         transport = UrllibCatalogTransport()
@@ -93,10 +86,7 @@ def test_urllib_runtime_transport_reads_the_resource() -> None:
 def test_large_chunked_download_materializes_every_row_without_truncation() -> None:
     """A multi-megabyte chunked body is fully consumed: row count and checksum must match.
 
-    The full body is consumed by the transport before the first batch is
-    yielded; this test pins read correctness at scale while the streaming
-    seam is absent. Any truncation or dropped chunk changes either the summed
-    row count or the id-column checksum and fails below.
+    Any truncation or dropped chunk changes the summed row count or checksum.
     """
     pytest.importorskip("httpx")
 
@@ -121,3 +111,32 @@ def test_large_chunked_download_materializes_every_row_without_truncation() -> N
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_http_download_yields_before_exhausting_and_closes_its_response() -> None:
+    from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, RuntimeStreamResponse
+
+    class StreamingTransport:
+        consumed = 0
+        closed = False
+
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            raise AssertionError("Resource downloads must use streaming transport")
+
+        def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+            def chunks() -> Iterator[bytes]:
+                yield b"id,name\n"
+                for _ in range(512):
+                    self.consumed += 1
+                    yield b"1,example\n" * 6553
+
+            def close() -> None:
+                self.closed = True
+
+            return RuntimeStreamResponse(200, {}, chunks(), close)
+
+    transport = StreamingTransport()
+    with DataPlaneResourceReader(transport=transport).open(_resource("https://example.test", "/data.csv")) as stream:
+        assert next(stream.iter_batches()).num_rows > 0
+        assert transport.consumed < 512
+    assert transport.closed

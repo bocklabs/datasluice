@@ -53,7 +53,7 @@ class CSVReader(BaseFormatReader):
                 "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
-        read_options = pacsv.ReadOptions(block_size=1 << 20, encoding=self.encoding)
+        read_options = pacsv.ReadOptions(block_size=65536, encoding=self.encoding, use_threads=False)
         parse_options = pacsv.ParseOptions(delimiter=self.delimiter)
         try:
             reader = pacsv.open_csv(source, read_options=read_options, parse_options=parse_options)

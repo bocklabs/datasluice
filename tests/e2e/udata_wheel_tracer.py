@@ -613,7 +613,7 @@ created_report = client.posts_reports.create_report(
     ),
 )
 assert created_report.record is not None
-assert client.posts_reports.get_report("wheel-report").payload["reason"] == "spam"
+assert client.posts_reports.get_report("wheel-report", sync_admin_permissions).payload["reason"] == "spam"
 assert client.posts_reports.list_reports_reasons()[0].payload["value"] == "spam"
 updated_report = client.posts_reports.update_report(
     "wheel-report",

@@ -8,6 +8,7 @@ declaring which fsspec backends provide an atomic rename.
 
 from __future__ import annotations
 
+import multiprocessing
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -192,6 +193,9 @@ class _ConditionalPutSpy:
         self._inner = inner
         self.conditional_put_calls: list[tuple[str, bytes | None]] = []
         self.get_with_version_calls: list[str] = []
+
+    def key_lock(self, key: str) -> Any:
+        return self._inner.key_lock(key)
 
     def get(self, key: str) -> Any:
         return self._inner.get(key)
@@ -441,3 +445,47 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
     assert destination_health(resource, Artifact.from_dict(artifact), destination_uri=dest), (
         "state checksum must match the artifact currently published at final_uri"
     )
+
+
+def _process_cas(base_uri: str, barrier: Any, results: Any, value: str) -> None:
+    store = FileStateStore(base_uri)
+    prior = store.read_version("shared")
+    barrier.wait(timeout=10)
+    try:
+        store.conditional_put("shared", SyncState(cursor={"shared": f'"{value}"'}), prior)
+        results.put("committed")
+    except SyncStateConflictError:
+        results.put("conflict")
+
+
+def test_local_cas_coordinates_separate_processes(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    base_uri = f"file://{tmp_path}/process-state"
+    FileStateStore(base_uri)
+    processes = [context.Process(target=_process_cas, args=(base_uri, barrier, results, value)) for value in ("a", "b")]
+    try:
+        for process in processes:
+            process.start()
+        assert sorted(results.get(timeout=15) for _ in processes) == ["committed", "conflict"]
+        for process in processes:
+            process.join(timeout=10)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        results.close()
+
+
+def test_atomic_sync_refuses_a_store_without_a_transaction_lock(tmp_path: Path) -> None:
+    from datasluice.exceptions import DataSluiceError
+    from datasluice.sync.sync import _resource_transaction
+
+    class UnlockedStore:
+        pass
+
+    with pytest.raises(DataSluiceError, match="key_lock"):
+        _resource_transaction(UnlockedStore(), "resource", is_atomic=True)

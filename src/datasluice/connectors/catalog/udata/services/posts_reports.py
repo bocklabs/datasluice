@@ -107,8 +107,11 @@ class SyncPostsReportsService(SyncCatalogService):
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    def list_reports(self, query: ReportQuery | None = None) -> MappingRecord:
-        return self._read(wire.list_reports_request(query), wire.LIST_REPORTS_OPERATION, wire.parse_mapping)
+    def list_reports(self, permissions: Permissions, query: ReportQuery | None = None) -> MappingRecord:
+        operation = wire.LIST_REPORTS_OPERATION
+        return _parsed(
+            self._mutate(wire.list_reports_request(query), permissions, None, operation), operation, wire.parse_mapping
+        )
 
     def create_report(
         self,
@@ -126,8 +129,13 @@ class SyncPostsReportsService(SyncCatalogService):
             success_target=lambda payload: _record_id(payload, "report"),
         )
 
-    def get_report(self, report_id: str) -> MappingRecord:
-        return self._read(wire.get_report_request(report_id), wire.GET_REPORT_OPERATION, wire.parse_mapping)
+    def get_report(self, report_id: str, permissions: Permissions) -> MappingRecord:
+        operation = wire.GET_REPORT_OPERATION
+        return _parsed(
+            self._mutate(wire.get_report_request(report_id), permissions, None, operation),
+            operation,
+            wire.parse_mapping,
+        )
 
     def update_report(
         self,
@@ -353,8 +361,10 @@ class AsyncPostsReportsService(AsyncCatalogService):
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    async def list_reports(self, query: ReportQuery | None = None) -> MappingRecord:
-        return await self._read(wire.list_reports_request(query), wire.LIST_REPORTS_OPERATION, wire.parse_mapping)
+    async def list_reports(self, permissions: Permissions, query: ReportQuery | None = None) -> MappingRecord:
+        operation = wire.LIST_REPORTS_OPERATION
+        response = await self._mutate(wire.list_reports_request(query), permissions, None, operation)
+        return _parsed(response, operation, wire.parse_mapping)
 
     async def create_report(
         self,
@@ -372,8 +382,10 @@ class AsyncPostsReportsService(AsyncCatalogService):
             success_target=lambda payload: _record_id(payload, "report"),
         )
 
-    async def get_report(self, report_id: str) -> MappingRecord:
-        return await self._read(wire.get_report_request(report_id), wire.GET_REPORT_OPERATION, wire.parse_mapping)
+    async def get_report(self, report_id: str, permissions: Permissions) -> MappingRecord:
+        operation = wire.GET_REPORT_OPERATION
+        response = await self._mutate(wire.get_report_request(report_id), permissions, None, operation)
+        return _parsed(response, operation, wire.parse_mapping)
 
     async def update_report(
         self,

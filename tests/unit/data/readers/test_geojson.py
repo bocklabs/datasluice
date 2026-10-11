@@ -124,3 +124,19 @@ def test_read_batches_complex_geometry_falls_back_to_json() -> None:
 
 def test_geojson_reader_in_registry() -> None:
     assert READERS["GEOJSON"] is GeoJSONReader
+
+
+@pytest.mark.parametrize(
+    "kind,coordinates",
+    [
+        ("Point", [1, 2, 3]),
+        ("LineString", [[1, 2, 3], [4, 5, 6]]),
+        ("Polygon", [[[1, 2, 3], [4, 5, 6], [1, 2, 3]]]),
+    ],
+)
+def test_altitude_is_preserved(kind: str, coordinates: object) -> None:
+    geometry = {"type": kind, "coordinates": coordinates}
+    feature = {"type": "Feature", "properties": {}, "geometry": geometry}
+    batches = GeoJSONReader().read_batches(io.BytesIO(json.dumps(feature).encode()))
+    table = pa.Table.from_batches(list(batches))
+    assert json.loads(table.column("geometry_wkt")[0].as_py()) == geometry

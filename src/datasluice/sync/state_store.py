@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 from contextlib import contextmanager
 from datetime import datetime
@@ -43,6 +44,7 @@ logger = get_logger("sync.state_store")
 _GLOBAL_LOCKS: dict[str, threading.RLock] = {}
 _GLOBAL_LOCKS_USERS: dict[str, int] = {}
 _GLOBAL_LOCKS_GUARD = threading.Lock()
+_HELD_FILE_LOCKS = threading.local()
 
 _UNSET = object()
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
@@ -80,15 +82,16 @@ class FileStateStore:
         :class:`datasluice.ports.state_store.AtomicStateStore` capability Protocol:
         :meth:`read_version` returns the raw envelope bytes for CAS comparison and
         :meth:`conditional_put` writes only when the on-disk version matches a
-        caller-supplied ``expected_prior``. A per-key :class:`threading.Lock`
-        (``_locks``) serializes the compare-read and the atomic-move so they are
-        indivisible within a single process — two barrier-synchronized
+        caller-supplied ``expected_prior``. Re-entrant thread locks and local
+        advisory file locks serialize compare-read and atomic-move across
+        local processes — two barrier-synchronized
         expected-absent writers cannot both succeed; the loser raises
         :class:`SyncStateConflictError`.
 
         Backend atomicity is declared via :data:`_ATOMIC_MV_BACKENDS`. On backends
         whose ``mv`` is a true atomic rename (local ``file``/, ``memory``) the
-        per-key lock makes CAS *preventive* same-process. On non-atomic backends
+        per-key lock makes CAS preventive across local processes and within
+        in-process memory storage. On non-atomic backends
         (generic copy-then-remove ``mv`` on remote object stores) CAS is
         *detection-only* — a cross-process observer may briefly see no file — and a
         warning is logged; the per-key lock still provides same-process safety
@@ -160,16 +163,9 @@ class FileStateStore:
 
     @contextmanager
     def key_lock(self, key: str) -> Iterator[threading.RLock]:
-        """Hold the per-key lock for *key* so callers serialize a multi-step transaction.
-
-        Returns a re-entrant lock scoped by backend+base URI+state path, so a
-        caller that holds this lock around (materialize artifact + CAS state)
-        serializes publication end-to-end against any other writer for the same
-        key, including writers using a separate :class:`FileStateStore`
-        instance. Re-entrancy lets the same thread call
-        :meth:`conditional_put` (which acquires the same lock) inside this
-        context without deadlock.
-        """
+        """Serialize a resource transaction across threads and local processes."""
+        if not self._is_atomic_mv:
+            raise StateStoreError("Sync transactions require local storage or a backend with a distributed key lock")
         with self._key_lock_held(key) as lock:
             yield lock
 
@@ -184,7 +180,7 @@ class FileStateStore:
                 _GLOBAL_LOCKS[scope] = lock
             _GLOBAL_LOCKS_USERS[scope] = _GLOBAL_LOCKS_USERS.get(scope, 0) + 1
         try:
-            with lock:
+            with lock, self._file_lock(key, scope):
                 yield lock
         finally:
             with _GLOBAL_LOCKS_GUARD:
@@ -194,6 +190,39 @@ class FileStateStore:
                 else:
                     _GLOBAL_LOCKS_USERS.pop(scope, None)
                     _GLOBAL_LOCKS.pop(scope, None)
+
+    @contextmanager
+    def _file_lock(self, key: str, scope: str) -> Iterator[None]:
+        protocol = self._fs.protocol
+        protocols = {protocol} if isinstance(protocol, str) else set(protocol)
+        held: set[str] = getattr(_HELD_FILE_LOCKS, "scopes", set())
+        if not protocols.intersection({"file", "local"}) or scope in held:
+            yield
+            return
+        path = self._fs._strip_protocol(self._state_path(key)) + ".lock"
+        with open(path, "a+b") as lock_file:
+            if sys.platform == "win32":
+                import msvcrt
+
+                if lock_file.tell() == 0:
+                    lock_file.write(b"0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            _HELD_FILE_LOCKS.scopes = held | {scope}
+            try:
+                yield
+            finally:
+                _HELD_FILE_LOCKS.scopes = held
+                if sys.platform == "win32":
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _state_path(self, key: str) -> str:
         """Return the SHA-256-hexdigest (.json) path for *key*."""
@@ -331,9 +360,8 @@ class FileStateStore:
     def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> bytes:
         """Persist *state* under *key* only if the current version matches ``expected_prior``.
 
-        The per-key threading lock (``_locks``) is held across the version check
-        and the atomic write, making them indivisible within a single process.
-        Two same-process writers that both pass the version check cannot both
+        Thread and local file locks span the version check and atomic write.
+        Two local writers that both pass the version check cannot both
         commit; the loser raises :class:`SyncStateConflictError`.
 
         On non-atomic-``mv`` backends (see :data:`_ATOMIC_MV_BACKENDS`) a

@@ -4133,6 +4133,11 @@ def _exercise_sync_posts_reports_reads(token: str, cases: tuple[tuple[str, str, 
     credential = UDataCredential(api_key=token)
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         for path, method, args in cases:
+            if method == "list_reports":
+                permissions = EffectivePermissions.for_credential(
+                    credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+                )
+                args = (permissions, *args)
             status, payload, _ = _direct_request(token, "GET", path, max_bytes=65536)
             if status != 200:
                 with pytest.raises(CatalogError) as error:
@@ -4150,6 +4155,11 @@ async def _exercise_async_posts_reports_reads(
     credential = UDataCredential(api_key=token)
     async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         for path, method, args in cases:
+            if method == "list_reports":
+                permissions = EffectivePermissions.for_credential(
+                    credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+                )
+                args = (permissions, *args)
             status, payload, _ = _direct_request(token, "GET", path, max_bytes=65536)
             if status != 200:
                 with pytest.raises(CatalogError) as error:
@@ -4300,7 +4310,7 @@ def _exercise_sync_controlled_report(client: SyncUDataClient, token: str, permis
     status, raw_report, _ = _direct_request(token, "GET", f"/api/1/reports/{report_id}/")
     assert status == 200
     assert isinstance(raw_report, Mapping)
-    assert _plain_json(client.posts_reports.get_report(report_id).payload) == raw_report
+    assert _plain_json(client.posts_reports.get_report(report_id, permissions).payload) == raw_report
     updated_report = client.posts_reports.update_report(
         report_id,
         ReportUpdateInput(message="evidence updated"),
@@ -4474,7 +4484,7 @@ async def _exercise_async_controlled_report(
     status, raw_report, _ = _direct_request(token, "GET", f"/api/1/reports/{report_id}/")
     assert status == 200
     assert isinstance(raw_report, Mapping)
-    assert _plain_json((await client.posts_reports.get_report(report_id)).payload) == raw_report
+    assert _plain_json((await client.posts_reports.get_report(report_id, permissions)).payload) == raw_report
     updated_report = await client.posts_reports.update_report(
         report_id,
         ReportUpdateInput(message="evidence updated"),

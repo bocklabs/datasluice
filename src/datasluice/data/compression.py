@@ -100,7 +100,7 @@ class PeekableReader(io.RawIOBase):
         return True
 
     def seekable(self) -> bool:
-        return getattr(self._source, "seekable", lambda: False)()
+        return False
 
     def writable(self) -> bool:
         return False

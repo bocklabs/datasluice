@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
@@ -60,6 +60,12 @@ def _validate_uri(value: object, path: str) -> str:
     except ValueError as exc:
         raise _contract_error(path) from exc
     if parts.username is not None or parts.password is not None:
+        raise _contract_error(path)
+    if (
+        parts.scheme
+        and parts.scheme not in {"file", "http", "https", *_OBJECT_STORAGE_SCHEMES}
+        and not PureWindowsPath(value).is_absolute()
+    ):
         raise _contract_error(path)
     return value
 
@@ -223,11 +229,13 @@ def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
     identity_source = str(locator.to_dict()["uri"])
     resource_id = hashlib.sha256(identity_source.encode()).hexdigest()
     access: LocalFile | ObjectStorage | HttpDownload
-    if parts.scheme == "file":
+    if PureWindowsPath(locator.uri).is_absolute():
+        access = LocalFile(path=locator.uri)
+    elif parts.scheme == "file":
         access = LocalFile(path=unquote(parts.path))
     elif parts.scheme in _OBJECT_STORAGE_SCHEMES:
         access = ObjectStorage(uri=locator.uri)
-    elif parts.scheme in ("http", "https") or parts.scheme:
+    elif parts.scheme in ("http", "https"):
         access = HttpDownload(url=locator.uri)
     else:
         access = LocalFile(path=locator.uri)

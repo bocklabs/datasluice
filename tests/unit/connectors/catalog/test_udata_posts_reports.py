@@ -26,7 +26,7 @@ from datasluice.connectors.catalog.udata.services.posts_reports import (
     SyncPostsReportsService,
 )
 from datasluice.connectors.catalog.udata.wire import posts_reports as wire
-from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError
+from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError, ForbiddenError
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
     UDATA_CREDENTIAL,
@@ -210,8 +210,8 @@ def test_post_reads_decode_native_pages_and_documents() -> None:
         atom = client.posts_reports.recent_posts_atom_feed()
         assert atom.payload["media_type"] == "application/atom+xml"
         assert thawing_payload(client.posts_reports.search_posts(PostSearchQuery(q="x")).payload) == udata_page(_post())
-        assert thawing_payload(client.posts_reports.list_reports().payload) == udata_page(_report())
-        assert thawing_payload(client.posts_reports.get_report("report-1").payload) == _report()
+        assert thawing_payload(client.posts_reports.list_reports(ADMIN_PERMISSIONS).payload) == udata_page(_report())
+        assert thawing_payload(client.posts_reports.get_report("report-1", ADMIN_PERMISSIONS).payload) == _report()
         reasons: tuple[MappingRecord, ...] = client.posts_reports.list_reports_reasons()
         assert cast("Mapping[str, object]", thawing_payload(reasons[0].payload))["value"] == "spam"
         assert thawing_payload(client.posts_reports.list_notifications(PERMISSIONS).payload) == udata_page(_report())
@@ -473,3 +473,20 @@ def test_frozen_report_mappings_stay_json_serializable(factory: Any, field: str)
 def test_report_mappings_reject_non_json_safe_values(bad: Mapping[str, object]) -> None:
     with pytest.raises(ValueError, match="JSON-safe values only"):
         ReportCreateInput(reason=_REASON, subject=_SUBJECT, callbacks=bad)
+
+
+@pytest.mark.parametrize("method,args", [("list_reports", (PERMISSIONS,)), ("get_report", ("report-1", PERMISSIONS))])
+def test_report_reads_require_admin_permissions_in_both_modes(method: str, args: tuple[object, ...]) -> None:
+    router = atom_sync_route_table(with_site_route({}))
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError):
+        getattr(client.posts_reports, method)(*args)
+    assert not [request for request in router.requests if "/reports/" in request.url]
+
+    async def run() -> None:
+        async_router = atom_async_route_table(with_site_route({}))
+        async with async_client(async_router, UDATA_CREDENTIAL) as client:
+            with pytest.raises(ForbiddenError):
+                await getattr(client.posts_reports, method)(*args)
+        assert not [request for request in async_router.requests if "/reports/" in request.url]
+
+    asyncio.run(run())

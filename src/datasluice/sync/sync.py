@@ -36,19 +36,12 @@ class SyncOutcome:
 
 
 def _resource_transaction(state_store: Any, key: str, *, is_atomic: bool) -> Any:
-    """Return a context manager that serializes a per-resource sync transaction.
-
-    For :class:`FileStateStore` (and any AtomicStateStore that exposes
-    ``key_lock``), the per-key lock is held across the entire
-    read-materialize-CAS-cleanup sequence so two writers for the same resource
-    cannot interleave their artifact publication with their state CAS — the
-    loser's CAS sees the winner's committed version and aborts before
-    publishing. For stores without ``key_lock`` (e.g. external AtomicStateStore
-    implementers that did not opt in), a no-op context manager is returned so
-    behavior matches today's per-call CAS.
-    """
-    if is_atomic and hasattr(state_store, "key_lock"):
-        return state_store.key_lock(key)
+    """Require atomic stores to serialize artifact publication and state CAS."""
+    if is_atomic:
+        key_lock = getattr(state_store, "key_lock", None)
+        if not callable(key_lock):
+            raise DataSluiceError("Atomic sync requires a key_lock spanning artifact publication and state commit")
+        return key_lock(key)
     return nullcontext()
 
 

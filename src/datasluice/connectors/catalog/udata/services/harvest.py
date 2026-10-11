@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import partial
 from inspect import isawaitable
 from time import monotonic, sleep
@@ -245,13 +247,23 @@ def _wait_for_job(
     """Poll one queued job under the caller's finite lease and poll ceiling."""
     current = handle
     record: MappingRecord | None = None
-    while True:
-        proceed, stopped, record = _wait_step(current, monitor, record, current.poll_interval)
-        if not proceed:
-            return HarvestJobWaitResult(handle=stopped, record=record)
-        if current.poll_interval > 0:
-            sleeper(current.poll_interval)
-        current, record = observe(current)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="udata-harvest-wait")
+    try:
+        while True:
+            proceed, stopped, record = _wait_step(current, monitor, record, current.poll_interval)
+            if not proceed:
+                return HarvestJobWaitResult(handle=stopped, record=record)
+            if current.poll_interval > 0:
+                sleeper(current.poll_interval)
+            future = executor.submit(observe, current)
+            try:
+                current, record = future.result(timeout=max(0.0, monitor.remaining()))
+            except FutureTimeoutError:
+                if future.done() and isinstance(future.exception(), TimeoutError):
+                    raise
+                return HarvestJobWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 async def _wait_for_job_async(
@@ -269,7 +281,13 @@ async def _wait_for_job_async(
             return HarvestJobWaitResult(handle=stopped, record=record)
         if current.poll_interval > 0:
             await sleeper(current.poll_interval)
-        current, record = await observe(current)
+        try:
+            async with asyncio.timeout(max(0.0, monitor.remaining())) as deadline:
+                current, record = await observe(current)
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+            return HarvestJobWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
 
 
 class SyncHarvestService(SyncCatalogService):

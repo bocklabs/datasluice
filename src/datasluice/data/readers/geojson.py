@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from datasluice.data.readers.base import BaseFormatReader
+from datasluice.data.readers.base import BaseFormatReader, read_document
 from datasluice.exceptions import FormatError
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ class GeoJSONReader(BaseFormatReader):
                 "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
-        data = source.read()
+        data = read_document(source)
         if not data.strip():
             return
         try:
@@ -107,19 +107,23 @@ def _to_wkt(geometry: Any) -> str:
         return ""
     geom_type = geometry.get("type")
     coords = geometry.get("coordinates")
-    if geom_type == "Point" and isinstance(coords, list) and len(coords) >= 2:
+    if geom_type == "Point" and _is_xy(coords):
         return f"POINT ({_fmt_coord(coords[0])} {_fmt_coord(coords[1])})"
-    if geom_type == "LineString" and isinstance(coords, list):
-        inside = ", ".join(f"{_fmt_coord(p[0])} {_fmt_coord(p[1])}" for p in coords if len(p) >= 2)
+    if geom_type == "LineString" and isinstance(coords, list) and all(_is_xy(point) for point in coords):
+        inside = ", ".join(f"{_fmt_coord(p[0])} {_fmt_coord(p[1])}" for p in coords)
         return f"LINESTRING ({inside})"
-    if geom_type == "Polygon" and isinstance(coords, list):
-        rings = [
-            "(" + ", ".join(f"{_fmt_coord(p[0])} {_fmt_coord(p[1])}" for p in ring if len(p) >= 2) + ")"
-            for ring in coords
-            if isinstance(ring, list)
-        ]
+    if (
+        geom_type == "Polygon"
+        and isinstance(coords, list)
+        and all(isinstance(ring, list) and all(_is_xy(point) for point in ring) for ring in coords)
+    ):
+        rings = ["(" + ", ".join(f"{_fmt_coord(p[0])} {_fmt_coord(p[1])}" for p in ring) + ")" for ring in coords]
         return f"POLYGON ({', '.join(rings)})"
     return json.dumps(geometry, separators=(",", ":"))
+
+
+def _is_xy(position: object) -> bool:
+    return isinstance(position, list) and len(position) == 2
 
 
 def _fmt_coord(value: Any) -> str:

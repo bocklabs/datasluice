@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urljoin, urlsplit
 
+from datasluice._uri import sanitize_uri
 from datasluice.data._byte_source import IterableBytesIO
 from datasluice.data.batch_stream import BatchCursor, BatchStream, ParquetRowGroupPosition
-from datasluice.data.compression import apply_compression
+from datasluice.data.compression import PeekableReader, apply_compression
 from datasluice.data.readers import get_reader
 from datasluice.exceptions import DataSluiceError, UnsupportedAccessError
 from datasluice.logging import get_logger
-from datasluice.runtime.transport.base import RuntimeRequest
+from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -116,6 +119,11 @@ class DataPlaneResourceReader:
             return self._open_http_parquet(resource, source, content_encoding, effective_batch_size)
         return self._open_compressed(source, content_encoding, resource, effective_batch_size)
 
+    def open_bytes(self, resource: Resource) -> Any:
+        """Open undecoded resource bytes; the caller must close the source."""
+        source, _ = self._open_source(self._resolve_access(resource), resource)
+        return source
+
     def _open_source(self, access: Any, resource: Resource) -> tuple[Any, str | None]:
         if access.kind == "http_download":
             return self._open_http_download(access)
@@ -157,27 +165,19 @@ class DataPlaneResourceReader:
     ) -> BatchStream:
         from datasluice.data.compression import _detect_format
 
-        magic = source.read(6)
-        source.seek(0)
+        source = PeekableReader(source)
+        magic = source.peek(6)
         header_hint = content_encoding
         if header_hint not in (None, "identity") and _detect_format(magic, None) == "none":
             header_hint = None
         if _detect_format(magic, header_hint) == "none":
             return self._build_batch_stream(resource, source, batch_size)
-        import io
-
         try:
             decompressed = apply_compression(source, header_hint)
         except BaseException:
             _close_source(source)
             raise
-        try:
-            body = decompressed.read()
-        except BaseException:
-            _close_source(decompressed)
-            raise
-        decompressed.close()
-        return self._build_batch_stream(resource, io.BytesIO(body), batch_size)
+        return self._build_batch_stream(resource, decompressed, batch_size)
 
     def _open_compressed(
         self, source: Any, content_encoding: str | None, resource: Resource, batch_size: int
@@ -330,16 +330,36 @@ class DataPlaneResourceReader:
 
         if self.transport is None:
             raise UnsupportedAccessError(
-                f"HttpDownload for {getattr(access, 'url', '<unknown>')!r} requires a transport; "
+                f"HttpDownload for {sanitize_uri(getattr(access, 'url', '<unknown>'))!r} requires a transport; "
                 "pass a CatalogTransport from the DataSluice runtime"
             )
         url = access.url
         import io
 
-        response = self.transport.send(RuntimeRequest(method="GET", url=url))
-        if not 200 <= response.status_code < 300:
-            raise UnsupportedAccessError(f"HttpDownload for {url!r} returned HTTP {response.status_code}")
-        return io.BytesIO(response.body), _content_encoding_from_headers(dict(response.headers))
+        from datasluice.data.readers.base import MAX_DOCUMENT_BYTES
+
+        send_stream = getattr(self.transport, "send_stream", None)
+        if not callable(send_stream):
+            response = self.transport.send(RuntimeRequest(method="GET", url=url, max_response_bytes=MAX_DOCUMENT_BYTES))
+            if not 200 <= response.status_code < 300 or len(response.body) > MAX_DOCUMENT_BYTES:
+                raise UnsupportedAccessError(
+                    f"HttpDownload for {sanitize_uri(url)!r} failed or exceeded the buffer limit"
+                )
+            return io.BytesIO(response.body), _content_encoding_from_headers(dict(response.headers))
+        for hop in range(11):
+            response = send_stream(RuntimeRequest(method="GET", url=url, redirect_policy=RedirectPolicy.NO_FOLLOW))
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            if 200 <= response.status_code < 300:
+                return _StreamClosingBytesIO(iter(response), response, nullcontext()), headers.get("content-encoding")
+            response.close()
+            if response.status_code not in {301, 302, 303, 307, 308} or "location" not in headers or hop == 10:
+                raise UnsupportedAccessError(
+                    f"HttpDownload for {sanitize_uri(url)!r} returned HTTP {response.status_code}"
+                )
+            url = urljoin(url, headers["location"])
+            if urlsplit(url).scheme not in {"http", "https"}:
+                raise UnsupportedAccessError("HttpDownload redirect must use HTTP or HTTPS")
+        raise UnsupportedAccessError("HttpDownload exceeded its redirect limit")
 
     def _open_object_storage(self, access: Any) -> tuple[Any, str | None]:
         """ObjectStorage: open via open_filesystem.open."""
@@ -358,8 +378,13 @@ class DataPlaneResourceReader:
 
 
 def _chain(first: Any, rest: Iterator[Any]) -> Iterator[Any]:
-    yield first
-    yield from rest
+    try:
+        yield first
+        yield from rest
+    finally:
+        close = getattr(rest, "close", None)
+        if callable(close):
+            close()
 
 
 def _validate_batch_size(batch_size: Any) -> None:
