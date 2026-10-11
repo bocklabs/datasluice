@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -27,7 +28,7 @@ from datasluice.connectors.catalog.udata.services.topics import AsyncTopicsServi
 from datasluice.connectors.catalog.udata.wire import topics as wire
 from datasluice.contracts.catalog.native.udata import AsyncUDataTopicsService, SyncUDataTopicsService
 from datasluice.domain.catalog.auth import EffectivePermissions
-from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
 from datasluice.errors.catalog import (
     CatalogConflictError,
     CatalogError,
@@ -645,6 +646,7 @@ def test_topic_mutations_return_exact_redacted_receipt_targets() -> None:
 
     assert isinstance(created, TopicMutationResult)
     assert created.receipt.target.value == "topic-1"
+    assert created.receipt.target.resource_kind == ResourceKind("topic")
     assert created.receipt.audit_metadata == {"mutation": "created", "status_code": 201, "target_valid": True}
     assert created.record is not None
     assert _plain(created.record.payload) == _TOPIC_OBJECT
@@ -661,6 +663,17 @@ def test_topic_mutations_return_exact_redacted_receipt_targets() -> None:
     assert element_deleted.receipt.target.value == "topic-1:element-1"
     assert featured.receipt.target.value == "topic-1"
     assert unfeatured.receipt.target.value == "topic-1"
+    for label, receipt in (
+        ("updated", updated.receipt),
+        ("deleted", deleted.receipt),
+        ("elements_created", elements_created.receipt),
+        ("elements_deleted", elements_deleted.receipt),
+        ("element_updated", element_updated.receipt),
+        ("element_deleted", element_deleted.receipt),
+        ("featured", featured.receipt),
+        ("unfeatured", unfeatured.receipt),
+    ):
+        assert receipt.target.resource_kind == ResourceKind("topic"), label
     receipts = json.dumps([result.receipt.to_dict() for result in (created, updated, featured, element_updated)])
     assert "secret-key" not in receipts
     assert "health" not in receipts.lower()
@@ -903,6 +916,7 @@ def test_topic_mutation_failure_after_dispatch_attaches_a_rejected_receipt() -> 
     receipt = cast("MutationReceipt", raised.value.__dict__["mutation_receipt"])
     assert receipt.outcome == "rejected"
     assert receipt.target.value == "topic-1"
+    assert receipt.target.resource_kind == ResourceKind("topic")
     assert receipt.operation == wire.DELETE_TOPIC_OPERATION
     assert router.requests == []
 
@@ -1161,3 +1175,86 @@ def test_topic_async_cancellation_is_never_recorded_as_a_circuit_breaker_failure
 
     asyncio.run(run())
     assert [event.outcome for event in events.events if "breaker" in event.outcome] == []
+
+
+def test_topic_sync_parallel_reads_preserve_results_and_owned_cleanup() -> None:
+    """Two concurrent reads on one client keep both results and close the owned transport once."""
+    client, transport = _topics_interrupting_sync(TimeoutError())
+    transport.armed = False
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pages = list(executor.map(lambda _: client.topics.list_topics(), range(2)))
+
+    assert [cast("Mapping[str, object]", _plain(page.payload))["total"] for page in pages] == [1, 1]
+    client.close()
+    assert transport.close_count == 1
+
+
+def test_topic_async_parallel_reads_preserve_results_and_owned_cleanup() -> None:
+    """The async mode matches sync: gathered reads keep both results and close once."""
+    client, transport = _topics_interrupting_async(TimeoutError())
+    transport.armed = False
+
+    async def run() -> None:
+        pages = await asyncio.gather(client.topics.list_topics(), client.topics.list_topics())
+        assert [cast("Mapping[str, object]", _plain(page.payload))["total"] for page in pages] == [1, 1]
+        await client.aclose()
+
+    asyncio.run(run())
+    assert transport.aclose_count == 1
+
+
+def test_topic_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> None:
+    """A during-dispatch timeout is not a cancellation: the receipt is failed and the client stays ready."""
+    transport = _CancellingSyncTransport(("DELETE", f"{ORIGIN}/api/2/topics/topic-1/"), TimeoutError(), _TOPIC_PAGE)
+    client = SyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=UDATA_CREDENTIAL,
+        retry_sleep=lambda _: None,
+        owns_transport=True,
+    )
+    with pytest.raises(TimeoutError) as stopped:
+        client.topics.delete_topic(
+            "topic-1",
+            PERMISSIONS,
+            mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True),
+        )
+    receipt = cast("MutationReceipt", stopped.value.__dict__["mutation_receipt"])
+    assert receipt.outcome == "failed"
+    assert receipt.target.value == "topic-1"
+    assert receipt.target.resource_kind == ResourceKind("topic")
+    transport.armed = False
+    assert cast("Mapping[str, object]", _plain(client.topics.list_topics().payload))["total"] == 1
+    client.close()
+    assert transport.close_count == 1
+
+
+def test_topic_async_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> None:
+    """The async timeout keeps the same failed receipt, next-read readiness, and close-once ownership."""
+    transport = _CancellingAsyncTransport(("DELETE", f"{ORIGIN}/api/2/topics/topic-1/"), TimeoutError(), _TOPIC_PAGE)
+    client = AsyncUDataClient(
+        transport,
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=UDATA_CREDENTIAL,
+        owns_transport=True,
+    )
+
+    async def run() -> None:
+        with pytest.raises(TimeoutError) as stopped:
+            await client.topics.delete_topic(
+                "topic-1",
+                PERMISSIONS,
+                mutation_policy(wire.DELETE_TOPIC_OPERATION, "topic-1", destructive=True),
+            )
+        receipt = cast("MutationReceipt", stopped.value.__dict__["mutation_receipt"])
+        assert receipt.outcome == "failed"
+        assert receipt.target.value == "topic-1"
+        transport.armed = False
+        assert cast("Mapping[str, object]", _plain((await client.topics.list_topics()).payload))["total"] == 1
+        await client.aclose()
+
+    asyncio.run(run())
+    assert transport.aclose_count == 1

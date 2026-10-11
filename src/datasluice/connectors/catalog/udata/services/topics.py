@@ -38,18 +38,19 @@ if TYPE_CHECKING:
     from datasluice.domain.catalog.models import MappingRecord
 
 _ADMIN = frozenset({wire.FEATURE_TOPIC_OPERATION, wire.UNFEATURE_TOPIC_OPERATION})
+_TOPIC_KIND = ResourceKind("topic")
 
 _mutation = partial(
     _run_mutation,
     SETTLEMENT_ERRORS,
     TopicMutationResult,
-    ResourceKind.DATASET,
+    _TOPIC_KIND,
 )
 _mutation_async = partial(
     _run_mutation_async,
     ASYNC_SETTLEMENT_ERRORS,
     TopicMutationResult,
-    ResourceKind.DATASET,
+    _TOPIC_KIND,
 )
 
 

@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 import pytest
 
 import tests.unit.connectors.catalog.test_udata_datasets as dataset_tests
+import tests.unit.connectors.catalog.test_udata_topics as topic_tests
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
     SyncUDataClient,
@@ -117,6 +118,40 @@ FAILURE_ROWS: dict[str, str] = {
     "dataset_invalid_input_pre_dispatch": "test_invalid_inputs_are_rejected_before_any_dispatch",
     "dataset_unimplemented_family": "test_unimplemented_native_operation_returns_typed_error",
     "dataset_sync_async_parity": "test_async_dataset_service_matches_sync_wire_exactly",
+}
+
+TOPIC_ASSIGNED_ROWS: dict[int, str] = {
+    197: "test_every_topic_route_has_an_exact_wire_shape",
+    198: "test_every_topic_route_has_an_exact_wire_shape",
+    199: "test_every_topic_route_has_an_exact_wire_shape",
+    200: "test_every_topic_route_has_an_exact_wire_shape",
+    201: "test_topic_mutation_bodies_carry_only_the_documented_fields",
+    202: "test_topic_mutations_return_exact_redacted_receipt_targets",
+    203: "test_every_topic_route_has_an_exact_wire_shape",
+    204: "test_topic_mutation_bodies_carry_only_the_documented_fields",
+    205: "test_topic_mutations_return_exact_redacted_receipt_targets",
+    206: "test_topic_mutations_return_exact_redacted_receipt_targets",
+    207: "test_topic_mutation_bodies_carry_only_the_documented_fields",
+    208: "test_topic_mutation_dispatch_uses_the_exact_operation_in_both_modes",
+    209: "test_topic_mutation_dispatch_uses_the_exact_operation_in_both_modes",
+}
+
+TOPIC_FAILURE_ROWS: dict[str, str] = {
+    "topic_success_wire": "test_topic_reads_decode_losslessly_and_fail_typed_in_both_modes",
+    "topic_invalid_input_pre_dispatch": "test_an_oversized_topic_page_never_reaches_a_route",
+    "topic_malformed_segment_pre_dispatch": "test_malformed_topic_identifiers_are_stopped_before_any_request",
+    "topic_dependency_exception": "test_topic_transport_failures_still_open_the_circuit_before_the_next_read",
+    "topic_pre_dispatch_denial": "test_topic_mutation_failure_after_dispatch_attaches_a_rejected_receipt",
+    "topic_during_dispatch_timeout": "test_topic_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state",
+    "topic_cancellation": "test_topic_mutation_cancellation_settles_as_cancelled_not_failed",
+    "topic_owned_cleanup": "test_topic_sync_cancellation_leaves_post_state_ready_and_closes_the_owned_transport_once",
+    "topic_borrowed_cleanup": "test_topic_sync_cancellation_never_closes_a_borrowed_transport",
+    "topic_malformed_decoding": "test_malformed_topic_read_bodies_fail_typed_without_a_raw_body",
+    "topic_non_finite_decoding": "test_non_finite_topic_responses_fail_typed_without_a_raw_body",
+    "topic_redaction": "test_topic_mutations_return_exact_redacted_receipt_targets",
+    "topic_retry_breaker_interaction": "test_topic_sync_cancellation_is_never_recorded_as_a_circuit_breaker_failure",
+    "topic_sync_async_parity": "test_topics_contract_exposes_every_assigned_method_in_both_modes",
+    "topic_parallel_reads": "test_topic_sync_parallel_reads_preserve_results_and_owned_cleanup",
 }
 
 ROOT_ROW_NUMBERS = frozenset(range(183, 196))
@@ -324,6 +359,28 @@ def test_dataset_failure_cell_has_passing_evidence(cell: str) -> None:
     test_name = FAILURE_ROWS[cell]
     test = getattr(dataset_tests, test_name)
     assert callable(test), test_name
+
+
+@pytest.mark.parametrize("row", sorted(TOPIC_ASSIGNED_ROWS))
+def test_topic_row_has_named_evidence(row: int) -> None:
+    """Every assigned topic COVERAGE row names a test in the topics family suite."""
+    test_name = TOPIC_ASSIGNED_ROWS[row]
+    test = getattr(topic_tests, test_name)
+    assert callable(test), test_name
+
+
+@pytest.mark.parametrize("cell", sorted(TOPIC_FAILURE_ROWS))
+def test_topic_failure_cell_has_named_evidence(cell: str) -> None:
+    """Every applicable topic failure cell names a discriminating test in the family suite."""
+    test_name = TOPIC_FAILURE_ROWS[cell]
+    test = getattr(topic_tests, test_name)
+    assert callable(test), test_name
+
+
+def test_topic_rows_cover_every_assigned_route_exactly_once() -> None:
+    """The thirteen assigned topic rows are exactly the pinned `/api/2/topics/` topic route-methods."""
+    assert set(TOPIC_ASSIGNED_ROWS) == set(range(197, 210))
+    assert len(TOPIC_ASSIGNED_ROWS) == 13
 
 
 def test_root_profile_rows_are_exhaustively_declared() -> None:
