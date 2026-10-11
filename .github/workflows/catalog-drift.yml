@@ -1,0 +1,34 @@
+name: uData public drift (disabled)
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: catalog-drift
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: Bounded advisory drift check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Report the reviewed allowlist state
+        run: uv run python scripts/check_udata_drift.py --allow-disabled
+
+      - name: Guard that no reviewed target was added without a new record
+        run: |
+          set -e
+          record=".planning/phases/04-udata-connector/04-DRIFT-TARGETS.md"
+          test -f "$record"
+          grep -q '^\*\*Empty\.\*\*' "$record" \
+            || { echo "Allowlist is no longer empty but no schedule trigger was restored" >&2; exit 1; }
