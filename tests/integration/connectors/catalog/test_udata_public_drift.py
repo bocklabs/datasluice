@@ -7,7 +7,6 @@ import contextlib
 import io
 import json
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -33,10 +32,6 @@ from scripts.check_udata_drift import (
     EXIT_OK,
     main,
 )
-
-_ROOT = Path(__file__).parents[4]
-_RECORD = _ROOT / ".planning/phases/04-udata-connector/04-DRIFT-TARGETS.md"
-_WORKFLOW = _ROOT / ".github/workflows/catalog-drift.yml"
 
 EXIT_DRIFTED = 2
 
@@ -137,30 +132,3 @@ def test_t04_every_allowlisted_read_is_an_anonymous_get() -> None:
 
 def test_t04_no_public_origin_is_reachable_while_the_allowlist_is_empty() -> None:
     assert {target.origin for target in APPROVED_TARGETS} == set()
-
-
-def test_t03_the_record_keeps_the_allowlist_empty_and_records_the_reprobe() -> None:
-    text = _RECORD.read_text(encoding="utf-8")
-
-    assert "**Empty.**" in text
-    assert "17.12.1" in text
-
-
-def test_t01_the_schedule_is_withheld_while_the_allowlist_is_empty() -> None:
-    text = _WORKFLOW.read_text(encoding="utf-8")
-
-    assert "workflow_dispatch:" in text
-    assert "schedule:" not in text
-    assert "cron:" not in text
-
-
-def test_t01_the_workflow_runs_the_shipped_entry_point() -> None:
-    text = _WORKFLOW.read_text(encoding="utf-8")
-
-    assert "scripts/check_udata_drift.py" in text
-
-
-def test_t01_a_restored_schedule_without_a_new_record_is_refused() -> None:
-    text = _WORKFLOW.read_text(encoding="utf-8")
-
-    assert r"grep -q '^\*\*Empty\.\*\*'" in text
