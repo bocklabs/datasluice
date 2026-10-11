@@ -649,8 +649,6 @@ def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
         assert f"def {test_id}(" in controlled_source, test_id
     assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
 
-    # Every claimed operation must actually be driven by the controlled test,
-    # either by its route name or by a direct call to the typed method.
     for operation in set(reads) | set(mutations):
         method = operation.rsplit(".", 1)[-1].replace("-", "_")
         assert f'"{method}"' in controlled_source or f"auth_oauth.{method}(" in controlled_source, operation
@@ -695,7 +693,6 @@ def test_controlled_topic_evidence_covers_every_route_in_both_modes() -> None:
         assert f"def {test_id}(" in controlled_source, test_id
     assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
 
-    # Every claimed operation must actually be driven by the controlled test.
     for operation in reads | mutations:
         method = operation.rsplit(".", 1)[-1].replace("-", "_")
         assert f'"{method}"' in controlled_source or f"topics.{method}(" in controlled_source, operation

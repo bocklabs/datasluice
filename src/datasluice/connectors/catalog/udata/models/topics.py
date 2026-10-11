@@ -288,13 +288,7 @@ class TopicElementInput:
 
 @dataclass(frozen=True, slots=True)
 class TopicElementLink:
-    """One documented element reference the topic element collection accepts.
-
-    The pinned ``TopicElementsAPI.post`` patches each body onto a ``TopicElement``,
-    so the reference is nested under the model's ``element`` write key. A flat
-    ``{"class", "id"}`` body is silently dropped by ``patch`` and then fails the
-    pinned title-or-element check with a 400.
-    """
+    """One documented element reference the topic element collection accepts."""
 
     element_class: str
     element_id: str
