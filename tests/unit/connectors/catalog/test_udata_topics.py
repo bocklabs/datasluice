@@ -306,8 +306,8 @@ def test_topic_mutation_bodies_carry_only_the_documented_fields() -> None:
             (TopicElementLink("Dataset", "dataset-1"), TopicElementLink("Reuse", "reuse-1")),
         ),
     )[3] == [
-        {"class": "Dataset", "id": "dataset-1"},
-        {"class": "Reuse", "id": "reuse-1"},
+        {"element": {"class": "Dataset", "id": "dataset-1"}},
+        {"element": {"class": "Reuse", "id": "reuse-1"}},
     ]
 
 

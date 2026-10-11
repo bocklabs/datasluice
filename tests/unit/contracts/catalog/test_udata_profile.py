@@ -675,6 +675,44 @@ def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
     )
 
 
+def test_controlled_topic_evidence_covers_every_route_in_both_modes() -> None:
+    """The topics evidence names every assigned route, a real test, and the live test digests."""
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_topic_evidence"]
+    evidence = controlled["route_differential"]
+    reads = set(evidence["read_operations"])
+    mutations = set(evidence["mutation_operations"])
+
+    assert reads | mutations == _TOPIC_ROUTE_OPERATION_IDS
+    assert reads.isdisjoint(mutations)
+    assert controlled["sanitized"] is True
+    assert controlled["local_only"] is True
+    assert controlled["stack_version"] == "17.6.0"
+    assert controlled["udata_image_digest"].startswith("sha256:")
+
+    controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+    wheel_source = (_ROOT / "tests/e2e/test_udata_wheel.py").read_text()
+    for test_id in controlled["test_ids"]:
+        assert f"def {test_id}(" in controlled_source, test_id
+    assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
+
+    # Every claimed operation must actually be driven by the controlled test.
+    for operation in reads | mutations:
+        method = operation.rsplit(".", 1)[-1].replace("-", "_")
+        assert f'"{method}"' in controlled_source or f"topics.{method}(" in controlled_source, operation
+
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == ["sync", "async"]
+    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+
+    for field, path in (
+        ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),
+        ("wheel_test_sha256", "tests/e2e/test_udata_wheel.py"),
+        ("wheel_tracer_sha256", "tests/e2e/udata_wheel_tracer.py"),
+        ("unit_test_sha256", "tests/unit/connectors/catalog/test_udata_topics.py"),
+    ):
+        assert controlled[field] == hashlib.sha256((_ROOT / path).read_bytes()).hexdigest(), field
+
+
 def _definition_start(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
     """Return the first source line of a definition, decorators included."""
     return min([decorator.lineno for decorator in node.decorator_list] + [node.lineno])

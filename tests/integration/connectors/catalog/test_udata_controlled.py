@@ -79,6 +79,14 @@ from datasluice.connectors.catalog.udata.models.reuses import (
 from datasluice.connectors.catalog.udata.models.root_profile import SiteMutationResult, SitePatchInput, SiteProfile
 from datasluice.connectors.catalog.udata.models.spatial import SpatialSuggestQuery
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery, TaxonomyMutationResult
+from datasluice.connectors.catalog.udata.models.topics import (
+    TopicCreateInput,
+    TopicElementInput,
+    TopicElementLink,
+    TopicElementsCreateInput,
+    TopicMutationResult,
+    TopicUpdateInput,
+)
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenCreationResult,
@@ -4891,7 +4899,14 @@ def test_controlled_dataservice_reads_match_raw_routes_in_both_modes() -> None:
 
 def _timestamp_free(value: object) -> object:
     """Drop the server timestamp fields, which change between any two requests to one record."""
-    volatile = {"created_at", "metadata_modified_at", "deleted_at", "archived_at", "last_used_at"}
+    volatile = {
+        "created_at",
+        "metadata_modified_at",
+        "deleted_at",
+        "archived_at",
+        "last_used_at",
+        "last_modified",
+    }
     if isinstance(value, Mapping):
         return {key: _timestamp_free(item) for key, item in value.items() if key not in volatile}
     if isinstance(value, (list, tuple)):
@@ -5354,3 +5369,515 @@ def test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up() -> 
     )
     _exercise_sync_dataservice_lifecycle(token, permissions, "Controlled evidence dataservice")
     asyncio.run(_exercise_async_dataservice_lifecycle(token, permissions, "Controlled async dataservice"))
+
+
+_TOPIC_ORACLE_PATH = (
+    Path(__file__).parents[4] / ".planning/phases/04-udata-connector/oracle/udata-oracle-candidate.json"
+)
+_TOPIC_FAMILY_SIGNATURES = frozenset(
+    {
+        "udata.core.topic.apiv2:TopicSearchAPI",
+        "udata.core.topic.apiv2:TopicsAPI",
+        "udata.core.topic.apiv2:TopicAPI",
+        "udata.core.topic.apiv2:TopicElementsAPI",
+        "udata.core.topic.apiv2:TopicElementAPI",
+        "udata.core.topic.apiv2:TopicFeaturedAPI",
+    }
+)
+_TOPIC_PLACEHOLDER = re.compile(r"<(?:[a-z_]+:)?([a-z_]+)>")
+_TOPIC_ABSENT_TARGETS = {"topic": "missing-topic", "element_id": "missing-element"}
+_ABSENT_TOPIC = "missing-topic"
+
+
+def _topic_oracle_routes() -> dict[tuple[str, str], str]:
+    """Return every topic path the pinned source oracle records, keyed by method and endpoint.
+
+    The oracle lives under the gitignored planning directory, so a fresh clone has no
+    independent oracle at all and every function needing one skips loudly rather than
+    falling back to hand-transcribed paths.
+    """
+    if not _TOPIC_ORACLE_PATH.exists():
+        pytest.skip(
+            f"no topic source oracle at {_TOPIC_ORACLE_PATH}; "
+            "reconcile it with scripts/extract_udata_oracle.py to run the topic differential"
+        )
+    document = json.loads(_TOPIC_ORACLE_PATH.read_text(encoding="utf-8"))
+    routes: dict[tuple[str, str], str] = {}
+    for route in document["routes"]:
+        if route["signature"] not in _TOPIC_FAMILY_SIGNATURES:
+            continue
+        endpoint = route["signature"].rsplit(":", 1)[1].removesuffix("API")
+        key = (route["method"], endpoint)
+        assert key not in routes, f"the source oracle records {key} twice"
+        routes[key] = route["path"]
+    assert len(routes) == 13, f"the source oracle must record 13 topic routes, found {len(routes)}"
+    return routes
+
+
+def _topic_path(method: str, endpoint: str) -> str:
+    """Return the oracle path for one endpoint with its placeholders filled by the absent targets."""
+    return _TOPIC_PLACEHOLDER.sub(
+        lambda placeholder: _TOPIC_ABSENT_TARGETS[placeholder.group(1)],
+        _topic_oracle_routes()[(method, endpoint)],
+    )
+
+
+def _topic_read_routes() -> tuple[tuple[str, str, str, tuple[object, ...]], ...]:
+    """Return every assigned topic read as its raw path, method, typed name, and arguments.
+
+    Every base path comes from the pinned source oracle; only the absent-target arguments
+    and the stock query strings belong to the controlled scenario.
+    """
+    return (
+        (f"{_topic_path('GET', 'Topics')}?page=1&page_size=20", "GET", "list_topics", ()),
+        (f"{_topic_path('GET', 'TopicSearch')}?page=1&page_size=20", "GET", "search_topics", ()),
+        (_topic_path("GET", "Topic"), "GET", "get_topic", (_ABSENT_TOPIC,)),
+        (
+            f"{_topic_path('GET', 'TopicElements')}?page=1&page_size=20",
+            "GET",
+            "topic_elements",
+            (_ABSENT_TOPIC,),
+        ),
+    )
+
+
+def _assert_topic_read_matches_raw(name: str, status: int, payload: object, typed: Any) -> None:
+    """Assert one topic read reproduces its raw status, and its body on success."""
+    if status != 200:
+        assert typed.metadata.get("status_code") == status, name
+        return
+    assert _plain_mapping(typed.payload) == payload, name
+
+
+def _topic_outcome[R](method: Callable[..., R], *args: object) -> object:
+    """Return one topic read result, or the typed error the connector raised for it."""
+    try:
+        return method(*args)
+    except CatalogError as error:
+        return error
+
+
+async def _topic_async_outcome(client: AsyncUDataClient, method: str, args: tuple[object, ...]) -> object:
+    """Return one asynchronous topic read result, or the typed error it raised."""
+    try:
+        return await getattr(client.topics, method)(*args)
+    except CatalogError as error:
+        return error
+
+
+def test_controlled_topic_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned topic read agrees with its raw loopback route in sync and async modes."""
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        for path, method, name, args in _topic_read_routes():
+            status, payload, _ = _direct_request("", method, path, include_body=True)
+            typed = _topic_outcome(getattr(client.topics, name), *args)
+            _assert_topic_read_matches_raw(name, status, payload, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            for path, method, name, args in _topic_read_routes():
+                status, payload, _ = _direct_request("", method, path, include_body=True)
+                typed = await _topic_async_outcome(client, name, args)
+                _assert_topic_read_matches_raw(name, status, payload, typed)
+
+    asyncio.run(run_async())
+
+
+def _topic_mutation_policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
+    """Return the confirmed overwrite policy the controlled topic mutations run under."""
+    return MutationPolicy(
+        destructive=destructive,
+        confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    )
+
+
+def _topic_differential_payload(payload: object) -> object:
+    """Normalize a topic record so a typed and a raw twin compare on stable fields only."""
+    assert isinstance(payload, Mapping)
+    record = _timestamp_free(payload)
+    assert isinstance(record, Mapping)
+    # A slug is server-derived from the name and de-duplicated with a suffix, so two
+    # twins created from the same name carry different slugs and self-URIs. Both are
+    # normalized alongside the record's own id and name.
+    own_values = [
+        (value, marker)
+        for value, marker in (
+            (record.get("id"), "<own-id>"),
+            (record.get("name"), "<own-name>"),
+            (record.get("slug"), "<own-slug>"),
+        )
+        if isinstance(value, str) and value
+    ]
+
+    def normalize(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {key: normalize(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [normalize(item) for item in value]
+        if isinstance(value, str):
+            for own_value, marker in own_values:
+                value = value.replace(own_value, marker)
+        return value
+
+    return normalize(record)
+
+
+def _assert_topic_mutation_matches_raw(
+    operation: str, typed: TopicMutationResult, raw: tuple[int, object, dict[str, str]]
+) -> None:
+    """Assert one typed topic mutation agrees with its raw twin on operation, status, and payload.
+
+    The pinned element-collection create answers 201 with a list, and a bounded typed result
+    keeps no ``MappingRecord`` for a list-valued payload. That cell compares the status and
+    the created element count instead of the discarded list body.
+    """
+    assert str(typed.receipt.operation) == operation
+    assert typed.receipt.audit_metadata["status_code"] == raw[0]
+    assert typed.receipt.outcome == "succeeded"
+    if isinstance(raw[1], list):
+        assert typed.record is None
+        assert raw[1], "the raw element collection create returned an empty list"
+    elif typed.record is None:
+        assert raw[1] is None
+    else:
+        assert _topic_differential_payload(typed.record.payload) == _topic_differential_payload(raw[1])
+
+
+def _cleanup_controlled_topic(token: str, identifier: str) -> None:
+    """Remove one controlled topic, tolerating an already-absent or already-deleted record."""
+    status, payload, _ = _direct_request(token, "GET", f"/api/2/topics/{identifier}/")
+    if status == 200:
+        if not isinstance(payload, Mapping):
+            raise ValueError("Controlled topic cleanup read returned an invalid object.")
+        if _direct_request(token, "DELETE", f"/api/2/topics/{identifier}/")[0] != 204:
+            raise ValueError("Controlled topic cleanup delete did not succeed.")
+    elif status not in {404, 410}:
+        raise ValueError("Controlled topic cleanup read returned an unexpected status.")
+
+
+def _cleanup_controlled_topics(token: str, identifiers: list[str], primary: BaseException | None) -> None:
+    """Attempt every known topic cleanup independently, preserving the original failure."""
+    errors: list[Exception] = []
+    for identifier in identifiers:
+        try:
+            _cleanup_controlled_topic(token, identifier)
+        except (AssertionError, OSError, ValueError) as error:
+            errors.append(error)
+    if errors:
+        if primary is not None:
+            primary.add_note("Controlled topic cleanup failed: " + ", ".join(type(error).__name__ for error in errors))
+        else:
+            raise ExceptionGroup("Controlled topic cleanup failed", errors)
+
+
+def _assert_controlled_topic_deleted(token: str, identifier: str) -> None:
+    """Assert a controlled topic is gone, tolerating the tombstone an administrator may still read."""
+    status, payload, _ = _direct_request(token, "GET", f"/api/2/topics/{identifier}/")
+    assert status in {200, 404, 410}
+    if status == 200:
+        assert isinstance(payload, Mapping)
+        assert payload.get("deleted_at") is not None
+
+
+def _exercise_sync_topic_lifecycle(token: str, permissions: EffectivePermissions, name: str) -> None:
+    """Drive every assigned topic mutation in sync mode against a raw twin, then clean up."""
+    credential = UDataCredential(api_key=token)
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        identifiers: list[str] = []
+        try:
+            created = client.topics.create_topic(
+                TopicCreateInput(name=name, description="Initial controlled description", tags=("controlled",)),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.create-topic", name),
+            )
+            assert created.record is not None
+            _, identifier = _assert_created_response(201, _plain_mapping(created.record.payload), identifiers)
+            raw = _direct_request(
+                token,
+                "POST",
+                "/api/2/topics/",
+                body={"name": name, "description": "Initial controlled description", "tags": ["controlled"]},
+            )
+            _, raw_id = _assert_created_response(raw[0], raw[1], identifiers)
+            _assert_topic_mutation_matches_raw("udata/api-v2.create-topic", created, raw)
+            assert created.receipt.target.value == identifier
+
+            updated = client.topics.update_topic(
+                identifier,
+                TopicUpdateInput(description="Updated controlled description"),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.update-topic", identifier),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.update-topic",
+                updated,
+                _direct_request(
+                    token, "PUT", f"/api/2/topics/{raw_id}/", body={"description": "Updated controlled description"}
+                ),
+            )
+
+            dataset_id = _seeded_dataset_id(token)
+            elements_created = client.topics.topic_elements_create(
+                identifier,
+                TopicElementsCreateInput((TopicElementLink("Dataset", dataset_id),)),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.topic-elements-create", identifier),
+            )
+            raw_elements_created = _direct_request(
+                token,
+                "POST",
+                f"/api/2/topics/{raw_id}/elements/",
+                body=[{"element": {"class": "Dataset", "id": dataset_id}}],
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-elements-create", elements_created, raw_elements_created
+            )
+            raw_element_id = str(cast("list[object]", raw_elements_created[1])[0]["id"])  # type: ignore[index]
+
+            page = client.topics.topic_elements(identifier)
+            # Compare the same topic's elements against its own raw route; the typed and raw
+            # twins hold distinct element rows, so a cross-twin body comparison would only
+            # ever compare one collection's ids with the other's.
+            raw_elements = _direct_request(
+                token, "GET", f"/api/2/topics/{identifier}/elements/?page=1&page_size=20", include_body=True
+            )
+            _assert_topic_read_matches_raw("topic_elements", raw_elements[0], raw_elements[1], page)
+            assert isinstance(page.payload, Mapping)
+            element_row = cast("list[object]", page.payload["data"])[0]
+            assert isinstance(element_row, Mapping)
+            element_id = str(element_row["id"])
+            identifiers.append(f"{identifier}:{element_id}")
+
+            element_updated = client.topics.topic_element_update(
+                identifier,
+                element_id,
+                TopicElementInput(title="Controlled element"),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.topic-element-update", f"{identifier}:{element_id}"),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-element-update",
+                element_updated,
+                _direct_request(
+                    token,
+                    "PUT",
+                    f"/api/2/topics/{raw_id}/elements/{raw_element_id}/",
+                    body={"title": "Controlled element"},
+                ),
+            )
+
+            element_deleted = client.topics.topic_element_delete(
+                identifier,
+                element_id,
+                permissions,
+                _topic_mutation_policy(
+                    "udata/api-v2.topic-element-delete", f"{identifier}:{element_id}", destructive=True
+                ),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-element-delete",
+                element_deleted,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/elements/{raw_element_id}/"),
+            )
+
+            elements_deleted = client.topics.topic_elements_delete(
+                identifier,
+                permissions,
+                _topic_mutation_policy("udata/api-v2.topic-elements-delete", identifier, destructive=True),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-elements-delete",
+                elements_deleted,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/elements/"),
+            )
+
+            featured = client.topics.feature_topic(
+                identifier, permissions, _topic_mutation_policy("udata/api-v2.feature-topic", identifier)
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.feature-topic",
+                featured,
+                _direct_request(token, "POST", f"/api/2/topics/{raw_id}/featured/"),
+            )
+            assert featured.record is not None
+            assert featured.record.payload["featured"] is True
+
+            unfeatured = client.topics.unfeature_topic(
+                identifier,
+                permissions,
+                _topic_mutation_policy("udata/api-v2.unfeature-topic", identifier, destructive=True),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.unfeature-topic",
+                unfeatured,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/featured/"),
+            )
+            assert unfeatured.record is not None
+            assert unfeatured.record.payload["featured"] is False
+
+            deleted = client.topics.delete_topic(
+                identifier,
+                permissions,
+                _topic_mutation_policy("udata/api-v2.delete-topic", identifier, destructive=True),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.delete-topic",
+                deleted,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/"),
+            )
+            assert deleted.record is None
+            _assert_controlled_topic_deleted(token, identifier)
+            _assert_controlled_topic_deleted(token, raw_id)
+        finally:
+            _cleanup_controlled_topics(token, identifiers, sys.exception())
+
+
+async def _exercise_async_topic_lifecycle(token: str, permissions: EffectivePermissions, name: str) -> None:
+    """Drive the same topic lifecycle in async mode against a raw twin, then clean up."""
+    credential = UDataCredential(api_key=token)
+    async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        identifiers: list[str] = []
+        try:
+            created = await client.topics.create_topic(
+                TopicCreateInput(name=name, description="Initial controlled description", tags=("controlled",)),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.create-topic", name),
+            )
+            assert created.record is not None
+            _, identifier = _assert_created_response(201, _plain_mapping(created.record.payload), identifiers)
+            raw = _direct_request(
+                token,
+                "POST",
+                "/api/2/topics/",
+                body={"name": name, "description": "Initial controlled description", "tags": ["controlled"]},
+            )
+            _, raw_id = _assert_created_response(raw[0], raw[1], identifiers)
+            _assert_topic_mutation_matches_raw("udata/api-v2.create-topic", created, raw)
+
+            updated = await client.topics.update_topic(
+                identifier,
+                TopicUpdateInput(description="Updated controlled description"),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.update-topic", identifier),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.update-topic",
+                updated,
+                _direct_request(
+                    token, "PUT", f"/api/2/topics/{raw_id}/", body={"description": "Updated controlled description"}
+                ),
+            )
+
+            dataset_id = _seeded_dataset_id(token)
+            elements_created = await client.topics.topic_elements_create(
+                identifier,
+                TopicElementsCreateInput((TopicElementLink("Dataset", dataset_id),)),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.topic-elements-create", identifier),
+            )
+            raw_elements_created = _direct_request(
+                token,
+                "POST",
+                f"/api/2/topics/{raw_id}/elements/",
+                body=[{"element": {"class": "Dataset", "id": dataset_id}}],
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-elements-create", elements_created, raw_elements_created
+            )
+            raw_element_id = str(cast("list[object]", raw_elements_created[1])[0]["id"])  # type: ignore[index]
+            page = await client.topics.topic_elements(identifier)
+            assert isinstance(page.payload, Mapping)
+            element_row = cast("list[object]", page.payload["data"])[0]
+            assert isinstance(element_row, Mapping)
+            element_id = str(element_row["id"])
+
+            element_updated = await client.topics.topic_element_update(
+                identifier,
+                element_id,
+                TopicElementInput(title="Controlled element"),
+                permissions,
+                _topic_mutation_policy("udata/api-v2.topic-element-update", f"{identifier}:{element_id}"),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-element-update",
+                element_updated,
+                _direct_request(
+                    token,
+                    "PUT",
+                    f"/api/2/topics/{raw_id}/elements/{raw_element_id}/",
+                    body={"title": "Controlled element"},
+                ),
+            )
+
+            element_deleted = await client.topics.topic_element_delete(
+                identifier,
+                element_id,
+                permissions,
+                _topic_mutation_policy(
+                    "udata/api-v2.topic-element-delete", f"{identifier}:{element_id}", destructive=True
+                ),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-element-delete",
+                element_deleted,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/elements/{raw_element_id}/"),
+            )
+
+            elements_deleted = await client.topics.topic_elements_delete(
+                identifier,
+                permissions,
+                _topic_mutation_policy("udata/api-v2.topic-elements-delete", identifier, destructive=True),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.topic-elements-delete",
+                elements_deleted,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/elements/"),
+            )
+
+            featured = await client.topics.feature_topic(
+                identifier, permissions, _topic_mutation_policy("udata/api-v2.feature-topic", identifier)
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.feature-topic",
+                featured,
+                _direct_request(token, "POST", f"/api/2/topics/{raw_id}/featured/"),
+            )
+            unfeatured = await client.topics.unfeature_topic(
+                identifier,
+                permissions,
+                _topic_mutation_policy("udata/api-v2.unfeature-topic", identifier, destructive=True),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.unfeature-topic",
+                unfeatured,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/featured/"),
+            )
+
+            deleted = await client.topics.delete_topic(
+                identifier,
+                permissions,
+                _topic_mutation_policy("udata/api-v2.delete-topic", identifier, destructive=True),
+            )
+            _assert_topic_mutation_matches_raw(
+                "udata/api-v2.delete-topic",
+                deleted,
+                _direct_request(token, "DELETE", f"/api/2/topics/{raw_id}/"),
+            )
+            assert deleted.record is None
+            _assert_controlled_topic_deleted(token, identifier)
+            _assert_controlled_topic_deleted(token, raw_id)
+        finally:
+            _cleanup_controlled_topics(token, identifiers, sys.exception())
+
+
+def test_controlled_topic_lifecycle_matches_raw_routes_and_cleans_up() -> None:
+    """Drive every assigned topic mutation in both modes, verifying raw status and cleanup."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled topic mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    permissions = EffectivePermissions.for_credential(
+        UDataCredential(api_key=token), platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    _exercise_sync_topic_lifecycle(token, permissions, "Controlled evidence topic")
+    asyncio.run(_exercise_async_topic_lifecycle(token, permissions, "Controlled async evidence topic"))

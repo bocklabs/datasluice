@@ -32,6 +32,13 @@ from datasluice.connectors.catalog.udata.models.resources import ResourceCreateI
 from datasluice.connectors.catalog.udata.models.reuses import ReuseCreateInput, ReuseSuggestQuery
 from datasluice.connectors.catalog.udata.models.spatial import SpatialDatasetQuery, SpatialSuggestQuery
 from datasluice.connectors.catalog.udata.models.taxonomies import BadgeCreateInput, SuggestQuery
+from datasluice.connectors.catalog.udata.models.topics import (
+    TopicCreateInput,
+    TopicElementInput,
+    TopicElementLink,
+    TopicElementsCreateInput,
+    TopicUpdateInput,
+)
 from datasluice.connectors.catalog.udata.models.users import ApiTokenCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
@@ -232,6 +239,50 @@ def _reuse_response(url, method):
     return None
 
 
+def _topic_page():
+    """Return the payload the stubbed topic collections answer with."""
+    return {
+        "data": [{"id": "wheel-topic", "name": "Wheel topic", "featured": False}],
+        "next_page": None,
+        "page": 1,
+        "page_size": 20,
+        "previous_page": None,
+        "total": 1,
+    }
+
+
+def _topic_record():
+    """Return the payload the stubbed single-topic and topic-element routes answer with."""
+    return _json({"id": "wheel-topic", "name": "Wheel topic", "featured": False, "private": False})
+
+
+def _topic_response(url, method):
+    """Return the stub for a topic collection, single topic, element, or featured route."""
+    path = url.partition("?")[0]
+    if path.endswith("/api/2/topics/search/"):
+        return _json({"data": [], "facets": {}, "links": {}, "meta": {"total": 0}})
+    if path.endswith("/api/2/topics/wheel-topic/elements/"):
+        if method == "GET":
+            return _json(
+                {
+                    "data": [{"id": "wheel-element", "title": "Wheel element", "tags": []}],
+                    "page": 1,
+                    "page_size": 20,
+                    "total": 1,
+                }
+            )
+        return _json([{"id": "wheel-element", "title": "Wheel element", "tags": []}])
+    if "/api/2/topics/wheel-topic/elements/wheel-element/" in path:
+        return _empty() if method == "DELETE" else _json({"id": "wheel-element", "title": "Wheel element", "tags": []})
+    if path.endswith("/api/2/topics/wheel-topic/featured/"):
+        return _topic_record()
+    if path.endswith("/api/2/topics/wheel-topic/"):
+        return _empty() if method == "DELETE" else _topic_record()
+    if path.endswith("/api/2/topics/"):
+        return _json(_topic_page())
+    return None
+
+
 def _spatial_response(url):
     """Return the stub for a spatial level, granularity, zone, or coverage route."""
     path = url.partition("?")[0]
@@ -294,6 +345,9 @@ class Transport:
         response = _spatial_response(url)
         if response is not None:
             return response
+        response = _topic_response(url, method)
+        if response is not None:
+            return response
         response = _content_response(url, method)
         if response is not None:
             return response
@@ -326,6 +380,8 @@ class Transport:
         self.requests.append(url)
         body, headers = self._route(request)
         status = 204 if request.method == "DELETE" else 201 if request.method == "POST" else 200
+        if url.partition("?")[0].endswith("/api/2/topics/wheel-topic/featured/"):
+            status = 200
         return RuntimeResponse(status_code=status, headers=headers, body=body)
 
     def send_stream(self, request):
@@ -477,6 +533,83 @@ assert (
     client.spatial.spatial_zone_datasets("wheel-zone", SpatialDatasetQuery(size=25))[0].payload["id"] == "wheel-dataset"
 )
 assert client.spatial.spatial_coverage("country:fr").payload["type"] == "FeatureCollection"
+assert client.topics.list_topics().payload["total"] == 1
+assert client.topics.get_topic("wheel-topic").payload["name"] == "Wheel topic"
+assert cast("dict[str, object]", client.topics.search_topics().payload["meta"])["total"] == 0
+assert client.topics.topic_elements("wheel-topic").payload["total"] == 1
+wheel_topic_created = client.topics.create_topic(
+    TopicCreateInput(name="Wheel topic", description="d"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v2.create-topic", target="Wheel topic"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert wheel_topic_created.record is not None
+assert wheel_topic_created.receipt.audit_metadata["status_code"] == 201
+wheel_topic_updated = client.topics.update_topic(
+    "wheel-topic",
+    TopicUpdateInput(description="updated"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v2.update-topic", target="wheel-topic"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert wheel_topic_updated.receipt.operation == "udata/api-v2.update-topic"
+wheel_elements = client.topics.topic_elements_create(
+    "wheel-topic",
+    TopicElementsCreateInput((TopicElementLink("Dataset", "abc"),)),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v2.topic-elements-create", target="wheel-topic"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert wheel_elements.receipt.audit_metadata["status_code"] == 201
+assert (
+    client.topics.feature_topic(
+        "wheel-topic",
+        sync_admin_permissions,
+        MutationPolicy(
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v2.feature-topic", target="wheel-topic"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).receipt.audit_metadata["status_code"]
+    == 200
+)
+assert (
+    client.topics.unfeature_topic(
+        "wheel-topic",
+        sync_admin_permissions,
+        MutationPolicy(
+            destructive=True,
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v2.unfeature-topic", target="wheel-topic"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).receipt.audit_metadata["status_code"]
+    == 200
+)
+assert (
+    client.topics.delete_topic(
+        "wheel-topic",
+        sync_permissions,
+        MutationPolicy(
+            destructive=True,
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v2.delete-topic", target="wheel-topic"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).record
+    is None
+)
 assert client.taxonomies.available_badges().payload["pivotal-data"] == "Pivotal data"
 assert client.taxonomies.extensions() == ("csv",)
 assert client.taxonomies.licenses()[0].payload["id"] == "lov2"
@@ -769,6 +902,64 @@ async def run_async():
             "id"
         ] == "wheel-dataset"
         assert (await active.spatial.spatial_coverage("country:fr")).payload["type"] == "FeatureCollection"
+        assert (await active.topics.list_topics()).payload["total"] == 1
+        assert (await active.topics.get_topic("wheel-topic")).payload["name"] == "Wheel topic"
+        assert cast("dict[str, object]", (await active.topics.search_topics()).payload["meta"])["total"] == 0
+        assert (await active.topics.topic_elements("wheel-topic")).payload["total"] == 1
+        async_topic_created = await active.topics.create_topic(
+            TopicCreateInput(name="Wheel topic", description="d"),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v2.create-topic", target="Wheel topic"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        assert async_topic_created.record is not None
+        assert async_topic_created.receipt.audit_metadata["status_code"] == 201
+        async_element_updated = await active.topics.topic_element_update(
+            "wheel-topic",
+            "wheel-element",
+            TopicElementInput(title="Wheel element"),
+            permissions,
+            MutationPolicy(
+                confirmation=ConfirmationPolicy(
+                    confirmed=True, operation="udata/api-v2.topic-element-update", target="wheel-topic:wheel-element"
+                ),
+                concurrency=ConcurrencyPolicy(overwrite=True),
+            ),
+        )
+        assert async_element_updated.receipt.operation == "udata/api-v2.topic-element-update"
+        assert (
+            await active.topics.topic_element_delete(
+                "wheel-topic",
+                "wheel-element",
+                permissions,
+                MutationPolicy(
+                    destructive=True,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True,
+                        operation="udata/api-v2.topic-element-delete",
+                        target="wheel-topic:wheel-element",
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).record is None
+        assert (
+            await active.topics.delete_topic(
+                "wheel-topic",
+                permissions,
+                MutationPolicy(
+                    destructive=True,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v2.delete-topic", target="wheel-topic"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).record is None
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
         assert (await active.taxonomies.suggest_mime(SuggestQuery("js")))[0].payload["text"] == "csv"
@@ -953,6 +1144,16 @@ expected = [
     "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
     "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
     "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
+    "http://127.0.0.1:5640/api/2/topics/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/2/topics/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
     "http://127.0.0.1:5640/api/1/datasets/licenses/",
@@ -1029,6 +1230,12 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/",
     "http://127.0.0.1:5640/api/1/spatial/zone/wheel-zone/datasets/?size=25",
     "http://127.0.0.1:5640/api/1/spatial/coverage/country%3Afr/",
+    "http://127.0.0.1:5640/api/2/topics/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/2/topics/search/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/2/topics/",
+    "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/wheel-element/",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

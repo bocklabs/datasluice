@@ -288,7 +288,13 @@ class TopicElementInput:
 
 @dataclass(frozen=True, slots=True)
 class TopicElementLink:
-    """One documented element reference the topic element collection accepts."""
+    """One documented element reference the topic element collection accepts.
+
+    The pinned ``TopicElementsAPI.post`` patches each body onto a ``TopicElement``,
+    so the reference is nested under the model's ``element`` write key. A flat
+    ``{"class", "id"}`` body is silently dropped by ``patch`` and then fails the
+    pinned title-or-element check with a 400.
+    """
 
     element_class: str
     element_id: str
@@ -300,8 +306,8 @@ class TopicElementLink:
             raise ValueError("uData topic element link id must be a non-empty string.")
         linked_identifier(self.element_id, "udata/api-v2.topic-elements-create", "uData topic element")
 
-    def payload(self) -> dict[str, str]:
-        return {"class": self.element_class, "id": self.element_id}
+    def payload(self) -> dict[str, dict[str, str]]:
+        return {"element": {"class": self.element_class, "id": self.element_id}}
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,7 +322,7 @@ class TopicElementsCreateInput:
         if not all(isinstance(link, TopicElementLink) for link in self.elements):
             raise ValueError("uData topic elements must be documented element links.")
 
-    def payload(self) -> list[dict[str, str]]:
+    def payload(self) -> list[dict[str, dict[str, str]]]:
         return [link.payload() for link in self.elements]
 
 

@@ -140,8 +140,8 @@
     "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
@@ -218,8 +218,8 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
@@ -263,16 +263,16 @@
       "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
       "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
     },
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
   },
   "controlled_activity_discussion_evidence": {
     "captured_at": "2026-09-26",
     "stack_version": "17.6.0",
     "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "test_ids": [
@@ -289,8 +289,8 @@
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "test_ids": [
@@ -307,8 +307,8 @@
     "captured_at": "2026-10-01",
     "stack_version": "17.6.0",
     "implementation_sha": "496f628b7b164fe7c168e8765d09a477566c985a",
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
     "test_ids": [
@@ -340,8 +340,8 @@
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "2373233cee7da7fa4465a1747fd41954b3b31ec2",
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
     "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
     "test_ids": [
@@ -361,9 +361,9 @@
     "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
     "dockerfile_sha256": "13d638063ae43c7617dd7d0a1252c854e400b9093bae6daa01eeb7a996746e80",
-    "controlled_test_sha256": "a0ffb79a843baeb5b823c69836f247fae919c37bb9b806efc92e2cc8e67efb10",
-    "wheel_test_sha256": "85125b5898e58ee55a589e93a1a8f87042b39c3918cd181c055830e0469a17ab",
-    "wheel_tracer_sha256": "95947b29fddee11f540831ef7221d1d00e0c9671ce8fc90ac073f5a98db35b7c",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
+    "wheel_tracer_sha256": "bc1d2f32453e23b9ca7e7041639106c7a7120a367160a1c6ef919e7e6779dd77",
     "test_ids": [
       "test_controlled_dataservice_reads_match_raw_routes_in_both_modes",
       "test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up"
@@ -426,5 +426,57 @@
         "udata/api-v1.delete-dataservice"
       ]
     }
+  },
+  "controlled_topic_evidence": {
+    "captured_at": "2026-10-11",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "13d638063ae43c7617dd7d0a1252c854e400b9093bae6daa01eeb7a996746e80",
+    "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
+    "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
+    "wheel_tracer_sha256": "bc1d2f32453e23b9ca7e7041639106c7a7120a367160a1c6ef919e7e6779dd77",
+    "unit_test_sha256": "5a63f92520d41e9d7e4175f6c0d070d3c7b05db8de9a07d90906cf36d558a839",
+    "test_ids": [
+      "test_controlled_topic_reads_match_raw_routes_in_both_modes",
+      "test_controlled_topic_lifecycle_matches_raw_routes_and_cleans_up"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v2.list-topics",
+        "udata/api-v2.search-topics",
+        "udata/api-v2.get-topic",
+        "udata/api-v2.topic-elements"
+      ],
+      "mutation_operations": [
+        "udata/api-v2.create-topic",
+        "udata/api-v2.update-topic",
+        "udata/api-v2.topic-elements-create",
+        "udata/api-v2.topic-element-update",
+        "udata/api-v2.topic-element-delete",
+        "udata/api-v2.topic-elements-delete",
+        "udata/api-v2.feature-topic",
+        "udata/api-v2.unfeature-topic",
+        "udata/api-v2.delete-topic"
+      ]
+    },
+    "recapture_note": "Captured against the loopback 17.6.0 stack at upstream commit 0546582. All four assigned reads compare raw status and body in sync and async; search answers a stack-wide 500 with no search service and is asserted as the typed error mapping, and the two absent-target routes answer 404. The sync lifecycle drives all nine assigned mutations against a separately created raw twin in both modes; the async lifecycle drives create, update, feature, unfeature, and delete. Element ids are per-topic, so each twin element mutation addresses its own topic's element. The pinned element-collection create answers 201 with a list, which the bounded typed result keeps no record for, so that cell compares status and a non-empty created list rather than the discarded body. A topic slug is server-derived and de-duplicated, so each twin's slug and self-URI are normalized beside its own id and name. Cleanup protects every created id from the first assertion, attempts each independently, and preserves the original failure. Only sanitized status and shape metadata are retained.",
+    "branch_discrimination": [
+      "receipt-resource-kind-dataset-instead-of-topic-detected",
+      "flat-element-reference-body-detected"
+    ]
   }
 }
