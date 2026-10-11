@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from datasluice.contracts.catalog.fixtures import ReferenceCase, ReferenceFixtureSet
+from datasluice.contracts.catalog.fixtures import _OUTCOMES, _SUCCESS_OUTCOMES, ReferenceCase, ReferenceFixtureSet
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     CapabilityState,
@@ -43,21 +43,6 @@ type FixtureOutcome = Literal[
     "rate-limited",
 ]
 
-_OUTCOMES = frozenset(
-    {
-        "core",
-        "optional",
-        "authenticated-success",
-        "missing-credentials",
-        "invalid-credentials",
-        "forbidden",
-        "deployment-disabled",
-        "unavailable",
-        "async-pending",
-        "rate-limited",
-    }
-)
-_SUCCESS_OUTCOMES = frozenset({"core", "optional", "authenticated-success", "async-pending"})
 _EXPECTED_ERRORS: dict[str, tuple[type[Exception], ...]] = {
     "missing-credentials": (UnauthenticatedError,),
     "invalid-credentials": (UnauthenticatedError,),
@@ -228,7 +213,7 @@ async def _run_reference_async_case(
     return _outcome(case, metadata)
 
 
-def _run_reference_cases(
+async def _run_reference_cases(
     cases: tuple[CatalogContractCase, ...], sync_client: object, async_client: object, fixture_set: ReferenceFixtureSet
 ) -> tuple[CaseOutcome, ...]:
     outcomes: list[CaseOutcome] = []
@@ -239,41 +224,42 @@ def _run_reference_cases(
                     _run_reference_sync_case(case, cast("_SyncReferenceCaseClient", sync_client), fixture_set)
                 )
 
-    async def execute_async() -> None:
-        async with cast("AsyncCatalogClient", async_client):
-            for case in cases:
-                if case.mode == "async":
-                    outcomes.append(
-                        await _run_reference_async_case(
-                            case, cast("_AsyncReferenceCaseClient", async_client), fixture_set
-                        )
-                    )
-
-    asyncio.run(execute_async())
+    async with cast("AsyncCatalogClient", async_client):
+        for case in cases:
+            if case.mode == "async":
+                outcomes.append(
+                    await _run_reference_async_case(case, cast("_AsyncReferenceCaseClient", async_client), fixture_set)
+                )
     return tuple(sorted(outcomes, key=lambda outcome: (outcome.operation_id, outcome.mode, outcome.warnings)))
 
 
-def _run_tracer_case(
-    case: CatalogContractCase, sync_client: SyncCatalogClient, async_client: AsyncCatalogClient
-) -> ComplianceReport:
-    _require_available(case.operation_id, sync_client.capability(case.operation_id))
-    _require_available(case.operation_id, async_client.capability(case.operation_id))
-    with sync_client:
+def _run_tracer_sync_case(case: CatalogContractCase, client: SyncCatalogClient) -> CaseOutcome:
+    with client:
         operation, guard = _dataset_get_call(case)
-        sync_result = sync_client.datasets.get(operation, guard)
+        sync_result = client.datasets.get(operation, guard)
         _assert_dataset(sync_result, case)
-        sync_outcome = CaseOutcome(
+        return CaseOutcome(
             operation_id=case.operation_id,
             mode="sync",
             capability="available",
             state="passed",
-            platform_metadata=sync_client.platform_metadata(),
+            platform_metadata=client.platform_metadata(),
         )
-    async_outcome = asyncio.run(_run_tracer_async_case(case, async_client))
+
+
+async def _run_tracer_case(
+    case: CatalogContractCase, sync_client: SyncCatalogClient, async_client: AsyncCatalogClient
+) -> ComplianceReport:
+    if case.dataset_id is None:
+        raise ValueError("A tracer contract requires a dataset ID before dispatch.")
+    _require_available(case.operation_id, sync_client.capability(case.operation_id))
+    _require_available(case.operation_id, async_client.capability(case.operation_id))
+    sync_outcome = _run_tracer_sync_case(case, sync_client)
+    async_outcome = await _run_tracer_async_case(case, async_client)
     return ComplianceReport(outcomes=(sync_outcome, async_outcome), platform_metadata=sync_client.platform_metadata())
 
 
-def run_catalog_contract(
+async def run_catalog_contract_async(
     case: CatalogContractCase | Iterable[CatalogContractCase],
     *,
     sync_client: SyncCatalogClient,
@@ -284,7 +270,7 @@ def run_catalog_contract(
     cases: tuple[CatalogContractCase, ...]
     if isinstance(case, CatalogContractCase):
         if fixture_set is None:
-            return _run_tracer_case(case, sync_client, async_client)
+            return await _run_tracer_case(case, sync_client, async_client)
         cases = (case,)
     else:
         cases = tuple(case)
@@ -295,7 +281,7 @@ def run_catalog_contract(
     expected = catalog_contract_cases(fixture_set)
     if not set(cases) <= set(expected):
         raise ValueError("Catalog contract cases must be generated from the pinned fixture set.")
-    outcomes = _run_reference_cases(cases, sync_client, async_client, fixture_set)
+    outcomes = await _run_reference_cases(cases, sync_client, async_client, fixture_set)
     return ComplianceReport(
         outcomes=outcomes,
         connector_id=f"datasluice/{fixture_set.platform}",
@@ -306,3 +292,22 @@ def run_catalog_contract(
         expected_case_ids=tuple(contract_case.pytest_id for contract_case in cases),
         platform_metadata=sync_client.platform_metadata(),
     )
+
+
+def run_catalog_contract(
+    case: CatalogContractCase | Iterable[CatalogContractCase],
+    *,
+    sync_client: SyncCatalogClient,
+    async_client: AsyncCatalogClient,
+    fixture_set: ReferenceFixtureSet | None = None,
+) -> ComplianceReport:
+    """Execute catalog contracts from synchronous code; await the async variant inside a loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            run_catalog_contract_async(
+                case, sync_client=sync_client, async_client=async_client, fixture_set=fixture_set
+            )
+        )
+    raise RuntimeError("Use run_catalog_contract_async inside a running event loop.")

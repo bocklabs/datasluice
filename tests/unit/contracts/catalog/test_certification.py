@@ -168,7 +168,7 @@ def test_certification_rejects_implicit_activation_mismatched_bindings_and_incom
             report=report,
             selected_connector_id=connector_id,
         )
-    updated_value_2 = replace(report, expected_case_ids=report.expected_case_ids[:-1])
+    updated_value_2 = replace(report, outcomes=report.outcomes[:-1])
     with pytest.raises(ValueError, match="complete case evidence"):
         catalog.certify_catalog_report(
             manifest=manifest,
@@ -185,6 +185,7 @@ def test_catalog_exports_only_the_documented_contract_surface_without_optional_i
     assert catalog.__all__ == [
         "catalog_contract_cases",
         "run_catalog_contract",
+        "run_catalog_contract_async",
         "certify_catalog_report",
         "CatalogContractCase",
         "CaseOutcome",

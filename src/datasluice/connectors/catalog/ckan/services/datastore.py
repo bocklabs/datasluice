@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
     _async_typed_read,
-    _AsyncNativeService,
+    _AsyncGroupService,
     _sync_typed_mutation,
     _sync_typed_read,
-    _SyncNativeService,
+    _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
 from datasluice.connectors.catalog.ckan.services._shared import WireParams, wire_params
@@ -41,7 +41,7 @@ _GROUP = "datastore"
 
 def _mutation_target(_action: str, params: Mapping[str, object]) -> CatalogId:
     key = "resource_id" if "resource_id" in params else "name"
-    return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params[key]))
+    return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params.get(key, "")))
 
 
 def _search_params(
@@ -134,7 +134,7 @@ def _function_create_params(
     )
 
 
-class SyncDatastoreService(_SyncNativeService):
+class SyncDatastoreService(_SyncGroupService):
     """Synchronous datastore projection carrying ten typed actions."""
 
     __slots__ = ()
@@ -287,7 +287,7 @@ class SyncDatastoreService(_SyncNativeService):
         return _sync_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)
 
 
-class AsyncDatastoreService(_AsyncNativeService):
+class AsyncDatastoreService(_AsyncGroupService):
     """Asynchronous datastore projection carrying ten typed actions."""
 
     __slots__ = ()

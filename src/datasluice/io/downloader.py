@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
-from datasluice._uri import sanitize_uri
-from datasluice.exceptions import DownloadError
+from datasluice._uri import sanitize_uri, validate_http_target
+from datasluice.exceptions import ChecksumMismatchError, DownloadError
 from datasluice.io.local import ensure_dir, safe_filename, save_bytes
 from datasluice.logging import get_logger
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, TransportError
+from datasluice.runtime.transport.base import CatalogTransport, RedirectPolicy, RuntimeRequest, TransportError
 from datasluice.runtime.transport.user_agent import build_user_agent
 
 if TYPE_CHECKING:
@@ -35,10 +36,12 @@ class Downloader:
         *,
         storage: Storage | None = None,
         cache: FileCache | None = None,
+        allow_private_http: bool = False,
     ) -> None:
         self.transport = transport
         self.storage = storage
         self.cache = cache
+        self.allow_private_http = allow_private_http
 
     def download(
         self,
@@ -68,28 +71,22 @@ class Downloader:
         logger.info("Downloading %s -> %s", sanitize_uri(resource.url), dest or "(memory)")
 
         cache_key = resource.url
-        if self.cache:
-            cached = self.cache.get(cache_key)
-            if cached is not None:
-                data = cached
-            else:
-                data = self._fetch(resource.url)
-                self.cache.put(cache_key, data)
-        else:
-            data = self._fetch(resource.url)
+        cached = self.cache.get(cache_key) if self.cache else None
+        data = cached if cached is not None else self._fetch(resource.url)
 
         if verify_hash:
             import hashlib
 
             actual = hashlib.new(hash_algorithm, data).hexdigest()
             if actual.lower() != verify_hash.lower():
-                from datasluice.exceptions import ChecksumMismatchError
-
                 raise ChecksumMismatchError(
                     f"Checksum mismatch for {sanitize_uri(resource.url)}",
                     expected=verify_hash,
                     actual=actual,
                 )
+
+        if self.cache and cached is None:
+            self.cache.put(cache_key, data)
 
         fname = filename or safe_filename(resource.name or resource.id) or "resource"
         if self.storage and dest is None:
@@ -100,15 +97,29 @@ class Downloader:
 
     def _fetch(self, url: str) -> bytes:
         """Fetch bytes through the runtime transport and validate the HTTP outcome."""
-        try:
-            response = self.transport.send(
-                RuntimeRequest(method="GET", url=url, headers={"User-Agent": build_user_agent()})
-            )
-        except TransportError as exc:
-            raise DownloadError(f"Download for {sanitize_uri(url)!r} failed: {exc}") from exc
-        if not 200 <= response.status_code < 300:
-            raise DownloadError(f"Download for {sanitize_uri(url)!r} returned HTTP {response.status_code}")
-        return response.body
+        for hop in range(11):
+            try:
+                validate_http_target(url, allow_private=self.allow_private_http)
+            except ValueError as exc:
+                raise DownloadError(f"Download target is invalid ({exc})") from None
+            try:
+                response = self.transport.send(
+                    RuntimeRequest(
+                        method="GET",
+                        url=url,
+                        headers={"User-Agent": build_user_agent()},
+                        redirect_policy=RedirectPolicy.NO_FOLLOW,
+                    )
+                )
+            except TransportError as exc:
+                raise DownloadError(f"Download for {sanitize_uri(url)!r} failed: {exc}") from exc
+            if 200 <= response.status_code < 300:
+                return response.body
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            if response.status_code not in {301, 302, 303, 307, 308} or "location" not in headers or hop == 10:
+                raise DownloadError(f"Download for {sanitize_uri(url)!r} returned HTTP {response.status_code}")
+            url = urljoin(url, headers["location"])
+        raise DownloadError("Download exceeded its redirect limit")
 
     def download_many(
         self,
@@ -122,6 +133,6 @@ class Downloader:
             try:
                 path = self.download(resource, dest)
                 results.append(path)
-            except DownloadError:
+            except (DownloadError, ChecksumMismatchError, OSError):
                 logger.exception("Failed to download %s", resource.id)
         return results

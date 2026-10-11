@@ -187,7 +187,9 @@ def test_source_uses_reference_connector_resources(tmp_path: Path) -> None:
         assert isinstance(connector, SyncCatalogClient)
         pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "reference_source")
 
-        _extract_and_load(pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query()))
+        _extract_and_load(
+            pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query(), allow_private_http=True)
+        )
 
         with duckdb.connect(str(db_path)) as connection:
             rows = connection.execute(f'SELECT id, name FROM "{dataset_name}"."my_resource_csv" ORDER BY id').fetchall()
@@ -217,7 +219,9 @@ def test_two_resources_share_one_transport_that_stays_usable_after_extraction(tm
     try:
         pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "shared_transport")
 
-        _extract_and_load(pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query()))
+        _extract_and_load(
+            pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query(), allow_private_http=True)
+        )
 
         with duckdb.connect(str(db_path)) as connection:
             rows = connection.execute(
@@ -252,7 +256,10 @@ def test_source_seeds_and_mirrors_load_committed_state(tmp_path: Path) -> None:
         pipeline, _, _ = _make_pipeline(tmp_path, "state_roundtrip")
 
         _extract_and_load(
-            pipeline, datasluice_source(cast("SyncCatalogClient", connector), _query(), state_store=store)
+            pipeline,
+            datasluice_source(
+                cast("SyncCatalogClient", connector), _query(), state_store=store, allow_private_http=True
+            ),
         )
         mirror_dlt_state(pipeline, store)
 

@@ -24,6 +24,7 @@ from datasluice.connectors.catalog.ckan.clients import (
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
+from datasluice.connectors.catalog.ckan.services._shared import drop_unset
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
@@ -100,7 +101,7 @@ def _source_name(source: str | os.PathLike[str] | BinaryIO) -> str | None:
 def _encode_field(value: object) -> bytes:
     if isinstance(value, str):
         return value.encode("utf-8")
-    return json.dumps(value).encode("utf-8")
+    return json.dumps(value, allow_nan=False).encode("utf-8")
 
 
 def _multipart_parts(params: Mapping[str, object], data: bytes, file_name: str | None) -> tuple[UploadPart, ...]:
@@ -136,7 +137,7 @@ class SyncResourcesService(_SyncResourceService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Search resources with native limit/offset paging."""
         return self._invoke_read(
-            "resource_search", _drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
+            "resource_search", drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
         )
 
     def resource_create(
@@ -235,7 +236,7 @@ class AsyncResourcesService(_AsyncResourceService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Search resources with native limit/offset paging."""
         return await self._invoke_read(
-            "resource_search", _drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
+            "resource_search", drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
         )
 
     async def resource_create(
@@ -326,7 +327,3 @@ def _resolve_files(
         return ()
     data = _buffer_upload(upload, max_bytes=max_bytes)
     return _multipart_parts(params, data, _source_name(upload))
-
-
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}

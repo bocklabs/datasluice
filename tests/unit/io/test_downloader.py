@@ -78,3 +78,32 @@ def test_downloader_cache_hit_skips_transport(tmp_path: Path) -> None:
 
     assert path.read_bytes() == b"cached"
     assert transport.requests == []
+
+
+def test_downloader_rejects_private_redirect_before_dispatch(tmp_path: Path) -> None:
+    from tests.helpers.httpx_probe import SyncProbe, at_host, redirect_to
+
+    responder = redirect_to("http://169.254.169.254/credentials", 302, at_host("catalog.example.test"))
+    with SyncProbe(responder) as transport, pytest.raises(DownloadError, match="locality"):
+        Downloader(transport).download(_resource(), tmp_path)
+    assert len(transport.requests) == 1
+
+
+def test_downloader_private_target_requires_explicit_allowance(tmp_path: Path) -> None:
+    transport = _Transport(RuntimeResponse(200, {}, b"local"))
+    resource = _resource("http://127.0.0.1/data")
+    with pytest.raises(DownloadError, match="locality"):
+        Downloader(transport).download(resource, tmp_path)
+    assert transport.requests == []
+    assert Downloader(transport, allow_private_http=True).download(resource, tmp_path).read_bytes() == b"local"
+
+
+def test_bad_checksum_does_not_populate_cache(tmp_path: Path) -> None:
+    from datasluice.exceptions import ChecksumMismatchError
+
+    cache = FileCache(tmp_path / "cache")
+    transport = _Transport(RuntimeResponse(200, {}, b"corrupt"))
+    resource = _resource()
+    with pytest.raises(ChecksumMismatchError):
+        Downloader(transport, cache=cache).download(resource, tmp_path, verify_hash="0" * 64)
+    assert cache.get(resource.url or "") is None

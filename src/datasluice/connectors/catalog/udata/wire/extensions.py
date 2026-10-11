@@ -158,11 +158,7 @@ def parse_avatar(body: object, *, response_media_type: str | None, operation: st
             f"The uData avatar media type {media_type!r} is not an approved image contract.",
             operation=operation,
             platform=PLATFORM,
-            metadata={
-                "safe_action": (
-                    f"Request one of the approved avatar media types: {', '.join(sorted(_AVATAR_MEDIA_TYPES))}."
-                )
-            },
+            safe_action=f"Request one of the approved avatar media types: {', '.join(sorted(_AVATAR_MEDIA_TYPES))}.",
         )
     data = bytes(body)
     return MappingRecord(

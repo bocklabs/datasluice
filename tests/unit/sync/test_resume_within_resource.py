@@ -562,7 +562,9 @@ def test_source_replacement_detected_and_restarted(tmp_path) -> None:
         writer.write_table(pa.table({"group_id": [100, 101], "value": ["x", "y"]}, schema=schema))
         writer.write_table(pa.table({"group_id": [102, 103], "value": ["z", "w"]}, schema=schema))
 
-    store = InMemoryStateStore()
+    from datasluice.sync.state_store import FileStateStore
+
+    store = FileStateStore(f"file://{tmp_path}/state")
     store.put(canonical_identity(resource), SyncState(extra=dict(interrupted.extra)))
     outcomes = list(
         sync_resources(
@@ -689,7 +691,7 @@ def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> N
     resource = make_resource(url, format="PARQUET", resource_id="http-parquet")
     transport = HttpxCatalogTransport()
     store = InMemoryStateStore()
-    reader = DataPlaneResourceReader(transport=transport)
+    reader = DataPlaneResourceReader(transport=transport, allow_private_http=True)
     destination = f"file://{tmp_path}/http-parquet"
 
     with patch("datasluice.sync.materialize.materialize_checkpointed") as mock_mc:

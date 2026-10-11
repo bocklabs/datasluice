@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.connectors.catalog.udata.models.reuses import linked_identifier
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.exceptions import DataSluiceError
@@ -14,7 +14,6 @@ from datasluice.exceptions import DataSluiceError
 if TYPE_CHECKING:
     from datasluice.domain.catalog.receipts import MutationReceipt
 
-_MAX_PAGE_SIZE = 100
 _DEFAULT_PAGE_SIZE = 20
 _TOPIC_SORTS = ("name", "created", "last_modified")
 _TOPIC_LIST_FILTERS = (
@@ -50,14 +49,6 @@ _ELEMENT_REFERENCE_CLASSES = ("Dataset", "Dataservice", "Reuse")
 def segment(value: str, operation: str) -> str:
     """Return *value* quoted as one URL-safe topic path segment."""
     return path_segment(value, operation, "Topic")
-
-
-def _paging(page: int, page_size: int, label: str) -> None:
-    """Bound the stock page and page_size pair before a request is ever built."""
-    if type(page) is not int or page < 1:
-        raise ValueError(f"uData topic {label} page must be a positive integer.")
-    if type(page_size) is not int or not 1 <= page_size <= _MAX_PAGE_SIZE:
-        raise ValueError(f"uData topic {label} page_size must be an integer from 1 through {_MAX_PAGE_SIZE}.")
 
 
 def _optional_text(value: object, label: str, *, required: bool = False) -> None:
@@ -170,7 +161,7 @@ class TopicListQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        _paging(self.page, self.page_size, "list")
+        paging(self.page, self.page_size, "list")
         _validated_sort(self.sort, "list")
         _optional_text(self.q, "list q")
         _validated_filters(
@@ -197,7 +188,7 @@ class TopicSearchQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        _paging(self.page, self.page_size, "search")
+        paging(self.page, self.page_size, "search")
         _validated_sort(self.sort, "search")
         _optional_text(self.q, "search q")
         _validated_filters(
@@ -234,7 +225,7 @@ class TopicElementsQuery:
     tag: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _paging(self.page, self.page_size, "element")
+        paging(self.page, self.page_size, "element")
         if self.element_class is not None and self.element_class not in _TOPIC_ELEMENT_CLASS_CHOICES:
             raise ValueError("uData topic element class filter is not a documented element class.")
         _optional_text(self.q, "element q")

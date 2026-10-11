@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Protocol
+from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.clients import declared_udata_profile
 from datasluice.connectors.catalog.udata.mapping import NATIVE_PAGE_FIELDS, PLATFORM
@@ -154,12 +155,12 @@ def _read_query_problem(query: tuple[tuple[str, str], ...]) -> str | None:
     for name, value in query:
         if name not in _ALLOWED_QUERY_KEYS:
             return "Drift read query parameters may only bound page and page_size."
-        if any(character.isspace() for character in value) or len(value) > 8:
+        if len(value) > 8:
             return "Drift read query values are bounded numeric strings."
-        if name == "page_size" and value.isdigit():
+        if not value.isascii() or not value.isdigit() or int(value) < 1:
+            return "Drift read page and page_size must be positive integer strings."
+        if name == "page_size":
             page_size = int(value)
-        elif name == "page_size":
-            return "Drift read page_size must be a positive integer string."
     if page_size is not None and page_size > MAX_PAGE_SIZE:
         return f"Drift read page_size cannot exceed {MAX_PAGE_SIZE}."
     return None
@@ -229,7 +230,7 @@ class ReadOperation:
     def build_request(self, origin: str) -> RuntimeRequest:
         """Build the bounded anonymous request for this read against one origin."""
         self.assert_readable()
-        query = "&".join(f"{name}={value}" for name, value in self.query)
+        query = urlencode(self.query)
         return RuntimeRequest(
             method="GET",
             url=f"{origin}{self.path}" + (f"?{query}" if query else ""),

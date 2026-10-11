@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
-from datasluice._uri import sanitize_uri
+from datasluice._uri import sanitize_uri, validate_http_target
 from datasluice.data._byte_source import IterableBytesIO
 from datasluice.data.batch_stream import BatchCursor, BatchStream, ParquetRowGroupPosition
 from datasluice.data.compression import PeekableReader, apply_compression
@@ -69,8 +69,11 @@ class DataPlaneResourceReader:
     .
     """
 
-    def __init__(self, transport: Any | None = None, *, batch_size: int = _DEFAULT_BATCH_SIZE) -> None:
+    def __init__(
+        self, transport: Any | None = None, *, batch_size: int = _DEFAULT_BATCH_SIZE, allow_private_http: bool = False
+    ) -> None:
         self.transport = transport
+        self.allow_private_http = allow_private_http
         self.default_batch_size = batch_size
 
     def _resolve_access(self, resource: Resource) -> Any:
@@ -339,27 +342,30 @@ class DataPlaneResourceReader:
         from datasluice.data.readers.base import MAX_DOCUMENT_BYTES
 
         send_stream = getattr(self.transport, "send_stream", None)
-        if not callable(send_stream):
-            response = self.transport.send(RuntimeRequest(method="GET", url=url, max_response_bytes=MAX_DOCUMENT_BYTES))
-            if not 200 <= response.status_code < 300 or len(response.body) > MAX_DOCUMENT_BYTES:
-                raise UnsupportedAccessError(
-                    f"HttpDownload for {sanitize_uri(url)!r} failed or exceeded the buffer limit"
-                )
-            return io.BytesIO(response.body), _content_encoding_from_headers(dict(response.headers))
         for hop in range(11):
-            response = send_stream(RuntimeRequest(method="GET", url=url, redirect_policy=RedirectPolicy.NO_FOLLOW))
+            try:
+                validate_http_target(url, allow_private=self.allow_private_http)
+            except ValueError as exc:
+                raise UnsupportedAccessError(f"HttpDownload target is invalid ({exc})") from None
+            request = RuntimeRequest(
+                method="GET", url=url, redirect_policy=RedirectPolicy.NO_FOLLOW, max_response_bytes=MAX_DOCUMENT_BYTES
+            )
+            response = send_stream(request) if callable(send_stream) else self.transport.send(request)
             headers = {key.lower(): value for key, value in response.headers.items()}
             if 200 <= response.status_code < 300:
-                return _StreamClosingBytesIO(iter(response), response, nullcontext()), headers.get("content-encoding")
-            response.close()
+                break
+            if callable(send_stream):
+                response.close()
             if response.status_code not in {301, 302, 303, 307, 308} or "location" not in headers or hop == 10:
                 raise UnsupportedAccessError(
                     f"HttpDownload for {sanitize_uri(url)!r} returned HTTP {response.status_code}"
                 )
             url = urljoin(url, headers["location"])
-            if urlsplit(url).scheme not in {"http", "https"}:
-                raise UnsupportedAccessError("HttpDownload redirect must use HTTP or HTTPS")
-        raise UnsupportedAccessError("HttpDownload exceeded its redirect limit")
+        if callable(send_stream):
+            return _StreamClosingBytesIO(iter(response), response, nullcontext()), headers.get("content-encoding")
+        if len(response.body) > MAX_DOCUMENT_BYTES:
+            raise UnsupportedAccessError("HttpDownload exceeded the buffer limit")
+        return io.BytesIO(response.body), headers.get("content-encoding")
 
     def _open_object_storage(self, access: Any) -> tuple[Any, str | None]:
         """ObjectStorage: open via open_filesystem.open."""

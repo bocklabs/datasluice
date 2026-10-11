@@ -39,7 +39,7 @@ def test_crash_then_resume_skips_completed_resource(
     crashing_store = FaultInjectingStateStore(first_store, raise_on_put=2)
     first_transport = HttpxCatalogTransport()
 
-    reader = DataPlaneResourceReader(transport=first_transport)
+    reader = DataPlaneResourceReader(transport=first_transport, allow_private_http=True)
     sync_resources_2 = sync_resources(
         resources,
         state_store=crashing_store,
@@ -68,7 +68,7 @@ def test_crash_then_resume_skips_completed_resource(
         resume_sync(
             resources,
             state_store=resumed_store,
-            reader=DataPlaneResourceReader(transport=second_transport),
+            reader=DataPlaneResourceReader(transport=second_transport, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=second_transport,
             resume=True,

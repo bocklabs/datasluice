@@ -209,6 +209,7 @@ class ComplianceReport:
             not isinstance(expected, tuple)
             or len(expected) > 4096
             or not all(isinstance(case_id, str) and case_id and len(case_id) <= 384 for case_id in expected)
+            or not {outcome.case_id for outcome in self.outcomes} <= set(expected)
         ):
             raise _report_error("report.expected_case_ids")
         object.__setattr__(self, "expected_case_ids", tuple(sorted(set(expected))))

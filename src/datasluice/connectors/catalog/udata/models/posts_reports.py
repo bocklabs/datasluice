@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
@@ -30,11 +30,6 @@ def segment(value: str, operation: str) -> str:
 
 def _paging(query: list[tuple[str, str]], page: int, page_size: int) -> list[tuple[str, str]]:
     return [("page", str(page)), ("page_size", str(page_size)), *query]
-
-
-def _validate_paging(page: int, page_size: int, label: str) -> None:
-    if type(page) is not int or page < 1 or type(page_size) is not int or page_size < 1:
-        raise ValueError(f"uData {label} paging must be positive integers.")
 
 
 def _text(value: object, label: str, *, required: bool = False) -> None:
@@ -100,7 +95,7 @@ class PostListQuery:
     with_drafts: bool | None = None
 
     def __post_init__(self) -> None:
-        _validate_paging(self.page, self.page_size, "post list")
+        paging(self.page, self.page_size, "post list")
         _choice(self.kind, _POST_KINDS, "post list kind")
         if self.with_drafts is not None and type(self.with_drafts) is not bool:
             raise ValueError("uData post list with_drafts must be a boolean when supplied.")
@@ -133,7 +128,7 @@ class PostSearchQuery:
     last_update_range: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_paging(self.page, self.page_size, "post search")
+        paging(self.page, self.page_size, "post search")
         _text(self.q, "post search q")
         _strings(self.tags, "post search tags")
         _choice(
@@ -296,7 +291,7 @@ class ReportQuery:
     subject_type: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_paging(self.page, self.page_size, "report list")
+        paging(self.page, self.page_size, "report list")
         _text(self.q, "report list q")
         _choice(self.subject_type, _REPORT_SUBJECT_TYPES, "report list subject_type")
         if self.handled is not None and type(self.handled) is not bool:
@@ -423,7 +418,7 @@ class NotificationQuery:
     handled: bool | None = None
 
     def __post_init__(self) -> None:
-        _validate_paging(self.page, self.page_size, "notification list")
+        paging(self.page, self.page_size, "notification list")
         _choice(self.sort, _NOTIFICATION_SORTS, "notification list sort")
         if self.handled is not None and type(self.handled) is not bool:
             raise ValueError("uData notification list handled must be a boolean when supplied.")

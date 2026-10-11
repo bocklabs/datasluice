@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.exceptions import DataSluiceError
 
@@ -191,8 +191,7 @@ class DiscussionSearchQuery:
     last_update_range: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1 or type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("uData discussion search paging must be strictly positive.")
+        paging(self.page, self.page_size, "uData activity_discussions")
         if self.sort is not None and self.sort not in _DISCUSSION_SORT_CHOICES:
             raise ValueError("uData discussion search sort is not a documented choice.")
         if self.last_update_range is not None and self.last_update_range not in _LAST_UPDATE_RANGES:

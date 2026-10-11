@@ -17,8 +17,10 @@ sync_module = importlib.import_module("datasluice.sync.sync")
 
 
 class _ResponseAwareReader:
+    allow_private_http = True
+
     def __init__(self, transport: HttpxCatalogTransport) -> None:
-        self._delegate = DataPlaneResourceReader(transport=transport)
+        self._delegate = DataPlaneResourceReader(transport=transport, allow_private_http=True)
         self.open_calls = 0
         self.open_response_calls = 0
         self.response_streams: list[Any] = []
@@ -35,7 +37,7 @@ class _ResponseAwareReader:
 
 class _BaseReader:
     def __init__(self, transport: HttpxCatalogTransport) -> None:
-        self._delegate = DataPlaneResourceReader(transport=transport)
+        self._delegate = DataPlaneResourceReader(transport=transport, allow_private_http=True)
         self.open_calls = 0
 
     def open(self, resource, *, batch_size: int = 65536):
@@ -180,7 +182,7 @@ def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, m
         sync_resources(
             [resource],
             state_store=_inmemory_state_store(),
-            reader=DataPlaneResourceReader(transport=transport),
+            reader=DataPlaneResourceReader(transport=transport, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=transport,
         )
@@ -216,7 +218,7 @@ def test_sync_preserves_query_auth_and_transport_injected_headers(tmp_path, csv_
         sync_resources(
             [resource],
             state_store=_inmemory_state_store(),
-            reader=DataPlaneResourceReader(transport=injecting),
+            reader=DataPlaneResourceReader(transport=injecting, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=injecting,
         )

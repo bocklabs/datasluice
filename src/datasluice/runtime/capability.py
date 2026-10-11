@@ -61,6 +61,8 @@ class _CacheEntry:
     timestamp: float
 
 
+_MAX_CACHE_ENTRIES = 1024
+
 _AsyncFlight = asyncio.Future[EffectiveCapabilityProfile]
 
 
@@ -209,7 +211,7 @@ class EffectiveCapabilityCache:
             if not flight.event.is_set():
                 flight.event.set()
             raise flight.error
-        self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
+        self._store_entry(cache_key, effective, completed_at)
         flight.profile = effective
         self._discard_sync_flight(cache_key, flight)
         flight.event.set()
@@ -276,7 +278,7 @@ class EffectiveCapabilityCache:
         if flight.cancelled():
             self._discard_async_flight(cache_key, flight)
             raise self._invalidation_error(operation_id)
-        self._entries[cache_key] = _CacheEntry(profile=effective, timestamp=completed_at)
+        self._store_entry(cache_key, effective, completed_at)
         self._discard_async_flight(cache_key, flight)
         if not flight.done():
             flight.set_result(effective)
@@ -340,9 +342,7 @@ class EffectiveCapabilityCache:
         }[response_class]
         effective = self._profile_with_state(operation_id, state)
         with self._lock:
-            self._entries[self._cache_key(operation_id, credential_scope)] = _CacheEntry(
-                profile=effective, timestamp=self._clock()
-            )
+            self._store_entry(self._cache_key(operation_id, credential_scope), effective, self._clock())
         return effective
 
     def record_evidence(
@@ -353,10 +353,22 @@ class EffectiveCapabilityCache:
         self._validate_evidence(evidence.operation_id, evidence, credential_scope=credential_scope)
         effective = self._profile_from_evidence(evidence.operation_id, evidence)
         with self._lock:
-            self._entries[self._cache_key(evidence.operation_id, credential_scope)] = _CacheEntry(
-                profile=effective, timestamp=self._clock()
-            )
+            self._store_entry(self._cache_key(evidence.operation_id, credential_scope), effective, self._clock())
         return effective
+
+    def _store_entry(
+        self, key: tuple[str, str, str, OperationId], profile: EffectiveCapabilityProfile, timestamp: float
+    ) -> None:
+        self._entries.pop(key, None)
+        if len(self._entries) >= _MAX_CACHE_ENTRIES:
+            self._entries = {
+                cached_key: entry
+                for cached_key, entry in self._entries.items()
+                if timestamp - entry.timestamp <= 2 * self._ttl_seconds
+            }
+            if len(self._entries) >= _MAX_CACHE_ENTRIES:
+                self._entries.pop(next(iter(self._entries)))
+        self._entries[key] = _CacheEntry(profile=profile, timestamp=timestamp)
 
     def invalidate(self, operation_id: OperationId | None = None) -> None:
         """Discard all cached state or the state for one operation."""

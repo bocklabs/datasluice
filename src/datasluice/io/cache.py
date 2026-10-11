@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 from pathlib import Path
 
@@ -35,6 +36,7 @@ class FileCache:
             return None
         age = time.time() - path.stat().st_mtime
         if age > self.ttl:
+            path.unlink(missing_ok=True)
             logger.debug("Cache miss (expired): %s", key)
             return None
         logger.debug("Cache hit: %s", key)
@@ -54,5 +56,5 @@ class FileCache:
     def clear(self) -> None:
         """Remove all entries from the cache."""
         for entry in self.cache_dir.iterdir():
-            if entry.is_file():
+            if entry.is_file() and re.fullmatch(r"[0-9a-f]{64}", entry.name):
                 entry.unlink()

@@ -120,10 +120,18 @@ def _request_for(operation: CatalogOperationRequest, credential: object | None =
     headers = operation.payload.get("headers", {})
     if not isinstance(headers, Mapping):
         raise ValueError("Catalog runtime request headers must be a mapping.")
+    headers = {"User-Agent": build_user_agent(), **_auth_headers(credential), **headers}
+    if operation.mutation_policy is not None and (key := operation.mutation_policy.idempotency.key) is not None:
+        headers = {
+            name: value
+            for name, value in headers.items()
+            if not isinstance(name, str) or name.lower() != "idempotency-key"
+        }
+        headers["Idempotency-Key"] = key
     return RuntimeRequest(
         method=method,
         url=url,
-        headers={"User-Agent": build_user_agent(), **_auth_headers(credential), **headers},
+        headers=headers,
         body=body,
     )
 

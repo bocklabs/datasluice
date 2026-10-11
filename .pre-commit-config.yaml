@@ -98,4 +98,4 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
-        args: [--ignore-words-list=blocs]
+        args: ["--ignore-words-list=blocs,pathc"]

@@ -199,6 +199,17 @@ class SiteVersionGate:
                     platform="udata",
                 )
             ) from exc
+        if response.status_code in {401, 403, 423}:
+            raise map_catalog_error(
+                NativeCatalogError(
+                    "The uData site probe requires deployment access.",
+                    operation=SITE_OPERATION_ID,
+                    platform="udata",
+                    status_code=response.status_code,
+                    capability_state={401: "unauthorized", 403: "forbidden", 423: "disabled"}[response.status_code],
+                    safe_action="Verify access to the deployment's stock /api/1/site/ document.",
+                )
+            )
         if not 200 <= response.status_code < 300:
             raise UDataVersionError(
                 version_state="missing",
@@ -276,6 +287,17 @@ class AsyncSiteVersionGate(SiteVersionGate):
                     platform="udata",
                 )
             ) from exc
+        if response.status_code in {401, 403, 423}:
+            raise map_catalog_error(
+                NativeCatalogError(
+                    "The uData site probe requires deployment access.",
+                    operation=SITE_OPERATION_ID,
+                    platform="udata",
+                    status_code=response.status_code,
+                    capability_state={401: "unauthorized", 403: "forbidden", 423: "disabled"}[response.status_code],
+                    safe_action="Verify access to the deployment's stock /api/1/site/ document.",
+                )
+            )
         if not 200 <= response.status_code < 300:
             raise UDataVersionError(
                 version_state="missing",

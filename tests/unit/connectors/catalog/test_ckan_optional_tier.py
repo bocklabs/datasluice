@@ -30,7 +30,7 @@ from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTr
 if TYPE_CHECKING:
     from datasluice.domain.catalog.operations import OperationId
 
-LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
+LOOPBACK_ORIGIN = "https://127.0.0.1:9001"
 ACTIVITY_ID = "ckan/action-api-v3.activity"
 VIEWS_ID = "ckan/action-api-v3.resource-views"
 
@@ -67,7 +67,7 @@ class SeededProbeRunner:
             response_class = ProbeResponseClass.SUCCESS
         return ProbeEvidence(
             operation_id=operation_id,
-            deployment_url="https://demo.ckan.org/api/3/action/status_show",
+            deployment_url="https://127.0.0.1:9001/api/3/action/status_show",
             credential_classification=CredentialClassification.ANONYMOUS,
             role_classification=RoleClassification.ANONYMOUS,
             observed_response_class=response_class,
@@ -88,7 +88,7 @@ class AsyncSeededProbeRunner:
         )
         return ProbeEvidence(
             operation_id=operation_id,
-            deployment_url="https://demo.ckan.org/api/3/action/status_show",
+            deployment_url="https://127.0.0.1:9001/api/3/action/status_show",
             credential_classification=CredentialClassification.ANONYMOUS,
             role_classification=RoleClassification.ANONYMOUS,
             observed_response_class=response_class,

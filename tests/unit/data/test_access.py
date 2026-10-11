@@ -159,7 +159,7 @@ def test_http_download_with_buffered_transport() -> None:
             format="CSV",
             access=HttpDownload(url=f"{base}/data.csv"),
         )
-        reader = DataPlaneResourceReader(transport=transport)
+        reader = DataPlaneResourceReader(transport=transport, allow_private_http=True)
         with reader.open(resource) as bs:
             batches = list(bs.iter_batches())
         table = pa.Table.from_batches(batches, schema=bs.schema)

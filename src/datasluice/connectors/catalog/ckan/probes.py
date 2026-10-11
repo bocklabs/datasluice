@@ -251,7 +251,7 @@ class StatusSnapshotCache:
         self._ttl_seconds = float(ttl_seconds)
         self._clock = clock
         self._lock = threading.Lock()
-        self._async_lock = asyncio.Lock()
+        self._async_lock: asyncio.Lock | None = None
         self._snapshot: _Snapshot | None = None
 
     @property
@@ -267,12 +267,18 @@ class StatusSnapshotCache:
             current = self._snapshot
             if current is not None and self._clock() - current.fetched_at < self._ttl_seconds:
                 return current
-            snapshot = _decode_snapshot(self._reader(self._request()), fetched_at=self._clock())
+        snapshot = _decode_snapshot(self._reader(self._request()), fetched_at=self._clock())
+        with self._lock:
+            current = self._snapshot
+            if current is not None and self._clock() - current.fetched_at < self._ttl_seconds:
+                return current
             self._snapshot = snapshot
             return snapshot
 
     async def snapshot_async(self, send: Callable[[RuntimeRequest], Awaitable[RuntimeResponse]]) -> _Snapshot:
         """Return the fresh snapshot, refreshing through one asynchronous read when stale."""
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
         async with self._async_lock:
             with self._lock:
                 current = self._snapshot

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from datasluice.connectors.catalog.udata.models._segment import paging
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, _thaw_json
 from datasluice.exceptions import DataSluiceError
@@ -109,8 +110,7 @@ class UserListQuery:
     def __post_init__(self) -> None:
         _text(self.q, "q", optional=True)
         _text(self.sort, "sort", optional=True)
-        if type(self.page) is not int or self.page < 1 or type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("uData user page values must be positive integers.")
+        paging(self.page, self.page_size, "uData users")
 
     def query_params(self) -> list[tuple[str, str]]:
         params = [("page", str(self.page)), ("page_size", str(self.page_size))]

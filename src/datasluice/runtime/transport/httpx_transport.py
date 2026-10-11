@@ -62,14 +62,16 @@ def _redirect_request(
     try:
         next_url = urljoin(request.url, location)
         _require_plain_http_target(next_url)
-    except ValueError as exc:
+    except ValueError:
         raise TransportError(
             f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
-        ) from exc
+        ) from None
     return _next_redirect_request(request, status, next_url, credential_scope, "httpx")
 
 
 def _runtime_response(response: Any, request: RuntimeRequest) -> RuntimeResponse:
+    import httpx
+
     try:
         return RuntimeResponse(
             response.status_code,
@@ -77,6 +79,8 @@ def _runtime_response(response: Any, request: RuntimeRequest) -> RuntimeResponse
             _read_body(response, request.max_response_bytes),
             _retry_after(response.headers.get("retry-after")),
         )
+    except httpx.HTTPError:
+        raise TransportError("httpx could not read the catalog response.") from None
     finally:
         response.close()
 
@@ -85,8 +89,8 @@ async def _runtime_response_async(response: Any, request: RuntimeRequest, httpx:
     try:
         try:
             body = await _read_body_async(response, request.max_response_bytes)
-        except httpx.HTTPError as exc:
-            raise TransportError("httpx could not read the catalog response.") from exc
+        except httpx.HTTPError:
+            raise TransportError("httpx could not read the catalog response.") from None
         return RuntimeResponse(
             response.status_code,
             dict(response.headers),
@@ -174,15 +178,15 @@ class _HttpxTransportBase:
     def _stream_chunks(self, response: Any) -> Iterator[bytes]:
         try:
             yield from response.iter_bytes()
-        except self._httpx.HTTPError as exc:
-            raise TransportError("httpx could not read the catalog response stream.") from exc
+        except self._httpx.HTTPError:
+            raise TransportError("httpx could not read the catalog response stream.") from None
 
     async def _stream_chunks_async(self, response: Any) -> AsyncIterator[bytes]:
         try:
             async for chunk in response.aiter_bytes():
                 yield chunk
-        except self._httpx.HTTPError as exc:
-            raise TransportError("httpx could not read the catalog response stream.") from exc
+        except self._httpx.HTTPError:
+            raise TransportError("httpx could not read the catalog response stream.") from None
 
 
 class HttpxCatalogTransport(_HttpxTransportBase):
@@ -220,8 +224,8 @@ class HttpxCatalogTransport(_HttpxTransportBase):
                     stream=current.max_response_bytes is not None,
                     follow_redirects=False,
                 )
-            except self._httpx.HTTPError as exc:
-                raise TransportError("httpx could not complete the catalog request.") from exc
+            except self._httpx.HTTPError:
+                raise TransportError("httpx could not complete the catalog request.") from None
             location = _follow_location(current, response)
             if location is None:
                 return _runtime_response(response, current)
@@ -242,8 +246,8 @@ class HttpxCatalogTransport(_HttpxTransportBase):
         self._assert_streamable(request)
         try:
             response = self._client.send(_build_request(self._client, request), stream=True, follow_redirects=False)
-        except self._httpx.HTTPError as exc:
-            raise TransportError("httpx could not open the catalog response stream.") from exc
+        except self._httpx.HTTPError:
+            raise TransportError("httpx could not open the catalog response stream.") from None
         status_code, headers, retry_after = self._stream_metadata(response)
         return RuntimeStreamResponse(
             status_code=status_code,
@@ -289,8 +293,8 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
                     stream=current.max_response_bytes is not None,
                     follow_redirects=False,
                 )
-            except self._httpx.HTTPError as exc:
-                raise TransportError("httpx could not complete the catalog request.") from exc
+            except self._httpx.HTTPError:
+                raise TransportError("httpx could not complete the catalog request.") from None
             location = _follow_location(current, response)
             if location is None:
                 return await _runtime_response_async(response, current, self._httpx)
@@ -313,8 +317,8 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
             response = await self._client.send(
                 _build_request(self._client, request), stream=True, follow_redirects=False
             )
-        except self._httpx.HTTPError as exc:
-            raise TransportError("httpx could not open the catalog response stream.") from exc
+        except self._httpx.HTTPError:
+            raise TransportError("httpx could not open the catalog response stream.") from None
         status_code, headers, retry_after = self._stream_metadata(response)
         return AsyncRuntimeStreamResponse(
             status_code=status_code,

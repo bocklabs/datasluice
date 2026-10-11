@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.exceptions import DataSluiceError
 
@@ -131,13 +131,6 @@ def _choice(value: object, choices: tuple[str, ...], label: str) -> None:
         raise ValueError(f"uData {label} is not a documented choice.")
 
 
-def _paging(page: object, page_size: object, label: str) -> None:
-    if type(page) is not int or page < 1:
-        raise ValueError(f"uData {label} page must be a positive integer.")
-    if type(page_size) is not int or not 1 <= page_size <= MAX_PAGE_SIZE:
-        raise ValueError(f"uData {label} page_size must be an integer from 1 through {MAX_PAGE_SIZE}.")
-
-
 def _frozen_mapping(value: Mapping[str, object], label: str) -> Mapping[str, object]:
     """Return *value* deep-frozen, rejecting anything that is not JSON serializable."""
     try:
@@ -253,7 +246,7 @@ class VisualizationListQuery:
     organization: str | None = None
 
     def __post_init__(self) -> None:
-        _paging(self.page, self.page_size, "visualization list")
+        paging(self.page, self.page_size, "visualization list")
         if self.sort is not None and self.sort not in {
             *(f"-{name}" for name in VISUALIZATION_SORTS),
             *VISUALIZATION_SORTS,

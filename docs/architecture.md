@@ -59,7 +59,8 @@ The executable contract API for built-in and third-party connectors:
   clients that satisfy the Protocols for PR-time contract testing.
 - **Runner and report** — `run_catalog_contract` executes declared cases
   and emits a machine-readable `ComplianceReport` covering core, optional,
-  authenticated, unauthorized, and unavailable behavior.
+  authenticated, unauthorized, and unavailable behavior. Callers inside a running
+  event loop await `run_catalog_contract_async` with the same arguments.
 - **Certification** — `certify_catalog_report` validates explicit
   manifests, declared profiles, fixture fingerprints, and complete
   runner-owned report evidence.

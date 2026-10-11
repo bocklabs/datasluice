@@ -1179,7 +1179,7 @@ class AsyncDatasetsService:
         )
         negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
         return wire.parse_text_document(
-            cast("bytes", body), negotiated.split(";")[0].strip(), response_media_type=negotiated, operation=operation
+            cast("bytes", body), wire.media_type_for_format(fmt), response_media_type=negotiated, operation=operation
         )
 
     async def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]:

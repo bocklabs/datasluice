@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
     _async_typed_read,
-    _AsyncNativeService,
+    _AsyncGroupService,
     _sync_typed_mutation,
     _sync_typed_read,
-    _SyncNativeService,
+    _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import GROUP, PLATFORM
 from datasluice.connectors.catalog.ckan.services._shared import WireParams, detail_params, drop_unset, wire_params
@@ -38,7 +38,7 @@ _GROUP_GROUP = "groups"
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     key = "name" if action == "group_create" else "id"
-    return CatalogId(PLATFORM, GROUP, str(params[key]))
+    return CatalogId(PLATFORM, GROUP, str(params.get(key, "")))
 
 
 def _fields_params(
@@ -51,7 +51,7 @@ def _fields_params(
     return wire_params({"id": id}, {"name": name, "title": title, "description": description, "image_url": image_url})
 
 
-class SyncGroupsService(_SyncNativeService):
+class SyncGroupsService(_SyncGroupService):
     """Synchronous group projection carrying twelve typed actions."""
 
     __slots__ = ()
@@ -166,7 +166,7 @@ class SyncGroupsService(_SyncNativeService):
         return _sync_typed_mutation(self._client, _GROUP_GROUP, action, params, policy, _mutation_target)
 
 
-class AsyncGroupsService(_AsyncNativeService):
+class AsyncGroupsService(_AsyncGroupService):
     """Asynchronous group projection carrying twelve typed actions."""
 
     __slots__ = ()

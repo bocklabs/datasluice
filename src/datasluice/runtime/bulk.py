@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from inspect import isawaitable
+from inspect import isawaitable, iscoroutine
 from threading import Event
 from time import monotonic
 from typing import TYPE_CHECKING, Protocol
@@ -561,7 +561,11 @@ class BulkExecutor(_BulkExecutorState[MutationReceipt]):
     def _persist(self, plan: BulkPlan, completed: dict[int, BulkItemReceipt], *, cancellation_requested: bool) -> None:
         checkpoint = self._build_checkpoint(plan, completed, cancellation_requested=cancellation_requested)
         if checkpoint is not None:
-            self._sink(checkpoint)
+            result = self._sink(checkpoint)
+            if isawaitable(result):
+                if iscoroutine(result):
+                    result.close()
+                raise TypeError("Async checkpoint sinks require AsyncBulkExecutor.")
 
 
 class AsyncBulkExecutor(_BulkExecutorState[Awaitable[MutationReceipt]]):

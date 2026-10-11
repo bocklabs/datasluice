@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from datasluice.errors.catalog import CatalogValidationError
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -30,3 +32,20 @@ def detail_params(
             "include_users": include_users,
         },
     )
+
+
+def reject_deprecated(action: str, payload: Mapping[str, object]) -> None:
+    """Reject parameters removed from the canonical CKAN Action API surface."""
+    banned = {
+        "current_package_list_with_resources": {"page"},
+        "tag_search": {"fields"},
+        "tag_autocomplete": {"fields"},
+    }.get(action, set())
+    clash = sorted(banned.intersection(payload))
+    if clash:
+        raise CatalogValidationError(
+            f"The parameter(s) {clash} are officially deprecated for {action} and are not accepted.",
+            operation=f"ckan/{action}",
+            platform="ckan",
+            safe_action="Use offset instead of page; use q and vocabulary_id instead of fields.",
+        )

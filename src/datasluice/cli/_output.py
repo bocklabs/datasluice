@@ -6,6 +6,7 @@ import json
 import sys
 from typing import TYPE_CHECKING, Any
 
+import typer
 from rich.console import Console
 
 if TYPE_CHECKING:
@@ -26,3 +27,9 @@ def render_jsonl_rows(rows: Iterable[Mapping[str, Any]]) -> None:
     for row in rows:
         json.dump(row, sys.stdout, default=str, separators=(",", ":"))
         sys.stdout.write("\n")
+
+
+def validate_output(output: str) -> None:
+    """Reject unsupported human or JSON output before processing input."""
+    if output not in {"human", "json"}:
+        raise typer.BadParameter("--output must be human or json")

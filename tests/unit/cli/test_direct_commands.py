@@ -126,7 +126,7 @@ def test_capabilities_list_and_show_declared_states_without_network() -> None:
 
 def test_credentials_availability_and_validation_redact_explicit_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Credential output advertises extras while rejecting secret disclosure."""
-    monkeypatch.delenv("DATASLUICE_NO_REDACT", raising=False)
+    monkeypatch.setenv("DATASLUICE_NO_REDACT", "1")
     availability = runner.invoke(app, ["credentials", "availability", "--output", "json"])
     validation = runner.invoke(
         app,
@@ -217,7 +217,7 @@ def test_validate_rejects_invalid_credential_json(platform: str, credential_json
 
 def test_validate_redacts_socrata_multi_field_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     """The socrata multi-field path redacts every secret-bearing field."""
-    monkeypatch.delenv("DATASLUICE_NO_REDACT", raising=False)
+    monkeypatch.setenv("DATASLUICE_NO_REDACT", "1")
     result = runner.invoke(
         app,
         [

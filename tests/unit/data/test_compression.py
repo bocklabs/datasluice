@@ -47,6 +47,8 @@ def test_gzip_round_trip() -> None:
     source = io.BytesIO(compressed)
     decompressed = apply_compression(source)
     assert decompressed.read() == raw
+    decompressed.close()
+    assert source.closed
 
 
 def test_bzip2_round_trip() -> None:
@@ -161,3 +163,25 @@ def test_peekable_reader_streams_non_seekable() -> None:
     assert peeked == b"abcd"
     assert peekable.read(6) == b"abcdef"
     assert peekable.read() == b"gh"
+
+
+@pytest.mark.parametrize("kind", ["gzip", "zip"])
+def test_expanded_payload_is_bounded(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    import zipfile
+
+    from datasluice.exceptions import DecompressionError
+
+    monkeypatch.setattr(_compression_module, "_MAX_DECOMPRESSED_BYTES", 16, raising=False)
+    raw = b"x" * 17
+    buffer = io.BytesIO()
+    if kind == "zip":
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("data.csv", raw)
+        data = buffer.getvalue()
+    else:
+        data = gzip.compress(raw)
+    with (
+        pytest.raises(DecompressionError, match="decompressed byte limit"),
+        apply_compression(io.BytesIO(data)) as source,
+    ):
+        source.read()

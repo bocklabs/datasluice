@@ -782,3 +782,9 @@ def test_t01_runners_never_write_to_the_profile_oracle_or_fixtures() -> None:
     assert after == before
     assert before
     assert report.advisory_only is True
+
+
+def test_drift_query_rejects_non_ascii_page_sizes_as_typed_validation() -> None:
+    read = _forge_read_operation(query=(("page_size", "²"),))
+    with pytest.raises(CatalogValidationError):
+        read.assert_readable()

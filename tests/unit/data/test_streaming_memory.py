@@ -52,7 +52,7 @@ def test_http_download_reads_chunked_response_through_streaming_seam() -> None:
         transport = HttpxCatalogTransport()
         try:
             rows, id_checksum = _read_row_totals(
-                DataPlaneResourceReader(transport=transport), _resource(base, "/stream")
+                DataPlaneResourceReader(transport=transport, allow_private_http=True), _resource(base, "/stream")
             )
         finally:
             transport.close()
@@ -71,7 +71,7 @@ def test_urllib_runtime_transport_reads_the_resource() -> None:
         transport = UrllibCatalogTransport()
         try:
             rows, id_checksum = _read_row_totals(
-                DataPlaneResourceReader(transport=transport), _resource(base, "/buffered")
+                DataPlaneResourceReader(transport=transport, allow_private_http=True), _resource(base, "/buffered")
             )
         finally:
             transport.close()
@@ -101,7 +101,7 @@ def test_large_chunked_download_materializes_every_row_without_truncation() -> N
         transport = HttpxCatalogTransport()
         try:
             rows, id_checksum = _read_row_totals(
-                DataPlaneResourceReader(transport=transport), _resource(base, "/stream")
+                DataPlaneResourceReader(transport=transport, allow_private_http=True), _resource(base, "/stream")
             )
         finally:
             transport.close()
@@ -136,7 +136,9 @@ def test_http_download_yields_before_exhausting_and_closes_its_response() -> Non
             return RuntimeStreamResponse(200, {}, chunks(), close)
 
     transport = StreamingTransport()
-    with DataPlaneResourceReader(transport=transport).open(_resource("https://example.test", "/data.csv")) as stream:
+    with DataPlaneResourceReader(transport=transport, allow_private_http=True).open(
+        _resource("https://example.test", "/data.csv")
+    ) as stream:
         assert next(stream.iter_batches()).num_rows > 0
         assert transport.consumed < 512
     assert transport.closed

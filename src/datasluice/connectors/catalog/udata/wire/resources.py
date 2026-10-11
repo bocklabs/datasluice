@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
@@ -161,7 +162,32 @@ def resource_request(
 def list_community_resources_request(
     params: Mapping[str, str | int] | None = None,
 ) -> tuple[str, str, dict[str, str], object | None]:
-    pairs = [] if params is None else [(key, str(value)) for key, value in sorted(params.items())]
+    if params is None:
+        params = {}
+    if not isinstance(params, Mapping) or any(
+        not isinstance(key, str)
+        or key not in {"page", "page_size", "sort", "dataset", "organization", "owner"}
+        or type(value) not in {str, int}
+        for key, value in params.items()
+    ):
+        raise CatalogValidationError(
+            "Community resource queries require documented keys and string or integer values.",
+            operation=COMMUNITY_LIST_OPERATION,
+            platform="udata",
+            safe_action="Pass documented community resource filters and bounded pagination.",
+        )
+    for key, maximum in (("page", 100_000), ("page_size", 100)):
+        if key not in params:
+            continue
+        value = str(params[key])
+        if re.fullmatch(r"\d{1,6}", value, flags=re.ASCII) is None or not 1 <= int(value) <= maximum:
+            raise CatalogValidationError(
+                "Community resource query paging must be bounded positive integers.",
+                operation=COMMUNITY_LIST_OPERATION,
+                platform="udata",
+                safe_action="Pass documented community resource filters and bounded pagination.",
+            )
+    pairs = [(key, str(value)) for key, value in sorted(params.items())]
     query = urlencode(pairs)
     return _request("GET", "/api/1/datasets/community_resources/" + (f"?{query}" if query else ""))
 
@@ -246,9 +272,13 @@ def parse_resource_page(payload: object) -> UDataPageEnvelope:
         total=page.total,
     )
     page_info = None
-    if page.page is not None:
-        next_cursor = str(page.page + 1) if page.next_page is not None else None
-        page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
+    if page.page is not None or page.next_page is not None:
+        next_cursor = page.next_page
+        if next_cursor is not None and page.page is not None:
+            next_cursor = str(page.page + 1)
+        page_info = PageInfo(
+            cursor=None if page.page is None else str(page.page), next_cursor=next_cursor, total_items=page.total
+        )
     return UDataPageEnvelope(
         items=tuple(parse_resource(item) for item in page.items),
         page=page_info,

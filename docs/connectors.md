@@ -99,8 +99,8 @@ Three selection criteria govern every configured check, and each
    `current_package_list_with_resources`) with fixed parameters; generic
    action invocation stays unavailable.
 2. **Stable ordering** — sequences compare under a declared ordering
-   mode; `platform-deterministic` compares positions as the platform
-   returns them, while `canonicalized` sorts both sides before
+   mode; `platform-deterministic` compares the platform sequence
+   against the sorted expectation, while `canonicalized` sorts both sides before
    comparing, so accidental reordering never reports as drift.
 3. **No time-varying fields** — expectations are exact key-set
    skeletons; volatile keys are excluded by configuration in the

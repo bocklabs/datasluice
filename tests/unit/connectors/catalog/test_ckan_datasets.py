@@ -30,7 +30,7 @@ from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPoli
 from datasluice.errors.catalog import CatalogValidationError, UnsupportedCapabilityError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, success_body
 
-LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
+LOOPBACK_ORIGIN = "https://127.0.0.1:9001"
 
 PACKAGE_CREATE_RESULT: dict[str, object] = {"id": "pkg-1", "name": "created-dataset", "title": "Created"}
 COLLABORATOR_RESULT: dict[str, object] = {
@@ -49,7 +49,7 @@ class StubProbeRunner:
         self.probed.append(operation_id)
         return ProbeEvidence(
             operation_id=operation_id,
-            deployment_url="https://demo.ckan.org/api/3/action/status_show",
+            deployment_url="https://127.0.0.1:9001/api/3/action/status_show",
             credential_classification=CredentialClassification.ANONYMOUS,
             role_classification=RoleClassification.ANONYMOUS,
             observed_response_class=self.response_class,

@@ -26,7 +26,7 @@ from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthTokenResult,
 )
 from datasluice.connectors.catalog.udata.wire import oauth as wire
-from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
+from datasluice.domain.catalog.auth import EffectivePermissions, SecretValue, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
@@ -144,7 +144,9 @@ def test_oauth_token_route_sends_exact_form_without_cookie_or_session_auth() -> 
     assert "X-API-KEY" not in request.headers
     assert "Cookie" not in request.headers
     assert result.token_type == "Bearer"
-    assert result.access_token == "opaque"
+    assert isinstance(result.access_token, SecretValue)
+    assert result.access_token.reveal() == "opaque"
+    assert str(result.access_token) == "***"
 
 
 def test_oauth_revoke_route_sends_exact_form_and_records_target() -> None:

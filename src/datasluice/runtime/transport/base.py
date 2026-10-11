@@ -14,6 +14,9 @@ from datasluice.domain.catalog.redaction import redact_string
 SENSITIVE_REDIRECT_HEADERS = frozenset(
     {"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token", "x-app-token"}
 )
+_SAFE_REDIRECT_HEADERS = frozenset(
+    {"accept", "content-type", "user-agent", "range", "if-none-match", "if-modified-since"}
+)
 
 _HOP_BODYLESS_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding"})
 _POST_TO_GET_STATUSES = frozenset({301, 302})
@@ -35,8 +38,8 @@ class UploadStream(Protocol):
 
 
 def strip_sensitive_redirect_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    """Return a copy without credential-bearing headers."""
-    return {key: value for key, value in headers.items() if key.lower() not in SENSITIVE_REDIRECT_HEADERS}
+    """Retain only standard content headers when credential forwarding is forbidden."""
+    return {key: value for key, value in headers.items() if key.lower() in _SAFE_REDIRECT_HEADERS}
 
 
 def drop_body_transfer_headers(headers: Mapping[str, str]) -> dict[str, str]:

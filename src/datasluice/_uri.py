@@ -12,6 +12,8 @@ actual I/O.
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from urllib.parse import SplitResult, parse_qsl, urlencode, urlsplit, urlunsplit
 
 _SENSITIVE_QUERY_KEYS = frozenset(
@@ -91,3 +93,61 @@ def sanitize_uri(uri: str) -> str:
     return urlunsplit(
         (parts.scheme, _netloc_without_userinfo(parts), parts.path, _redacted_query(parts.query), parts.fragment)
     )
+
+
+def validate_http_target(value: object, *, allow_private: bool = False) -> str:
+    """Validate HTTP syntax and static target locality without resolving DNS."""
+    if not isinstance(value, str) or not value:
+        raise ValueError("missing")
+    if len(value) > 2048:
+        raise ValueError("length")
+    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("format")
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+    except ValueError:
+        raise ValueError("host") from None
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError("port") from None
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("scheme")
+    if "@" in parsed.netloc:
+        raise ValueError("userinfo")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("port")
+    if not host or "\\" in host or "%" in host:
+        raise ValueError("host")
+    if not allow_private and _private_http_host(host):
+        raise ValueError("locality")
+    return value
+
+
+def _private_http_host(host: str) -> bool:
+    host = host.lower().rstrip(".")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            address = ipaddress.IPv4Address(socket.inet_aton(host))
+        except OSError:
+            return (
+                host in {"localhost", "ip6-localhost", "ip6-loopback"}
+                or "." not in host
+                or host.endswith(
+                    (
+                        ".localhost",
+                        ".local",
+                        ".lan",
+                        ".internal",
+                        ".intranet",
+                        ".corp",
+                        ".localdomain",
+                        ".home.arpa",
+                        ".onion",
+                    )
+                )
+            )
+    return not address.is_global or address.is_multicast

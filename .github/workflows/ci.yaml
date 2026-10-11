@@ -147,6 +147,7 @@ jobs:
 
       - name: Core coverage report
         run: |
+          set -o pipefail
           echo '## Core Branch Coverage Report' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           uv run coverage report --data-file=.coverage.core | tee -a $GITHUB_STEP_SUMMARY

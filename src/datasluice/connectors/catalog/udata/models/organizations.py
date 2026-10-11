@@ -6,6 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from datasluice.connectors.catalog.udata.models._segment import paging
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.domain.catalog.models import (
     MappingRecord,
@@ -91,8 +92,7 @@ class OrganizationListQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1 or type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("uData organization page values must be positive integers.")
+        paging(self.page, self.page_size, "uData organization")
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("uData organization q must be a string when supplied.")
         if self.sort is not None and (not isinstance(self.sort, str) or not self.sort):

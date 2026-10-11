@@ -49,8 +49,11 @@ def test_clear_evicts(tmp_path: Path) -> None:
     cache = FileCache(tmp_path / "cache", ttl=3600)
     cache.put("k1", b"x")
     assert cache.has("k1")
+    unrelated = cache.cache_dir / "notes.txt"
+    unrelated.write_text("keep")
     cache.clear()
     assert not cache.has("k1")
+    assert unrelated.read_text() == "keep"
 
 
 def test_expired_entry_returns_none(tmp_path: Path) -> None:
@@ -60,4 +63,5 @@ def test_expired_entry_returns_none(tmp_path: Path) -> None:
     old = time.time() - 3600
     os.utime(path, (old, old))
     assert cache.get("k1") is None
+    assert not path.exists()
     assert not cache.has("k1")

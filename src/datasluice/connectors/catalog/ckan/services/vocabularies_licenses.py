@@ -16,20 +16,19 @@ from typing import TYPE_CHECKING
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
     _async_typed_read,
-    _AsyncNativeService,
+    _AsyncGroupService,
     _sync_typed_mutation,
     _sync_typed_read,
-    _SyncNativeService,
+    _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM, TAG, VOCABULARY
+from datasluice.connectors.catalog.ckan.services._shared import drop_unset
 from datasluice.domain.catalog.ids import CatalogId
-from datasluice.errors.catalog import CatalogValidationError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
     from datasluice.connectors.catalog.ckan.results import CKANMutationResult
     from datasluice.contracts.catalog.native.ckan import CKANResultItem
-    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
     from datasluice.domain.catalog.models import ResultEnvelope
     from datasluice.domain.catalog.safety import MutationPolicy
 
@@ -40,45 +39,22 @@ type TranslationBatch = list[Mapping[str, object]]
 type TermTranslationTerms = list[str]
 type WireParams = dict[str, object]
 
-_DEPRECATED_PARAMETERS: Mapping[str, frozenset[str]] = {
-    "tag_search": frozenset({"fields"}),
-    "tag_autocomplete": frozenset({"fields"}),
-}
-
-
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}
-
-
-def _reject_deprecated(action: str, payload: Mapping[str, object]) -> None:
-    banned = _DEPRECATED_PARAMETERS.get(action)
-    if not banned:
-        return
-    clash = sorted(banned.intersection(payload))
-    if clash:
-        raise CatalogValidationError(
-            f"The parameter(s) {clash} are officially deprecated for {action} and are not accepted.",
-            operation=f"{PLATFORM.value}/{action}",
-            platform=PLATFORM.value,
-            safe_action="Use q with an optional vocabulary_id; the fields parameter has no replacement.",
-        )
-
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "tag_create":
-        return CatalogId(PLATFORM, TAG, str(params["name"]))
+        return CatalogId(PLATFORM, TAG, str(params.get("name", "")))
     if action == "tag_delete":
-        return CatalogId(PLATFORM, TAG, str(params["id"]))
+        return CatalogId(PLATFORM, TAG, str(params.get("id", "")))
     if action == "vocabulary_create":
-        return CatalogId(PLATFORM, VOCABULARY, str(params["name"]))
+        return CatalogId(PLATFORM, VOCABULARY, str(params.get("name", "")))
     if action in {"vocabulary_update", "vocabulary_delete"}:
-        return CatalogId(PLATFORM, VOCABULARY, str(params["id"]))
+        return CatalogId(PLATFORM, VOCABULARY, str(params.get("id", "")))
     if action == "term_translation_update":
-        return CatalogId(PLATFORM, VOCABULARY, str(params["term"]))
+        return CatalogId(PLATFORM, VOCABULARY, str(params.get("term", "")))
     return CatalogId(PLATFORM, VOCABULARY, str(action))
 
 
-class SyncVocabulariesLicensesService(_SyncNativeService):
+class SyncVocabulariesLicensesService(_SyncGroupService):
     """Synchronous vocabulary/license projection carrying sixteen typed actions."""
 
     __slots__ = ()
@@ -86,20 +62,11 @@ class SyncVocabulariesLicensesService(_SyncNativeService):
     def __init__(self, client: SyncCKANClient) -> None:
         super().__init__(client, "vocabularies_licenses")
 
-    def tags_vocabularies_and_licenses(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        """Read or manage tags, vocabularies, and licenses with deprecation discipline."""
-        action = operation.payload.get("action")
-        if isinstance(action, str):
-            _reject_deprecated(action, operation.payload)
-        return super().tags_vocabularies_and_licenses(operation, guard)
-
     def tag_list(
         self, *, vocabulary_id: str | None = None, q: str | None = None, all_fields: bool | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List tags optionally scoped to one vocabulary."""
-        params = _drop_unset({"vocabulary_id": vocabulary_id, "q": q, "all_fields": all_fields})
+        params = drop_unset({"vocabulary_id": vocabulary_id, "q": q, "all_fields": all_fields})
         return self._invoke_read("tag_list", params)
 
     def tag_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
@@ -115,14 +82,14 @@ class SyncVocabulariesLicensesService(_SyncNativeService):
         offset: int | None = None,
     ) -> ResultEnvelope[CKANResultItem]:
         """Search tags with the documented query parameters."""
-        params = _drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit, "offset": offset})
+        params = drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit, "offset": offset})
         return self._invoke_read("tag_search", params)
 
     def tag_autocomplete(
         self, *, q: str | None = None, vocabulary_id: str | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete tags with the documented query parameters."""
-        params = _drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit})
+        params = drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit})
         return self._invoke_read("tag_autocomplete", params)
 
     def vocabulary_list(self) -> ResultEnvelope[CKANResultItem]:
@@ -139,33 +106,33 @@ class SyncVocabulariesLicensesService(_SyncNativeService):
 
     def format_autocomplete(self, *, q: str | None = None, limit: int | None = None) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete resource formats."""
-        return self._invoke_read("format_autocomplete", _drop_unset({"q": q, "limit": limit}))
+        return self._invoke_read("format_autocomplete", drop_unset({"q": q, "limit": limit}))
 
     def term_translation_show(
         self, *, terms: TermTranslationTerms, lang_codes: list[str] | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Show translations for the listed terms."""
         params: WireParams = {"terms": terms}
-        params.update(_drop_unset({"lang_codes": lang_codes}))
+        params.update(drop_unset({"lang_codes": lang_codes}))
         return self._invoke_read("term_translation_show", params)
 
     def tag_create(
         self, *, name: str, vocabulary_id: str | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Create a free tag or add a tag to one vocabulary."""
-        return self._invoke_mutation("tag_create", _drop_unset({"name": name, "vocabulary_id": vocabulary_id}), policy)
+        return self._invoke_mutation("tag_create", drop_unset({"name": name, "vocabulary_id": vocabulary_id}), policy)
 
     def tag_delete(
         self, *, id: str, vocabulary_id: str | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Delete a free tag or remove a tag from one vocabulary."""
-        return self._invoke_mutation("tag_delete", _drop_unset({"id": id, "vocabulary_id": vocabulary_id}), policy)
+        return self._invoke_mutation("tag_delete", drop_unset({"id": id, "vocabulary_id": vocabulary_id}), policy)
 
     def vocabulary_create(
         self, *, name: str, tags: FieldSpecList | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Create a vocabulary optionally seeded with tags."""
-        return self._invoke_mutation("vocabulary_create", _drop_unset({"name": name, "tags": tags}), policy)
+        return self._invoke_mutation("vocabulary_create", drop_unset({"name": name, "tags": tags}), policy)
 
     def vocabulary_update(
         self,
@@ -177,7 +144,7 @@ class SyncVocabulariesLicensesService(_SyncNativeService):
     ) -> CKANMutationResult:
         """Update one vocabulary's name or tag membership."""
         params: WireParams = {"id": id}
-        params.update(_drop_unset({"name": name, "tags": tags}))
+        params.update(drop_unset({"name": name, "tags": tags}))
         return self._invoke_mutation("vocabulary_update", params, policy)
 
     def vocabulary_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -206,7 +173,7 @@ class SyncVocabulariesLicensesService(_SyncNativeService):
         return _sync_typed_mutation(self._client, _VOCABULARY_GROUP, action, params, policy, _mutation_target)
 
 
-class AsyncVocabulariesLicensesService(_AsyncNativeService):
+class AsyncVocabulariesLicensesService(_AsyncGroupService):
     """Asynchronous vocabulary/license projection carrying sixteen typed actions."""
 
     __slots__ = ()
@@ -214,20 +181,11 @@ class AsyncVocabulariesLicensesService(_AsyncNativeService):
     def __init__(self, client: AsyncCKANClient) -> None:
         super().__init__(client, "vocabularies_licenses")
 
-    async def tags_vocabularies_and_licenses(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        """Read or manage tags, vocabularies, and licenses with deprecation discipline."""
-        action = operation.payload.get("action")
-        if isinstance(action, str):
-            _reject_deprecated(action, operation.payload)
-        return await super().tags_vocabularies_and_licenses(operation, guard)
-
     async def tag_list(
         self, *, vocabulary_id: str | None = None, q: str | None = None, all_fields: bool | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List tags optionally scoped to one vocabulary."""
-        params = _drop_unset({"vocabulary_id": vocabulary_id, "q": q, "all_fields": all_fields})
+        params = drop_unset({"vocabulary_id": vocabulary_id, "q": q, "all_fields": all_fields})
         return await self._invoke_read("tag_list", params)
 
     async def tag_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
@@ -243,14 +201,14 @@ class AsyncVocabulariesLicensesService(_AsyncNativeService):
         offset: int | None = None,
     ) -> ResultEnvelope[CKANResultItem]:
         """Search tags with the documented query parameters."""
-        params = _drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit, "offset": offset})
+        params = drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit, "offset": offset})
         return await self._invoke_read("tag_search", params)
 
     async def tag_autocomplete(
         self, *, q: str | None = None, vocabulary_id: str | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete tags with the documented query parameters."""
-        params = _drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit})
+        params = drop_unset({"q": q, "vocabulary_id": vocabulary_id, "limit": limit})
         return await self._invoke_read("tag_autocomplete", params)
 
     async def vocabulary_list(self) -> ResultEnvelope[CKANResultItem]:
@@ -269,35 +227,35 @@ class AsyncVocabulariesLicensesService(_AsyncNativeService):
         self, *, q: str | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete resource formats."""
-        return await self._invoke_read("format_autocomplete", _drop_unset({"q": q, "limit": limit}))
+        return await self._invoke_read("format_autocomplete", drop_unset({"q": q, "limit": limit}))
 
     async def term_translation_show(
         self, *, terms: TermTranslationTerms, lang_codes: list[str] | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Show translations for the listed terms."""
         params: WireParams = {"terms": terms}
-        params.update(_drop_unset({"lang_codes": lang_codes}))
+        params.update(drop_unset({"lang_codes": lang_codes}))
         return await self._invoke_read("term_translation_show", params)
 
     async def tag_create(
         self, *, name: str, vocabulary_id: str | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Create a free tag or add a tag to one vocabulary."""
-        params = _drop_unset({"name": name, "vocabulary_id": vocabulary_id})
+        params = drop_unset({"name": name, "vocabulary_id": vocabulary_id})
         return await self._invoke_mutation("tag_create", params, policy)
 
     async def tag_delete(
         self, *, id: str, vocabulary_id: str | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Delete a free tag or remove a tag from one vocabulary."""
-        params = _drop_unset({"id": id, "vocabulary_id": vocabulary_id})
+        params = drop_unset({"id": id, "vocabulary_id": vocabulary_id})
         return await self._invoke_mutation("tag_delete", params, policy)
 
     async def vocabulary_create(
         self, *, name: str, tags: FieldSpecList | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Create a vocabulary optionally seeded with tags."""
-        params = _drop_unset({"name": name, "tags": tags})
+        params = drop_unset({"name": name, "tags": tags})
         return await self._invoke_mutation("vocabulary_create", params, policy)
 
     async def vocabulary_update(
@@ -310,7 +268,7 @@ class AsyncVocabulariesLicensesService(_AsyncNativeService):
     ) -> CKANMutationResult:
         """Update one vocabulary's name or tag membership."""
         params: WireParams = {"id": id}
-        params.update(_drop_unset({"name": name, "tags": tags}))
+        params.update(drop_unset({"name": name, "tags": tags}))
         return await self._invoke_mutation("vocabulary_update", params, policy)
 
     async def vocabulary_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:

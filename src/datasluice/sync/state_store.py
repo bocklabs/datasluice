@@ -23,6 +23,7 @@ from datasluice._uri import sanitize_uri
 from datasluice.exceptions import StateStoreError, SyncStateConflictError
 from datasluice.io.filesystem import safe_remove
 from datasluice.logging import get_logger
+from datasluice.sync._hashing import is_sha256
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -326,11 +327,6 @@ class FileStateStore:
         fsspec backends expose no portable conditional-write/etag (RESEARCH
         ). Omit *expected_prior* for an unconditional write.
 
-        Note: the compare-read and rename in this method are NOT guarded by the
-        per-key lock — callers needing same-process indivisibility between two
-        writers must use :meth:`conditional_put` instead. This method remains
-        for unconditional writes and backward compatibility.
-
         Args:
             key: The sync-state key (resource-id-scoped, per Area 1).
             state: The :class:`SyncState` to persist (watermark strings, never
@@ -343,19 +339,13 @@ class FileStateStore:
                 *expected_prior* (CAS lost a race).
             StateStoreError: on any write I/O failure.
         """
-        _validate_state_for_write(key, state)
-        payload = _serialize_state(state)
-
         if expected_prior is not _UNSET:
-            actual_prior = self.read_raw(key)
-            expected_bytes = expected_prior if isinstance(expected_prior, bytes) else b""
-            actual_bytes = actual_prior if actual_prior is not None else b""
-            expected_sha = hashlib.sha256(expected_bytes).hexdigest()
-            actual_sha = hashlib.sha256(actual_bytes).hexdigest()
-            if actual_sha != expected_sha:
-                raise SyncStateConflictError("State changed since last read (CAS mismatch); re-read and re-apply")
-
-        self._publish(key, payload)
+            if expected_prior is not None and not isinstance(expected_prior, bytes):
+                raise TypeError("expected_prior must be bytes or None")
+            self.conditional_put(key, state, expected_prior)
+            return
+        _validate_state_for_write(key, state)
+        self._publish(key, _serialize_state(state))
 
     def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> bytes:
         """Persist *state* under *key* only if the current version matches ``expected_prior``.
@@ -638,7 +628,7 @@ def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
         or position["kind"] != "parquet_row_group"
         or checkpoint["status"] != "in_progress"
         or not _is_source_version(checkpoint["source_version"])
-        or not _is_sha256(checkpoint["destination_identity"])
+        or not is_sha256(checkpoint["destination_identity"])
     ):
         raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
 
@@ -658,7 +648,7 @@ def _validate_completed_artifact(artifact: Any) -> None:
     destination_checksum = artifact["destination_checksum"]
     if set(artifact) == _COMPLETED_ARTIFACT_KEYS:
         destination_identity = artifact["destination_identity"]
-        valid_destination = _is_sha256(destination_identity)
+        valid_destination = is_sha256(destination_identity)
     else:
         destination_uri = artifact["destination_uri"]
         valid_destination = _is_safe_destination_uri(destination_uri)
@@ -689,15 +679,7 @@ def _is_safe_destination_uri(value: Any) -> bool:
 
 
 def _is_source_version(value: Any) -> bool:
-    return value is None or _is_sha256(value)
-
-
-def _is_sha256(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdefABCDEF" for character in value)
-    )
+    return value is None or is_sha256(value)
 
 
 def _validate_checkpoint_v1(checkpoint: dict[str, Any]) -> None:

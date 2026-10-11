@@ -9,10 +9,12 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from datasluice._uri import validate_http_target
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
 from datasluice.ports import ResponseAwareReader
-from datasluice.runtime.transport.base import RuntimeRequest
+from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest
+from datasluice.sync._hashing import is_sha256
 from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
 
 if TYPE_CHECKING:
@@ -95,7 +97,6 @@ def _load_sync_context(
         logger.warning("Checkpoint for resource %r is stale; discarding it and restarting", resource.id)
         checkpoint = None
         prior = None
-        prior_version = None
     watermark = prior.cursor.get(key) if prior is not None else None
     prior_artifact = _completed_artifact_record(prior, resource, destination_uri)
     healthy = prior_artifact is not None and destination_health(
@@ -134,7 +135,7 @@ def _conditional_reader(
     url = getattr(resource.access, "url", None) or resource.url
     if kind != "http_download" or url is None or transport is None or not isinstance(reader, ResponseAwareReader):
         return reader, None, None
-    if context.watermark is not None and _looks_like_sha256(context.watermark):
+    if context.watermark is not None and is_sha256(context.watermark):
         return reader, None, None
     etag, last_modified = _conditional_validators(context.watermark)
     headers = {
@@ -142,7 +143,15 @@ def _conditional_reader(
         for name, value in {"If-None-Match": etag, "If-Modified-Since": last_modified}.items()
         if value is not None
     }
-    response = transport.send(RuntimeRequest(method="GET", url=url, headers=headers))
+    try:
+        validate_http_target(url, allow_private=getattr(reader, "allow_private_http", False))
+    except ValueError as exc:
+        raise DataSluiceError(f"Conditional fetch target is invalid ({exc})") from None
+    response = transport.send(
+        RuntimeRequest(method="GET", url=url, headers=headers, redirect_policy=RedirectPolicy.NO_FOLLOW)
+    )
+    if response.status_code in {301, 302, 303, 307, 308}:
+        return reader, None, None
     if response.status_code == 304:
         completed = _completed_artifact_record(context.prior, resource, destination_uri)
         if isinstance(completed, Artifact) and destination_health(resource, completed, destination_uri=destination_uri):
@@ -494,7 +503,7 @@ def _decode_checkpoint_v3(checkpoint: dict[str, Any]) -> Any:
         or type(position["row_group_index"]) is not int
         or position["row_group_index"] < 0
         or not _is_source_version(source_version)
-        or not _is_sha256(destination_identity)
+        or not is_sha256(destination_identity)
     ):
         raise DataSluiceError("Corrupt datasluice checkpoint v3: invalid field values")
     return _Checkpoint(
@@ -541,15 +550,7 @@ class _Checkpoint:
 
 
 def _is_source_version(value: Any) -> bool:
-    return value is None or _is_sha256(value)
-
-
-def _is_sha256(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdefABCDEF" for character in value)
-    )
+    return value is None or is_sha256(value)
 
 
 def _utcnow_iso() -> str:
@@ -618,10 +619,6 @@ def _conditional_validators(watermark: str | None) -> tuple[str | None, str | No
     if watermark.startswith(('"', "W/")):
         return watermark, None
     return None, watermark
-
-
-def _looks_like_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdefABCDEF" for character in value)
 
 
 def _preferred_watermark(headers: Any) -> str | None:

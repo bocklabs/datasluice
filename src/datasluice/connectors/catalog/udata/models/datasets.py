@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from datasluice.connectors.catalog.udata.models._segment import paging
 from datasluice.domain.catalog.receipts import MutationReceipt
 
 if TYPE_CHECKING:
@@ -139,10 +140,7 @@ class DatasetListQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1:
-            raise ValueError("Dataset list page must be a positive integer.")
-        if type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("Dataset list page_size must be a positive integer.")
+        paging(self.page, self.page_size, "Dataset list")
         if self.sort is not None:
             _validate_sort(self.sort, "Dataset list")
         if self.q is not None and not isinstance(self.q, str):
@@ -362,10 +360,7 @@ class DatasetSearchQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1:
-            raise ValueError("Dataset search page must be a positive integer.")
-        if type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("Dataset search page_size must be a positive integer.")
+        paging(self.page, self.page_size, "Dataset search")
         if self.sort is not None:
             _validate_sort(self.sort, "Dataset search")
         if self.q is not None and not isinstance(self.q, str):

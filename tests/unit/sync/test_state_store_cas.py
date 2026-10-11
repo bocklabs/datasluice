@@ -291,7 +291,7 @@ def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) 
         sync_resources(
             [resource],
             state_store=store,
-            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
+            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
         )
     )
@@ -321,7 +321,7 @@ def test_sync_fallback_unconditional_put_for_non_atomic(tmp_path, csv_server, ma
         sync_resources(
             [resource],
             state_store=store,
-            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
+            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
         )
     )
@@ -414,7 +414,7 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
                 sync_resources(
                     [resource],
                     state_store=store,
-                    reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
+                    reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
                     destination_uri=dest,
                 )
             )

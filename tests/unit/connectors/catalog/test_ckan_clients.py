@@ -46,7 +46,9 @@ from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTr
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
+    from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+LOOPBACK_ORIGIN = "https://127.0.0.1:9001"
 DATASTORE_OPERATION_ID = "ckan/datastore-extension.query-and-record-crud"
 
 STATUS_RESULT: dict[str, object] = {
@@ -70,14 +72,15 @@ PACKAGE_RESULT: dict[str, object] = {
 class StubProbeRunner:
     """A bounded probe runner returning sanitized demo-origin evidence."""
 
-    def __init__(self) -> None:
+    def __init__(self, origin: str = LOOPBACK_ORIGIN) -> None:
+        self.origin = origin
         self.probed: list[OperationId] = []
 
     def probe(self, operation_id: OperationId) -> ProbeEvidence:
         self.probed.append(operation_id)
         return ProbeEvidence(
             operation_id=operation_id,
-            deployment_url="https://demo.ckan.org/api/3/action/datastore_search",
+            deployment_url=f"{self.origin}/api/3/action/datastore_search",
             credential_classification=CredentialClassification.ANONYMOUS,
             role_classification=RoleClassification.ANONYMOUS,
             observed_response_class=ProbeResponseClass.SUCCESS,
@@ -502,7 +505,7 @@ def test_https_origins_attach_default_probe_runners_with_zero_construction_netwo
 def test_explicit_runner_settings_win_over_the_https_default_attachment() -> None:
     """Override precedence: caller-supplied runners replace the factory default."""
     transport = SyncCaptureTransport(body=success_body({"pkg-1": ()}))
-    runner = StubProbeRunner()
+    runner = StubProbeRunner(DEMO_HTTPS_ORIGIN)
     settings = CKANClientSettings(
         base_url=DEMO_HTTPS_ORIGIN,
         sync_transport=transport,
@@ -525,7 +528,7 @@ def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None
     """The controlled-stack posture is an explicit choice, never a silent bypass."""
     transport = SyncCaptureTransport(body=success_body(STATUS_RESULT))
 
-    settings = CKANClientSettings(base_url=LOOPBACK_ORIGIN, sync_transport=transport)
+    settings = CKANClientSettings(base_url="http://127.0.0.1:9001", sync_transport=transport)
     with pytest.raises(UnsupportedCapabilityError) as excinfo:
         create_sync_client(settings)
 
@@ -533,7 +536,7 @@ def test_loopback_origins_refuse_default_runners_under_the_auto_policy() -> None
     assert "declared-baseline" in excinfo.value.safe_action
 
     async_transport = AsyncCaptureTransport(body=success_body(STATUS_RESULT))
-    settings_2 = CKANClientSettings(base_url=LOOPBACK_ORIGIN, async_transport=async_transport)
+    settings_2 = CKANClientSettings(base_url="http://127.0.0.1:9001", async_transport=async_transport)
     with pytest.raises(UnsupportedCapabilityError):
         create_async_client(settings_2)
     assert async_transport.requests == []
@@ -583,3 +586,141 @@ def test_admin_corpus_rows_resolve_to_manifest_actions_with_regenerated_fingerpr
     assert ("ckan/action-api-v3.group-list-show-search", "core") in pairs
     assert ("ckan/action-api-v3.user-create-update-delete-token-management", "authenticated-success") in pairs
     assert ("ckan/action-api-v3.tags-vocabularies-licenses-list-show", "core") in pairs
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_abandoned_half_open_trial_allows_the_next_dispatch(asynchronous: bool) -> None:
+    from datasluice.domain.catalog.resilience import CircuitKey
+    from datasluice.runtime.resilience import BreakerRegistry
+
+    now = 0.0
+    breakers = BreakerRegistry(failure_threshold=1, cooldown=1, clock=lambda: now)
+    breakers.record_transport_failure(CircuitKey(LOOPBACK_ORIGIN, "anonymous"))
+    now = 2.0
+
+    class SyncInterrupted(SyncCaptureTransport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if not self.requests:
+                self.requests.append(request)
+                raise NotImplementedError("interrupted trial")
+            return super().send(request)
+
+    class AsyncInterrupted(AsyncCaptureTransport):
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if not self.requests:
+                self.requests.append(request)
+                raise asyncio.CancelledError()
+            return await super().send(request)
+
+    if asynchronous:
+        transport = AsyncInterrupted(body=success_body(PACKAGE_RESULT))
+        client = AsyncCKANClient(
+            transport,
+            declared_ckan_profile(),
+            CKANClientSettings(base_url=LOOPBACK_ORIGIN, breakers=breakers, probe_policy="declared-baseline"),
+        )
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(client.datasets.package_show(id="abc-123"))
+        assert asyncio.run(client.datasets.package_show(id="abc-123")).items
+    else:
+        sync_transport = SyncInterrupted(body=success_body(PACKAGE_RESULT))
+        sync_client = SyncCKANClient(
+            sync_transport,
+            declared_ckan_profile(),
+            CKANClientSettings(base_url=LOOPBACK_ORIGIN, breakers=breakers, probe_policy="declared-baseline"),
+        )
+        with pytest.raises(NotImplementedError):
+            sync_client.datasets.package_show(id="abc-123")
+        assert sync_client.datasets.package_show(id="abc-123").items
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_refreshed_credential_can_recover_after_unauthorized_response(asynchronous: bool) -> None:
+    rotated = False
+
+    class RotatingCredential(CKANCredential):
+        def resolve(self) -> CKANCredential:
+            return CKANCredential("fresh" if rotated else "expired")
+
+    settings = CKANClientSettings(
+        base_url=LOOPBACK_ORIGIN, credential=RotatingCredential("provider"), probe_policy="declared-baseline"
+    )
+    if asynchronous:
+        transport = AsyncCaptureTransport(status_code=401)
+        client = AsyncCKANClient(transport, declared_ckan_profile(), settings)
+        with pytest.raises(UnauthenticatedError):
+            asyncio.run(client.datasets.package_show(id="abc-123"))
+        rotated = True
+        transport.status_code, transport.body = 200, success_body(PACKAGE_RESULT)
+        assert asyncio.run(client.datasets.package_show(id="abc-123")).items
+        assert len(transport.requests) == 2
+    else:
+        sync_transport = SyncCaptureTransport(status_code=401)
+        sync_client = SyncCKANClient(sync_transport, declared_ckan_profile(), settings)
+        with pytest.raises(UnauthenticatedError):
+            sync_client.datasets.package_show(id="abc-123")
+        rotated = True
+        sync_transport.status_code, sync_transport.body = 200, success_body(PACKAGE_RESULT)
+        assert sync_client.datasets.package_show(id="abc-123").items
+        assert len(sync_transport.requests) == 2
+
+
+@pytest.mark.parametrize("params", [{"value": float("nan")}, {"value": "oversized"}])
+def test_invalid_json_params_are_rejected_before_dispatch(params: dict[str, object]) -> None:
+    transport = SyncCaptureTransport(body=success_body([]))
+    client = SyncCKANClient(
+        transport,
+        declared_ckan_profile(),
+        CKANClientSettings(base_url=LOOPBACK_ORIGIN, max_upload_bytes=8, probe_policy="declared-baseline"),
+    )
+    operation_id = OperationId("ckan", "action-api-v3", "dataset-list-show-search")
+    operation = CatalogOperationRequest(
+        operation_id=operation_id, payload={"action": "current_package_list_with_resources", **params}
+    )
+    with pytest.raises(CatalogValidationError):
+        client.datasets.list_show_search(
+            operation, CatalogOperationGuard(operation_id=operation_id, profile=client._profile)
+        )
+    assert transport.requests == []
+
+
+@pytest.mark.parametrize(
+    "origin", ["https://169.254.169.254", "https://10.0.0.5/ckan", "https://host/a/../b", "https://host/a/%2e%2e/b"]
+)
+def test_ckan_settings_reject_unsafe_hosts_and_mount_paths(origin: str) -> None:
+    with pytest.raises(ValueError):
+        CKANClientSettings(base_url=origin)
+
+
+def test_opened_circuit_stops_retries_before_another_transport_attempt() -> None:
+    from datasluice.errors.catalog import CatalogUnavailableError
+    from datasluice.runtime.resilience import BreakerRegistry
+
+    transport = SyncCaptureTransport(status_code=503)
+    client = SyncCKANClient(
+        transport,
+        declared_ckan_profile(),
+        CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN,
+            breakers=BreakerRegistry(failure_threshold=1, cooldown=30),
+            retry_sleep=lambda _: None,
+            probe_policy="declared-baseline",
+        ),
+    )
+    with pytest.raises(CatalogUnavailableError):
+        client.datasets.package_show(id="abc-123")
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_discovery_exposes_only_its_supported_operation_family(asynchronous: bool) -> None:
+    settings = CKANClientSettings(base_url=LOOPBACK_ORIGIN, probe_policy="declared-baseline")
+    discovery = (
+        AsyncCKANClient(AsyncCaptureTransport(), declared_ckan_profile(), settings).action_discovery
+        if asynchronous
+        else SyncCKANClient(SyncCaptureTransport(), declared_ckan_profile(), settings).action_discovery
+    )
+    assert callable(discovery.discovery_help_and_status)
+    assert callable(discovery.status_show)
+    assert callable(discovery.help_show)
+    assert not hasattr(discovery, "query_and_record_crud")

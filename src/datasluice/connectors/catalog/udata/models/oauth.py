@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from datasluice.domain.catalog.auth import SecretValue, _secret
+
 if TYPE_CHECKING:
     from datasluice.domain.catalog.receipts import MutationReceipt
 
@@ -38,11 +40,11 @@ class OAuthTokenRequest:
 
     grant_type: str
     client_id: str
-    client_secret: str | None = field(default=None, repr=False)
+    client_secret: SecretValue | str | None = field(default=None, repr=False)
     code: str | None = field(default=None, repr=False)
-    refresh_token: str | None = field(default=None, repr=False)
+    refresh_token: SecretValue | str | None = field(default=None, repr=False)
     username: str | None = field(default=None, repr=False)
-    password: str | None = field(default=None, repr=False)
+    password: SecretValue | str | None = field(default=None, repr=False)
     scope: str | None = None
     code_verifier: str | None = field(default=None, repr=False)
     redirect_uri: str | None = None
@@ -53,16 +55,21 @@ class OAuthTokenRequest:
         _text(self.client_id, "client_id")
         if self.scope is not None and (not isinstance(self.scope, str) or _SCOPE.fullmatch(self.scope) is None):
             raise ValueError("uData OAuth scope must be a space-delimited list of RFC 6749 scope tokens.")
-        for name in ("client_secret", "code", "refresh_token", "username", "password", "code_verifier"):
+        for name in ("code", "username", "code_verifier"):
             value = getattr(self, name)
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"uData OAuth {name} must be a string or null.")
-        if self.grant_type == "refresh_token" and not self.refresh_token:
-            raise ValueError("The uData refresh_token grant requires a refresh token.")
-        if self.grant_type == "password" and not (self.username and self.password):
-            raise ValueError("The uData password grant requires a username and password.")
-        if self.grant_type == "authorization_code" and not self.code:
-            raise ValueError("The uData authorization_code grant requires a code.")
+        for name in ("client_secret", "refresh_token", "password"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _secret(value))
+        required = {
+            "refresh_token": ("refresh_token",),
+            "password": ("username", "password"),
+            "authorization_code": ("code",),
+        }.get(self.grant_type, ())
+        if any(not getattr(self, name) for name in required):
+            raise ValueError(f"The uData {self.grant_type} grant requires {', '.join(required)}.")
 
     def form_fields(self) -> dict[str, str]:
         """Return the exact form keys the stock token endpoint reads, in wire order."""
@@ -79,7 +86,7 @@ class OAuthTokenRequest:
         ):
             value = getattr(self, name)
             if value is not None:
-                fields[name] = value
+                fields[name] = value.reveal() if isinstance(value, SecretValue) else value
         return fields
 
 
@@ -87,27 +94,27 @@ class OAuthTokenRequest:
 class OAuthRevokeRequest:
     """One RFC 7009 revocation form body without the optional client hint."""
 
-    token: str = field(repr=False)
+    token: SecretValue | str = field(repr=False)
     token_type_hint: str | None = None
     client_id: str | None = None
-    client_secret: str | None = field(default=None, repr=False)
+    client_secret: SecretValue | str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        _text(self.token, "token")
+        object.__setattr__(self, "token", _secret(self.token))
         if self.token_type_hint is not None and self.token_type_hint not in TOKEN_TYPE_HINTS:
             raise ValueError(f"uData OAuth token_type_hint must be one of {sorted(TOKEN_TYPE_HINTS)}.")
-        for name in ("client_id", "client_secret"):
-            value = getattr(self, name)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(f"uData OAuth {name} must be a string or null.")
+        if self.client_id is not None and not isinstance(self.client_id, str):
+            raise ValueError("uData OAuth client_id must be a string or null.")
+        if self.client_secret is not None:
+            object.__setattr__(self, "client_secret", _secret(self.client_secret))
 
     def form_fields(self) -> dict[str, str]:
         """Return the exact revocation form keys, omitting the absent optional hint."""
-        fields = {"token": self.token}
+        fields = {"token": self.token.reveal() if isinstance(self.token, SecretValue) else self.token}
         for name in ("token_type_hint", "client_id", "client_secret"):
             value = getattr(self, name)
             if value is not None:
-                fields[name] = value
+                fields[name] = value.reveal() if isinstance(value, SecretValue) else value
         return fields
 
 
@@ -186,18 +193,20 @@ class OAuthTokenResult:
     token_type: str
     expires_in: int | None = None
     scope: str | None = None
-    access_token: str | None = field(default=None, repr=False)
-    refresh_token: str | None = field(default=None, repr=False)
+    access_token: SecretValue | str | None = field(default=None, repr=False)
+    refresh_token: SecretValue | str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.token_type not in TOKEN_TYPES:
             raise ValueError(f"uData OAuth token_type must be one of {sorted(TOKEN_TYPES)}.")
         if self.expires_in is not None and (type(self.expires_in) is not int or self.expires_in < 0):
             raise ValueError("uData OAuth expires_in must be a non-negative integer or null.")
-        for name in ("scope", "access_token", "refresh_token"):
+        if self.scope is not None:
+            _text(self.scope, "scope")
+        for name in ("access_token", "refresh_token"):
             value = getattr(self, name)
-            if value is not None and (not isinstance(value, str) or not value):
-                raise ValueError(f"uData OAuth {name} must be a non-empty string or null.")
+            if value is not None:
+                object.__setattr__(self, name, _secret(value))
 
     def to_dict(self) -> dict[str, object]:
         return {

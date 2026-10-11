@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import ipaddress
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice._uri import validate_http_target
+from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.resilience import TimeBudget
@@ -36,27 +35,9 @@ HARVEST_BULK_ACTIONS = frozenset({"delete-source", "unschedule-source", "run-sou
 HARVEST_DESTRUCTIVE_BULK_ACTIONS = frozenset({"delete-source", "unschedule-source"})
 
 ALLOWED_CRAWL_SCHEMES = frozenset({"http", "https"})
-_PRIVATE_HOST_NAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
-_PRIVATE_HOST_SUFFIXES = (
-    ".localhost",
-    ".local",
-    ".lan",
-    ".internal",
-    ".intranet",
-    ".corp",
-    ".localdomain",
-    ".home.arpa",
-    ".onion",
-    ".test",
-    ".invalid",
-    ".example",
-)
-_PUBLIC_HOSTNAME = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\.?$")
 _ABSOLUTE_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
-_MAX_ENDPOINT_LENGTH = 2048
 _CRON_FIELD = re.compile(r"^[0-9*,/\-]+$")
 _MAX_PAGE = 100_000
-_MAX_PAGE_SIZE = 100
 _MAX_BULK_TARGETS = 64
 _MAX_BULK_PARALLELISM = 8
 _MAX_POLLS = 1024
@@ -76,26 +57,6 @@ def _endpoint_rejection(code: str) -> CatalogValidationError:
         ),
         metadata={"endpoint_classification": code},
     )
-
-
-def _public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    if address.is_private or address.is_loopback or address.is_link_local:
-        return False
-    if address.is_multicast or address.is_reserved or address.is_unspecified:
-        return False
-    return bool(address.is_global)
-
-
-def _private_host(host: str) -> bool:
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        pass
-    else:
-        return not _public_address(address)
-    if host in _PRIVATE_HOST_NAMES or host.endswith(_PRIVATE_HOST_SUFFIXES):
-        return True
-    return _PUBLIC_HOSTNAME.fullmatch(host) is None
 
 
 def crawl_endpoint(value: object, *, allow_private: bool = False) -> str:
@@ -118,28 +79,10 @@ def crawl_endpoint(value: object, *, allow_private: bool = False) -> str:
         CatalogValidationError: If the endpoint is not a permitted crawl target.
             The classification is bounded metadata; the host is never retained.
     """
-    if not isinstance(value, str) or not value:
-        raise _endpoint_rejection("missing")
-    if len(value) > _MAX_ENDPOINT_LENGTH:
-        raise _endpoint_rejection("length")
-    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
-        raise _endpoint_rejection("format")
-    parsed = urlsplit(value)
-    if parsed.scheme.lower() not in ALLOWED_CRAWL_SCHEMES:
-        raise _endpoint_rejection("scheme")
-    if "@" in parsed.netloc:
-        raise _endpoint_rejection("userinfo")
     try:
-        port = parsed.port
-    except ValueError:
-        raise _endpoint_rejection("port") from None
-    if port is not None and not 1 <= port <= 65535:
-        raise _endpoint_rejection("port")
-    if not parsed.hostname:
-        raise _endpoint_rejection("host")
-    if not allow_private and _private_host(parsed.hostname):
-        raise _endpoint_rejection("locality")
-    return value
+        return validate_http_target(value, allow_private=allow_private)
+    except ValueError as error:
+        raise _endpoint_rejection(str(error)) from None
 
 
 def _validated_endpoint_tree(value: object, *, allow_private: bool) -> None:
@@ -183,11 +126,6 @@ def _validate_boolean(value: object, label: str) -> bool | None:
 def _validate_page(value: object, label: str) -> None:
     if type(value) is not int or not 1 <= value <= _MAX_PAGE:
         raise ValueError(f"uData harvest {label} must be an integer from 1 through {_MAX_PAGE}.")
-
-
-def _validate_page_size(value: object, label: str) -> None:
-    if type(value) is not int or not 1 <= value <= _MAX_PAGE_SIZE:
-        raise ValueError(f"uData harvest {label} must be an integer from 1 through {_MAX_PAGE_SIZE}.")
 
 
 def source_segment(value: str, operation: str = HARVEST_OPERATION) -> str:
@@ -346,7 +284,7 @@ class HarvestSourceQuery:
 
     def __post_init__(self) -> None:
         _validate_page(self.page, "source list page")
-        _validate_page_size(self.page_size, "source list page_size")
+        paging(self.page, self.page_size, "uData harvest source list")
         _validate_text(self.q, "source list q")
         if self.owner_id is not None:
             object.__setattr__(
@@ -384,7 +322,7 @@ class HarvestJobQuery:
 
     def __post_init__(self) -> None:
         _validate_page(self.page, "job list page")
-        _validate_page_size(self.page_size, "job list page_size")
+        paging(self.page, self.page_size, "uData harvest job list")
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the exact job collection query-string pairs."""
@@ -401,7 +339,7 @@ class HarvestJobItemsQuery:
 
     def __post_init__(self) -> None:
         _validate_page(self.page, "job item list page")
-        _validate_page_size(self.page_size, "job item list page_size")
+        paging(self.page, self.page_size, "uData harvest job item list")
         if self.status is not None and self.status not in HARVEST_ITEM_STATUSES:
             raise ValueError(f"uData harvest item status must be one of {sorted(HARVEST_ITEM_STATUSES)}.")
 

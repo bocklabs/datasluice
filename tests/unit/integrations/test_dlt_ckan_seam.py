@@ -149,7 +149,7 @@ def test_ckan_live_client_flows_through_dlt_source_end_to_end(tmp_path: Any) -> 
         assert client.transport is transport
         pipeline, db_path, dataset_name = _make_pipeline(tmp_path, "ckan_seam")
 
-        pipeline.extract(datasluice_source(cast("SyncCatalogClient", client), _ckan_query()))
+        pipeline.extract(datasluice_source(cast("SyncCatalogClient", client), _ckan_query(), allow_private_http=True))
         pipeline.normalize()
         pipeline.load()
 

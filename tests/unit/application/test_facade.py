@@ -382,3 +382,22 @@ def test_facade_materialize_delegates_once_and_closes_owned_dependencies(
     assert session.storage.close_calls == 1
     assert session.state_store.close_calls == 1
     assert session.plugins.close_calls == 1
+
+
+def test_partial_bulk_download_does_not_misattribute_resources(tmp_path) -> None:
+    from datasluice.exceptions import DownloadError
+
+    class PartialTransport(_Transport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/b.csv"):
+                return RuntimeResponse(404, {}, b"missing")
+            return RuntimeResponse(200, {}, request.url.encode())
+
+    resources = [Resource(id=name, name=f"{name}.csv", url=f"https://catalog.test/{name}.csv") for name in "abc"]
+    with (
+        DataSluice(session=DataSluiceSession(transport=PartialTransport())) as facade,
+        pytest.raises(DownloadError, match="incomplete"),
+    ):
+        facade.download_many(resources, str(tmp_path))
+    assert (tmp_path / "a.csv").read_bytes() == b"https://catalog.test/a.csv"
+    assert (tmp_path / "c.csv").read_bytes() == b"https://catalog.test/c.csv"

@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
     _async_typed_read,
-    _AsyncNativeService,
+    _AsyncGroupService,
     _sync_typed_mutation,
     _sync_typed_read,
-    _SyncNativeService,
+    _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
 from datasluice.connectors.catalog.ckan.services._shared import WireParams, drop_unset, wire_params
@@ -47,18 +47,18 @@ def _mapping_identity(value: object, *keys: str) -> str:
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "package_create_default_resource_views":
-        return CatalogId(PLATFORM, ResourceKind.DATASET, _mapping_identity(params["package"], "id", "name"))
+        return CatalogId(PLATFORM, ResourceKind.DATASET, _mapping_identity(params.get("package", ""), "id", "name"))
     if action == "resource_create_default_resource_views":
-        return CatalogId(PLATFORM, ResourceKind.RESOURCE, _mapping_identity(params["resource"], "id"))
+        return CatalogId(PLATFORM, ResourceKind.RESOURCE, _mapping_identity(params.get("resource", ""), "id"))
     if action in {"resource_view_update", "resource_view_delete"}:
-        return CatalogId(PLATFORM, _VIEW, str(params["id"]))
+        return CatalogId(PLATFORM, _VIEW, str(params.get("id", "")))
     for key in ("resource_id", "id"):
         if key in params:
-            return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params[key]))
-    raise KeyError("the view mutation carried no resource-targeting id")
+            return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params.get(key, "")))
+    return CatalogId(PLATFORM, ResourceKind.RESOURCE, "")
 
 
-class SyncViewsService(_SyncNativeService):
+class SyncViewsService(_SyncGroupService):
     """Synchronous resource-view projection carrying nine typed actions."""
 
     __slots__ = ()
@@ -163,7 +163,7 @@ class SyncViewsService(_SyncNativeService):
         return _sync_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)
 
 
-class AsyncViewsService(_AsyncNativeService):
+class AsyncViewsService(_AsyncGroupService):
     """Asynchronous resource-view projection carrying nine typed actions."""
 
     __slots__ = ()

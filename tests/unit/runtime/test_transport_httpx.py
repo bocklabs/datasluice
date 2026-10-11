@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import traceback
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from typing import TYPE_CHECKING, cast
@@ -83,11 +84,14 @@ def test_httpx_transport_absent_retry_after_header_maps_to_none() -> None:
 
 def test_httpx_transport_maps_transport_failure() -> None:
     def responder(request: Request) -> Response:
-        raise httpx.ConnectTimeout("timed out", request=request)
+        raise httpx.ConnectTimeout("timed out with password=transport-fixture-secret", request=request)
 
     probe = SyncProbe(responder)
-    with probe, pytest.raises(TransportError):
+    with probe, pytest.raises(TransportError) as raised:
         probe.send(RuntimeRequest("GET", "https://example.test/"))
+
+    assert "transport-fixture-secret" not in "".join(traceback.format_exception(raised.value))
+    assert raised.value.__cause__ is None
 
 
 def test_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() -> None:
@@ -98,6 +102,8 @@ def test_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() 
         "x-AuTh-ToKeN": "token-secret",
         "X-App-Token": "app-secret",
         "X-Benign": "preserve-me",
+        "X-Dataset-Key": "credential-fixture",
+        "Accept": "application/json",
     }
     responder = redirect_to("https://other.test/next?token=redirect-secret&keep=value", 302, at_host("example.test"))
 
@@ -110,7 +116,9 @@ def test_httpx_transport_strips_sensitive_headers_and_forwards_query_verbatim() 
     second_headers = header_view(probe.requests[1])
     assert all(name in first_headers for name in SENSITIVE_HEADERS)
     assert all(name not in second_headers for name in SENSITIVE_HEADERS)
-    assert second_headers["x-benign"] == "preserve-me"
+    assert "x-benign" not in second_headers
+    assert "x-dataset-key" not in second_headers
+    assert second_headers["accept"] == "application/json"
     assert "token=redirect-secret" in str(probe.requests[1].url)
     assert "keep=value" in str(probe.requests[1].url)
 
@@ -147,6 +155,16 @@ def test_httpx_transport_same_origin_redirect_preserves_caller_headers() -> None
     forwarded = header_view(probe.requests[1])
     assert response.body == b"redirected"
     assert all(forwarded[key.lower()] == value for key, value in request_headers.items())
+
+
+def test_redirect_userinfo_is_rejected_before_a_second_request() -> None:
+    with (
+        SyncProbe(redirect_to("https://user:fixture-password@example.test/next", 302, at_path("/start"))) as probe,
+        pytest.raises(TransportError, match="embedded credentials"),
+    ):
+        probe.send(RuntimeRequest("GET", "https://example.test/start"))
+
+    assert len(probe.requests) == 1
 
 
 @pytest.mark.parametrize("status", [301, 302, 303])
@@ -393,7 +411,7 @@ def test_async_httpx_transport_strips_sensitive_headers_and_forwards_query_verba
     second_headers = header_view(probe.requests[1])
     assert all(name in first_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
     assert all(name not in second_headers for name in {"authorization", "cookie", "x-api-key", "x-auth-token"})
-    assert second_headers["x-benign"] == "preserve-me"
+    assert "x-benign" not in second_headers
     assert "token=redirect-secret" in str(probe.requests[1].url)
     assert "keep=value" in str(probe.requests[1].url)
 

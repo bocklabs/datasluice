@@ -16,7 +16,7 @@ def _sync(tmp_path, resource, state_store, transport):
         sync_resources(
             [resource],
             state_store=state_store,
-            reader=DataPlaneResourceReader(transport=transport),
+            reader=DataPlaneResourceReader(transport=transport, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=transport,
         )

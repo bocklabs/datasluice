@@ -100,6 +100,11 @@ def test_report_rejects_unversioned_or_non_strict_payloads() -> None:
         ComplianceReport.from_dict({"schema_version": 1})
 
 
+def test_report_rejects_outcomes_outside_its_required_cases() -> None:
+    with pytest.raises(ValueError, match="expected_case_ids"):
+        ComplianceReport(outcomes=(_outcome(), _outcome(mode="async")), expected_case_ids=(_outcome().case_id,))
+
+
 def test_report_rejects_payload_missing_its_schema_version_key() -> None:
     """Strict report decoding refuses otherwise-complete unversioned payloads."""
     payload = ComplianceReport(outcomes=(_outcome(),)).to_dict()

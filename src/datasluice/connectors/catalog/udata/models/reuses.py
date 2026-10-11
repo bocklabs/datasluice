@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
@@ -94,10 +94,7 @@ class ReuseListQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1:
-            raise ValueError("uData reuse list page must be a positive integer.")
-        if type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("uData reuse list page_size must be a positive integer.")
+        paging(self.page, self.page_size, "uData reuse list")
         if self.sort is not None and self.sort not in _REUSE_SORT_CHOICES:
             raise ValueError("uData reuse list sort is not a documented choice.")
         if self.q is not None and not isinstance(self.q, str):
@@ -131,10 +128,7 @@ class ReuseFollowersQuery:
     user: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1:
-            raise ValueError("uData reuse follower page must be a positive integer.")
-        if type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("uData reuse follower page_size must be a positive integer.")
+        paging(self.page, self.page_size, "uData reuse follower")
         if self.user is not None and (not isinstance(self.user, str) or not self.user):
             raise ValueError("uData reuse follower user must be a non-empty string when supplied.")
 
@@ -155,10 +149,7 @@ class ReuseSearchQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        if type(self.page) is not int or self.page < 1:
-            raise ValueError("uData reuse search page must be a positive integer.")
-        if type(self.page_size) is not int or self.page_size < 1:
-            raise ValueError("uData reuse search page_size must be a positive integer.")
+        paging(self.page, self.page_size, "uData reuse search")
         if self.q is not None and not isinstance(self.q, str):
             raise ValueError("uData reuse search q must be a string when supplied.")
         _validated_reuse_filters(self.filters, query="search")

@@ -199,6 +199,8 @@ class DriftTarget:
             raise ValueError("Drift targets are sanitized HTTPS origins.")
         if not isinstance(self.checks, tuple) or not all(isinstance(check, DriftCheck) for check in self.checks):
             raise ValueError("Drift targets carry a tuple of DriftCheck records.")
+        if sum(check.action == "status_show" for check in self.checks) > 1:
+            raise ValueError("Drift targets accept only one status_show check.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,7 +232,7 @@ def canonical_compare(observed: object, expected_keys: frozenset[str], ordering:
             record mappings reduced from one typed read.
         expected_keys: The configured structural skeleton; time-varying keys
             are excluded here by configuration, never filtered ad hoc.
-        ordering: ``platform-deterministic`` compares sequences positionally
+        ordering: ``platform-deterministic`` compares sequences
             against the sorted expectation; ``canonicalized`` sorts both sides
             before comparing. Mappings always compare as exact key sets.
 

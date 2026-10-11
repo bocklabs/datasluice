@@ -217,14 +217,6 @@ def _publish_parquet(
         safe_remove(fs, tmp_uri)
 
 
-def _blob_digest(uri: str) -> str:
-    from datasluice.io.filesystem import open_filesystem
-
-    fs = open_filesystem(uri)
-    with fs.open(uri, "rb") as source:
-        return _hash_source(source)
-
-
 def materialize_checkpointed(
     resource: Any,
     *,

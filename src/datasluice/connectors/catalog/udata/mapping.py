@@ -260,9 +260,13 @@ def shape_native_page(page: NativePage, records: tuple[UDataResultItem, ...]) ->
         The envelope carrying normalized cursors plus native pager metadata.
     """
     page_info = None
-    if page.page is not None:
-        next_cursor = str(page.page + 1) if page.next_page is not None else None
-        page_info = PageInfo(cursor=str(page.page), next_cursor=next_cursor, total_items=page.total)
+    if page.page is not None or page.next_page is not None:
+        next_cursor = page.next_page
+        if next_cursor is not None and page.page is not None:
+            next_cursor = str(page.page + 1)
+        page_info = PageInfo(
+            cursor=None if page.page is None else str(page.page), next_cursor=next_cursor, total_items=page.total
+        )
     native_page = NativePageMetadata(
         present_fields=page.present_fields,
         page=page.page,

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
+from importlib.resources import files
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,25 +15,26 @@ from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import ForbiddenError, UnauthenticatedError, UnsupportedCapabilityError
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 @pytest.mark.parametrize("platform", ["ckan", "udata", "socrata"])
-def test_reference_fixture_sets_are_strictly_profile_bound(platform: str) -> None:
+def test_reference_fixture_sets_are_strictly_profile_bound(platform: str, tmp_path: Path) -> None:
     fixture_set = load_reference_fixture_set(platform)
 
     assert fixture_set.platform == platform
     assert fixture_set.cases
     assert all(case.operation_id.platform == platform for case in fixture_set.cases)
 
-    cases_path = Path(__file__).parents[4] / "src/datasluice/contracts/catalog/fixtures" / platform / "cases.json"
-    original = json.loads(cases_path.read_text(encoding="utf-8"))
-    original["cases"][0]["operation"] = "ckan/unknown.operation"
-    tampered = cases_path.with_name("tampered.json")
+    fixture_root = files("datasluice.contracts.catalog.fixtures").joinpath(platform)
+    original = json.loads(fixture_root.joinpath("cases.json").read_text(encoding="utf-8"))
+    original["cases"][0]["operation"] = f"{platform}/unknown.operation"
+    tampered = tmp_path / "cases.json"
     tampered.write_text(json.dumps(original), encoding="utf-8")
-    try:
-        with pytest.raises(ValueError, match="fingerprint|undeclared"):
-            load_reference_fixture_set(platform, cases_path=tampered)
-    finally:
-        tampered.unlink()
+    (tmp_path / "evidence.json").write_bytes(fixture_root.joinpath("evidence.json").read_bytes())
+    with pytest.raises(ValueError, match="fingerprint"):
+        load_reference_fixture_set(platform, cases_path=tampered)
 
 
 @pytest.mark.parametrize("platform", ["ckan", "udata", "socrata"])

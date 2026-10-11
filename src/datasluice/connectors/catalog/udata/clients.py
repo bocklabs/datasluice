@@ -14,7 +14,7 @@ import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date
-from functools import lru_cache, partial
+from functools import cached_property, lru_cache, partial
 from importlib import resources
 from pathlib import Path
 from time import monotonic, sleep
@@ -3274,82 +3274,82 @@ class SyncUDataClient(_UDataClientCore):
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         return self._require_site_version()
 
-    @property
+    @cached_property
     def datasets(self) -> _SyncDatasetsService:
         """Expose the complete typed dataset service."""
         return SyncDatasetsService(self)
 
-    @property
+    @cached_property
     def root_profile(self) -> _SyncRootProfileService:
         """Expose the complete typed root-profile service."""
         return SyncRootProfileService(self)
 
-    @property
+    @cached_property
     def resources(self) -> _SyncResourcesService:
         """Expose the complete typed resource service."""
         return SyncResourcesService(self)
 
-    @property
+    @cached_property
     def dataservices(self) -> _SyncDataservicesService:
         """Expose the complete typed dataservice and dataservice-follower service."""
         return SyncDataservicesService(self)
 
-    @property
+    @cached_property
     def reuses(self) -> _SyncReusesService:
         """Expose the complete typed reuse and reuse-follower service."""
         return SyncReusesService(self)
 
-    @property
+    @cached_property
     def posts_reports(self) -> _SyncPostsReportsService:
         """Expose the complete typed post, report, and notification service."""
         return SyncPostsReportsService(self)
 
-    @property
+    @cached_property
     def spatial(self) -> _SyncSpatialService:
         """Expose the complete typed spatial zone and coverage service."""
         return SyncSpatialService(self)
 
-    @property
+    @cached_property
     def taxonomies(self) -> _SyncTaxonomiesService:
         """Expose the complete typed taxonomy service."""
         return SyncTaxonomiesService(self)
 
-    @property
+    @cached_property
     def topics(self) -> _SyncTopicsService:
         """Expose the complete typed topic and topic-element service."""
         return SyncTopicsService(self)
 
-    @property
+    @cached_property
     def transfers(self) -> _SyncTransfersService:
         """Expose the complete typed dataset ownership-transfer service."""
         return SyncTransfersService(self)
 
-    @property
+    @cached_property
     def activity_discussions(self) -> _SyncActivityDiscussionsService:
         """Expose the complete typed activity and discussion service."""
         return SyncActivityDiscussionsService(self)
 
-    @property
+    @cached_property
     def organizations_memberships(self) -> _SyncOrganizationsMembershipsService:
         """Expose the complete typed organization and membership service."""
         return SyncOrganizationsMembershipsService(self)
 
-    @property
+    @cached_property
     def users_tokens(self) -> _SyncUsersTokensService:
         """Expose the typed user, invitation, and API-token service."""
         return SyncUsersTokensService(self)
 
-    @property
+    @cached_property
     def auth_oauth(self) -> _SyncAuthOAuthService:
         """Expose the typed OAuth and authentication service."""
         return SyncAuthOAuthService(self)
 
-    @property
+    @cached_property
     def harvest_moderation_admin(self) -> _SyncHarvestService:
         """Expose the typed harvest source, job, and bounded admin bulk service."""
         return SyncHarvestService(self)
 
-    @property
+    @cached_property
     def contact_visualization(self) -> _SyncContactVisualizationService:
         """Expose the typed contact-point and visualization service."""
         return SyncContactVisualizationService(self)
@@ -3406,7 +3406,7 @@ class SyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        max_response_bytes: int | None = None,
+        max_response_bytes: int | None = 1_048_576,
         files: tuple[UploadPart, ...] = (),
         form_body: bytes | None = None,
         **overrides: Unpack[_DatasetCallOverrides],
@@ -3762,82 +3762,82 @@ class AsyncUDataClient(_UDataClientCore):
             return await gate.require_current_async(self._credentials)
         raise RuntimeError("The asynchronous uData client requires an asynchronous site gate.")
 
-    @property
+    @cached_property
     def datasets(self) -> _AsyncDatasetsService:
         """Expose the complete typed dataset service."""
         return AsyncDatasetsService(self)
 
-    @property
+    @cached_property
     def root_profile(self) -> _AsyncRootProfileService:
         """Expose the complete typed root-profile service."""
         return AsyncRootProfileService(self)
 
-    @property
+    @cached_property
     def resources(self) -> _AsyncResourcesService:
         """Expose the complete typed resource service."""
         return AsyncResourcesService(self)
 
-    @property
+    @cached_property
     def dataservices(self) -> _AsyncDataservicesService:
         """Expose the complete typed dataservice and dataservice-follower service."""
         return AsyncDataservicesService(self)
 
-    @property
+    @cached_property
     def reuses(self) -> _AsyncReusesService:
         """Expose the complete typed reuse and reuse-follower service."""
         return AsyncReusesService(self)
 
-    @property
+    @cached_property
     def posts_reports(self) -> _AsyncPostsReportsService:
         """Expose the complete typed post, report, and notification service."""
         return AsyncPostsReportsService(self)
 
-    @property
+    @cached_property
     def spatial(self) -> _AsyncSpatialService:
         """Expose the complete typed spatial zone and coverage service."""
         return AsyncSpatialService(self)
 
-    @property
+    @cached_property
     def taxonomies(self) -> _AsyncTaxonomiesService:
         """Expose the complete typed taxonomy service."""
         return AsyncTaxonomiesService(self)
 
-    @property
+    @cached_property
     def topics(self) -> _AsyncTopicsService:
         """Expose the complete typed topic and topic-element service."""
         return AsyncTopicsService(self)
 
-    @property
+    @cached_property
     def transfers(self) -> _AsyncTransfersService:
         """Expose the complete typed dataset ownership-transfer service."""
         return AsyncTransfersService(self)
 
-    @property
+    @cached_property
     def activity_discussions(self) -> _AsyncActivityDiscussionsService:
         """Expose the complete typed activity and discussion service."""
         return AsyncActivityDiscussionsService(self)
 
-    @property
+    @cached_property
     def organizations_memberships(self) -> _AsyncOrganizationsMembershipsService:
         """Expose the complete typed organization and membership service."""
         return AsyncOrganizationsMembershipsService(self)
 
-    @property
+    @cached_property
     def users_tokens(self) -> _AsyncUsersTokensService:
         """Expose the typed user, invitation, and API-token service."""
         return AsyncUsersTokensService(self)
 
-    @property
+    @cached_property
     def auth_oauth(self) -> _AsyncAuthOAuthService:
         """Expose the typed OAuth and authentication service."""
         return AsyncAuthOAuthService(self)
 
-    @property
+    @cached_property
     def harvest_moderation_admin(self) -> _AsyncHarvestService:
         """Expose the typed harvest source, job, and bounded admin bulk service."""
         return AsyncHarvestService(self)
 
-    @property
+    @cached_property
     def contact_visualization(self) -> _AsyncContactVisualizationService:
         """Expose the typed contact-point and visualization service."""
         return AsyncContactVisualizationService(self)
@@ -3985,7 +3985,7 @@ class AsyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        max_response_bytes: int | None = None,
+        max_response_bytes: int | None = 1_048_576,
         files: tuple[UploadPart, ...] = (),
         form_body: bytes | None = None,
         **overrides: Unpack[_DatasetCallOverrides],

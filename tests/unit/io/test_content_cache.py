@@ -389,3 +389,20 @@ def test_ttl_expired_returns_none(tmp_path: Path) -> None:
     finally:
         conn.close()
     assert cache.get("k") is None
+
+
+def test_failed_overwrite_preserves_content_and_metadata(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put_with_metadata("k", b"good", etag='"old"')
+    with patch.object(cache._fs, "pipe_file", side_effect=OSError("disk full")), pytest.raises(DownloadError):
+        cache.put_with_metadata("k", b"bad", etag='"new"')
+    assert cache.get("k") == b"good"
+    metadata = cache.get_metadata("k")
+    assert metadata is not None
+    assert metadata["etag"] == '"old"'
+
+
+def test_expired_metadata_is_a_miss(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"), ttl=-1)
+    cache.put_with_metadata("k", b"good", etag='"old"')
+    assert cache.get_metadata("k") is None

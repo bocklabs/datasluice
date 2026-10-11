@@ -148,6 +148,22 @@ def test_nan_ttl_is_rejected() -> None:
         EffectiveCapabilityCache(profile, ttl_seconds=numeric_value)
 
 
+def test_cache_evicts_oldest_scope_when_many_fresh_credentials_rotate() -> None:
+    operation = _operation()
+    cache = EffectiveCapabilityCache(_profile(operation))
+    for index in range(1025):
+        cache.record_response(operation.id, ProbeResponseClass.UNAUTHORIZED, credential_scope=f"scope-{index}")
+
+    assert (
+        cache.peek(operation.id, credential_scope="scope-0").for_operation(operation.id).state
+        is EffectiveCapabilityState.CORE
+    )
+    assert (
+        cache.peek(operation.id, credential_scope="scope-1024").for_operation(operation.id).state
+        is EffectiveCapabilityState.UNAUTHORIZED
+    )
+
+
 def test_ttl_expiry_reprobes_using_an_injected_clock() -> None:
     operation = _operation()
     runner = _CountingRunner(_evidence(operation))

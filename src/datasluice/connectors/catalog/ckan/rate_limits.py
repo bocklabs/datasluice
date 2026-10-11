@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from urllib.parse import urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -89,7 +90,8 @@ def resolve_rate_policy(settings: CKANClientSettings) -> PortalRatePolicy:
     """
     if settings.rate_policy is not None:
         return settings.rate_policy
-    entry = PORTAL_RATE_LIMITS.get(settings.base_url.lower())
+    parsed = urlsplit(settings.base_url)
+    entry = PORTAL_RATE_LIMITS.get(urlunsplit((parsed.scheme, parsed.netloc, "", "", "")))
     if entry is not None:
         return entry
     return UnlimitedRatePolicy()

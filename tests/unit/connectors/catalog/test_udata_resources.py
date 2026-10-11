@@ -151,6 +151,8 @@ def test_clients_expose_typed_native_resource_protocols() -> None:
         owns_transport=False,
     )
 
+    assert sync.resources is sync.resources
+    assert async_client.resources is async_client.resources
     assert isinstance(sync.resources, SyncUDataResourcesService)
     assert isinstance(async_client.resources, AsyncUDataResourcesService)
     sync.close()
@@ -172,6 +174,10 @@ def test_resource_page_and_type_decoders_keep_typed_data_and_pagination() -> Non
     assert page.native_page.total == 11
     assert page.page is not None
     assert page.page.next_cursor == "2"
+    cursor_page = wire.parse_resource_page({"data": [], "next_page": "https://example.test/page/2"})
+    assert cursor_page.page is not None
+    assert cursor_page.page.cursor is None
+    assert cursor_page.page.next_cursor == "https://example.test/page/2"
     assert wire.parse_resource_types([{"id": "file", "label": "File"}]) == ({"id": "file", "label": "File"},)
 
     with pytest.raises(CatalogValidationError, match="resource type"):
@@ -877,7 +883,7 @@ def test_approved_text_media_type_remediation_lists_the_approved_set() -> None:
             approved_media_types=APPROVED_TEXT_MEDIA_TYPES,
             list_approved_action=True,
         )
-    safe_action = cast("dict[str, object]", raised.value.metadata)["safe_action"]
+    safe_action = raised.value.safe_action
     assert cast("str", safe_action).startswith("Request one of the approved media types: ")
     assert "text/html" not in cast("str", safe_action)
     for approved in APPROVED_TEXT_MEDIA_TYPES:
@@ -901,3 +907,21 @@ def test_empty_user_update_fields_report_emptiness_not_a_mapping_failure() -> No
         UserUpdateInput(cast("Mapping[str, object]", "about"))
     assert "at least one documented field" not in str(not_a_mapping.value)
     assert UserUpdateInput({"website": None}).payload() == {"website": None}
+
+
+def test_remote_resource_creation_rejects_internal_targets_unless_explicitly_allowed() -> None:
+    with pytest.raises(ValueError, match="locality"):
+        ResourceCreateInput("Private", "http://169.254.169.254/data.csv")
+    allowed = ResourceCreateInput("Private", "http://127.0.0.1/data.csv", allow_private_endpoint=True)
+    assert allowed.payload()["url"] == "http://127.0.0.1/data.csv"
+    assert "allow_private_endpoint" not in allowed.payload()
+
+
+def test_community_resource_queries_reject_unknown_keys_and_unbounded_pages() -> None:
+    with pytest.raises(CatalogValidationError):
+        wire.list_community_resources_request({"unexpected": "value"})
+    with pytest.raises(CatalogValidationError):
+        wire.list_community_resources_request({"page_size": 101})
+    assert wire.list_community_resources_request({"owner": "a&b", "page_size": 100})[1].endswith(
+        "?owner=a%26b&page_size=100"
+    )

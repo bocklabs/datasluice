@@ -76,7 +76,7 @@ def _register_resource(
 
 
 def _make_dlt_resource(
-    dlt: Any, resource: Any, identity: str, table_name: str, transport: Any, state_store: Any
+    dlt: Any, resource: Any, identity: str, table_name: str, transport: Any, state_store: Any, allow_private_http: bool
 ) -> Any:
     @dlt.resource(name=table_name, table_name=table_name, write_disposition="replace")
     def _resource_body(resource: Any = resource, identity: str = identity) -> Any:
@@ -84,7 +84,9 @@ def _make_dlt_resource(
         from datasluice.integrations.arrow import to_arrow
         from datasluice.sync._hashing import logical_sha256
 
-        reader = DataPlaneResourceReader(transport=cast("CatalogTransport", transport))
+        reader = DataPlaneResourceReader(
+            transport=cast("CatalogTransport", transport), allow_private_http=allow_private_http
+        )
         state: dict[str, Any] = {"identity": identity, "watermark": None}
         if state_store is not None:
             prior = state_store.get(identity)
@@ -112,7 +114,9 @@ def _make_metadata_resource(dlt: Any, records: Any) -> Any:
     return _resources
 
 
-def _make_dlt_source(dlt: Any, records: Any, transport: Any, state_store: Any, include_metadata: bool) -> Any:
+def _make_dlt_source(
+    dlt: Any, records: Any, transport: Any, state_store: Any, include_metadata: bool, allow_private_http: bool
+) -> Any:
     @dlt.source(name="datasluice")
     def _source() -> Any:
         seen_identities: dict[str, str] = {}
@@ -121,7 +125,7 @@ def _make_dlt_source(dlt: Any, records: Any, transport: Any, state_store: Any, i
             resource, identity, table_name = _register_resource(
                 record, include_metadata, seen_identities, seen_table_names
             )
-            yield _make_dlt_resource(dlt, resource, identity, table_name, transport, state_store)
+            yield _make_dlt_resource(dlt, resource, identity, table_name, transport, state_store, allow_private_http)
         if include_metadata:
             yield _make_metadata_resource(dlt, records)
 
@@ -134,6 +138,7 @@ def datasluice_source(
     *,
     state_store: Any | None = None,
     include_metadata: bool = False,
+    allow_private_http: bool = False,
 ) -> Any:
     """Return a dlt source from a caller-owned normalized resource query.
 
@@ -142,6 +147,7 @@ def datasluice_source(
         query: Typed resources.list catalog operation.
         state_store: Optional durable store seeded with prior per-resource watermarks.
         include_metadata: Whether to include normalized resource metadata as a sibling resource.
+        allow_private_http: Explicitly permit trusted private HTTP resource targets.
 
     Returns:
         A dlt ``DltSource`` containing one resource per normalized catalog resource.
@@ -171,7 +177,7 @@ def datasluice_source(
         )
 
     records = client.resources.list(query, CatalogOperationGuard(operation_id=query.operation_id)).items
-    return _make_dlt_source(dlt, records, transport, state_store, include_metadata)
+    return _make_dlt_source(dlt, records, transport, state_store, include_metadata, allow_private_http)
 
 
 def mirror_dlt_state(pipeline: Any, state_store: Any, *, source_name: str = "datasluice") -> None:

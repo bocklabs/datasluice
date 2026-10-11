@@ -68,7 +68,7 @@ def _redacted_redirect_url(url: str) -> str:
         )
     except ValueError:
         return "<unparseable-redirect-target>"
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
+    return urlunsplit((parsed.scheme, parsed.netloc.rsplit("@", 1)[-1], parsed.path, query, ""))
 
 
 def _retains_credentials(scope: CredentialScope | None, current_url: str, next_url: str) -> bool:
@@ -90,6 +90,8 @@ def _next_redirect_request(
     credential_scope: CredentialScope | None,
     label: str,
 ) -> RuntimeRequest:
+    if "@" in urlsplit(next_url).netloc:
+        raise TransportError(f"{label} refused a redirect target with embedded credentials.")
     headers = dict(request.headers)
     if not _retains_credentials(credential_scope, request.url, next_url):
         headers = strip_sensitive_redirect_headers(headers)

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.patches import UNSET, UnsetType
 from datasluice.exceptions import DataSluiceError
@@ -47,7 +47,6 @@ _SEARCH_FILTERS = (
 _SEARCH_BOOLEAN_FILTERS = ("archived", "featured", "is_restricted")
 _SEARCH_SORTS = ("created", "views", "followers")
 _SEARCH_SORT_CHOICES = frozenset(_SEARCH_SORTS) | frozenset(f"-{name}" for name in _SEARCH_SORTS)
-_MAX_PAGE_SIZE = 100
 
 
 def segment(value: str, operation: str) -> str:
@@ -119,13 +118,6 @@ def cast_str(value: object) -> str:
     return value if isinstance(value, str) else str(value)
 
 
-def _paging(page: int, page_size: int, label: str) -> None:
-    if type(page) is not int or page < 1:
-        raise ValueError(f"uData dataservice {label} page must be a positive integer.")
-    if type(page_size) is not int or not 1 <= page_size <= _MAX_PAGE_SIZE:
-        raise ValueError(f"uData dataservice {label} page_size must be an integer from 1 through {_MAX_PAGE_SIZE}.")
-
-
 def _optional_text(value: object, label: str, *, required: bool = False, allow_empty: bool = False) -> None:
     if required and (not isinstance(value, str) or not value.strip()):
         raise ValueError(f"uData dataservice {label} must be a non-empty string.")
@@ -144,7 +136,7 @@ class DataserviceListQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        _paging(self.page, self.page_size, "list")
+        paging(self.page, self.page_size, "list")
         if self.sort is not None and self.sort not in _LIST_SORT_CHOICES:
             raise ValueError("uData dataservice list sort is not a documented choice.")
         _optional_text(self.q, "list q")
@@ -172,7 +164,7 @@ class DataserviceSearchQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        _paging(self.page, self.page_size, "search")
+        paging(self.page, self.page_size, "search")
         if self.sort is not None and self.sort not in _SEARCH_SORT_CHOICES:
             raise ValueError("uData dataservice search sort is not a documented choice.")
         _optional_text(self.q, "search q")
@@ -198,7 +190,7 @@ class DataserviceFollowersQuery:
     user: str | None = None
 
     def __post_init__(self) -> None:
-        _paging(self.page, self.page_size, "follower")
+        paging(self.page, self.page_size, "follower")
         if self.user is not None and (not isinstance(self.user, str) or not self.user):
             raise ValueError("uData dataservice follower user must be a non-empty string when supplied.")
 

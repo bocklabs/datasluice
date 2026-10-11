@@ -232,7 +232,7 @@ def test_urllib_cross_origin_redirect_strips_sensitive_headers_case_insensitivel
     assert all(
         name not in forwarded for name in {"authorization", "cookie", "x-api-key", "x-auth-token", "x-app-token"}
     )
-    assert forwarded["x-benign"] == "preserve-me"
+    assert "x-benign" not in forwarded
     assert dict(request.headers) == request_headers
 
 
@@ -314,7 +314,7 @@ def test_urllib_https_to_http_downgrade_strips_sensitive_headers() -> None:
     forwarded = {key.lower(): value for key, value in opener.requests[1].header_items()}
     assert response.status_code == 200
     assert all(name not in forwarded for name in {"authorization", "cookie"})
-    assert forwarded["x-benign"] == "preserve-me"
+    assert "x-benign" not in forwarded
 
 
 def test_urllib_exceeding_max_redirects_raises_transport_failure() -> None:

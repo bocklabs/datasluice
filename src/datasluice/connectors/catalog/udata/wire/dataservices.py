@@ -15,7 +15,7 @@ from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceUpdateInput,
     segment,
 )
-from datasluice.connectors.catalog.udata.wire._text_document import bound_text_document
+from datasluice.connectors.catalog.udata.wire._text_document import APPROVED_TEXT_MEDIA_TYPES, bound_text_document
 from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import CatalogValidationError
 
@@ -220,5 +220,8 @@ def parse_text_document(
         operation=operation,
         platform=PLATFORM,
         subject="dataservice",
+        approved_media_types=frozenset({"application/atom+xml"})
+        if operation == RECENT_DATASERVICES_ATOM_FEED_OPERATION
+        else APPROVED_TEXT_MEDIA_TYPES,
     )
     return MappingRecord(document.payload())

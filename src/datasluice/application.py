@@ -287,8 +287,12 @@ class _ApplicationServices:
 
         downloader = Downloader(self._session._transport)
         paths = downloader.download_many(resources, destination)
+        if len(paths) != len(resources):
+            from datasluice.exceptions import DownloadError
+
+            raise DownloadError("Bulk download was incomplete; no resource manifest was produced")
         results: list[dict[str, object]] = []
-        for resource, path in zip(resources, paths, strict=False):
+        for resource, path in zip(resources, paths, strict=True):
             try:
                 size = path.stat().st_size
             except OSError:

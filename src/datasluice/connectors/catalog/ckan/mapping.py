@@ -264,6 +264,8 @@ def shape_result_envelope(
 
     Returns:
         A result envelope of record, value, mapping, or secret token items.
+        Bare arrays expose their returned item count in page.total_items; only
+        explicit platform count fields describe the total across all pages.
 
     Raises:
         NativeCatalogError: If the result contradicts the declared outcome shape.

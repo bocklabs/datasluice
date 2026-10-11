@@ -89,6 +89,14 @@ def test_empty_and_single_item_plans_follow_their_distinct_dispatch_paths() -> N
     assert one_summary.dispatches == 1
 
 
+def test_sync_executor_rejects_async_checkpoint_sink() -> None:
+    async def sink(checkpoint: BulkCheckpoint) -> None:
+        raise AssertionError("The synchronous executor must not invoke an async sink.")
+
+    with pytest.raises(TypeError, match="AsyncBulkExecutor"):
+        list(BulkExecutor(_receipt, checkpoint_sink=sink).stream(_plan("only")))
+
+
 def test_duplicate_ids_fail_before_any_dispatch() -> None:
     plan = _plan("same", "same")
     calls: list[CatalogId] = []

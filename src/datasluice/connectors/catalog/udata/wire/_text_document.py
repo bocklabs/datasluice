@@ -78,9 +78,7 @@ def bound_text_document(
             f"The uData {qualifier}document media type {negotiated!r} is not an approved text contract.",
             operation=operation,
             platform=platform,
-            metadata={
-                "safe_action": f"Request one of the approved media types: {', '.join(sorted(approved_media_types))}."
-            }
+            safe_action=f"Request one of the approved media types: {', '.join(sorted(approved_media_types))}."
             if list_approved_action
             else None,
         )

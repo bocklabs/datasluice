@@ -9,6 +9,7 @@ from time import monotonic
 from types import MappingProxyType
 from typing import BinaryIO
 
+from datasluice._uri import validate_http_target
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.domain.catalog.models import NativeRecord
 from datasluice.domain.catalog.receipts import MutationReceipt
@@ -127,10 +128,13 @@ class ResourceCreateInput:
     filetype: str = "remote"
     type: str = "other"
     fields: Mapping[str, object] | None = field(default=None, repr=False)
+    allow_private_endpoint: bool = False
 
     def __post_init__(self) -> None:
         _text(self.title, "title")
-        _text(self.url, "url")
+        if type(self.allow_private_endpoint) is not bool:
+            raise ValueError("Resource private endpoint allowance must be boolean.")
+        validate_http_target(self.url, allow_private=self.allow_private_endpoint)
         if self.filetype != "remote":
             raise ValueError("Remote resource creation requires filetype='remote'.")
         _text(self.type, "type")

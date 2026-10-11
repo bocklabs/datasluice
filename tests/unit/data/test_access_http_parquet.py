@@ -41,7 +41,7 @@ def _open_table(transport: HttpxCatalogTransport | UrllibCatalogTransport, base:
         format="PARQUET",
         access=HttpDownload(url=f"{base}/data.parquet"),
     )
-    with DataPlaneResourceReader(transport=transport).open(resource) as stream:
+    with DataPlaneResourceReader(transport=transport, allow_private_http=True).open(resource) as stream:
         return pa.Table.from_batches(list(stream.iter_batches()), schema=stream.schema)
 
 

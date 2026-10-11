@@ -1112,3 +1112,8 @@ def test_dataservice_async_cancelled_mutation_records_a_cancelled_receipt_with_t
         await client.aclose()
 
     asyncio.run(run())
+
+
+def test_dataservice_atom_feed_rejects_a_non_atom_response() -> None:
+    with pytest.raises(NativeCatalogError, match="not an approved"):
+        wire.parse_text_document(b"<rdf/>", "application/atom+xml", response_media_type="text/turtle")

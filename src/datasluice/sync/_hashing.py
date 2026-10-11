@@ -41,3 +41,12 @@ def _encode(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _encode(item) for key, item in value.items()}
     return {"__s": str(value)}
+
+
+def is_sha256(value: object) -> bool:
+    """Return whether a value is a SHA-256 hexadecimal digest."""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )

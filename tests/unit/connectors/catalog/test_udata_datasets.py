@@ -1464,3 +1464,14 @@ def test_suggestion_records_redact_credential_shaped_fields() -> None:
     assert isinstance(unknown, dict)
     assert unknown["udata.dataset"]["token"] == REDACTED
     assert "live-token-plaintext" not in json.dumps([record.to_dict() for record in records])
+
+
+def test_dataset_queries_bound_page_size_before_dispatch() -> None:
+    with pytest.raises(ValueError, match="page_size"):
+        DatasetListQuery(page_size=101)
+
+
+def test_dataset_list_rejects_oversized_responses_before_decoding() -> None:
+    routes = _site_first({("GET", "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20"): b" " * 1_048_577})
+    with _sync_client(routes) as client, pytest.raises(NativeCatalogError, match="configured byte limit"):
+        client.datasets.list()
