@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import operator
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -32,11 +33,15 @@ from datasluice.contracts.catalog.native.udata import (
     SyncUDataContactVisualizationService,
 )
 from datasluice.domain.catalog.auth import EffectivePermissions
-from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.errors.catalog import (
+    CatalogConflictError,
+    CatalogError,
     CatalogNotFoundError,
+    CatalogRateLimitError,
+    CatalogUnavailableError,
     CatalogValidationError,
     ForbiddenError,
     NativeCatalogError,
@@ -808,6 +813,35 @@ def test_a_missing_record_maps_to_a_typed_error_without_retry_or_body_echo() -> 
     assert len([request for request in router.requests if "viz-404" in request.url]) == 1
 
 
+_STATUS_OUTCOMES = (
+    (400, CatalogValidationError, None),
+    (401, UnauthenticatedError, "unauthorized"),
+    (403, ForbiddenError, "forbidden"),
+    (404, CatalogNotFoundError, None),
+    (410, CatalogConflictError, "unavailable"),
+    (423, CatalogUnavailableError, "deployment-disabled"),
+    (429, CatalogRateLimitError, None),
+    (500, CatalogUnavailableError, "unavailable"),
+    (503, CatalogUnavailableError, "unavailable"),
+)
+
+
+@pytest.mark.parametrize(("status", "error_type", "state"), _STATUS_OUTCOMES)
+def test_status_failures_decode_into_the_documented_error_shape(
+    status: int, error_type: type[CatalogError], state: str | None
+) -> None:
+    """Every pinned failure status maps to its normalized error and never leaks the raw body."""
+    router = sync_route_table(with_site_route({("GET", f"{ORIGIN}{VISUALIZATIONS}viz-1/"): (status, {"id": "viz-1"})}))
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(error_type) as raised:
+        client.contact_visualization.get_visualization("viz-1")
+    assert raised.value.operation == wire.GET_VISUALIZATION_OPERATION
+    assert raised.value.__dict__["metadata"]["status_code"] == status
+    if state is not None:
+        assert raised.value.capability_state == state
+    assert "mutation_receipt" not in raised.value.__dict__
+    assert "viz-1" not in str(raised.value.metadata)
+
+
 def test_delete_failures_keep_the_exact_target_and_a_redacted_receipt() -> None:
     """A refused delete stays visible against its exact target."""
     router = sync_route_table(with_site_route({("DELETE", f"{ORIGIN}{CONTACTS}cp-1/"): (403, {"message": "Denied"})}))
@@ -1031,6 +1065,79 @@ def test_async_cancellation_is_never_recorded_as_a_circuit_breaker_failure() -> 
 
     asyncio.run(run())
     assert [event.outcome for event in events.events if "breaker" in event.outcome] == []
+
+
+def test_sync_parallel_reads_preserve_results_and_owned_cleanup() -> None:
+    """T-04-GEO-02: two concurrent reads on one client keep both results and close the transport once."""
+    client, transport = _sync_interrupted_client(TimeoutError())
+    transport.armed = False
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        pages = list(executor.map(lambda _: client.contact_visualization.list_visualizations(), range(2)))
+
+    assert [page.total for page in pages] == [1, 1]
+    client.close()
+    assert transport.close_count == 1
+
+
+def test_async_parallel_reads_preserve_results_and_owned_cleanup() -> None:
+    """T-04-GEO-02: gathered async reads keep both results and close the owned transport once."""
+    client, transport = _async_interrupted_client(TimeoutError())
+    transport.armed = False
+
+    async def run() -> None:
+        pages = await asyncio.gather(
+            client.contact_visualization.list_visualizations(),
+            client.contact_visualization.list_visualizations(),
+        )
+        assert [page.total for page in pages] == [1, 1]
+        await client.aclose()
+
+    asyncio.run(run())
+    assert transport.aclose_count == 1
+
+
+def test_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> None:
+    """T-04-GEO-02: a during-dispatch timeout is failed, not cancelled, and the client stays ready."""
+    client, transport = _sync_interrupted_client(TimeoutError())
+
+    with pytest.raises(TimeoutError) as stopped:
+        client.contact_visualization.delete_visualization(
+            "viz-1",
+            _VISUALIZATION_DELETE_ONLY,
+            mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True),
+        )
+
+    receipt = _receipt_from(stopped.value)
+    assert receipt.outcome == "failed"
+    assert receipt.target.value == "viz-1"
+    assert receipt.target.resource_kind == ResourceKind("visualization")
+    transport.armed = False
+    assert client.contact_visualization.list_visualizations().total == 1
+    client.close()
+    assert transport.close_count == 1
+
+
+def test_async_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> None:
+    """T-04-GEO-02: the async timeout keeps the same failed receipt, readiness, and close-once ownership."""
+    client, transport = _async_interrupted_client(TimeoutError())
+
+    async def run() -> None:
+        with pytest.raises(TimeoutError) as stopped:
+            await client.contact_visualization.delete_visualization(
+                "viz-1",
+                _VISUALIZATION_DELETE_ONLY,
+                mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True),
+            )
+        receipt = _receipt_from(stopped.value)
+        assert receipt.outcome == "failed"
+        assert receipt.target.value == "viz-1"
+        transport.armed = False
+        assert (await client.contact_visualization.list_visualizations()).total == 1
+        await client.aclose()
+
+    asyncio.run(run())
+    assert transport.aclose_count == 1
 
 
 def test_sync_and_async_modes_produce_identical_wire_and_records() -> None:

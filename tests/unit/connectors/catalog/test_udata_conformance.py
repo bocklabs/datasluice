@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
+import tests.unit.connectors.catalog.test_udata_contact_visualization as contact_visualization_tests
 import tests.unit.connectors.catalog.test_udata_datasets as dataset_tests
 import tests.unit.connectors.catalog.test_udata_topics as topic_tests
 from datasluice.connectors.catalog.udata.clients import (
@@ -152,6 +153,39 @@ TOPIC_FAILURE_ROWS: dict[str, str] = {
     "topic_retry_breaker_interaction": "test_topic_sync_cancellation_is_never_recorded_as_a_circuit_breaker_failure",
     "topic_sync_async_parity": "test_topics_contract_exposes_every_assigned_method_in_both_modes",
     "topic_parallel_reads": "test_topic_sync_parallel_reads_preserve_results_and_owned_cleanup",
+}
+
+CONTACT_VISUALIZATION_ASSIGNED_ROWS: dict[int, str] = {
+    100: "test_every_contact_visualization_route_has_an_exact_wire_shape",
+    101: "test_create_and_update_bodies_omit_every_absent_key",
+    102: "test_every_contact_visualization_route_has_an_exact_wire_shape",
+    103: "test_create_and_update_bodies_omit_every_absent_key",
+    104: "test_receipts_are_redacted_and_carry_no_raw_body_for_every_mutation",
+    105: "test_image_upload_sends_the_stock_multipart_file_part",
+    221: "test_create_and_update_bodies_omit_every_absent_key",
+    222: "test_every_contact_visualization_route_has_an_exact_wire_shape",
+    223: "test_create_and_update_bodies_omit_every_absent_key",
+    224: "test_receipts_are_redacted_and_carry_no_raw_body_for_every_mutation",
+    225: "test_contact_role_decoding_rejects_undocumented_roles_and_missing_labels",
+}
+
+CONTACT_VISUALIZATION_FAILURE_ROWS: dict[str, str] = {
+    "cv_success_wire": "test_visualization_reads_decode_the_native_page_in_both_modes",
+    "cv_invalid_input_pre_dispatch": "test_malformed_page_sizes_are_rejected_before_dispatch",
+    "cv_malformed_segment_pre_dispatch": "test_malformed_contact_visualization_segments_never_reach_a_route",
+    "cv_pre_dispatch_denial": "test_mutation_permissions_discriminate_each_route_in_both_modes",
+    "cv_destructive_policy": "test_a_destructive_delete_requires_a_confirmed_destructive_policy",
+    "cv_during_dispatch_timeout": "test_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state",
+    "cv_cancellation": "test_cancelled_sync_mutation_records_a_cancelled_receipt_with_the_exact_target",
+    "cv_owned_cleanup": "test_cancelled_read_leaves_post_state_ready_and_closes_the_owned_transport_once",
+    "cv_borrowed_cleanup": "test_cancelled_read_never_closes_a_borrowed_transport",
+    "cv_malformed_decoding": "test_malformed_page_envelopes_fail_closed_with_the_route_identity",
+    "cv_non_finite_decoding": "test_non_finite_responses_fail_typed_without_echoing_the_raw_body",
+    "cv_redaction": "test_contact_point_serialization_exposes_no_field_beyond_the_allowlist",
+    "cv_retry_breaker_interaction": "test_async_cancellation_is_never_recorded_as_a_circuit_breaker_failure",
+    "cv_sync_async_parity": "test_sync_and_async_modes_produce_identical_wire_and_records",
+    "cv_parallel_reads": "test_sync_parallel_reads_preserve_results_and_owned_cleanup",
+    "cv_status_matrix": "test_status_failures_decode_into_the_documented_error_shape",
 }
 
 ROOT_ROW_NUMBERS = frozenset(range(183, 196))
@@ -381,6 +415,28 @@ def test_topic_rows_cover_every_assigned_route_exactly_once() -> None:
     """The thirteen assigned topic rows are exactly the pinned `/api/2/topics/` topic route-methods."""
     assert set(TOPIC_ASSIGNED_ROWS) == set(range(197, 210))
     assert len(TOPIC_ASSIGNED_ROWS) == 13
+
+
+@pytest.mark.parametrize("row", sorted(CONTACT_VISUALIZATION_ASSIGNED_ROWS))
+def test_contact_visualization_row_has_named_evidence(row: int) -> None:
+    """Every assigned contact-point and visualization COVERAGE row names a test in the family suite."""
+    test_name = CONTACT_VISUALIZATION_ASSIGNED_ROWS[row]
+    test = getattr(contact_visualization_tests, test_name)
+    assert callable(test), test_name
+
+
+@pytest.mark.parametrize("cell", sorted(CONTACT_VISUALIZATION_FAILURE_ROWS))
+def test_contact_visualization_failure_cell_has_named_evidence(cell: str) -> None:
+    """Every applicable family failure cell names a discriminating test in the family suite."""
+    test_name = CONTACT_VISUALIZATION_FAILURE_ROWS[cell]
+    test = getattr(contact_visualization_tests, test_name)
+    assert callable(test), test_name
+
+
+def test_contact_visualization_rows_cover_every_assigned_route_exactly_once() -> None:
+    """The eleven assigned rows are exactly the pinned contact-point and visualization route-methods."""
+    assert set(CONTACT_VISUALIZATION_ASSIGNED_ROWS) == {*range(100, 106), *range(221, 226)}
+    assert len(CONTACT_VISUALIZATION_ASSIGNED_ROWS) == 11
 
 
 def test_root_profile_rows_are_exhaustively_declared() -> None:
