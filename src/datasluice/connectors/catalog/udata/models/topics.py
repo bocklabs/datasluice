@@ -242,12 +242,26 @@ class TopicElementsQuery:
         return params
 
 
+def _elements_carry_a_title_or_link(elements: tuple[TopicElementInput, ...] | None) -> None:
+    """Require every create or replace element to carry a title or a linked element.
+
+    Raises:
+        ValueError: When an element carries neither, which the pinned model rejects
+            with a 400 on the create and replace paths.
+    """
+    for element in elements or ():
+        if element.title is None and element.element is None:
+            raise ValueError("uData topic element must carry a title or a linked element.")
+
+
 @dataclass(frozen=True, slots=True)
 class TopicElementInput:
-    """One stock topic-element body: the documented element fields and linked reference.
+    """One documented topic-element body.
 
-    The pinned model rejects an element carrying neither a title nor a linked
-    element, so that check is enforced before dispatch rather than by a 400.
+    The pinned element update merges the body onto the stored element, so a
+    description-only, tags-only, or extras-only change is stock-accepted there.
+    Create and replace payloads still require a title or a linked element, which
+    their own validation enforces.
     """
 
     title: str | None = None
@@ -268,8 +282,6 @@ class TopicElementInput:
         if self.element is not None:
             operation = "udata/api-v2.topic-element"
             object.__setattr__(self, "element", _element_reference(self.element, operation))
-        if self.title is None and self.element is None:
-            raise ValueError("uData topic element must carry a title or a linked element.")
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {}
@@ -352,6 +364,7 @@ class TopicCreateInput:
             isinstance(element, TopicElementInput) for element in self.elements
         ):
             raise ValueError("uData topic elements must be a tuple of topic element inputs.")
+        _elements_carry_a_title_or_link(self.elements)
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {"name": self.name}
@@ -406,6 +419,7 @@ class TopicUpdateInput:
                 object.__setattr__(self, label, _frozen_mapping(value, f"topic {label}"))
         if self.elements is not None and not isinstance(self.elements, tuple):
             raise ValueError("uData topic elements must be a tuple of topic element inputs when supplied.")
+        _elements_carry_a_title_or_link(self.elements)
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {}

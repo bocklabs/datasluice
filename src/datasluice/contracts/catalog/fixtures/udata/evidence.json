@@ -382,7 +382,7 @@
       "async"
     ],
     "recapture_note": "Re-executed both dataservice controlled tests after review fixes. Seven read routes match raw status or bounded shape in sync and async. Each of nine assigned mutations compares typed status and full normalized payload against a separately created raw twin in both modes; only per-record identity and server timestamps are normalized. Creation omits optional base_api_url and uses restricted access audiences. Update clears description and nullable references; deleted_at/archived_at null restores deleted records. Canonical-ID and slug RDF redirects match raw status in both modes. Cleanup protects all known created IDs from the first assertion, attempts each independently, and preserves the original failure. A deliberately incorrect async update payload was rejected. Only sanitized status and shape metadata retained. WR-03 recapture retains caller-controlled archived_at timestamp and null in differential equality, asserts archive and restoration in both modes, and rejects mismatched archive state in a RED/GREEN comparator regression.",
-    "unit_test_sha256": "8186ba8a43e1a1f032c454258c36ad6ef31233483bf2759b8be02a92e4055fb2",
+    "unit_test_sha256": "44c0eabe816860e992696c832551d81ad0a13c02d4b5d2cf0104047ba3e555c2",
     "branch_discrimination": [
       "follower-verb-inversion-detected",
       "rdf-format-validation-removal-detected",
@@ -437,7 +437,7 @@
     "controlled_test_sha256": "44f3fcff30df5a98dda70f85be8d3fead9de7f738b65762891a12da31970c32b",
     "wheel_test_sha256": "873eb47021dd17b325aab5d0fb94ede55ce8d40d366cf52498f56328594792a7",
     "wheel_tracer_sha256": "bc1d2f32453e23b9ca7e7041639106c7a7120a367160a1c6ef919e7e6779dd77",
-    "unit_test_sha256": "5a63f92520d41e9d7e4175f6c0d070d3c7b05db8de9a07d90906cf36d558a839",
+    "unit_test_sha256": "44c0eabe816860e992696c832551d81ad0a13c02d4b5d2cf0104047ba3e555c2",
     "test_ids": [
       "test_controlled_topic_reads_match_raw_routes_in_both_modes",
       "test_controlled_topic_lifecycle_matches_raw_routes_and_cleans_up"

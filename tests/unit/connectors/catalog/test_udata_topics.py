@@ -480,7 +480,6 @@ _MALFORMED_ELEMENT_REFERENCES: tuple[object, ...] = (
     {"class": "Dataset", "id": ""},
     {"class": "Dataset", "id": 4},
     "Dataset",
-    None,
     ["Dataset", "dataset-1"],
 )
 
@@ -493,9 +492,27 @@ def test_malformed_topic_element_references_never_reach_a_route(reference: objec
 
 
 def test_topic_element_requires_a_title_or_a_linked_element() -> None:
-    """The pinned check is enforced as an input invariant rather than by a 400."""
+    """A create or replace payload rejects an element with neither a title nor a link, as the pinned model does."""
     with pytest.raises(ValueError, match="title or a linked element"):
-        TopicElementInput(description="orphan")
+        TopicCreateInput(name="Health", elements=(TopicElementInput(description="orphan"),))
+    with pytest.raises(ValueError, match="title or a linked element"):
+        TopicUpdateInput(elements=(TopicElementInput(description="orphan"),))
+
+
+def test_topic_element_update_accepts_a_field_only_change() -> None:
+    """The pinned element PUT merges onto the stored element, so a description-only change is stock-accepted."""
+    assert TopicElementInput(description="rewritten").payload() == {"description": "rewritten"}
+
+    payload = {"id": "element-1"}
+    routes = {("PUT", f"{ORIGIN}/api/2/topics/topic-1/elements/element-1/"): (200, cast("object", payload))}
+    with sync_client(sync_route_table(with_site_route(routes)), UDATA_CREDENTIAL) as client:
+        client.topics.topic_element_update(
+            "topic-1",
+            "element-1",
+            TopicElementInput(description="rewritten"),
+            PERMISSIONS,
+            mutation_policy(wire.TOPIC_ELEMENT_UPDATE_OPERATION, "topic-1:element-1"),
+        )
     assert TopicElementInput(title="A dataset").payload() == {"title": "A dataset"}
     assert TopicElementInput(element={"class": "Dataservice", "id": "dataservice-1"}).payload() == {
         "element": {"class": "Dataservice", "id": "dataservice-1"}
@@ -908,7 +925,7 @@ def test_topic_routes_require_a_controlled_origin_for_every_mutation() -> None:
     assert _topic_requests(public_router) == []
 
 
-def test_topic_mutation_failure_after_dispatch_attaches_a_rejected_receipt() -> None:
+def test_topic_mutation_pre_dispatch_policy_rejection_attaches_a_rejected_receipt() -> None:
     """A pre-dispatch policy rejection still yields an immutable receipt bound to the target."""
     router = sync_route_table(with_site_route({}))
     with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as raised:

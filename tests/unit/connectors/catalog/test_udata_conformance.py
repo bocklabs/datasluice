@@ -141,7 +141,7 @@ TOPIC_FAILURE_ROWS: dict[str, str] = {
     "topic_invalid_input_pre_dispatch": "test_an_oversized_topic_page_never_reaches_a_route",
     "topic_malformed_segment_pre_dispatch": "test_malformed_topic_identifiers_are_stopped_before_any_request",
     "topic_dependency_exception": "test_topic_transport_failures_still_open_the_circuit_before_the_next_read",
-    "topic_pre_dispatch_denial": "test_topic_mutation_failure_after_dispatch_attaches_a_rejected_receipt",
+    "topic_pre_dispatch_denial": "test_topic_mutation_pre_dispatch_policy_rejection_attaches_a_rejected_receipt",
     "topic_during_dispatch_timeout": "test_topic_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state",
     "topic_cancellation": "test_topic_mutation_cancellation_settles_as_cancelled_not_failed",
     "topic_owned_cleanup": "test_topic_sync_cancellation_leaves_post_state_ready_and_closes_the_owned_transport_once",
