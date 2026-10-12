@@ -42,6 +42,14 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
     DiscussionSearchQuery,
     DiscussionUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.contact_visualization import (
+    ContactPointCreateInput,
+    ContactPointUpdateInput,
+    ContactVisualizationMutationResult,
+    VisualizationCreateInput,
+    VisualizationImageInput,
+    VisualizationUpdateInput,
+)
 from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceCreateInput,
     DataserviceDatasetLinkInput,
@@ -5881,3 +5889,554 @@ def test_controlled_topic_lifecycle_matches_raw_routes_and_cleans_up() -> None:
     )
     _exercise_sync_topic_lifecycle(token, permissions, "Controlled evidence topic")
     asyncio.run(_exercise_async_topic_lifecycle(token, permissions, "Controlled async evidence topic"))
+
+
+_CONTACT_VISUALIZATION_ORACLE_PATH = (
+    Path(__file__).parents[4] / ".planning/phases/04-udata-connector/oracle/udata-oracle-candidate.json"
+)
+_CONTACT_VISUALIZATION_FAMILY_SIGNATURES = frozenset(
+    {
+        "udata.core.contact_point.api:ContactPointsListAPI",
+        "udata.core.contact_point.api:ContactPointAPI",
+        "udata.core.contact_point.api:ContactPointRolesAPI",
+        "udata.core.visualizations.api:VisualizationsAPI",
+        "udata.core.visualizations.api:VisualizationAPI",
+        "udata.core.visualizations.api:VisualizationImageAPI",
+    }
+)
+_CV_PLACEHOLDER = re.compile(r"<(?:[a-z_]+:)?([a-z_]+)>")
+_CV_ABSENT_TARGETS = {"contact_point": "missing-contact", "visualization": "missing-viz"}
+
+
+def _cv_oracle_routes() -> dict[tuple[str, str], str]:
+    """Return every contact-point and visualization path the pinned source oracle records.
+
+    The oracle lives under the gitignored planning directory, so a fresh clone has no
+    independent oracle at all and every function needing one skips loudly rather than
+    falling back to hand-transcribed paths.
+    """
+    if not _CONTACT_VISUALIZATION_ORACLE_PATH.exists():
+        pytest.skip(
+            f"no contact-point source oracle at {_CONTACT_VISUALIZATION_ORACLE_PATH}; "
+            "reconcile it with scripts/extract_udata_oracle.py to run the contact differential"
+        )
+    document = json.loads(_CONTACT_VISUALIZATION_ORACLE_PATH.read_text(encoding="utf-8"))
+    routes: dict[tuple[str, str], str] = {}
+    for route in document["routes"]:
+        if route["signature"] not in _CONTACT_VISUALIZATION_FAMILY_SIGNATURES:
+            continue
+        endpoint = route["signature"].rsplit(":", 1)[1].removesuffix("API")
+        key = (route["method"], endpoint)
+        assert key not in routes, f"the source oracle records {key} twice"
+        routes[key] = route["path"]
+    assert len(routes) == 11, f"the source oracle must record 11 family routes, found {len(routes)}"
+    return routes
+
+
+def _cv_path(method: str, endpoint: str) -> str:
+    """Return the oracle path for one endpoint with its placeholders filled by the absent targets."""
+    return _CV_PLACEHOLDER.sub(
+        lambda placeholder: _CV_ABSENT_TARGETS[placeholder.group(1)],
+        _cv_oracle_routes()[(method, endpoint)],
+    )
+
+
+def _cv_read_routes() -> tuple[tuple[str, str, str, tuple[object, ...]], ...]:
+    """Return every assigned family read as its raw path, method, typed name, and arguments."""
+    return (
+        (f"{_cv_path('GET', 'Visualizations')}?page=1&page_size=20", "GET", "list_visualizations", ()),
+        (_cv_path("GET", "Visualization"), "GET", "get_visualization", (_CV_ABSENT_TARGETS["visualization"],)),
+        (_cv_path("GET", "ContactPoint"), "GET", "get_contact_point", (_CV_ABSENT_TARGETS["contact_point"],)),
+        (_cv_path("GET", "ContactPointRoles"), "GET", "contact_point_roles", ()),
+    )
+
+
+def _cv_projection(record: object) -> dict[str, object]:
+    """Return one typed record's payload without its decoding markers."""
+    assert isinstance(record, MappingRecord)
+    return {key: value for key, value in dict(record.payload).items() if key not in {"resource_kind", "operation"}}
+
+
+def _assert_cv_read_matches_raw(name: str, status: int, payload: object, typed: object) -> None:
+    """Assert one family read reproduces its raw status and every documented field."""
+    if status != 200:
+        assert isinstance(typed, CatalogError), name
+        assert typed.metadata.get("status_code") == status, name
+        return
+    if name == "contact_point_roles":
+        assert isinstance(payload, list)
+        assert isinstance(typed, tuple)
+        assert len(typed) == len(payload)
+        for record, raw_item in zip(typed, payload, strict=True):
+            assert isinstance(raw_item, Mapping)
+            assert _cv_projection(record) == {"id": raw_item["id"], "label": raw_item["label"]}, name
+        return
+    if name == "list_visualizations":
+        assert isinstance(payload, Mapping)
+        page = cast("Any", typed)
+        assert (page.page, page.page_size, page.total) == (
+            payload["page"],
+            payload["page_size"],
+            payload["total"],
+        ), name
+        raw_items = payload["data"]
+        assert len(page.items) == len(raw_items)
+        for record, raw_item in zip(page.items, raw_items, strict=True):
+            assert isinstance(raw_item, Mapping)
+            projection = _cv_projection(record)
+            assert set(projection) <= set(raw_item), name
+            assert _cv_differential_payload(projection) == _cv_differential_payload(
+                {key: raw_item[key] for key in projection}
+            ), name
+        return
+    assert isinstance(payload, Mapping)
+    projection = _cv_projection(typed)
+    assert set(projection) <= set(payload), name
+    assert _cv_differential_payload(projection) == _cv_differential_payload(
+        {key: payload[key] for key in projection}
+    ), name
+
+
+def _cv_outcome[R](method: Callable[..., R], *args: object) -> object:
+    """Return one family read result, or the typed error the connector raised for it."""
+    try:
+        return method(*args)
+    except CatalogError as error:
+        return error
+
+
+async def _cv_async_outcome(client: AsyncUDataClient, method: str, args: tuple[object, ...]) -> object:
+    """Return one asynchronous family read result, or the typed error it raised."""
+    try:
+        return await getattr(client.contact_visualization, method)(*args)
+    except CatalogError as error:
+        return error
+
+
+def test_controlled_contact_visualization_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned family read agrees with its raw loopback route in sync and async modes."""
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
+        for path, method, name, args in _cv_read_routes():
+            status, payload, _ = _direct_request("", method, path, include_body=True)
+            typed = _cv_outcome(getattr(client.contact_visualization, name), *args)
+            _assert_cv_read_matches_raw(name, status, payload, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
+            for path, method, name, args in _cv_read_routes():
+                status, payload, _ = _direct_request("", method, path, include_body=True)
+                typed = await _cv_async_outcome(client, name, args)
+                _assert_cv_read_matches_raw(name, status, payload, typed)
+
+    asyncio.run(run_async())
+
+
+def _cv_mutation_policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
+    """Return the confirmed overwrite policy the controlled family mutations run under."""
+    return MutationPolicy(
+        destructive=destructive,
+        confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    )
+
+
+def _cv_differential_payload(payload: object) -> object:
+    """Normalize a family record so a typed and a raw twin compare on stable fields only.
+
+    The identifier, title, name, and slug are server-owned or server-derived, so
+    each twin is normalized beside its own values before the two compare.
+    """
+    assert isinstance(payload, Mapping)
+    record = _timestamp_free(payload)
+    assert isinstance(record, Mapping)
+    own_values = [
+        (value, marker)
+        for value, marker in (
+            (record.get("id"), "<own-id>"),
+            (record.get("name"), "<own-name>"),
+            (record.get("title"), "<own-title>"),
+            (record.get("slug"), "<own-slug>"),
+        )
+        if isinstance(value, str) and value
+    ]
+
+    def normalize(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {key: normalize(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [normalize(item) for item in value]
+        if isinstance(value, str):
+            for own_value, marker in own_values:
+                value = value.replace(own_value, marker)
+        return value
+
+    return normalize(record)
+
+
+def _assert_cv_mutation_matches_raw(
+    operation: str,
+    typed: ContactVisualizationMutationResult,
+    raw: tuple[int, object, dict[str, str]],
+) -> None:
+    """Assert one typed family mutation agrees with its raw twin on operation, status, and payload."""
+    assert str(typed.receipt.operation) == operation
+    assert typed.receipt.audit_metadata["status_code"] == raw[0]
+    assert typed.receipt.outcome == "succeeded"
+    if typed.record is None:
+        assert raw[1] is None
+    else:
+        assert _cv_differential_payload(typed.record.payload) == _cv_differential_payload(raw[1])
+
+
+def _cleanup_controlled_contact_visualization(
+    token: str, viz_ids: list[str], contact_ids: list[str], dataset_ids: list[str], primary: BaseException | None
+) -> None:
+    """Attempt every known family cleanup independently, preserving the original failure."""
+    errors: list[Exception] = []
+    for identifier in viz_ids:
+        try:
+            _direct_request(token, "DELETE", f"/api/1/visualizations/{identifier}/")
+        except (AssertionError, OSError, ValueError) as error:
+            errors.append(error)
+    for identifier in contact_ids:
+        try:
+            _direct_request(token, "DELETE", f"/api/1/contacts/{identifier}/")
+        except (AssertionError, OSError, ValueError) as error:
+            errors.append(error)
+    for identifier in dataset_ids:
+        try:
+            _direct_request(token, "DELETE", f"/api/1/datasets/{identifier}/")
+        except (AssertionError, OSError, ValueError) as error:
+            errors.append(error)
+    if errors:
+        if primary is not None:
+            primary.add_note(
+                "Controlled contact-visualization cleanup failed: "
+                + ", ".join(type(error).__name__ for error in errors)
+            )
+        else:
+            raise ExceptionGroup("Controlled contact-visualization cleanup failed", errors)
+
+
+def _seed_controlled_resource(token: str, suffix: str, dataset_ids: list[str]) -> str:
+    """Create one raw dataset and one raw resource, returning the resource identifier."""
+    status, payload, _ = _direct_request(
+        token, "POST", "/api/1/datasets/", body={"title": f"Evidence dataset {suffix}", "description": "d"}
+    )
+    assert status == 201, "the raw evidence dataset create failed"
+    assert isinstance(payload, Mapping) and isinstance(payload.get("id"), str)
+    dataset_ids.append(payload["id"])
+    status, payload, _ = _direct_request(
+        token,
+        "POST",
+        f"/api/1/datasets/{payload['id']}/resources/",
+        body={
+            "title": "Evidence visualization resource",
+            "url": "https://example.com/evidence.csv",
+            "filetype": "remote",
+            "type": "other",
+        },
+    )
+    assert status == 201, "the raw evidence resource create failed"
+    assert isinstance(payload, Mapping) and isinstance(payload.get("id"), str)
+    return str(payload["id"])
+
+
+def _assert_controlled_visualization_deleted(token: str, identifier: str) -> None:
+    """Assert a controlled visualization is gone, tolerating the administrator tombstone."""
+    status, payload, _ = _direct_request(token, "GET", f"/api/1/visualizations/{identifier}/")
+    assert status in {200, 404, 410}
+    if status == 200:
+        assert isinstance(payload, Mapping)
+        assert payload.get("deleted_at") is not None
+
+
+def _assert_controlled_contact_deleted(token: str, identifier: str) -> None:
+    """Assert a controlled contact point is hard-deleted."""
+    status, _, _ = _direct_request(token, "GET", f"/api/1/contacts/{identifier}/")
+    assert status == 404
+
+
+def _exercise_sync_cv_lifecycle(token: str, permissions: EffectivePermissions, suffix: str) -> None:
+    """Drive every assigned family mutation in sync mode against a raw twin, then clean up."""
+    credential = UDataCredential(api_key=token)
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        viz_ids: list[str] = []
+        contact_ids: list[str] = []
+        dataset_ids: list[str] = []
+        try:
+            resource_id = _seed_controlled_resource(token, suffix, dataset_ids)
+
+            viz_title = f"Evidence visualization {suffix}"
+            viz_created = client.contact_visualization.create_visualization(
+                VisualizationCreateInput(
+                    title=viz_title,
+                    description="Controlled visualization evidence",
+                    x_axis={"column_x": "col", "type": "discrete"},
+                    series=({"resource_id": resource_id, "type": "line"},),
+                ),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.create-visualization", viz_title),
+            )
+            assert viz_created.record is not None
+            _, viz_id = _assert_created_response(201, _plain_mapping(viz_created.record.payload), viz_ids)
+            raw_viz = _direct_request(
+                token,
+                "POST",
+                "/api/1/visualizations/",
+                body={
+                    "title": f"Raw evidence visualization {suffix}",
+                    "description": "Controlled visualization evidence",
+                    "x_axis": {"column_x": "col", "type": "discrete"},
+                    "series": [{"resource_id": resource_id, "type": "line"}],
+                },
+            )
+            _, raw_viz_id = _assert_created_response(raw_viz[0], raw_viz[1], viz_ids)
+            _assert_cv_mutation_matches_raw("udata/api-v1.create-visualization", viz_created, raw_viz)
+            assert viz_created.receipt.target.value == viz_id
+
+            viz_read = client.contact_visualization.get_visualization(viz_id)
+            raw_viz_read = _direct_request(token, "GET", f"/api/1/visualizations/{viz_id}/", include_body=True)
+            assert raw_viz_read[0] == 200
+            _assert_cv_read_matches_raw("get_visualization", 200, raw_viz_read[1], viz_read)
+
+            viz_updated = client.contact_visualization.update_visualization(
+                viz_id,
+                VisualizationUpdateInput(title=f"Updated visualization {suffix}"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.update-visualization", viz_id),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.update-visualization",
+                viz_updated,
+                _direct_request(
+                    token, "PATCH", f"/api/1/visualizations/{raw_viz_id}/", body={"title": f"Updated {suffix}"}
+                ),
+            )
+
+            image_status = client.contact_visualization.visualization_image(
+                viz_id,
+                VisualizationImageInput(data=_CONTROLLED_PNG, content_type="image/png"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.visualization-image", viz_id),
+            )
+            image_body, image_type = _multipart_body(_CONTROLLED_PNG, "evidence.png", media_type="image/png")
+            raw_image_status = _direct_request(
+                token,
+                "POST",
+                f"/api/1/visualizations/{raw_viz_id}/image/",
+                body=image_body,
+                content_type=image_type,
+            )
+            assert str(image_status.receipt.operation) == "udata/api-v1.visualization-image"
+            assert image_status.receipt.audit_metadata["status_code"] == raw_image_status[0] == 200
+            assert image_status.receipt.outcome == "succeeded"
+
+            viz_deleted = client.contact_visualization.delete_visualization(
+                viz_id,
+                permissions,
+                _cv_mutation_policy("udata/api-v1.delete-visualization", viz_id, destructive=True),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.delete-visualization",
+                viz_deleted,
+                _direct_request(token, "DELETE", f"/api/1/visualizations/{raw_viz_id}/"),
+            )
+            assert viz_deleted.record is None
+            _assert_controlled_visualization_deleted(token, viz_id)
+            _assert_controlled_visualization_deleted(token, raw_viz_id)
+
+            contact_name = f"Evidence contact {suffix}"
+            contact_created = client.contact_visualization.create_contact_point(
+                ContactPointCreateInput(name=contact_name, role="creator", email=f"{suffix}@gmail.com"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.create-contact-point", "contacts"),
+            )
+            assert contact_created.record is not None
+            _, contact_id = _assert_created_response(201, _plain_mapping(contact_created.record.payload), contact_ids)
+            raw_contact = _direct_request(
+                token,
+                "POST",
+                "/api/1/contacts/",
+                body={
+                    "name": f"Raw evidence contact {suffix}",
+                    "role": "creator",
+                    "email": f"{suffix}@gmail.com",
+                },
+            )
+            _, raw_contact_id = _assert_created_response(raw_contact[0], raw_contact[1], contact_ids)
+            _assert_cv_mutation_matches_raw("udata/api-v1.create-contact-point", contact_created, raw_contact)
+            assert contact_created.receipt.target.value == contact_id
+
+            contact_read = client.contact_visualization.get_contact_point(contact_id)
+            raw_contact_read = _direct_request(token, "GET", f"/api/1/contacts/{contact_id}/", include_body=True)
+            assert raw_contact_read[0] == 200
+            _assert_cv_read_matches_raw("get_contact_point", 200, raw_contact_read[1], contact_read)
+
+            contact_updated = client.contact_visualization.update_contact_point(
+                contact_id,
+                ContactPointUpdateInput(role="publisher"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.update-contact-point", contact_id),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.update-contact-point",
+                contact_updated,
+                _direct_request(token, "PUT", f"/api/1/contacts/{raw_contact_id}/", body={"role": "publisher"}),
+            )
+
+            contact_deleted = client.contact_visualization.delete_contact_point(
+                contact_id,
+                permissions,
+                _cv_mutation_policy("udata/api-v1.delete-contact-point", contact_id, destructive=True),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.delete-contact-point",
+                contact_deleted,
+                _direct_request(token, "DELETE", f"/api/1/contacts/{raw_contact_id}/"),
+            )
+            assert contact_deleted.record is None
+            _assert_controlled_contact_deleted(token, contact_id)
+            _assert_controlled_contact_deleted(token, raw_contact_id)
+        finally:
+            _cleanup_controlled_contact_visualization(token, viz_ids, contact_ids, dataset_ids, sys.exception())
+
+
+async def _exercise_async_cv_lifecycle(token: str, permissions: EffectivePermissions, suffix: str) -> None:
+    """Drive the same family lifecycle in async mode against a raw twin, then clean up."""
+    credential = UDataCredential(api_key=token)
+    async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        viz_ids: list[str] = []
+        contact_ids: list[str] = []
+        dataset_ids: list[str] = []
+        try:
+            resource_id = _seed_controlled_resource(token, suffix, dataset_ids)
+
+            viz_title = f"Evidence visualization {suffix}"
+            viz_created = await client.contact_visualization.create_visualization(
+                VisualizationCreateInput(
+                    title=viz_title,
+                    description="Controlled visualization evidence",
+                    x_axis={"column_x": "col", "type": "discrete"},
+                    series=({"resource_id": resource_id, "type": "line"},),
+                ),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.create-visualization", viz_title),
+            )
+            assert viz_created.record is not None
+            _, viz_id = _assert_created_response(201, _plain_mapping(viz_created.record.payload), viz_ids)
+            raw_viz = _direct_request(
+                token,
+                "POST",
+                "/api/1/visualizations/",
+                body={
+                    "title": f"Raw evidence visualization {suffix}",
+                    "description": "Controlled visualization evidence",
+                    "x_axis": {"column_x": "col", "type": "discrete"},
+                    "series": [{"resource_id": resource_id, "type": "line"}],
+                },
+            )
+            _, raw_viz_id = _assert_created_response(raw_viz[0], raw_viz[1], viz_ids)
+            _assert_cv_mutation_matches_raw("udata/api-v1.create-visualization", viz_created, raw_viz)
+
+            viz_updated = await client.contact_visualization.update_visualization(
+                viz_id,
+                VisualizationUpdateInput(title=f"Updated visualization {suffix}"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.update-visualization", viz_id),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.update-visualization",
+                viz_updated,
+                _direct_request(
+                    token, "PATCH", f"/api/1/visualizations/{raw_viz_id}/", body={"title": f"Updated {suffix}"}
+                ),
+            )
+
+            image_status = await client.contact_visualization.visualization_image(
+                viz_id,
+                VisualizationImageInput(data=_CONTROLLED_PNG, content_type="image/png"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.visualization-image", viz_id),
+            )
+            raw_image_body, raw_image_type = _multipart_body(_CONTROLLED_PNG, "evidence.png", media_type="image/png")
+            raw_image_status = _direct_request(
+                token,
+                "POST",
+                f"/api/1/visualizations/{raw_viz_id}/image/",
+                body=raw_image_body,
+                content_type=raw_image_type,
+            )
+            assert str(image_status.receipt.operation) == "udata/api-v1.visualization-image"
+            assert image_status.receipt.audit_metadata["status_code"] == raw_image_status[0] == 200
+
+            viz_deleted = await client.contact_visualization.delete_visualization(
+                viz_id,
+                permissions,
+                _cv_mutation_policy("udata/api-v1.delete-visualization", viz_id, destructive=True),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.delete-visualization",
+                viz_deleted,
+                _direct_request(token, "DELETE", f"/api/1/visualizations/{raw_viz_id}/"),
+            )
+            _assert_controlled_visualization_deleted(token, viz_id)
+
+            contact_name = f"Evidence contact {suffix}"
+            contact_created = await client.contact_visualization.create_contact_point(
+                ContactPointCreateInput(name=contact_name, role="creator", email=f"{suffix}@gmail.com"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.create-contact-point", "contacts"),
+            )
+            assert contact_created.record is not None
+            _, contact_id = _assert_created_response(201, _plain_mapping(contact_created.record.payload), contact_ids)
+            raw_contact = _direct_request(
+                token,
+                "POST",
+                "/api/1/contacts/",
+                body={
+                    "name": f"Raw evidence contact {suffix}",
+                    "role": "creator",
+                    "email": f"{suffix}@gmail.com",
+                },
+            )
+            _, raw_contact_id = _assert_created_response(raw_contact[0], raw_contact[1], contact_ids)
+            _assert_cv_mutation_matches_raw("udata/api-v1.create-contact-point", contact_created, raw_contact)
+
+            contact_updated = await client.contact_visualization.update_contact_point(
+                contact_id,
+                ContactPointUpdateInput(role="publisher"),
+                permissions,
+                _cv_mutation_policy("udata/api-v1.update-contact-point", contact_id),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.update-contact-point",
+                contact_updated,
+                _direct_request(token, "PUT", f"/api/1/contacts/{raw_contact_id}/", body={"role": "publisher"}),
+            )
+
+            contact_deleted = await client.contact_visualization.delete_contact_point(
+                contact_id,
+                permissions,
+                _cv_mutation_policy("udata/api-v1.delete-contact-point", contact_id, destructive=True),
+            )
+            _assert_cv_mutation_matches_raw(
+                "udata/api-v1.delete-contact-point",
+                contact_deleted,
+                _direct_request(token, "DELETE", f"/api/1/contacts/{raw_contact_id}/"),
+            )
+            _assert_controlled_contact_deleted(token, contact_id)
+        finally:
+            _cleanup_controlled_contact_visualization(token, viz_ids, contact_ids, dataset_ids, sys.exception())
+
+
+def test_controlled_contact_visualization_lifecycle_matches_raw_routes_and_cleans_up() -> None:
+    """Drive every assigned family mutation in both modes, verifying raw status and cleanup."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled family mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    permissions = EffectivePermissions.for_credential(
+        UDataCredential(api_key=token), platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    _exercise_sync_cv_lifecycle(token, permissions, f"sync-{uuid4().hex[:8]}")
+    asyncio.run(_exercise_async_cv_lifecycle(token, permissions, f"async-{uuid4().hex[:8]}"))

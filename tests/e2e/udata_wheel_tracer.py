@@ -14,6 +14,13 @@ from datasluice.connectors.catalog.udata.models.activity_discussions import (
     DiscussionSearchQuery,
     DiscussionUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.contact_visualization import (
+    ContactPointCreateInput,
+    ContactPointUpdateInput,
+    VisualizationCreateInput,
+    VisualizationImageInput,
+    VisualizationUpdateInput,
+)
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthClientRequest,
@@ -283,6 +290,60 @@ def _topic_response(url, method):
     return None
 
 
+def _cv_record():
+    """Return the payload the stubbed single contact-point and visualization routes answer with."""
+    return {
+        "id": "wheel-viz",
+        "title": "Wheel visualization",
+        "slug": "wheel-visualization",
+        "description": "d",
+        "private": False,
+        "extras": {},
+        "deleted_at": None,
+        "x_axis": {"column_x": "col", "type": "discrete"},
+        "y_axis": None,
+        "series": [{"resource_id": "wheel-resource", "type": "line"}],
+        "image": None,
+        "metrics": {},
+        "permissions": {},
+        "owner": None,
+        "organization": None,
+        "created_at": None,
+        "last_modified": None,
+    }
+
+
+def _cv_contact_record():
+    """Return the payload the stubbed contact-point routes answer with."""
+    return {"id": "wheel-contact", "name": "Wheel contact", "role": "creator", "email": None, "contact_form": None}
+
+
+def _cv_response(url, method):
+    """Return the stub for a contact-point or visualization route."""
+    path = url.partition("?")[0]
+    if path.endswith("/api/1/contacts/roles/"):
+        return _json([{"id": "contact", "label": "Contact"}])
+    if path.endswith("/api/1/contacts/wheel-contact/"):
+        return _empty() if method == "DELETE" else _json(_cv_contact_record())
+    if path.endswith("/api/1/contacts/"):
+        return _json(_cv_contact_record())
+    if path.endswith("/api/1/visualizations/wheel-viz/image/"):
+        return _json({"success": True, "image": {"cardinal": "1", "original": "wheel-visualization.png"}})
+    if path.endswith("/api/1/visualizations/wheel-viz/"):
+        return _empty() if method == "DELETE" else _json(_cv_record())
+    if path.endswith("/api/1/visualizations/"):
+        page = {
+            "data": [_cv_record()],
+            "next_page": None,
+            "page": 1,
+            "page_size": 20,
+            "previous_page": None,
+            "total": 1,
+        }
+        return _json(page) if method == "GET" else _json(_cv_record())
+    return None
+
+
 def _spatial_response(url):
     """Return the stub for a spatial level, granularity, zone, or coverage route."""
     path = url.partition("?")[0]
@@ -348,6 +409,9 @@ class Transport:
         response = _topic_response(url, method)
         if response is not None:
             return response
+        response = _cv_response(url, method)
+        if response is not None:
+            return response
         response = _content_response(url, method)
         if response is not None:
             return response
@@ -381,6 +445,8 @@ class Transport:
         body, headers = self._route(request)
         status = 204 if request.method == "DELETE" else 201 if request.method == "POST" else 200
         if url.partition("?")[0].endswith("/api/2/topics/wheel-topic/featured/"):
+            status = 200
+        if url.partition("?")[0].endswith("/api/1/visualizations/wheel-viz/image/"):
             status = 200
         return RuntimeResponse(status_code=status, headers=headers, body=body)
 
@@ -609,6 +675,107 @@ assert (
         ),
     ).record
     is None
+)
+assert client.contact_visualization.list_visualizations().total == 1
+assert client.contact_visualization.get_visualization("wheel-viz").payload["title"] == "Wheel visualization"
+assert [dict(r.payload)["id"] for r in client.contact_visualization.contact_point_roles()] == ["contact"]
+assert client.contact_visualization.get_contact_point("wheel-contact").payload["name"] == "Wheel contact"
+viz_created = client.contact_visualization.create_visualization(
+    VisualizationCreateInput(
+        title="Wheel visualization",
+        description="d",
+        x_axis={"column_x": "col", "type": "discrete"},
+        series=({"resource_id": "wheel-resource", "type": "line"},),
+    ),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.create-visualization", target="Wheel visualization"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert viz_created.receipt.audit_metadata["status_code"] == 201
+assert (
+    client.contact_visualization.update_visualization(
+        "wheel-viz",
+        VisualizationUpdateInput(title="updated"),
+        sync_permissions,
+        MutationPolicy(
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v1.update-visualization", target="wheel-viz"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).receipt.operation
+    == "udata/api-v1.update-visualization"
+)
+assert (
+    client.contact_visualization.visualization_image(
+        "wheel-viz",
+        VisualizationImageInput(data=b"wheel-png", content_type="image/png"),
+        sync_permissions,
+        MutationPolicy(
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v1.visualization-image", target="wheel-viz"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).receipt.audit_metadata["status_code"]
+    == 200
+)
+assert (
+    client.contact_visualization.delete_visualization(
+        "wheel-viz",
+        sync_permissions,
+        MutationPolicy(
+            destructive=True,
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v1.delete-visualization", target="wheel-viz"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).record
+    is None
+)
+contact_created = client.contact_visualization.create_contact_point(
+    ContactPointCreateInput(name="Wheel contact", role="creator"),
+    sync_permissions,
+    MutationPolicy(
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.create-contact-point", target="contacts"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert contact_created.receipt.audit_metadata["status_code"] == 201
+assert (
+    client.contact_visualization.update_contact_point(
+        "wheel-contact",
+        ContactPointUpdateInput(role="publisher"),
+        sync_permissions,
+        MutationPolicy(
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v1.update-contact-point", target="wheel-contact"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).receipt.operation
+    == "udata/api-v1.update-contact-point"
+)
+assert (
+    client.contact_visualization.delete_contact_point(
+        "wheel-contact",
+        sync_permissions,
+        MutationPolicy(
+            destructive=True,
+            confirmation=ConfirmationPolicy(
+                confirmed=True, operation="udata/api-v1.delete-contact-point", target="wheel-contact"
+            ),
+            concurrency=ConcurrencyPolicy(overwrite=True),
+        ),
+    ).receipt.audit_metadata["status_code"]
+    == 204
 )
 assert client.taxonomies.available_badges().payload["pivotal-data"] == "Pivotal data"
 assert client.taxonomies.extensions() == ("csv",)
@@ -960,6 +1127,79 @@ async def run_async():
                 ),
             )
         ).record is None
+        assert (await active.contact_visualization.list_visualizations()).total == 1
+        assert (await active.contact_visualization.get_visualization("wheel-viz")).payload["title"] == (
+            "Wheel visualization"
+        )
+        assert [dict(r.payload)["id"] for r in await active.contact_visualization.contact_point_roles()] == ["contact"]
+        assert (
+            await active.contact_visualization.create_visualization(
+                VisualizationCreateInput(
+                    title="Wheel visualization",
+                    description="d",
+                    x_axis={"column_x": "col", "type": "discrete"},
+                    series=({"resource_id": "wheel-resource", "type": "line"},),
+                ),
+                permissions,
+                MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.create-visualization", target="Wheel visualization"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).receipt.audit_metadata["status_code"] == 201
+        assert (
+            await active.contact_visualization.visualization_image(
+                "wheel-viz",
+                VisualizationImageInput(data=b"wheel-png", content_type="image/png"),
+                permissions,
+                MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.visualization-image", target="wheel-viz"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).receipt.audit_metadata["status_code"] == 200
+        assert (
+            await active.contact_visualization.delete_visualization(
+                "wheel-viz",
+                permissions,
+                MutationPolicy(
+                    destructive=True,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.delete-visualization", target="wheel-viz"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).record is None
+        assert (
+            await active.contact_visualization.create_contact_point(
+                ContactPointCreateInput(name="Wheel contact", role="creator"),
+                permissions,
+                MutationPolicy(
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.create-contact-point", target="contacts"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).receipt.audit_metadata["status_code"] == 201
+        assert (
+            await active.contact_visualization.delete_contact_point(
+                "wheel-contact",
+                permissions,
+                MutationPolicy(
+                    destructive=True,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.delete-contact-point", target="wheel-contact"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).record is None
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
         assert (await active.taxonomies.suggest_mime(SuggestQuery("js")))[0].payload["text"] == "csv"
@@ -1154,6 +1394,17 @@ expected = [
     "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
     "http://127.0.0.1:5640/api/2/topics/wheel-topic/featured/",
     "http://127.0.0.1:5640/api/2/topics/wheel-topic/",
+    "http://127.0.0.1:5640/api/1/visualizations/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/contacts/roles/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/visualizations/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/contacts/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
     "http://127.0.0.1:5640/api/1/datasets/licenses/",
@@ -1236,6 +1487,13 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/2/topics/",
     "http://127.0.0.1:5640/api/2/topics/wheel-topic/elements/wheel-element/",
+    "http://127.0.0.1:5640/api/1/visualizations/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/",
+    "http://127.0.0.1:5640/api/1/contacts/roles/",
+    "http://127.0.0.1:5640/api/1/visualizations/",
+    "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/",
+    "http://127.0.0.1:5640/api/1/contacts/",
+    "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
