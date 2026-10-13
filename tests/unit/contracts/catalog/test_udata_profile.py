@@ -1033,3 +1033,7 @@ def test_controlled_harvest_evidence_covers_reads_and_the_refusal_cell() -> None
         controlled["dockerfile_sha256"]
         == hashlib.sha256((_ROOT / "dev/udata-evidence/Dockerfile").read_bytes()).hexdigest()
     )
+    assert (
+        controlled["compose_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/compose.yaml").read_bytes()).hexdigest()
+    )

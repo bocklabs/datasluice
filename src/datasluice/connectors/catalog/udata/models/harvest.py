@@ -39,7 +39,6 @@ _ABSOLUTE_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 _CRON_FIELD = re.compile(r"^[0-9*,/\-]+$")
 _MAX_PAGE = 100_000
 _MAX_BULK_TARGETS = 64
-_MAX_BULK_PARALLELISM = 8
 _MAX_POLLS = 1024
 _MAX_POLL_INTERVAL = 300.0
 _MAX_TEXT = 255
@@ -390,6 +389,11 @@ class UDataJobHandle:
     returns this handle instead of blocking. The handle owns the caller's wait
     budget, the poll interval, and the poll ceiling, so a job can only be
     awaited under an explicit finite lease and never by an unbounded loop.
+    The handle is derived from the run response's ``last_job`` field, which
+    upstream reports before the new job registers: on a source's first run it
+    is absent (the wait refuses), and on a re-run it can name the previous
+    run's already-terminal job, so an immediate wait may observe that stale
+    terminal status while the new job has not started.
     """
 
     source_id: str
