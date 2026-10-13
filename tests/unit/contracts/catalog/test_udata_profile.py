@@ -991,3 +991,45 @@ def test_jobs_profile_rows_pin_admin_capability_and_mutations() -> None:
             "mutation": mutation,
             "evidence_requirement": "controlled-environment-only",
         }, operation_id
+
+
+def test_controlled_harvest_evidence_covers_reads_and_the_refusal_cell() -> None:
+    """The harvest evidence binds the aggregate route, the refusal cell, and live digests.
+
+    The pinned stock deployment registers zero harvest backends, so no mutation can
+    execute there: the record claims read coverage for the single aggregate operation
+    and an explicit refused-operations cell instead of a mutation lifecycle.
+    """
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_harvest_evidence"]
+    evidence = controlled["route_differential"]
+    aggregate = "udata/api-v1.harvest-moderation-and-admin-operations"
+
+    assert evidence["read_operations"] == [aggregate]
+    assert evidence["mutation_operations"] == []
+    assert evidence["refused_operations"] == [aggregate]
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == ["sync", "async"]
+    assert controlled["sanitized"] is True
+    assert controlled["local_only"] is True
+    assert controlled["stack_version"] == "17.6.0"
+    assert controlled["udata_image_digest"].startswith("sha256:")
+
+    controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+    tracer_source = (_ROOT / "tests/e2e/udata_wheel_tracer.py").read_text()
+    for test_id in controlled["test_ids"]:
+        assert f"def {test_id}(" in controlled_source, test_id
+    assert "harvest_moderation_admin" in controlled_source
+    assert "harvest_moderation_admin" in tracer_source, "the tracer must execute the family from installed content"
+
+    for field, path in (
+        ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),
+        ("wheel_test_sha256", "tests/e2e/test_udata_wheel.py"),
+        ("wheel_tracer_sha256", "tests/e2e/udata_wheel_tracer.py"),
+        ("unit_test_sha256", "tests/unit/connectors/catalog/test_udata_harvest.py"),
+        ("unit_state_test_sha256", "tests/unit/connectors/catalog/test_udata_harvest_state.py"),
+    ):
+        assert controlled[field] == hashlib.sha256((_ROOT / path).read_bytes()).hexdigest(), field
+    assert (
+        controlled["dockerfile_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/Dockerfile").read_bytes()).hexdigest()
+    )

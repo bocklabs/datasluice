@@ -57,6 +57,7 @@ from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
+from datasluice.connectors.catalog.udata.models.harvest import HarvestPage, HarvestSourceInput, HarvestSourceQuery
 from datasluice.connectors.catalog.udata.models.jobs import CrontabSchedule, JobMutationResult, JobScheduleInput
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
@@ -6771,3 +6772,141 @@ def test_controlled_jobs_lifecycle_matches_raw_routes_and_cleans_up() -> None:
     )
     _exercise_sync_jobs_lifecycle(token, permissions, f"sync-{uuid4().hex[:8]}", task_name)
     asyncio.run(_exercise_async_jobs_lifecycle(token, permissions, f"async-{uuid4().hex[:8]}", task_name))
+
+
+_HARVEST_ABSDENT_SOURCE = "000000000000000000000000"
+_HARVEST_ABSDENT_JOB = "000000000000000000000001"
+
+
+def _assert_harvest_read_matches_raw(name: str, raw: tuple[int, object, dict[str, str]], typed: object) -> None:
+    """Assert one family read reproduces its raw status through the typed error mapping."""
+    status, payload, _ = raw
+    if status != 200:
+        assert isinstance(typed, CatalogError), name
+        assert typed.metadata.get("status_code") == status, name
+        return
+    if name == "list_sources":
+        assert isinstance(payload, Mapping), name
+        assert isinstance(typed, HarvestPage), name
+        assert (typed.page, typed.page_size, typed.total) == (payload["page"], payload["page_size"], payload["total"])
+        return
+    assert isinstance(payload, list), name
+    assert typed == tuple(payload), name
+
+
+def _harvest_outcome(method: Callable[..., object], *args: object) -> object:
+    """Return one family read result, or the typed error the connector raised for it."""
+    try:
+        return method(*args)
+    except CatalogError as error:
+        return error
+
+
+async def _harvest_async_outcome(client: AsyncUDataClient, name: str, args: tuple[object, ...]) -> object:
+    """Return one asynchronous family read result, or the typed error it raised."""
+    try:
+        return await getattr(client.harvest_moderation_admin, name)(*args)
+    except CatalogError as error:
+        return error
+
+
+def test_controlled_harvest_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned family read agrees with its raw loopback route in sync and async modes."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled family reads require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    reads: tuple[tuple[str, str, str, tuple[object, ...]], ...] = (
+        ("/api/1/harvest/sources/?page=1&page_size=20", "GET", "list_sources", (HarvestSourceQuery(), permissions)),
+        ("/api/1/harvest/backends/", "GET", "backends", (permissions,)),
+        (
+            f"/api/1/harvest/source/{_HARVEST_ABSDENT_SOURCE}/",
+            "GET",
+            "get_source",
+            (_HARVEST_ABSDENT_SOURCE, permissions),
+        ),
+        (
+            f"/api/1/harvest/source/{_HARVEST_ABSDENT_SOURCE}/preview/",
+            "GET",
+            "preview_source",
+            (_HARVEST_ABSDENT_SOURCE, permissions),
+        ),
+        (f"/api/1/harvest/job/{_HARVEST_ABSDENT_JOB}/", "GET", "get_job", (_HARVEST_ABSDENT_JOB, permissions)),
+    )
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        for path, method, name, args in reads:
+            raw = _direct_request(token, method, path, include_body=True)
+            typed = _harvest_outcome(getattr(client.harvest_moderation_admin, name), *args)
+            _assert_harvest_read_matches_raw(name, raw, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            for path, method, name, args in reads:
+                raw = _direct_request(token, method, path, include_body=True)
+                typed = await _harvest_async_outcome(client, name, args)
+                _assert_harvest_read_matches_raw(name, raw, typed)
+
+    asyncio.run(run_async())
+
+
+def test_controlled_harvest_create_refusal_matches_raw_in_both_modes() -> None:
+    """A create the pinned stock deployment must refuse agrees with its raw twin."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled family mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    body = {"name": "Evidence source", "url": "https://example.org/feed", "backend": "csv"}
+    typed_status: dict[str, object] = {}
+
+    def assert_refusal(name: str, error: object, raw: tuple[int, object, dict[str, str]]) -> None:
+        assert isinstance(error, CatalogError), name
+        assert error.metadata.get("status_code") == raw[0] == 400, name
+        typed_status[name] = raw[1]
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        try:
+            client.harvest_moderation_admin.create_source(
+                HarvestSourceInput(name="Evidence source", url="https://example.org/feed", backend="csv"),
+                permissions,
+                MutationPolicy(
+                    destructive=False,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True,
+                        operation="udata/api-v1.harvest-moderation-and-admin-operations",
+                        target="harvest-source:create",
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            raise AssertionError("the stock deployment accepted an unknown backend")
+        except CatalogError as error:
+            assert_refusal("sync", error, _direct_request(token, "POST", "/api/1/harvest/sources/", body=body))
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            try:
+                await client.harvest_moderation_admin.create_source(
+                    HarvestSourceInput(name="Evidence source", url="https://example.org/feed", backend="csv"),
+                    permissions,
+                    MutationPolicy(
+                        destructive=False,
+                        confirmation=ConfirmationPolicy(
+                            confirmed=True,
+                            operation="udata/api-v1.harvest-moderation-and-admin-operations",
+                            target="harvest-source:create",
+                        ),
+                        concurrency=ConcurrencyPolicy(overwrite=True),
+                    ),
+                )
+                raise AssertionError("the stock deployment accepted an unknown backend")
+            except CatalogError as error:
+                assert_refusal("async", error, _direct_request(token, "POST", "/api/1/harvest/sources/", body=body))
+
+    asyncio.run(run_async())
+    assert typed_status["sync"] == typed_status["async"]

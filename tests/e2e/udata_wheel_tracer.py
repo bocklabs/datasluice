@@ -22,6 +22,7 @@ from datasluice.connectors.catalog.udata.models.contact_visualization import (
     VisualizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
+from datasluice.connectors.catalog.udata.models.harvest import HarvestSourceInput, HarvestSourceQuery
 from datasluice.connectors.catalog.udata.models.jobs import CrontabSchedule, JobScheduleInput
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthClientRequest,
@@ -374,6 +375,28 @@ def _content_response(url, method):
     return _reuse_response(url, method)
 
 
+def _harvest_response(url, method):
+    _source = {
+        "id": "wheel-source",
+        "name": "wheel-source",
+        "url": "https://example.org/feed",
+        "backend": "csv",
+    }
+    if url.endswith("/api/1/harvest/backends/"):
+        return _json([{"id": "csv", "name": "CSV"}])
+    if url.endswith("/api/1/harvest/sources/?page=1&page_size=20"):
+        return _json(
+            {"data": [_source], "page": 1, "page_size": 20, "total": 1, "next_page": None, "previous_page": None}
+        )
+    if url.endswith("/api/1/harvest/source/wheel-source/"):
+        if method == "DELETE":
+            return _empty()
+        return _json(_source)
+    if url.endswith("/api/1/harvest/sources/"):
+        return _json(_source)
+    return None
+
+
 def _jobs_response(url, method):
     if url.endswith("/api/1/workers/jobs/schedulables/"):
         return _json(["wheel-task"])
@@ -483,6 +506,9 @@ class Transport:
         if response is not None:
             return response
         response = _jobs_response(url, method)
+        if response is not None:
+            return response
+        response = _harvest_response(url, method)
         if response is not None:
             return response
         response = _content_response(url, method)
@@ -865,6 +891,27 @@ wheel_job_created = client.worker_jobs.create_job(
 )
 assert wheel_job_created.record is not None
 assert dict(wheel_job_created.record.payload)["id"] == "wheel-job"
+assert client.harvest_moderation_admin.backends(sync_admin_permissions)[0].payload["id"] == "csv"
+assert client.harvest_moderation_admin.list_sources(HarvestSourceQuery(), sync_admin_permissions).total == 1
+wheel_source_created = client.harvest_moderation_admin.create_source(
+    HarvestSourceInput(name="wheel-source", url="https://example.org/feed", backend="csv"),
+    sync_admin_permissions,
+    MutationPolicy(
+        destructive=False,
+        confirmation=ConfirmationPolicy(
+            confirmed=True,
+            operation="udata/api-v1.harvest-moderation-and-admin-operations",
+            target="harvest-source:create",
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert wheel_source_created.record is not None
+assert dict(wheel_source_created.record.payload)["id"] == "wheel-source"
+assert (
+    dict(client.harvest_moderation_admin.get_source("wheel-source", sync_admin_permissions).payload)["name"]
+    == "wheel-source"
+)
 assert client.taxonomies.available_badges().payload["pivotal-data"] == "Pivotal data"
 assert client.taxonomies.extensions() == ("csv",)
 assert client.taxonomies.licenses()[0].payload["id"] == "lov2"
@@ -1309,6 +1356,8 @@ async def run_async():
                 ),
             )
         ).receipt.audit_metadata["status_code"] == 201
+        assert [b.payload["id"] for b in await active.harvest_moderation_admin.backends(async_permissions)] == ["csv"]
+        assert (await active.harvest_moderation_admin.list_sources(HarvestSourceQuery(), async_permissions)).total == 1
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
         assert (await active.taxonomies.suggest_mime(SuggestQuery("js")))[0].payload["text"] == "csv"
@@ -1519,6 +1568,10 @@ expected = [
     "http://127.0.0.1:5640/api/1/workers/jobs/",
     "http://127.0.0.1:5640/api/1/workers/jobs/wheel-job/",
     "http://127.0.0.1:5640/api/1/workers/jobs/",
+    "http://127.0.0.1:5640/api/1/harvest/backends/",
+    "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/harvest/sources/",
+    "http://127.0.0.1:5640/api/1/harvest/source/wheel-source/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
     "http://127.0.0.1:5640/api/1/datasets/licenses/",
@@ -1611,6 +1664,8 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
     "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
     "http://127.0.0.1:5640/api/1/workers/jobs/",
+    "http://127.0.0.1:5640/api/1/harvest/backends/",
+    "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"

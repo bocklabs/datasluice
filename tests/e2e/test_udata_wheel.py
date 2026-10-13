@@ -66,6 +66,9 @@ def test_wheel_ships_udata_176_contract_files_and_no_legacy_profile(built_wheel:
         "models/jobs.py",
         "wire/jobs.py",
         "services/jobs.py",
+        "models/harvest.py",
+        "wire/harvest.py",
+        "services/harvest.py",
     ):
         assert (package / module).is_file(), module
     assert (profiles / "udata-17.6.json").is_file()
