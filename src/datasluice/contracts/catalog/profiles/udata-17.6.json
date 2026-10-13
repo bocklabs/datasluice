@@ -1728,6 +1728,55 @@
             "authentication": "authenticated",
             "mutation": "delete",
             "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.list-jobs",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.create-job",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "create",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.get-job",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.update-job",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "update",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.delete-job",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "delete",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.get-task",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
+        },
+        {
+            "id": "udata/api-v1.list-schedulable-jobs",
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": "read",
+            "evidence_requirement": "controlled-environment-only"
         }
     ]
 }

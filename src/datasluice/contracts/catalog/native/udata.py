@@ -50,7 +50,15 @@ if TYPE_CHECKING:
         HarvestSourceInput,
         HarvestSourceQuery,
         HarvestValidationInput,
+    )
+    from datasluice.connectors.catalog.udata.models.harvest import (
+        UDataJobHandle as HarvestJobHandle,
+    )
+    from datasluice.connectors.catalog.udata.models.jobs import (
+        JobMutationResult,
+        JobScheduleInput,
         UDataJobHandle,
+        WorkerTaskWaitResult,
     )
     from datasluice.connectors.catalog.udata.models.oauth import (
         OAuthAuthorizeDecision,
@@ -1699,7 +1707,7 @@ class SyncUDataHarvestService(Protocol):
     def preview_bulk(self, action: str, targets: HarvestBulkTargets) -> HarvestBulkPreview: ...
     def wait_for_job(
         self,
-        handle: UDataJobHandle,
+        handle: HarvestJobHandle,
         permissions: EffectivePermissions,
         *,
         budget: TimeBudget | None = None,
@@ -1795,7 +1803,7 @@ class AsyncUDataHarvestService(Protocol):
     def preview_bulk(self, action: str, targets: HarvestBulkTargets) -> HarvestBulkPreview: ...
     async def wait_for_job(
         self,
-        handle: UDataJobHandle,
+        handle: HarvestJobHandle,
         permissions: EffectivePermissions,
         *,
         budget: TimeBudget | None = None,
@@ -2013,6 +2021,88 @@ class AsyncUDataTransfersService(Protocol):
         permissions: EffectivePermissions,
         mutation_policy: MutationPolicy | None = None,
     ) -> TransferMutationResult: ...
+
+
+@runtime_checkable
+class SyncUDataJobsService(Protocol):
+    """Typed synchronous worker job, task, and schedulable operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_jobs(self, permissions: EffectivePermissions) -> tuple[MappingRecord, ...]: ...
+    def get_job(self, job_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    def get_task(self, task_id: str, permissions: EffectivePermissions) -> MappingRecord: ...
+    def list_schedulables(self, permissions: EffectivePermissions) -> tuple[str, ...]: ...
+    def create_job(
+        self,
+        client_input: JobScheduleInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> JobMutationResult: ...
+    def update_job(
+        self,
+        job_id: str,
+        client_input: JobScheduleInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> JobMutationResult: ...
+    def delete_job(
+        self,
+        job_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> JobMutationResult: ...
+    def wait_for_task(
+        self,
+        handle: UDataJobHandle,
+        permissions: EffectivePermissions,
+        *,
+        budget: TimeBudget | None = None,
+        clock: Callable[[], float] = ...,
+        sleeper: Callable[[float], None] = ...,
+    ) -> WorkerTaskWaitResult: ...
+
+
+@runtime_checkable
+class AsyncUDataJobsService(Protocol):
+    """Typed asynchronous worker job, task, and schedulable operations."""
+
+    @property
+    def error_type(self) -> type[NativeCatalogError]: ...
+
+    def list_jobs(self, permissions: EffectivePermissions) -> Awaitable[tuple[MappingRecord, ...]]: ...
+    def get_job(self, job_id: str, permissions: EffectivePermissions) -> Awaitable[MappingRecord]: ...
+    def get_task(self, task_id: str, permissions: EffectivePermissions) -> Awaitable[MappingRecord]: ...
+    def list_schedulables(self, permissions: EffectivePermissions) -> Awaitable[tuple[str, ...]]: ...
+    def create_job(
+        self,
+        client_input: JobScheduleInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> Awaitable[JobMutationResult]: ...
+    def update_job(
+        self,
+        job_id: str,
+        client_input: JobScheduleInput,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> Awaitable[JobMutationResult]: ...
+    def delete_job(
+        self,
+        job_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> Awaitable[JobMutationResult]: ...
+    def wait_for_task(
+        self,
+        handle: UDataJobHandle,
+        permissions: EffectivePermissions,
+        *,
+        budget: TimeBudget | None = None,
+        clock: Callable[[], float] = ...,
+        sleeper: Callable[[float], None] = ...,
+    ) -> Awaitable[WorkerTaskWaitResult]: ...
 
 
 @runtime_checkable

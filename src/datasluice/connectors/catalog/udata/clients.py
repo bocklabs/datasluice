@@ -138,6 +138,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.harvest import (
         SyncHarvestService as _SyncHarvestService,
     )
+    from datasluice.connectors.catalog.udata.services.jobs import (
+        AsyncWorkerJobsService as _AsyncWorkerJobsService,
+    )
+    from datasluice.connectors.catalog.udata.services.jobs import (
+        SyncWorkerJobsService as _SyncWorkerJobsService,
+    )
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
         AsyncOrganizationsMembershipsService as _AsyncOrganizationsMembershipsService,
     )
@@ -3356,6 +3362,11 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the typed contact-point and visualization service."""
         return SyncContactVisualizationService(self)
 
+    @cached_property
+    def worker_jobs(self) -> _SyncWorkerJobsService:
+        """Expose the typed worker job, task, and budgeted task-wait service."""
+        return SyncWorkerJobsService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -3843,6 +3854,11 @@ class AsyncUDataClient(_UDataClientCore):
     def contact_visualization(self) -> _AsyncContactVisualizationService:
         """Expose the typed contact-point and visualization service."""
         return AsyncContactVisualizationService(self)
+
+    @cached_property
+    def worker_jobs(self) -> _AsyncWorkerJobsService:
+        """Expose the typed worker job, task, and budgeted task-wait service."""
+        return AsyncWorkerJobsService(self)
 
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
@@ -4343,6 +4359,10 @@ def _load_services():
         AsyncHarvestService,
         SyncHarvestService,
     )
+    from datasluice.connectors.catalog.udata.services.jobs import (
+        AsyncWorkerJobsService,
+        SyncWorkerJobsService,
+    )
     from datasluice.connectors.catalog.udata.services.organizations_memberships import (
         AsyncOrganizationsMembershipsService,
         SyncOrganizationsMembershipsService,
@@ -4411,6 +4431,8 @@ def _load_services():
         SyncTopicsService,
         AsyncHarvestService,
         SyncHarvestService,
+        AsyncWorkerJobsService,
+        SyncWorkerJobsService,
     )
 
 
@@ -4447,4 +4469,6 @@ def _load_services():
     SyncTopicsService,
     AsyncHarvestService,
     SyncHarvestService,
+    AsyncWorkerJobsService,
+    SyncWorkerJobsService,
 ) = _load_services()

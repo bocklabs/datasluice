@@ -950,6 +950,22 @@ CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS = frozenset(
         "udata/api-v1.contact-point-roles",
     }
 )
+# JOBS_ROUTE_OPERATION_IDS carries the same deliberate omissions as the taxonomy set: the
+# worker jobs, task, and schedulable routes are approved operations only, so they carry no
+# locked INTEGRATE row, no fixture case, and no native Protocol member in
+# NATIVE_OPERATION_MEMBERS. The family is typed through
+# SyncUDataJobsService/AsyncUDataJobsService instead.
+JOBS_ROUTE_OPERATION_IDS = frozenset(
+    {
+        "udata/api-v1.list-jobs",
+        "udata/api-v1.create-job",
+        "udata/api-v1.get-job",
+        "udata/api-v1.update-job",
+        "udata/api-v1.delete-job",
+        "udata/api-v1.get-task",
+        "udata/api-v1.list-schedulable-jobs",
+    }
+)
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
     "udata": (
         LOCKED_DATASET_ROUTE_OPERATIONS
@@ -962,6 +978,7 @@ PLATFORM_APPROVED_ROUTE_OPERATIONS = {
         | TOPIC_ROUTE_OPERATION_IDS
         | TRANSFER_ROUTE_OPERATION_IDS
         | CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS
+        | JOBS_ROUTE_OPERATION_IDS
         | frozenset(
             {
                 "udata/api-v1.access-type-reason-categories",

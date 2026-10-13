@@ -258,6 +258,17 @@ _CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS = {
 }
 
 
+_JOBS_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-jobs",
+    "udata/api-v1.create-job",
+    "udata/api-v1.get-job",
+    "udata/api-v1.update-job",
+    "udata/api-v1.delete-job",
+    "udata/api-v1.get-task",
+    "udata/api-v1.list-schedulable-jobs",
+}
+
+
 _OAUTH_ROUTE_OPERATION_IDS = {
     "udata/oauth.access-token",
     "udata/oauth.authorize",
@@ -396,6 +407,7 @@ def test_profile_covers_each_udata_integrate_capability_exactly_once() -> None:
         | _TOPIC_ROUTE_OPERATION_IDS
         | _TRANSFER_ROUTE_OPERATION_IDS
         | _CONTACT_VISUALIZATION_ROUTE_OPERATION_IDS
+        | _JOBS_ROUTE_OPERATION_IDS
     )
     assert len(operation_ids) == len(set(operation_ids))
 
