@@ -57,6 +57,7 @@ from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetListQuery, DatasetSuggestQuery
+from datasluice.connectors.catalog.udata.models.jobs import CrontabSchedule, JobMutationResult, JobScheduleInput
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
     OAuthClientRequest,
@@ -6440,3 +6441,331 @@ def test_controlled_contact_visualization_lifecycle_matches_raw_routes_and_clean
     )
     _exercise_sync_cv_lifecycle(token, permissions, f"sync-{uuid4().hex[:8]}")
     asyncio.run(_exercise_async_cv_lifecycle(token, permissions, f"async-{uuid4().hex[:8]}"))
+
+
+_JOBS_PATH = "/api/1/workers/jobs/"
+_JOBS_ABSENT_TARGET = "absent-jobs-evidence"
+_TASKS_ABSENT_TARGET = "absent-tasks-evidence"
+
+
+def _assert_jobs_read_matches_raw(name: str, raw: tuple[int, object, dict[str, str]], typed: object) -> None:
+    """Assert one family read reproduces its raw status and every documented field."""
+    status, payload, _ = raw
+    if name in {"get_job", "get_task"} and status != 200:
+        assert isinstance(typed, CatalogError), name
+        assert typed.metadata.get("status_code") == status, name
+        return
+    if name == "list_jobs":
+        assert isinstance(payload, list), name
+        assert isinstance(typed, tuple), name
+        assert len(typed) == len(payload), name
+        for record, raw_item in zip(typed, payload, strict=True):
+            assert isinstance(raw_item, Mapping), name
+            projection = {key: value for key, value in dict(record.payload).items() if key not in {"operation"}}
+            assert set(projection) <= set(raw_item), name
+        return
+    if name == "list_schedulables":
+        assert isinstance(payload, list), name
+        assert isinstance(typed, tuple), name
+        assert typed == tuple(payload), name
+        return
+    assert isinstance(payload, Mapping), name
+    assert isinstance(typed, MappingRecord), name
+    projection = {key: value for key, value in dict(typed.payload).items() if key not in {"operation"}}
+
+    def thaw(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {key: thaw(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [thaw(item) for item in value]
+        return value
+
+    assert set(projection) <= set(payload), name
+    for key, value in projection.items():
+        assert payload[key] == thaw(value), (name, key)
+
+
+def _jobs_outcome(method: Callable[..., object], *args: object) -> object:
+    """Return one family read result, or the typed error the connector raised for it."""
+    try:
+        return method(*args)
+    except CatalogError as error:
+        return error
+
+
+async def _jobs_async_outcome(client: AsyncUDataClient, name: str, args: tuple[object, ...]) -> object:
+    """Return one asynchronous family read result, or the typed error it raised."""
+    try:
+        return await getattr(client.worker_jobs, name)(*args)
+    except CatalogError as error:
+        return error
+
+
+def test_controlled_jobs_reads_match_raw_routes_in_both_modes() -> None:
+    """Every assigned family read agrees with its raw loopback route in sync and async modes."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled family reads require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    credential = UDataCredential(api_key=token)
+    permissions = EffectivePermissions.for_credential(
+        credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        raw_schedulables = _direct_request(token, "GET", f"{_JOBS_PATH}schedulables/", include_body=True)
+        assert raw_schedulables[0] == 200
+        reads: tuple[tuple[str, str, str, tuple[object, ...]], ...] = (
+            (_JOBS_PATH, "GET", "list_jobs", (permissions,)),
+            (f"{_JOBS_PATH}{_JOBS_ABSENT_TARGET}/", "GET", "get_job", (_JOBS_ABSENT_TARGET, permissions)),
+            (f"/api/1/workers/tasks/{_TASKS_ABSENT_TARGET}/", "GET", "get_task", (_TASKS_ABSENT_TARGET, permissions)),
+            (f"{_JOBS_PATH}schedulables/", "GET", "list_schedulables", (permissions,)),
+        )
+        for path, method, name, args in reads:
+            raw = _direct_request(token, method, path, include_body=True)
+            typed = _jobs_outcome(getattr(client.worker_jobs, name), *args)
+            _assert_jobs_read_matches_raw(name, raw, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            for path, method, name, args in reads:
+                raw = _direct_request(token, method, path, include_body=True)
+                typed = await _jobs_async_outcome(client, name, args)
+                _assert_jobs_read_matches_raw(name, raw, typed)
+
+    asyncio.run(run_async())
+
+
+def _jobs_differential_payload(payload: object) -> object:
+    """Normalize one job document so a typed and a raw twin compare on stable fields only."""
+    assert isinstance(payload, Mapping)
+    record = _timestamp_free(payload)
+    assert isinstance(record, Mapping)
+    own_values = [
+        (value, marker)
+        for value, marker in ((record.get("id"), "<own-id>"), (record.get("name"), "<own-name>"))
+        if isinstance(value, str) and value
+    ]
+
+    def normalize(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {key: normalize(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [normalize(item) for item in value]
+        if isinstance(value, str):
+            for own_value, marker in own_values:
+                value = value.replace(own_value, marker)
+        return value
+
+    return normalize(record)
+
+
+def _assert_jobs_mutation_matches_raw(
+    operation: str,
+    typed: JobMutationResult,
+    raw: tuple[int, object, dict[str, str]],
+) -> None:
+    """Assert one typed family mutation agrees with its raw twin on operation, status, and payload."""
+    assert str(typed.receipt.operation) == operation
+    assert typed.receipt.audit_metadata["status_code"] == raw[0]
+    assert typed.receipt.outcome == "succeeded"
+    if typed.record is None:
+        assert raw[1] is None
+    else:
+        assert _jobs_differential_payload(typed.record.payload) == _jobs_differential_payload(raw[1])
+
+
+def _cleanup_controlled_jobs(token: str, job_ids: list[str], primary: BaseException | None) -> None:
+    """Attempt every known family cleanup independently, preserving the original failure."""
+    errors: list[Exception] = []
+    for identifier in job_ids:
+        try:
+            status, _, _ = _direct_request(token, "DELETE", f"{_JOBS_PATH}{identifier}/")
+            assert status in {204, 404}
+        except (AssertionError, OSError, ValueError) as error:
+            errors.append(error)
+    assert not errors, f"cleanup failures: {errors!r}; original: {primary!r}"
+
+
+def _exercise_sync_jobs_lifecycle(
+    token: str,
+    permissions: EffectivePermissions,
+    suffix: str,
+    task_name: str,
+) -> None:
+    """Drive every assigned family mutation in sync mode against a raw twin, then clean up."""
+    credential = UDataCredential(api_key=token)
+    job_ids: list[str] = []
+    try:
+        crontab = {"minute": "0", "hour": "*", "day_of_week": "*", "day_of_month": "*", "month_of_year": "*"}
+        job_input = JobScheduleInput(
+            name=f"Evidence job {suffix}",
+            task=task_name,
+            crontab=CrontabSchedule(minute="0", hour="*", day_of_week="*", day_of_month="*", month_of_year="*"),
+            description=None,
+        )
+        with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            created = client.worker_jobs.create_job(
+                job_input,
+                permissions,
+                MutationPolicy(
+                    destructive=False,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.create-job", target=job_input.name
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            assert created.record is not None
+            created_payload = dict(created.record.payload)
+            job_id = created_payload["id"]
+            assert isinstance(job_id, str)
+            job_ids.append(job_id)
+            raw_body = {
+                "name": f"Raw evidence job {suffix}",
+                "task": task_name,
+                "crontab": crontab,
+            }
+            raw_created = _direct_request(token, "POST", _JOBS_PATH, body=raw_body)
+            assert raw_created[0] == 201
+            raw_payload = raw_created[1]
+            assert isinstance(raw_payload, Mapping)
+            raw_job_id = raw_payload["id"]
+            assert isinstance(raw_job_id, str)
+            job_ids.append(raw_job_id)
+            _assert_jobs_mutation_matches_raw("udata/api-v1.create-job", created, raw_created)
+            assert created.receipt.target.value == job_id
+
+            job_read = client.worker_jobs.get_job(job_id, permissions)
+            own_read = _direct_request(token, "GET", f"{_JOBS_PATH}{job_id}/", include_body=True)
+            assert own_read[0] == 200
+            _assert_jobs_read_matches_raw("get_job", own_read, job_read)
+            raw_read = _direct_request(token, "GET", f"{_JOBS_PATH}{raw_job_id}/", include_body=True)
+            assert raw_read[0] == 200
+
+            updated_input = JobScheduleInput(
+                name=f"Evidence job {suffix}", task=task_name, crontab=CrontabSchedule(minute="30")
+            )
+            updated = client.worker_jobs.update_job(
+                job_id,
+                updated_input,
+                permissions,
+                MutationPolicy(
+                    destructive=False,
+                    confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.update-job", target=job_id),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            raw_updated = _direct_request(
+                token, "PUT", f"{_JOBS_PATH}{raw_job_id}/", body={**raw_body, "crontab": {**crontab, "minute": "30"}}
+            )
+            _assert_jobs_mutation_matches_raw("udata/api-v1.update-job", updated, raw_updated)
+
+            deleted = client.worker_jobs.delete_job(
+                job_id,
+                permissions,
+                MutationPolicy(
+                    destructive=True,
+                    confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.delete-job", target=job_id),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            raw_deleted = _direct_request(token, "DELETE", f"{_JOBS_PATH}{raw_job_id}/")
+            _assert_jobs_mutation_matches_raw("udata/api-v1.delete-job", deleted, raw_deleted)
+            assert deleted.record is None
+            assert _direct_request(token, "GET", f"{_JOBS_PATH}{job_id}/")[0] == 404
+            assert _direct_request(token, "GET", f"{_JOBS_PATH}{raw_job_id}/")[0] == 404
+            job_ids.clear()
+    finally:
+        _cleanup_controlled_jobs(token, job_ids, sys.exception())
+
+
+async def _exercise_async_jobs_lifecycle(
+    token: str,
+    permissions: EffectivePermissions,
+    suffix: str,
+    task_name: str,
+) -> None:
+    """Drive every assigned family mutation in async mode against a raw twin, then clean up."""
+    credential = UDataCredential(api_key=token)
+    job_ids: list[str] = []
+    try:
+        job_input = JobScheduleInput(
+            name=f"Evidence job {suffix}",
+            task=task_name,
+            crontab=CrontabSchedule(minute="0", hour="*", day_of_week="*", day_of_month="*", month_of_year="*"),
+            description=None,
+        )
+        raw_body = {
+            "name": f"Raw evidence job {suffix}",
+            "task": task_name,
+            "crontab": {"minute": "0", "hour": "*", "day_of_week": "*", "day_of_month": "*", "month_of_year": "*"},
+        }
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            created = await client.worker_jobs.create_job(
+                job_input,
+                permissions,
+                MutationPolicy(
+                    destructive=False,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.create-job", target=job_input.name
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            assert created.record is not None
+            created_payload = dict(created.record.payload)
+            job_id = created_payload["id"]
+            assert isinstance(job_id, str)
+            job_ids.append(job_id)
+            raw_created = _direct_request(token, "POST", _JOBS_PATH, body=raw_body)
+            raw_payload = raw_created[1]
+            assert isinstance(raw_payload, Mapping)
+            raw_job_id = raw_payload["id"]
+            assert isinstance(raw_job_id, str)
+            job_ids.append(raw_job_id)
+            _assert_jobs_mutation_matches_raw("udata/api-v1.create-job", created, raw_created)
+
+            updated = await client.worker_jobs.update_job(
+                job_id,
+                JobScheduleInput(name=f"Evidence job {suffix}", task=task_name, crontab=CrontabSchedule(minute="30")),
+                permissions,
+                MutationPolicy(
+                    destructive=False,
+                    confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.update-job", target=job_id),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            raw_updated = _direct_request(
+                token, "PUT", f"{_JOBS_PATH}{raw_job_id}/", body={**raw_body, "crontab": {"minute": "30"}}
+            )
+            _assert_jobs_mutation_matches_raw("udata/api-v1.update-job", updated, raw_updated)
+
+            deleted = await client.worker_jobs.delete_job(
+                job_id,
+                permissions,
+                MutationPolicy(
+                    destructive=True,
+                    confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.delete-job", target=job_id),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+            _assert_jobs_mutation_matches_raw(
+                "udata/api-v1.delete-job", deleted, _direct_request(token, "DELETE", f"{_JOBS_PATH}{raw_job_id}/")
+            )
+            job_ids.clear()
+    finally:
+        _cleanup_controlled_jobs(token, job_ids, sys.exception())
+
+
+def test_controlled_jobs_lifecycle_matches_raw_routes_and_cleans_up() -> None:
+    """Drive every assigned family mutation in both modes, verifying raw status and cleanup."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled family mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    status, payload, _ = _direct_request(token, "GET", f"{_JOBS_PATH}schedulables/", include_body=True)
+    assert status == 200 and isinstance(payload, list) and payload
+    task_name = sorted(str(name) for name in payload)[0]
+    permissions = EffectivePermissions.for_credential(
+        UDataCredential(api_key=token), platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    _exercise_sync_jobs_lifecycle(token, permissions, f"sync-{uuid4().hex[:8]}", task_name)
+    asyncio.run(_exercise_async_jobs_lifecycle(token, permissions, f"async-{uuid4().hex[:8]}", task_name))

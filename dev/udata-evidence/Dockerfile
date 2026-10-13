@@ -39,6 +39,10 @@ RUN printf '%s\n' \
     'FS_URL = "http://127.0.0.1:5640"' \
     > /opt/udata/udata.cfg
 
+ENV GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=safe.directory \
+    GIT_CONFIG_VALUE_0=/opt/udata
+
 USER 10001:10001
 
 EXPOSE 7000
