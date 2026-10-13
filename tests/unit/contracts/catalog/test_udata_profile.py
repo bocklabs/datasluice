@@ -918,3 +918,76 @@ def test_pass() -> None:
     ast.parse(gutted)
     assert "def exercise" not in gutted
     assert "@mark" not in gutted
+
+
+def test_controlled_jobs_evidence_covers_every_route_in_both_modes() -> None:
+    """The jobs evidence names every assigned route, a real test, and the live test digests."""
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_jobs_evidence"]
+    evidence = controlled["route_differential"]
+    reads = set(evidence["read_operations"])
+    mutations = set(evidence["mutation_operations"])
+
+    assert reads | mutations == _JOBS_ROUTE_OPERATION_IDS
+    assert reads.isdisjoint(mutations)
+    assert controlled["sanitized"] is True
+    assert controlled["local_only"] is True
+    assert controlled["stack_version"] == "17.6.0"
+    assert controlled["udata_image_digest"].startswith("sha256:")
+
+    controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+    wheel_source = (_ROOT / "tests/e2e/test_udata_wheel.py").read_text()
+    tracer_source = (_ROOT / "tests/e2e/udata_wheel_tracer.py").read_text()
+    for test_id in controlled["test_ids"]:
+        assert f"def {test_id}(" in controlled_source, test_id
+    assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
+
+    for operation in reads | mutations:
+        method = operation.rsplit(".", 1)[-1].replace("-", "_")
+        token = "list_schedulables" if method == "list_schedulable_jobs" else method
+        assert f'"{token}"' in controlled_source or f"worker_jobs.{token}(" in controlled_source, operation
+
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == ["sync", "async"]
+    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+    assert "worker_jobs" in tracer_source, "the tracer must execute the family from installed content"
+
+    for field, path in (
+        ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),
+        ("wheel_test_sha256", "tests/e2e/test_udata_wheel.py"),
+        ("wheel_tracer_sha256", "tests/e2e/udata_wheel_tracer.py"),
+        ("unit_test_sha256", "tests/unit/connectors/catalog/test_udata_jobs.py"),
+        ("unit_state_test_sha256", "tests/unit/connectors/catalog/test_udata_job_state.py"),
+    ):
+        assert controlled[field] == hashlib.sha256((_ROOT / path).read_bytes()).hexdigest(), field
+    assert (
+        controlled["dockerfile_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/Dockerfile").read_bytes()).hexdigest()
+    )
+
+
+def test_jobs_profile_rows_pin_admin_capability_and_mutations() -> None:
+    """The seven jobs rows stay admin/privileged with verb-faithful mutations.
+
+    The public-origin dispatch refusal derives from these rows, so a drifted
+    mutation cell would silently reclassify an admin mutation as a safe read.
+    """
+    profile = _read_json(_PROFILE_PATH)
+    rows = {operation["id"]: operation for operation in profile["operations"]}
+    expected = {
+        "udata/api-v1.list-jobs": "read",
+        "udata/api-v1.create-job": "create",
+        "udata/api-v1.get-job": "read",
+        "udata/api-v1.update-job": "update",
+        "udata/api-v1.delete-job": "delete",
+        "udata/api-v1.get-task": "read",
+        "udata/api-v1.list-schedulable-jobs": "read",
+    }
+    assert set(expected) <= set(rows)
+    for operation_id, mutation in expected.items():
+        assert rows[operation_id] == {
+            "id": operation_id,
+            "capability": "admin",
+            "authentication": "privileged",
+            "mutation": mutation,
+            "evidence_requirement": "controlled-environment-only",
+        }, operation_id

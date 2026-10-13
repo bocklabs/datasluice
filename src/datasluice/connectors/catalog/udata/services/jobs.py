@@ -116,11 +116,13 @@ def _wait_for_task(
             try:
                 current, record = future.result(timeout=max(0.0, monitor.remaining()))
             except FutureTimeoutError:
-                if future.done() and isinstance(future.exception(), TimeoutError):
+                if future.done():
                     raise
                 return WorkerTaskWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        executor.shutdown(
+            wait=False, cancel_futures=True
+        )  # shortcut: an in-flight observation is not cancelled; one worker thread lingers until its transport timeout
 
 
 async def _wait_for_task_async(

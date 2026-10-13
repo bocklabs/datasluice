@@ -99,7 +99,9 @@ class JobScheduleInput:
 
     The pinned ``JobsAPI`` refuses a body carrying both schedule forms with a
     400 and picks the form from whichever key the body carries, so the typed
-    input enforces exactly one schedule before any dispatch.
+    input enforces exactly one schedule before any dispatch. The stock PUT
+    treats an omitted ``enabled`` key as false, so updating a schedule without
+    ``enabled=True`` disables the job; the typed input mirrors that wire rule.
     """
 
     name: str
@@ -209,7 +211,8 @@ class UDataJobHandle:
 
         A caller lease is finite by construction, so releasing it mid-run is a
         normal outcome rather than a failure. Recording it keeps the outstanding
-        remote work detectable and lets the same handle be resumed later.
+        remote work detectable; the abandoned handle never polls again, and
+        watching the same task requires a fresh handle for its task id.
 
         Args:
             exhausted: Whether the lease ended because its time budget ran out.

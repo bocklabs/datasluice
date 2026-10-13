@@ -6751,6 +6751,8 @@ async def _exercise_async_jobs_lifecycle(
             _assert_jobs_mutation_matches_raw(
                 "udata/api-v1.delete-job", deleted, _direct_request(token, "DELETE", f"{_JOBS_PATH}{raw_job_id}/")
             )
+            assert _direct_request(token, "GET", f"{_JOBS_PATH}{job_id}/")[0] == 404
+            assert _direct_request(token, "GET", f"{_JOBS_PATH}{raw_job_id}/")[0] == 404
             job_ids.clear()
     finally:
         _cleanup_controlled_jobs(token, job_ids, sys.exception())

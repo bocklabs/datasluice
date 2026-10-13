@@ -22,6 +22,7 @@ from datasluice.connectors.catalog.udata.models.contact_visualization import (
     VisualizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
+from datasluice.connectors.catalog.udata.models.jobs import CrontabSchedule, JobScheduleInput
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthClientRequest,
     OAuthRevokeRequest,
@@ -373,6 +374,75 @@ def _content_response(url, method):
     return _reuse_response(url, method)
 
 
+def _jobs_response(url, method):
+    if url.endswith("/api/1/workers/jobs/schedulables/"):
+        return _json(["wheel-task"])
+    if url.endswith("/api/1/workers/tasks/wheel-task-run/"):
+        return _json({"id": "wheel-task-run", "status": "SUCCESS", "result": None, "exc": None, "traceback": None})
+    if url.endswith("/api/1/workers/jobs/wheel-job/"):
+        if method == "DELETE":
+            return _empty()
+        return _json(
+            {
+                "id": "wheel-job",
+                "name": "wheel-job",
+                "description": None,
+                "task": "wheel-task",
+                "crontab": {"minute": "0", "hour": "*", "day_of_week": "*", "day_of_month": "*", "month_of_year": "*"},
+                "interval": None,
+                "args": [],
+                "kwargs": {},
+                "schedule": "0 * * * *",
+                "last_run_at": None,
+                "last_run_id": None,
+                "enabled": False,
+            }
+        )
+    if url.endswith("/api/1/workers/jobs/"):
+        if method == "GET":
+            return _json(
+                [
+                    {
+                        "id": "wheel-job",
+                        "name": "wheel-job",
+                        "description": None,
+                        "task": "wheel-task",
+                        "crontab": {
+                            "minute": "0",
+                            "hour": "*",
+                            "day_of_week": "*",
+                            "day_of_month": "*",
+                            "month_of_year": "*",
+                        },
+                        "interval": None,
+                        "args": [],
+                        "kwargs": {},
+                        "schedule": "0 * * * *",
+                        "last_run_at": None,
+                        "last_run_id": None,
+                        "enabled": False,
+                    }
+                ]
+            )
+        return _json(
+            {
+                "id": "wheel-job",
+                "name": "wheel-job",
+                "description": None,
+                "task": "wheel-task",
+                "crontab": {"minute": "0", "hour": "*", "day_of_week": "*", "day_of_month": "*", "month_of_year": "*"},
+                "interval": None,
+                "args": [],
+                "kwargs": {},
+                "schedule": "0 * * * *",
+                "last_run_at": None,
+                "last_run_id": None,
+                "enabled": False,
+            }
+        )
+    return None
+
+
 class Transport:
     def __init__(self, version="17.6.0"):
         self.requests = []
@@ -410,6 +480,9 @@ class Transport:
         if response is not None:
             return response
         response = _cv_response(url, method)
+        if response is not None:
+            return response
+        response = _jobs_response(url, method)
         if response is not None:
             return response
         response = _content_response(url, method)
@@ -777,6 +850,21 @@ assert (
     ).receipt.audit_metadata["status_code"]
     == 204
 )
+assert client.worker_jobs.list_schedulables(sync_admin_permissions) == ("wheel-task",)
+assert dict(client.worker_jobs.get_task("wheel-task-run", sync_admin_permissions).payload)["status"] == "SUCCESS"
+assert [dict(r.payload)["id"] for r in client.worker_jobs.list_jobs(sync_admin_permissions)] == ["wheel-job"]
+assert dict(client.worker_jobs.get_job("wheel-job", sync_admin_permissions).payload)["name"] == "wheel-job"
+wheel_job_created = client.worker_jobs.create_job(
+    JobScheduleInput(name="wheel-job", task="wheel-task", crontab=CrontabSchedule(minute="0")),
+    sync_admin_permissions,
+    MutationPolicy(
+        destructive=False,
+        confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.create-job", target="wheel-job"),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert wheel_job_created.record is not None
+assert dict(wheel_job_created.record.payload)["id"] == "wheel-job"
 assert client.taxonomies.available_badges().payload["pivotal-data"] == "Pivotal data"
 assert client.taxonomies.extensions() == ("csv",)
 assert client.taxonomies.licenses()[0].payload["id"] == "lov2"
@@ -1200,6 +1288,27 @@ async def run_async():
                 ),
             )
         ).record is None
+        async_permissions = EffectivePermissions.for_credential(
+            async_credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+        )
+        assert await active.worker_jobs.list_schedulables(async_permissions) == ("wheel-task",)
+        assert (
+            dict((await active.worker_jobs.get_task("wheel-task-run", async_permissions)).payload)["status"]
+            == "SUCCESS"
+        )
+        assert (
+            await active.worker_jobs.create_job(
+                JobScheduleInput(name="wheel-job", task="wheel-task", crontab=CrontabSchedule(minute="0")),
+                async_permissions,
+                MutationPolicy(
+                    destructive=False,
+                    confirmation=ConfirmationPolicy(
+                        confirmed=True, operation="udata/api-v1.create-job", target="wheel-job"
+                    ),
+                    concurrency=ConcurrencyPolicy(overwrite=True),
+                ),
+            )
+        ).receipt.audit_metadata["status_code"] == 201
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
         assert (await active.taxonomies.suggest_mime(SuggestQuery("js")))[0].payload["text"] == "csv"
@@ -1405,6 +1514,11 @@ expected = [
     "http://127.0.0.1:5640/api/1/contacts/",
     "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
     "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
+    "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/wheel-job/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
     "http://127.0.0.1:5640/api/1/datasets/licenses/",
@@ -1494,6 +1608,9 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/visualizations/wheel-viz/image/",
     "http://127.0.0.1:5640/api/1/contacts/",
     "http://127.0.0.1:5640/api/1/contacts/wheel-contact/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
+    "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
+    "http://127.0.0.1:5640/api/1/workers/jobs/",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
