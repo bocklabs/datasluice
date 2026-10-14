@@ -175,9 +175,11 @@ def _string_tuple(value: object, field_name: str) -> None:
 class DiscussionSearchQuery:
     """Stock `DiscussionSearch` request-parser arguments.
 
-    `q` and the documented filters are omitted unless supplied, mirroring
-    `DiscussionSearch.as_request_parser(store_missing=False)`. Paging keeps the
-    stock `page`/`page_size` names and their documented defaults.
+    The pinned v2 search parser registers exactly `q`, `closed`,
+    `last_update_range`, `sort`, `page`, and `page_size`; flask-restx parses
+    with `strict=False`, so any other parameter would be silently dropped and
+    an "filtered" search would answer an unfiltered page. The typed query
+    therefore omits the unregistered subject/organization/user filters.
     """
 
     q: str | None = None
@@ -185,9 +187,6 @@ class DiscussionSearchQuery:
     page_size: int = 20
     sort: str | None = None
     closed: bool | None = None
-    subject_ids: tuple[str, ...] = ()
-    org: str | None = None
-    user: str | None = None
     last_update_range: str | None = None
 
     def __post_init__(self) -> None:
@@ -198,9 +197,6 @@ class DiscussionSearchQuery:
             raise ValueError("uData discussion search last_update_range is not a documented choice.")
         _optional_text(self.q, "q")
         _optional_bool(self.closed, "closed")
-        _string_tuple(self.subject_ids, "subject_ids")
-        _optional_non_empty_text(self.org, "org")
-        _optional_non_empty_text(self.user, "user")
 
     def query(self) -> str:
         from urllib.parse import urlencode
@@ -210,12 +206,6 @@ class DiscussionSearchQuery:
             pairs.append(("q", self.q))
         if self.closed is not None:
             pairs.append(("closed", "true" if self.closed else "false"))
-        for subject_id in self.subject_ids:
-            pairs.append(("for", subject_id))
-        if self.org is not None:
-            pairs.append(("org", self.org))
-        if self.user is not None:
-            pairs.append(("user", self.user))
         if self.last_update_range is not None:
             pairs.append(("last_update_range", self.last_update_range))
         if self.sort is not None:

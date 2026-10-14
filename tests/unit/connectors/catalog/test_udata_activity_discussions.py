@@ -273,10 +273,8 @@ def test_search_query_encodes_only_supplied_filters_plus_stock_paging() -> None:
         == "/api/2/discussions/search/?q=dataset&closed=true&page=1&page_size=5"
     )
     assert (
-        wire.search_discussions_request(
-            DiscussionSearchQuery(sort="-created", subject_ids=("d1", "d2"), last_update_range="last_30_days")
-        )[1]
-        == "/api/2/discussions/search/?for=d1&for=d2&last_update_range=last_30_days&sort=-created&page=1&page_size=20"
+        wire.search_discussions_request(DiscussionSearchQuery(sort="-created", last_update_range="last_30_days"))[1]
+        == "/api/2/discussions/search/?last_update_range=last_30_days&sort=-created&page=1&page_size=20"
     )
     with pytest.raises(ValueError, match="sort"):
         DiscussionSearchQuery(sort="nope")
