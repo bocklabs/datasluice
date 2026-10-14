@@ -1082,3 +1082,50 @@ def test_controlled_transfers_evidence_covers_the_state_machine_in_both_modes() 
         controlled["compose_sha256"]
         == hashlib.sha256((_ROOT / "dev/udata-evidence/compose.yaml").read_bytes()).hexdigest()
     )
+
+
+def test_controlled_extensions_evidence_covers_the_stock_rows_in_both_modes() -> None:
+    """The extensions evidence binds the five stock rows, the refusal cells, and live digests."""
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_extensions_evidence"]
+    evidence = controlled["route_differential"]
+
+    assert set(evidence["read_operations"]) == {
+        "udata/api-v1.allowed-extensions",
+        "udata/api-v1.access-type-reason-categories",
+        "udata/api-v1.suggest-tags",
+        "udata/api-v1.avatar",
+        "udata/api-v2.captchetat",
+    }
+    assert evidence["mutation_operations"] == []
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == []
+    assert controlled["sanitized"] is True
+    assert controlled["local_only"] is True
+    assert controlled["stack_version"] == "17.6.0"
+    assert controlled["udata_image_digest"].startswith("sha256:")
+
+    controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+    tracer_source = (_ROOT / "tests/e2e/udata_wheel_tracer.py").read_text()
+    wheel_source = (_ROOT / "tests/e2e/test_udata_wheel.py").read_text()
+    for test_id in controlled["test_ids"]:
+        assert f"def {test_id}(" in controlled_source, test_id
+    assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
+    assert "SyncExtensionsService" in controlled_source
+    assert "extensions" in tracer_source, "the tracer must execute the family from installed content"
+
+    for field, path in (
+        ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),
+        ("wheel_test_sha256", "tests/e2e/test_udata_wheel.py"),
+        ("wheel_tracer_sha256", "tests/e2e/udata_wheel_tracer.py"),
+        ("unit_test_sha256", "tests/unit/connectors/catalog/test_udata_extensions.py"),
+        ("unit_probe_test_sha256", "tests/unit/connectors/catalog/test_udata_probes.py"),
+    ):
+        assert controlled[field] == hashlib.sha256((_ROOT / path).read_bytes()).hexdigest(), field
+    assert (
+        controlled["dockerfile_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/Dockerfile").read_bytes()).hexdigest()
+    )
+    assert (
+        controlled["compose_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/compose.yaml").read_bytes()).hexdigest()
+    )

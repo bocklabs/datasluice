@@ -7150,3 +7150,87 @@ def test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up() -
             except (AssertionError, OSError, ValueError) as error:
                 errors.append(error)
         assert not errors, f"cleanup failures: {errors!r}; original: {primary!r}"
+
+
+def test_controlled_extensions_and_probes_match_raw_routes_in_both_modes() -> None:
+    """The stock extension rows and the deployment-dependent refusals agree with raw routes."""
+    from datasluice.connectors.catalog.udata.models.extensions import AvatarRequest, TagSuggestQuery
+    from datasluice.connectors.catalog.udata.services.extensions import (
+        AsyncExtensionsService,
+        SyncExtensionsService,
+    )
+
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    if not token:
+        pytest.skip("controlled extension reads require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
+    credential = UDataCredential(api_key=token)
+    status, me, _ = _direct_request(token, "GET", "/api/1/me/", include_body=True)
+    assert status == 200 and isinstance(me, Mapping)
+    avatar_identifier = me["id"]
+    assert isinstance(avatar_identifier, str)
+
+    def assert_outcome(name: str, raw: tuple[int, object, dict[str, str]], typed: object) -> None:
+        status, payload, _ = raw
+        if status != 200:
+            assert isinstance(typed, CatalogError), name
+            assert typed.metadata.get("status_code") == status, name
+            return
+        if name == "avatar":
+            assert isinstance(typed, MappingRecord), name
+            return
+        if name == "suggest_tags":
+            assert isinstance(payload, list), name
+            assert isinstance(typed, tuple), name
+            assert len(typed) == len(payload), name
+            return
+        assert isinstance(payload, list), name
+        assert isinstance(typed, tuple), name
+        assert len(typed) == len(payload), name
+
+    cases = (
+        ("allowed_extensions", "/api/1/datasets/extensions/", "extensions"),
+        ("reason_categories", "/api/1/access_type/reason_categories/", "reason_categories"),
+        ("suggest_tags", "/api/1/tags/suggest/?q=ta&size=10", "suggest_tags"),
+        ("avatar", f"/api/1/avatars/{avatar_identifier}/64/", "avatar"),
+        ("captchetat", "/api/2/captchetat/", "captchetat"),
+    )
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+        extensions = SyncExtensionsService(client)
+        operations = {
+            "allowed_extensions": lambda: client.taxonomies.extensions(),
+            "reason_categories": lambda: extensions.reason_categories(),
+            "suggest_tags": lambda: extensions.suggest_tags(TagSuggestQuery("ta")),
+            "avatar": lambda: extensions.avatar(AvatarRequest(identifier=avatar_identifier, size=64)),
+            "captchetat": lambda: extensions.captchetat(),
+        }
+        for name, path, _ in cases:
+            raw = _direct_request(token, "GET", path, include_body=True)
+            try:
+                typed = operations[name]()
+            except CatalogError as error:
+                typed = error
+            assert_outcome(name, raw, typed)
+
+    async def run_async() -> None:
+        async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
+            extensions = AsyncExtensionsService(client)
+            operations = {
+                "allowed_extensions": lambda: client.taxonomies.extensions(),
+                "reason_categories": lambda: extensions.reason_categories(),
+                "suggest_tags": lambda: extensions.suggest_tags(TagSuggestQuery("ta")),
+                "avatar": lambda: extensions.avatar(AvatarRequest(identifier=avatar_identifier, size=64)),
+                "captchetat": lambda: extensions.captchetat(),
+            }
+            for name, path, _ in cases:
+                raw = _direct_request(token, "GET", path, include_body=True)
+
+                async def invoke(op):
+                    try:
+                        return await op()
+                    except CatalogError as error:
+                        return error
+
+                assert_outcome(name, raw, await invoke(operations[name]))
+
+    asyncio.run(run_async())
