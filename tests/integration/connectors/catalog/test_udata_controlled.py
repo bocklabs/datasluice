@@ -6936,6 +6936,20 @@ def _transfer_policy(operation: str, target: str, *, destructive: bool = False) 
     )
 
 
+def _assert_absent_transfer_read(token: str, admin_permissions: EffectivePermissions) -> None:
+    """An absent transfer identifier answers 404 and maps to the typed error."""
+    absent = "000000000000000000000001"
+    raw = _direct_request(token, "GET", f"{_TRANSFERS_PATH}{absent}/", include_body=True)
+    assert raw[0] == 404
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))) as client:
+        try:
+            client.transfers.get_transfer(absent, admin_permissions)
+        except CatalogError as error:
+            assert error.metadata.get("status_code") == 404
+        else:
+            raise AssertionError("an absent transfer read did not fail typed")
+
+
 def _seed_transfer_dataset(token: str, suffix: str, dataset_ids: list[str]) -> str:
     """Create one raw dataset for the transfer subject and register it for cleanup."""
     status, payload, _ = _direct_request(
@@ -7117,6 +7131,7 @@ def test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up() -
         suffix = uuid4().hex[:8]
         dataset_id = _seed_transfer_dataset(token, suffix, dataset_ids)
         member_id = _seed_member_id(token)
+        _assert_absent_transfer_read(token, admin_permissions)
         _exercise_sync_transfer_lifecycle(
             token, admin_permissions, member_permissions, member_credential, dataset_id, member_id, suffix
         )
@@ -7127,10 +7142,11 @@ def test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up() -
         )
         dataset_ids.clear()
     finally:
+        primary = sys.exception()
         errors: list[Exception] = []
         for dataset_id in dataset_ids:
             try:
                 assert _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/")[0] in {204, 404}
             except (AssertionError, OSError, ValueError) as error:
                 errors.append(error)
-        assert not errors, f"cleanup failures: {errors!r}"
+        assert not errors, f"cleanup failures: {errors!r}; original: {primary!r}"

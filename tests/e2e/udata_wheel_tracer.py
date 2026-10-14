@@ -538,7 +538,6 @@ class Transport:
         if response is not None:
             return response
         response = _content_response(url, method)
-        response = _content_response(url, method)
         if response is not None:
             return response
         if url.endswith("/api/1/dataservices/wheel-dataservice/"):

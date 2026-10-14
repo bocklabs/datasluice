@@ -1055,8 +1055,10 @@ def test_controlled_transfers_evidence_covers_the_state_machine_in_both_modes() 
 
     controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
     tracer_source = (_ROOT / "tests/e2e/udata_wheel_tracer.py").read_text()
+    wheel_source = (_ROOT / "tests/e2e/test_udata_wheel.py").read_text()
     for test_id in controlled["test_ids"]:
         assert f"def {test_id}(" in controlled_source, test_id
+    assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
     assert "transfers.request_transfer(" in controlled_source
     assert "transfers.respond_to_transfer(" in controlled_source
     assert "transfers" in tracer_source, "the tracer must execute the family from installed content"
