@@ -38,11 +38,11 @@ def test_coverage_inventory_is_the_locked_denominator() -> None:
 def test_validation_authority_fails_on_pending_or_draft(tmp_path: Path) -> None:
     pending = tmp_path / "validation-pending.md"
     pending.write_text("status: pending", encoding="utf-8")
-    with pytest.raises(SystemExit, match="pending or draft"):
+    with pytest.raises(gate.GateError, match="pending or draft"):
         gate.require_validation_authoritative(pending)
     draft = tmp_path / "validation-draft.md"
     draft.write_text("Status: draft", encoding="utf-8")
-    with pytest.raises(SystemExit, match="pending or draft"):
+    with pytest.raises(gate.GateError, match="pending or draft"):
         gate.require_validation_authoritative(draft)
     clean = tmp_path / "validation-clean.md"
     clean.write_text("status: compliant; every row green", encoding="utf-8")
@@ -67,9 +67,9 @@ def test_semantic_conformance_reports_the_true_family_state() -> None:
     assert covered == total - len(KNOWN_HISTORICAL_GAPS)
 
 
-def test_every_current_era_receipt_verifies_at_its_own_sha() -> None:
+def test_every_current_era_receipt_verifies_at_its_own_sha(monkeypatch: pytest.MonkeyPatch) -> None:
     """Known-good: every receipt of the reviewed families is valid at its recorded sha."""
-    sys.path.insert(0, str(ROOT / "scripts"))
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
     import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
 
     reviewed_families = gate.FAMILIES

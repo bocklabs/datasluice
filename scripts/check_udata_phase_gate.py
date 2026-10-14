@@ -58,6 +58,10 @@ REVIEWS_DIR_NAMES = {
 }
 
 
+class GateError(Exception):
+    """One gate check's fail-closed refusal to pass the phase."""
+
+
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -116,19 +120,16 @@ def surface_completeness() -> tuple[int, int]:
 _RECORDLESS_FAMILIES = frozenset({"tracer", "datasets", "root_profile"})
 
 
-def _family_semantic_gaps(family: str, evidence: dict[str, object]) -> list[str]:
-    """Return the reasons one family lacks semantic coverage."""
-    record = evidence.get(f"controlled_{family}_evidence")
-    if record is None and family not in _RECORDLESS_FAMILIES:
-        return ["no controlled evidence record"]
-    reviews_dir = REVIEWS_ROOT / REVIEWS_DIR_NAMES.get(family, family)
-    receipts = sorted(reviews_dir.glob("*/review-receipt.json")) if reviews_dir.exists() else []
-    if not receipts:
-        return ["no captured review receipt"]
-    sys.path.insert(0, str(ROOT / "scripts"))
+def _first_verifying_receipt(family: str) -> tuple[str | None, list[str]]:
+    """Return the first review-receipt sha that verifies and every receipt error."""
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
     import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
 
-    verified_sha = None
+    dir_name = REVIEWS_DIR_NAMES.get(family, family)
+    receipts = sorted((REVIEWS_ROOT / dir_name).glob("*/review-receipt.json"))
+    verified_sha: str | None = None
     errors: list[str] = []
     for receipt_path in receipts:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -136,12 +137,23 @@ def _family_semantic_gaps(family: str, evidence: dict[str, object]) -> list[str]
         if not isinstance(reviewed_sha, str) or len(reviewed_sha) != 40:
             continue
         try:
-            review_gate.verify_review(REVIEWS_ROOT, REVIEWS_DIR_NAMES.get(family, family), reviewed_sha)
+            review_gate.verify_review(REVIEWS_ROOT, dir_name, reviewed_sha)
         except review_gate.ReviewGateError as err:
             errors.append(f"{reviewed_sha[:10]}: {err}")
             continue
         verified_sha = reviewed_sha
         break
+    return verified_sha, errors
+
+
+def _family_semantic_gaps(family: str, evidence: dict[str, object]) -> list[str]:
+    """Return the reasons one family lacks semantic coverage."""
+    record = evidence.get(f"controlled_{family}_evidence")
+    if record is None and family not in _RECORDLESS_FAMILIES:
+        return ["no controlled evidence record"]
+    verified_sha, errors = _first_verifying_receipt(family)
+    if verified_sha is None and not errors:
+        return ["no captured review receipt"]
     if verified_sha is None:
         return [f"receipt does not verify — {reason}" for reason in errors]
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -178,9 +190,9 @@ def semantic_conformance() -> tuple[int, int]:
 def require_validation_authoritative(path: Path = VALIDATION_PATH) -> None:
     text = path.read_text(encoding="utf-8")
     if re.search(r"status:\s*(pending|draft)", text, re.IGNORECASE):
-        raise SystemExit("GATE FAIL: 04-VALIDATION.md still contains pending or draft status rows")
+        raise GateError("GATE FAIL: 04-VALIDATION.md still contains pending or draft status rows")
     if "⬜" in text:
-        raise SystemExit("GATE FAIL: 04-VALIDATION.md still contains unchecked validation cells")
+        raise GateError("GATE FAIL: 04-VALIDATION.md still contains unchecked validation cells")
 
 
 def require_review_current() -> None:
@@ -190,34 +202,12 @@ def require_review_current() -> None:
     shas. Currency at one single merge head is printed as informational
     notes, never as a failure.
     """
-    evidence = json.loads(
-        (ROOT / "src/datasluice/contracts/catalog/fixtures/udata/evidence.json").read_text(encoding="utf-8")
-    )
-    sys.path.insert(0, str(ROOT / "scripts"))
-    import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
-
     for family in FAMILIES:
-        reviews_dir = REVIEWS_ROOT / REVIEWS_DIR_NAMES.get(family, family)
-        receipts = sorted(reviews_dir.glob("*/review-receipt.json")) if reviews_dir.exists() else []
-        if not receipts:
-            raise SystemExit(f"GATE FAIL: {family} has no captured review receipt")
-        verified = False
-        errors: list[str] = []
-        for receipt_path in receipts:
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-            reviewed_sha = receipt.get("reviewed_sha")
-            if not isinstance(reviewed_sha, str) or len(reviewed_sha) != 40:
-                continue
-            try:
-                review_gate.verify_review(REVIEWS_ROOT, REVIEWS_DIR_NAMES.get(family, family), reviewed_sha)
-            except review_gate.ReviewGateError as err:
-                errors.append(f"{reviewed_sha[:10]}: {err}")
-                continue
-            verified = True
-            break
-        if not verified:
-            raise SystemExit(f"GATE FAIL: {family} receipts do not verify — {'; '.join(errors)}")
-        _ = evidence
+        verified_sha, errors = _first_verifying_receipt(family)
+        if verified_sha is None and not errors:
+            raise GateError(f"GATE FAIL: {family} has no captured review receipt")
+        if verified_sha is None:
+            raise GateError(f"GATE FAIL: {family} receipts do not verify — {'; '.join(errors)}")
 
 
 def require_cleanup() -> None:
@@ -225,15 +215,15 @@ def require_cleanup() -> None:
         str(path) for path in PHASE_DIR.glob(".review-recovery*")
     ]
     if markers:
-        raise SystemExit(f"GATE FAIL: review recovery markers remain: {markers}")
-    code, output = _run(["git", "worktree", "list", "--porcelain"])
+        raise GateError(f"GATE FAIL: review recovery markers remain: {markers}")
+    _, output = _run(["git", "worktree", "list", "--porcelain"])
     entries = [block for block in output.split("\n\n") if block.strip()]
     worktrees = [block for block in entries if "detached" not in block]
     if len(worktrees) > 1:
-        raise SystemExit(f"GATE FAIL: extra git worktrees remain:\n{output}")
-    code, output = _run(["git", "status", "--porcelain"])
+        raise GateError(f"GATE FAIL: extra git worktrees remain:\n{output}")
+    _, output = _run(["git", "status", "--porcelain"])
     if output.strip():
-        raise SystemExit(f"GATE FAIL: the working tree is not clean:\n{output}")
+        raise GateError(f"GATE FAIL: the working tree is not clean:\n{output}")
 
 
 def require_prohibitions_resolved() -> None:
@@ -252,7 +242,7 @@ def require_prohibitions_resolved() -> None:
     )
     if code != 0:
         print(output[-3000:])
-        raise SystemExit("GATE FAIL: the retired-surface prohibition checks do not pass")
+        raise GateError("GATE FAIL: the retired-surface prohibition checks do not pass")
 
 
 def require_concurrency_resolved() -> None:
@@ -267,7 +257,7 @@ def require_concurrency_resolved() -> None:
     )
     missing = [cell for cell in required if cell not in text]
     if missing:
-        raise SystemExit(f"GATE FAIL: the concurrency edge lacks final dispositions for: {missing}")
+        raise GateError(f"GATE FAIL: the concurrency edge lacks final dispositions for: {missing}")
 
 
 def main() -> int:
@@ -299,7 +289,7 @@ def main() -> int:
         try:
             check()
             print(f"{name}: OK")
-        except SystemExit as error:
+        except GateError as error:
             failures.append(f"{name}: {error}")
 
     if surface_covered != surface_total or semantic_covered != semantic_total:
