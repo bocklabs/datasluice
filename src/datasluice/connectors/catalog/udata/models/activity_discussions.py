@@ -173,14 +173,7 @@ def _string_tuple(value: object, field_name: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class DiscussionSearchQuery:
-    """Stock `DiscussionSearch` request-parser arguments.
-
-    The pinned v2 search parser registers exactly `q`, `closed`,
-    `last_update_range`, `sort`, `page`, and `page_size`; flask-restx parses
-    with `strict=False`, so any other parameter would be silently dropped and
-    an "filtered" search would answer an unfiltered page. The typed query
-    therefore omits the unregistered subject/organization/user filters.
-    """
+    """Stock v2 discussion search query; every optional key is omitted unless supplied."""
 
     q: str | None = None
     page: int = 1
