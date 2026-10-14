@@ -562,7 +562,8 @@ def test_dataservice_create_update_and_delete_match_exact_wire_and_receipts() ->
     assert writes[2].url == f"{ORIGIN}{DATASERVICES}/ds-1/"
 
 
-def test_rows93_94_feature_transitions_use_exact_methods_and_require_admin() -> None:
+@pytest.mark.parametrize("method_name", ("feature_dataservice", "unfeature_dataservice"))
+def test_rows93_94_feature_transitions_use_exact_methods_and_require_admin(method_name: str) -> None:
     router = atom_sync_route_table(
         with_site_route(
             {
@@ -571,18 +572,19 @@ def test_rows93_94_feature_transitions_use_exact_methods_and_require_admin() -> 
             }
         )
     )
+    operation = (
+        wire.FEATURE_DATASERVICE_OPERATION
+        if method_name == "feature_dataservice"
+        else wire.UNFEATURE_DATASERVICE_OPERATION
+    )
     with sync_client(router, UDATA_CREDENTIAL) as client:
-        client.dataservices.feature_dataservice(
-            "ds-1", ADMIN_PERMISSIONS, _policy(wire.FEATURE_DATASERVICE_OPERATION, "ds-1")
-        )
-        client.dataservices.unfeature_dataservice(
-            "ds-1", ADMIN_PERMISSIONS, _policy(wire.UNFEATURE_DATASERVICE_OPERATION, "ds-1")
-        )
+        getattr(client.dataservices, method_name)("ds-1", ADMIN_PERMISSIONS, _policy(operation, "ds-1"))
+        with pytest.raises(ForbiddenError):
+            getattr(client.dataservices, method_name)("ds-1", EDIT_ONLY_PERMISSIONS, _policy(operation, "ds-1"))
     writes = [r for r in router.requests if "/featured/" in r.url]
-    assert [(r.method, r.url) for r in writes] == [
-        ("POST", f"{ORIGIN}{DATASERVICES}/ds-1/featured/"),
-        ("DELETE", f"{ORIGIN}{DATASERVICES}/ds-1/featured/"),
-    ]
+    assert len(writes) == 1, "the admin tier dispatches once; the non-admin tier dispatches nothing"
+    expected_method = "POST" if method_name == "feature_dataservice" else "DELETE"
+    assert (writes[0].method, writes[0].url) == (expected_method, f"{ORIGIN}{DATASERVICES}/ds-1/featured/")
 
 
 def test_rows95_96_dataset_relationship_mutations_match_exact_wire() -> None:

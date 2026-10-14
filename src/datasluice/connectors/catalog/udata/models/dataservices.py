@@ -20,18 +20,14 @@ _LIST_FILTERS = (
     "topic",
     "organization",
     "organization_badge",
-    "archived",
-    "featured",
     "access_type",
-    "producer_type",
-    "last_update_range",
-    "is_restricted",
+    "owner",
     "dataset",
     "contact_point",
     "reuse",
 )
-_LIST_BOOLEAN_FILTERS = ("archived", "featured", "is_restricted")
-_LIST_SORTS = ("created", "created_at", "last_modified", "title", "followers", "views")
+_LIST_BOOLEAN_FILTERS = ("featured",)
+_LIST_SORTS = ("title", "created", "last_modified", "followers", "views", "base_api_url")
 _LIST_SORT_CHOICES = frozenset(_LIST_SORTS) | frozenset(f"-{name}" for name in _LIST_SORTS)
 _SEARCH_FILTERS = (
     "tag",

@@ -28,7 +28,10 @@ from .taxonomies import (
     AsyncCatalogService,
     Permissions,
     Policy,
+    Request,
+    Response,
     SyncCatalogService,
+    _dataset_mutate,
     _run_mutation,
     _run_mutation_async,
 )
@@ -59,6 +62,9 @@ def _dataset_target(dataservice_id: str, dataset_id: str) -> str:
     return f"{dataservice_id}:{dataset_id}"
 
 
+_ADMIN = frozenset({wire.FEATURE_DATASERVICE_OPERATION, wire.UNFEATURE_DATASERVICE_OPERATION})
+
+
 class SyncDataservicesService(SyncCatalogService):
     """Typed synchronous dataservice and dataservice-follower operations."""
 
@@ -68,6 +74,23 @@ class SyncDataservicesService(SyncCatalogService):
     @property
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
+
+    def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
+        """Run one guarded mutation, requiring the admin role for the featured routes.
+
+        The pinned ``DataserviceFeaturedAPI`` guards both transitions with
+        ``@apiv1.secure(admin_permission)``, so that role is part of the
+        pre-dispatch evidence rather than something the deployment decides later.
+        """
+        return _dataset_mutate(
+            self._client._dataset_call,
+            self._client._resolved_credential(),
+            permissions,
+            policy,
+            operation,
+            request,
+            admin=operation in _ADMIN,
+        )
 
     def list_dataservices(self, query: DataserviceListQuery | None = None) -> MappingRecord:
         return self._read(
@@ -293,6 +316,18 @@ class AsyncDataservicesService(AsyncCatalogService):
 
     def __init__(self, client: AsyncUDataClient) -> None:
         self._client = client
+
+    async def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
+        """Run one guarded mutation, requiring the admin role for the featured routes."""
+        return await _dataset_mutate(
+            self._client._dataset_call_async,
+            await self._client._resolved_credential_async(),
+            permissions,
+            policy,
+            operation,
+            request,
+            admin=operation in _ADMIN,
+        )
 
     @property
     def error_type(self) -> type[NativeCatalogError]:

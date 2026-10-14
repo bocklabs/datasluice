@@ -443,8 +443,8 @@
     },
     {
       "id": "udata/api-v1.feature-dataservice",
-      "capability": "authenticated",
-      "authentication": "authenticated",
+      "capability": "admin",
+      "authentication": "privileged",
       "mutation": "update",
       "evidence_requirement": "controlled-environment-only"
     },
@@ -1122,8 +1122,8 @@
     },
     {
       "id": "udata/api-v1.unfeature-dataservice",
-      "capability": "authenticated",
-      "authentication": "authenticated",
+      "capability": "admin",
+      "authentication": "privileged",
       "mutation": "update",
       "evidence_requirement": "controlled-environment-only"
     },
