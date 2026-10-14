@@ -160,6 +160,14 @@ def test_row87_list_dataservices_matches_exact_path_and_query() -> None:
         {},
         None,
     )
+    assert wire.list_dataservices_request(
+        DataserviceListQuery(sort="base_api_url", filters={"featured": True, "owner": "o1"})
+    ) == (
+        "GET",
+        f"{DATASERVICES}/?page=1&page_size=20&sort=base_api_url&featured=true&owner=o1",
+        {},
+        None,
+    )
 
 
 def test_row89_recent_atom_feed_matches_exact_path() -> None:
@@ -357,6 +365,12 @@ def test_dataservice_queries_reject_invalid_input_before_dispatch() -> None:
         DataserviceListQuery(filters={"not-a-filter": "x"})
     with pytest.raises(ValueError):
         DataserviceListQuery(filters={"featured": "yes"})
+    with pytest.raises(ValueError):
+        DataserviceListQuery(sort="created_at")
+    with pytest.raises(ValueError):
+        DataserviceListQuery(filters={"archived": True})
+    with pytest.raises(ValueError):
+        DataserviceListQuery(filters={"is_restricted": True})
     with pytest.raises(ValueError):
         DataserviceSearchQuery(page=0)
     with pytest.raises(ValueError):

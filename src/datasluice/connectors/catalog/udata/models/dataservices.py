@@ -21,6 +21,7 @@ _LIST_FILTERS = (
     "organization",
     "organization_badge",
     "access_type",
+    "featured",
     "owner",
     "dataset",
     "contact_point",
