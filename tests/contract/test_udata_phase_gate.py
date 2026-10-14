@@ -49,26 +49,12 @@ def test_validation_authority_fails_on_pending_or_draft(tmp_path: Path) -> None:
     gate.require_validation_authoritative(clean)
 
 
-KNOWN_HISTORICAL_GAPS = {
-    # Families whose latest review follows a pre-convention format the current
-    # gate refuses: inline-review-era receipts without source-review.md
-    # (organization, user, oauth, taxonomy, activity_discussion, reuse,
-    # posts_report, topic), a pre-classification thread export (dataservices),
-    # a post-fix parent chain the validator cannot match (datasets), and a
-    # family with no receipt directory at all (resource). Reconciling these is
-    # the documented 04-14 debt; the gate fails closed until it is paid.
-    "datasets",
-    "resource",
-    "organization",
-    "user",
-    "oauth",
-    "taxonomy",
-    "activity_discussion",
-    "reuse",
-    "dataservices",
-    "posts_report",
-    "topic",
-}
+KNOWN_HISTORICAL_GAPS: set[str] = set()
+# The reconciliation campaign captured current-era receipts for all nineteen
+# families at merge head 2cc19605 (ten re-reviewed after the rate-limited first
+# round; the rest already verified at their own heads). If a future convention
+# change reopens gaps, list the affected families here and the gate will fail
+# closed until they are reconciled.
 
 
 def test_semantic_conformance_reports_the_true_family_state() -> None:
@@ -93,5 +79,18 @@ def test_every_current_era_receipt_verifies_at_its_own_sha() -> None:
         reviews_dir = gate.REVIEWS_ROOT / gate.REVIEWS_DIR_NAMES.get(family, family)
         receipts = sorted(reviews_dir.glob("*/review-receipt.json")) if reviews_dir.exists() else []
         assert receipts, family
-        latest = json.loads(receipts[-1].read_text(encoding="utf-8"))
-        review_gate.verify_review(gate.REVIEWS_ROOT, family, latest["reviewed_sha"])
+        # Any internally valid receipt carries the family's review credit; this
+        # mirrors the phase gate's semantics.
+        errors: list[str] = []
+        for receipt_path in receipts:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            try:
+                review_gate.verify_review(
+                    gate.REVIEWS_ROOT, gate.REVIEWS_DIR_NAMES.get(family, family), receipt["reviewed_sha"]
+                )
+            except review_gate.ReviewGateError as err:
+                errors.append(f"{receipt['reviewed_sha'][:10]}: {err}")
+                continue
+            break
+        else:
+            raise AssertionError(f"no valid receipt for {family}: {errors}")

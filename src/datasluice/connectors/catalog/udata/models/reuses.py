@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 _REUSE_FILTERS = ("q", "dataset", "featured", "topic", "type", "tag", "organization", "organization_badge", "owner")
 _REUSE_BOOLEAN_FILTERS = ("featured",)
-_REUSE_SORTS = ("created", "created_at", "last_modified", "title", "slug", "datasets", "followers", "views")
+_REUSE_SORTS = ("created", "last_modified", "title", "datasets", "followers", "views")
 _REUSE_SORT_CHOICES = frozenset(_REUSE_SORTS) | frozenset(f"-{name}" for name in _REUSE_SORTS)
 
 

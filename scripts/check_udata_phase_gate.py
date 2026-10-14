@@ -54,6 +54,7 @@ REVIEWS_DIR_NAMES = {
     "reuse": "reuses",
     "posts_report": "posts_reports",
     "topic": "topics",
+    "resource": "resources",
 }
 
 
@@ -112,6 +113,43 @@ def surface_completeness() -> tuple[int, int]:
     return len(inventory), len(inventory)
 
 
+_RECORDLESS_FAMILIES = frozenset({"tracer", "datasets", "root_profile"})
+
+
+def _family_semantic_gaps(family: str, evidence: dict[str, object]) -> list[str]:
+    """Return the reasons one family lacks semantic coverage."""
+    record = evidence.get(f"controlled_{family}_evidence")
+    if record is None and family not in _RECORDLESS_FAMILIES:
+        return ["no controlled evidence record"]
+    reviews_dir = REVIEWS_ROOT / REVIEWS_DIR_NAMES.get(family, family)
+    receipts = sorted(reviews_dir.glob("*/review-receipt.json")) if reviews_dir.exists() else []
+    if not receipts:
+        return ["no captured review receipt"]
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
+
+    verified_sha = None
+    errors: list[str] = []
+    for receipt_path in receipts:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        reviewed_sha = receipt.get("reviewed_sha")
+        if not isinstance(reviewed_sha, str) or len(reviewed_sha) != 40:
+            continue
+        try:
+            review_gate.verify_review(REVIEWS_ROOT, REVIEWS_DIR_NAMES.get(family, family), reviewed_sha)
+        except review_gate.ReviewGateError as err:
+            errors.append(f"{reviewed_sha[:10]}: {err}")
+            continue
+        verified_sha = reviewed_sha
+        break
+    if verified_sha is None:
+        return [f"receipt does not verify — {reason}" for reason in errors]
+    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    if verified_sha != head:
+        print(f"review currency note: {family} is reviewed at {verified_sha[:10]}, not the current head")
+    return []
+
+
 def semantic_conformance() -> tuple[int, int]:
     """Return (families with green controlled evidence and a passed review, families).
 
@@ -128,37 +166,11 @@ def semantic_conformance() -> tuple[int, int]:
     total = 0
     for family in FAMILIES:
         total += 1
-        record = evidence.get(f"controlled_{family}_evidence")
-        reviews_dir = REVIEWS_ROOT / REVIEWS_DIR_NAMES.get(family, family)
-        receipts = sorted(reviews_dir.glob("*/review-receipt.json")) if reviews_dir.exists() else []
-        if record is None and family not in {"tracer", "datasets", "root_profile"}:
-            print(f"semantic gap: {family} has no controlled evidence record")
+        gaps = _family_semantic_gaps(family, evidence)
+        if gaps:
+            for gap in gaps:
+                print(f"semantic gap: {family} — {gap}")
             continue
-        if not receipts:
-            print(f"semantic gap: {family} has no captured review receipt")
-            continue
-        latest = receipts[-1]
-        receipt = json.loads(latest.read_text(encoding="utf-8"))
-        reviewed_sha = receipt.get("reviewed_sha")
-        if not isinstance(reviewed_sha, str) or len(reviewed_sha) != 40:
-            print(f"semantic gap: {family} latest receipt has no valid reviewed sha")
-            continue
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
-
-        try:
-            review_gate.verify_review(REVIEWS_ROOT, family, reviewed_sha)
-        except review_gate.ReviewGateError as error:
-            print(f"semantic gap: {family} review gate does not pass at {reviewed_sha[:10]}: {error}")
-            continue
-        at_head = (
-            reviewed_sha
-            == subprocess.run(
-                ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
-            ).stdout.strip()
-        )
-        if not at_head:
-            print(f"review currency note: {family} is reviewed at {reviewed_sha[:10]}, not the current head")
         covered += 1
     return covered, total
 

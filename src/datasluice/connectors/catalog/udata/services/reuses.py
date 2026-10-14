@@ -55,7 +55,14 @@ _mutation_async = partial(
 )
 # The pinned uData 17.6 profile declares both operations capability "admin", so the
 # authorization check must run before I/O like every other admin mutation.
-_ADMIN = frozenset({wire.FEATURE_REUSE_OPERATION, wire.UNFEATURE_REUSE_OPERATION})
+_ADMIN = frozenset(
+    {
+        wire.FEATURE_REUSE_OPERATION,
+        wire.UNFEATURE_REUSE_OPERATION,
+        wire.ADD_REUSE_BADGE_OPERATION,
+        wire.DELETE_REUSE_BADGE_OPERATION,
+    }
+)
 
 
 class SyncReusesService(SyncCatalogService):

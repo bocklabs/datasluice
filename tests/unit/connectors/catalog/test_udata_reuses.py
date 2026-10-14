@@ -502,10 +502,10 @@ def test_reuse_badge_and_feature_mutations_match_exact_wire() -> None:
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
         client.reuses.add_reuse_badge(
-            "reuse-1", "badger", PERMISSIONS, _policy(wire.ADD_REUSE_BADGE_OPERATION, "reuse-1")
+            "reuse-1", "badger", ADMIN_PERMISSIONS, _policy(wire.ADD_REUSE_BADGE_OPERATION, "reuse-1")
         )
         client.reuses.delete_reuse_badge(
-            "reuse-1", "badger", PERMISSIONS, _policy(wire.DELETE_REUSE_BADGE_OPERATION, "reuse-1")
+            "reuse-1", "badger", ADMIN_PERMISSIONS, _policy(wire.DELETE_REUSE_BADGE_OPERATION, "reuse-1")
         )
         client.reuses.feature_reuse("reuse-1", ADMIN_PERMISSIONS, _policy(wire.FEATURE_REUSE_OPERATION, "reuse-1"))
         client.reuses.unfeature_reuse("reuse-1", ADMIN_PERMISSIONS, _policy(wire.UNFEATURE_REUSE_OPERATION, "reuse-1"))
@@ -533,6 +533,30 @@ def test_feature_admin_operations_refuse_non_admin_credentials_before_dispatch(m
         getattr(client.reuses, method_name)("reuse-1", ADMIN_PERMISSIONS, _policy(operation, "reuse-1"))
         with pytest.raises(ForbiddenError):
             getattr(client.reuses, method_name)("reuse-1", PERMISSIONS, _policy(operation, "reuse-1"))
+
+
+@pytest.mark.parametrize("method_name", ("add_reuse_badge", "delete_reuse_badge"))
+def test_badge_admin_operations_refuse_non_admin_credentials_before_dispatch(method_name: str) -> None:
+    """Upstream gates the badge routes behind the admin tier, so the role is checked before I/O."""
+    routes: dict[tuple[str, str], tuple[int, object]] = {
+        ("POST", f"{ORIGIN}/api/1/reuses/reuse-1/badges/"): (200, _reuse()),
+        ("DELETE", f"{ORIGIN}/api/1/reuses/reuse-1/badges/badger/"): (200, _reuse()),
+    }
+    router = atom_sync_route_table(with_site_route(routes))
+    operation = (
+        wire.ADD_REUSE_BADGE_OPERATION if method_name == "add_reuse_badge" else wire.DELETE_REUSE_BADGE_OPERATION
+    )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        if method_name == "add_reuse_badge":
+            client.reuses.add_reuse_badge("reuse-1", "badger", ADMIN_PERMISSIONS, _policy(operation, "reuse-1"))
+            with pytest.raises(ForbiddenError):
+                client.reuses.add_reuse_badge("reuse-1", "badger", PERMISSIONS, _policy(operation, "reuse-1"))
+        else:
+            client.reuses.delete_reuse_badge("reuse-1", "badger", ADMIN_PERMISSIONS, _policy(operation, "reuse-1"))
+            with pytest.raises(ForbiddenError):
+                client.reuses.delete_reuse_badge("reuse-1", "badger", PERMISSIONS, _policy(operation, "reuse-1"))
+    badge_dispatches = [r for r in router.requests if "/badges" in r.url]
+    assert len(badge_dispatches) == 1, "the admin tier dispatches once; the non-admin tier dispatches nothing"
     assert len([r for r in router.requests if "/reuses/" in r.url]) == 1
 
 
