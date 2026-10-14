@@ -22,6 +22,7 @@ from datasluice.connectors.catalog.udata.models.contact_visualization import (
     VisualizationUpdateInput,
 )
 from datasluice.connectors.catalog.udata.models.datasets import DatasetCreateInput
+from datasluice.connectors.catalog.udata.models.extensions import AvatarRequest, TagSuggestQuery
 from datasluice.connectors.catalog.udata.models.harvest import HarvestSourceInput, HarvestSourceQuery
 from datasluice.connectors.catalog.udata.models.jobs import CrontabSchedule, JobScheduleInput
 from datasluice.connectors.catalog.udata.models.oauth import (
@@ -54,6 +55,10 @@ from datasluice.connectors.catalog.udata.models.transfers import (
 )
 from datasluice.connectors.catalog.udata.models.users import ApiTokenCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
+from datasluice.connectors.catalog.udata.services.extensions import (
+    AsyncExtensionsService,
+    SyncExtensionsService,
+)
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
@@ -379,7 +384,22 @@ def _content_response(url, method):
     return _reuse_response(url, method)
 
 
+def _extensions_response(url, method):
+    if url.endswith("/api/1/access_type/reason_categories/"):
+        return _json([{"value": "restricted", "label": "Restricted", "definition": "d"}])
+    if url.endswith("/api/1/tags/suggest/?q=ta&size=10"):
+        return _json([])
+    if "/api/1/avatars/wheel-user/64/" in url:
+        return (b"\x89PNG\r\n\x1a\nwheelavatar", {"Content-Type": "image/png"})
+    if url.endswith("/api/2/captchetat/"):
+        return (b"\x89PNG\r\n\x1a\ncaptcha", {"Content-Type": "image/png"})
+    return None
+
+
 def _transfers_response(url, method):
+    extensions = _extensions_response(url, method)
+    if extensions is not None:
+        return extensions
     _transfer = {
         "id": "wheel-transfer",
         "status": "pending",
@@ -958,6 +978,13 @@ assert (
     dict(client.harvest_moderation_admin.get_source("wheel-source", sync_admin_permissions).payload)["name"]
     == "wheel-source"
 )
+sync_extensions = SyncExtensionsService(client)
+assert [dict(r.payload)["value"] for r in sync_extensions.reason_categories()] == ["restricted"]
+assert sync_extensions.suggest_tags(TagSuggestQuery("ta")) == ()
+assert (
+    dict(sync_extensions.avatar(AvatarRequest(identifier="wheel-user", size=64)).payload)["media_type"] == "image/png"
+)
+assert dict(sync_extensions.captchetat().payload)["media_type"] == "image/png"
 assert client.taxonomies.available_badges().payload["pivotal-data"] == "Pivotal data"
 assert client.taxonomies.extensions() == ("csv",)
 assert client.taxonomies.licenses()[0].payload["id"] == "lov2"
@@ -1404,6 +1431,9 @@ async def run_async():
         ).receipt.audit_metadata["status_code"] == 201
         assert [b.payload["id"] for b in await active.harvest_moderation_admin.backends(async_permissions)] == ["csv"]
         assert (await active.harvest_moderation_admin.list_sources(HarvestSourceQuery(), async_permissions)).total == 1
+        async_extensions = AsyncExtensionsService(active)
+        assert [dict(r.payload)["value"] for r in await async_extensions.reason_categories()] == ["restricted"]
+        assert dict((await async_extensions.captchetat()).payload)["media_type"] == "image/png"
         assert (await active.transfers.get_transfer("wheel-transfer", async_permissions)).payload["status"] == "pending"
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
@@ -1622,6 +1652,10 @@ expected = [
     "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
     "http://127.0.0.1:5640/api/1/transfer/?subject=wheel-dataset",
     "http://127.0.0.1:5640/api/1/harvest/source/wheel-source/",
+    "http://127.0.0.1:5640/api/1/access_type/reason_categories/",
+    "http://127.0.0.1:5640/api/1/tags/suggest/?q=ta&size=10",
+    "http://127.0.0.1:5640/api/1/avatars/wheel-user/64/",
+    "http://127.0.0.1:5640/api/2/captchetat/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
     "http://127.0.0.1:5640/api/1/datasets/licenses/",
@@ -1714,6 +1748,8 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/workers/jobs/schedulables/",
     "http://127.0.0.1:5640/api/1/workers/tasks/wheel-task-run/",
     "http://127.0.0.1:5640/api/1/workers/jobs/",
+    "http://127.0.0.1:5640/api/1/access_type/reason_categories/",
+    "http://127.0.0.1:5640/api/2/captchetat/",
     "http://127.0.0.1:5640/api/1/harvest/backends/",
     "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",

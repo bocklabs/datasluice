@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import threading
 from typing import TYPE_CHECKING, cast
@@ -77,7 +78,7 @@ def _probe_routes(avatar_status: int = 200) -> RouteTable:
         ("GET", _REASON_CATEGORIES_URL): (200, [{"id": "reason-1", "reason": "Restricted"}]),
         ("GET", _PROBE_SUGGEST_TAGS_URL): (200, [{"id": "env", "count": 2}]),
         ("GET", _PROBE_AVATAR_URL): (avatar_status, _PNG_BODY if avatar_status == 200 else {"message": "absent"}),
-        ("GET", _CAPTCHETAT_URL): (200, {"active": False}),
+        ("GET", _CAPTCHETAT_URL): (200, _PNG_BODY),
     }
 
 
@@ -150,8 +151,6 @@ def test_require_extension_operation_rejects_unknown_operations() -> None:
         (wire.parse_reason_categories, {"id": "reason-1"}),
         (wire.parse_tag_suggestions, {"id": "env"}),
         (wire.parse_tag_suggestions, [1, 2]),
-        (wire.parse_captchetat, ["active"]),
-        (wire.parse_captchetat, {"active": "yes"}),
     ],
 )
 def test_extension_decoders_reject_undocumented_shapes(
@@ -159,6 +158,18 @@ def test_extension_decoders_reject_undocumented_shapes(
 ) -> None:
     with pytest.raises(CatalogValidationError):
         parser(payload, wire.EXTENSIONS_OPERATION)
+
+
+@pytest.mark.parametrize("body", [{"active": True}, "image"])
+def test_parse_captchetat_rejects_undocumented_shapes(body: object) -> None:
+    with pytest.raises(NativeCatalogError):
+        wire.parse_captchetat(body, response_media_type="image/png", operation=wire.CAPTCHETAT_OPERATION)
+
+
+@pytest.mark.parametrize("media_type", ["text/html", "application/json", None])
+def test_parse_captchetat_rejects_undocumented_media_types(media_type: str | None) -> None:
+    with pytest.raises(NativeCatalogError):
+        wire.parse_captchetat(_PNG_BODY, response_media_type=media_type, operation=wire.CAPTCHETAT_OPERATION)
 
 
 def test_parse_avatar_retains_only_bounded_image_metadata() -> None:
@@ -265,12 +276,15 @@ def test_row232_avatar_returns_bounded_image_metadata() -> None:
 
 
 def test_row262_captchetat_exact_wire() -> None:
-    router = _sync_router({("GET", _CAPTCHETAT_URL): (200, {"active": True})})
+    """Upstream proxies raw captcha image bytes; the decode retains bounded metadata."""
+    router = _sync_router({("GET", _CAPTCHETAT_URL): (200, _PNG_BODY)})
     service = _sync_service(router)
 
     record = service.captchetat()
 
-    assert record.payload["active"] is True
+    assert record.payload["media_type"] == "image/png"
+    assert record.payload["size_bytes"] == len(_PNG_BODY)
+    assert record.payload["sha256"] == hashlib.sha256(_PNG_BODY).hexdigest()
     assert router.requests[-1].url == _CAPTCHETAT_URL
 
 

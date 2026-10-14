@@ -11,7 +11,7 @@ from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 PLATFORM = "udata"
-EXTENSIONS_OPERATION = "udata/api-v1.extensions"
+EXTENSIONS_OPERATION = "udata/api-v1.allowed-extensions"
 REASON_CATEGORIES_OPERATION = "udata/api-v1.access-type-reason-categories"
 SUGGEST_TAGS_OPERATION = "udata/api-v1.suggest-tags"
 AVATAR_OPERATION = "udata/api-v1.avatar"
@@ -120,24 +120,36 @@ def parse_tag_suggestions(payload: object, operation: str) -> tuple[MappingRecor
     return parse_mapping_sequence(payload, operation)
 
 
-def parse_captchetat(payload: object, operation: str) -> MappingRecord:
-    """Decode the captcha-state document, failing closed on an ambiguous shape."""
-    if not isinstance(payload, Mapping):
-        raise CatalogValidationError(
-            "The uData captcha-state response must be an object.",
+def parse_captchetat(body: object, *, response_media_type: str | None, operation: str) -> MappingRecord:
+    """Bound the proxied captcha image to its media type, size, and digest.
+
+    Upstream 17.6.0 proxies the remote CaptchEtat service and returns its raw
+    image bytes with a passthrough content type (or aborts 500 when the
+    backend is unconfigured), so only the approved media type, byte count,
+    and SHA-256 digest are retained.
+    """
+    if not isinstance(body, (bytes, bytearray)):
+        raise NativeCatalogError(
+            "The uData captchetat response must be buffered image bytes.",
             operation=operation,
             platform=PLATFORM,
-            safe_action=_PINNED_SCHEMA_ACTION,
         )
-    active = payload.get("active")
-    if "active" in payload and type(active) is not bool:
-        raise CatalogValidationError(
-            "The uData captcha-state active field must be a boolean.",
+    media_type = (response_media_type or "").split(";", 1)[0].strip().lower()
+    if media_type not in _AVATAR_MEDIA_TYPES:
+        raise NativeCatalogError(
+            f"The uData captchetat media type {media_type!r} is not an approved image contract.",
             operation=operation,
             platform=PLATFORM,
-            safe_action=_PINNED_SCHEMA_ACTION,
+            safe_action=f"Request one of the approved image media types: {', '.join(sorted(_AVATAR_MEDIA_TYPES))}.",
         )
-    return MappingRecord(payload)
+    data = bytes(body)
+    return MappingRecord(
+        {
+            "media_type": media_type,
+            "size_bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    )
 
 
 def parse_avatar(body: object, *, response_media_type: str | None, operation: str) -> MappingRecord:

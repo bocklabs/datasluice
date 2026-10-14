@@ -1111,7 +1111,9 @@ def test_controlled_extensions_evidence_covers_the_stock_rows_in_both_modes() ->
         assert f"def {test_id}(" in controlled_source, test_id
     assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
     assert "SyncExtensionsService" in controlled_source
-    assert "extensions" in tracer_source, "the tracer must execute the family from installed content"
+    assert "SyncExtensionsService" in tracer_source and "AsyncExtensionsService" in tracer_source, (
+        "the tracer must execute the family from installed content"
+    )
 
     for field, path in (
         ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),

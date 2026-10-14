@@ -340,8 +340,21 @@ class SyncExtensionsService(SyncCatalogService):
         )
 
     def captchetat(self) -> MappingRecord:
-        """GET /api/2/captchetat/ (row 262)."""
-        return self._read(wire.captchetat_request(), wire.CAPTCHETAT_OPERATION, wire.parse_captchetat)
+        """GET /api/2/captchetat/ (row 262); retains bounded image metadata only."""
+        method, path, headers, _ = wire.captchetat_request()
+        _, body, response = self._client._dataset_call(
+            method=method,
+            path=path,
+            owning_operation=wire.CAPTCHETAT_OPERATION,
+            headers=headers,
+            raw_text=True,
+            max_response_bytes=wire.AVATAR_MAX_BYTES,
+        )
+        return wire.parse_captchetat(
+            cast("bytes", body),
+            response_media_type=_header(response.headers, "content-type"),
+            operation=wire.CAPTCHETAT_OPERATION,
+        )
 
     def capability(self, operation: str) -> ExtensionEvidence:
         """Return bounded evidence for one stock extension operation, proving it harmlessly.
@@ -417,8 +430,21 @@ class AsyncExtensionsService(AsyncCatalogService):
         )
 
     async def captchetat(self) -> MappingRecord:
-        """GET /api/2/captchetat/ (row 262)."""
-        return await self._read(wire.captchetat_request(), wire.CAPTCHETAT_OPERATION, wire.parse_captchetat)
+        """GET /api/2/captchetat/ (row 262); retains bounded image metadata only."""
+        method, path, headers, _ = wire.captchetat_request()
+        _, body, response = await self._client._dataset_call_async(
+            method=method,
+            path=path,
+            owning_operation=wire.CAPTCHETAT_OPERATION,
+            headers=headers,
+            raw_text=True,
+            max_response_bytes=wire.AVATAR_MAX_BYTES,
+        )
+        return wire.parse_captchetat(
+            cast("bytes", body),
+            response_media_type=_header(response.headers, "content-type"),
+            operation=wire.CAPTCHETAT_OPERATION,
+        )
 
     async def capability(self, operation: str) -> ExtensionEvidence:
         """Return bounded evidence for one stock extension operation, proving it harmlessly."""

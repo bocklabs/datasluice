@@ -7177,6 +7177,9 @@ def test_controlled_extensions_and_probes_match_raw_routes_in_both_modes() -> No
             return
         if name == "avatar":
             assert isinstance(typed, MappingRecord), name
+            assert isinstance(payload, (bytes, bytearray)), name
+            assert typed.payload["size_bytes"] == len(payload), name
+            assert typed.payload["sha256"] == hashlib.sha256(bytes(payload)).hexdigest(), name
             return
         if name == "suggest_tags":
             assert isinstance(payload, list), name

@@ -160,6 +160,10 @@ class SiteVersionGate:
     def require_current(self, credentials: object | None) -> SiteVersion:
         """Return cached evidence or dispatch one anonymous site probe.
 
+        The probe is dispatched outside the lock without single-flight: cold
+        concurrent callers may each probe once, which is acceptable for an
+        idempotent anonymous read (single-flight is the evidence cache's contract).
+
         Raises:
             UDataVersionError: When the deployment fails the exact-version gate.
             NativeCatalogError: When the probe transport or JSON decode fails.

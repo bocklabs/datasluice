@@ -30,7 +30,11 @@ def segment(value: str, operation: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class TagSuggestQuery:
-    """Stock tag-suggestion query: required ``q`` and the upstream ``size`` ceiling."""
+    """Stock tag-suggestion query: required ``q`` and connector bounds on ``size``.
+
+    Upstream applies no ceiling and defaults to 8; the connector's default and
+    100-value cap are stricter client-side policy, always sending an explicit size.
+    """
 
     q: str
     size: int = 10
