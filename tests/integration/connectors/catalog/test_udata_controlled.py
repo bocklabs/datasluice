@@ -97,6 +97,11 @@ from datasluice.connectors.catalog.udata.models.topics import (
     TopicMutationResult,
     TopicUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.transfers import (
+    TransferListQuery,
+    TransferRequestInput,
+    TransferResponseInput,
+)
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenCreationResult,
@@ -6910,3 +6915,222 @@ def test_controlled_harvest_create_refusal_matches_raw_in_both_modes() -> None:
 
     asyncio.run(run_async())
     assert typed_status["sync"] == typed_status["async"]
+
+
+def _raw_status(raw: tuple[int, object, dict[str, str]]) -> object:
+    """Return one raw response document's status field with narrowing."""
+    payload = raw[1]
+    assert isinstance(payload, Mapping)
+    return payload["status"]
+
+
+_TRANSFERS_PATH = "/api/1/transfer/"
+
+
+def _transfer_policy(operation: str, target: str, *, destructive: bool = False) -> MutationPolicy:
+    """Return the confirmed overwrite policy one transfer write runs under."""
+    return MutationPolicy(
+        destructive=destructive,
+        confirmation=ConfirmationPolicy(confirmed=True, operation=operation, target=target),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    )
+
+
+def _seed_transfer_dataset(token: str, suffix: str, dataset_ids: list[str]) -> str:
+    """Create one raw dataset for the transfer subject and register it for cleanup."""
+    status, payload, _ = _direct_request(
+        token, "POST", "/api/1/datasets/", body={"title": f"Transfer evidence {suffix}", "description": "d"}
+    )
+    assert status == 201 and isinstance(payload, Mapping)
+    dataset_id = payload["id"]
+    assert isinstance(dataset_id, str)
+    dataset_ids.append(dataset_id)
+    return dataset_id
+
+
+def _seed_member_id(token: str) -> str:
+    """Resolve the seeded regular user's identifier for the recipient role."""
+    status, payload, _ = _direct_request(token, "GET", "/api/1/users/?q=user@evidence.invalid", include_body=True)
+    assert status == 200 and isinstance(payload, Mapping)
+    users = payload["data"]
+    assert isinstance(users, list) and users
+    member_id = users[0]["id"]
+    assert isinstance(member_id, str)
+    return member_id
+
+
+def _assert_transfer_read_matches_raw(name: str, raw: tuple[int, object, dict[str, str]], typed: object) -> None:
+    """Assert one transfer read reproduces its raw status and document identity."""
+    status, payload, _ = raw
+    if status != 200:
+        assert isinstance(typed, CatalogError), name
+        assert typed.metadata.get("status_code") == status, name
+        return
+    assert isinstance(payload, Mapping), name
+    assert isinstance(typed, MappingRecord), name
+    projection = {key: value for key, value in dict(typed.payload).items()}
+    assert projection.get("id") == payload.get("id"), name
+    assert projection.get("status") == payload.get("status"), name
+
+
+def _exercise_sync_transfer_lifecycle(
+    token: str,
+    admin_permissions: EffectivePermissions,
+    member_permissions: EffectivePermissions,
+    member_credential: UDataCredential,
+    dataset_id: str,
+    member_id: str,
+    suffix: str,
+) -> None:
+    """Drive the transfer state machine in sync mode against a raw twin."""
+    request_input = TransferRequestInput(
+        subject_id=dataset_id, subject_class="Dataset", recipient_id=member_id, recipient_class="User"
+    )
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))) as client:
+        requested = client.transfers.request_transfer(
+            request_input,
+            admin_permissions,
+            _transfer_policy("udata/api-v1.request-transfer", request_input.mutation_target()),
+        )
+        assert requested.transfer is not None
+        typed_document = dict(requested.transfer.payload)
+        transfer_id = typed_document["id"]
+        assert isinstance(transfer_id, str)
+        assert typed_document["status"] == "pending"
+        raw_created = _direct_request(
+            token,
+            "POST",
+            _TRANSFERS_PATH,
+            body={
+                "subject": {"id": dataset_id, "class": "Dataset"},
+                "recipient": {"id": member_id, "class": "User"},
+            },
+        )
+        assert raw_created[0] == 201 and isinstance(raw_created[1], Mapping)
+        raw_transfer_id = raw_created[1]["id"]
+
+        read = client.transfers.get_transfer(transfer_id, admin_permissions)
+        own_read = _direct_request(token, "GET", f"{_TRANSFERS_PATH}{transfer_id}/", include_body=True)
+        _assert_transfer_read_matches_raw("get_transfer", own_read, read)
+        raw_read = _direct_request(token, "GET", f"{_TRANSFERS_PATH}{raw_transfer_id}/", include_body=True)
+        assert raw_read[0] == 200
+
+        listed = client.transfers.list_transfers(TransferListQuery(subject=dataset_id), admin_permissions)
+        assert any(dict(record.payload)["id"] == transfer_id for record in listed)
+
+    with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=member_credential)) as member_client:
+        refused = member_client.transfers.respond_to_transfer(
+            transfer_id,
+            TransferResponseInput("refuse"),
+            member_permissions,
+            _transfer_policy("udata/api-v1.respond-to-transfer", transfer_id),
+        )
+        assert refused.transfer is not None
+        assert dict(refused.transfer.payload)["status"] == "refused"
+        raw_refused = _direct_request(
+            token,
+            "POST",
+            f"{_TRANSFERS_PATH}{raw_transfer_id}/",
+            body={"response": "refuse"},
+        )
+        assert raw_refused[0] == 200
+
+    assert (
+        _raw_status(_direct_request(token, "GET", f"{_TRANSFERS_PATH}{transfer_id}/", include_body=True)) == "refused"
+    )
+    assert (
+        _raw_status(_direct_request(token, "GET", f"{_TRANSFERS_PATH}{raw_transfer_id}/", include_body=True))
+        == "refused"
+    )
+
+
+async def _exercise_async_transfer_lifecycle(
+    token: str,
+    admin_permissions: EffectivePermissions,
+    member_permissions: EffectivePermissions,
+    member_credential: UDataCredential,
+    dataset_id: str,
+    member_id: str,
+    suffix: str,
+) -> None:
+    """Drive the transfer state machine in async mode against a raw twin."""
+    request_input = TransferRequestInput(
+        subject_id=dataset_id, subject_class="Dataset", recipient_id=member_id, recipient_class="User"
+    )
+    async with create_async_client(
+        UDataClientSettings(base_url=ORIGIN, credential=UDataCredential(api_key=token))
+    ) as client:
+        requested = await client.transfers.request_transfer(
+            request_input,
+            admin_permissions,
+            _transfer_policy("udata/api-v1.request-transfer", request_input.mutation_target()),
+        )
+        assert requested.transfer is not None
+        created_document = dict(requested.transfer.payload)
+        transfer_id = created_document["id"]
+        assert isinstance(transfer_id, str)
+        raw_created = _direct_request(
+            token,
+            "POST",
+            _TRANSFERS_PATH,
+            body={
+                "subject": {"id": dataset_id, "class": "Dataset"},
+                "recipient": {"id": member_id, "class": "User"},
+            },
+        )
+        assert raw_created[0] == 201
+        raw_payload = raw_created[1]
+        assert isinstance(raw_payload, Mapping)
+        raw_transfer_id = raw_payload["id"]
+        assert isinstance(raw_transfer_id, str)
+
+    async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=member_credential)) as member_client:
+        refused = await member_client.transfers.respond_to_transfer(
+            transfer_id,
+            TransferResponseInput("refuse"),
+            member_permissions,
+            _transfer_policy("udata/api-v1.respond-to-transfer", transfer_id),
+        )
+        assert refused.transfer is not None
+        assert dict(refused.transfer.payload)["status"] == "refused"
+
+    assert (
+        _raw_status(_direct_request(token, "GET", f"{_TRANSFERS_PATH}{transfer_id}/", include_body=True)) == "refused"
+    )
+
+
+def test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up() -> None:
+    """The transfer request/respond state machine agrees with its raw twins in both modes."""
+    token = os.environ.get("UDATA_EVIDENCE_ADMIN_TOKEN")
+    member_token = os.environ.get("UDATA_EVIDENCE_MEMBER_TOKEN")
+    if not token or not member_token:
+        pytest.skip("controlled transfer evidence requires the seeded admin and member tokens")
+    admin_permissions = EffectivePermissions.for_credential(
+        UDataCredential(api_key=token), platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
+    )
+    member_permissions = EffectivePermissions.for_credential(
+        UDataCredential(api_key=member_token), platform=CatalogPlatform.UDATA
+    )
+    member_credential = UDataCredential(api_key=member_token)
+    dataset_ids: list[str] = []
+    try:
+        suffix = uuid4().hex[:8]
+        dataset_id = _seed_transfer_dataset(token, suffix, dataset_ids)
+        member_id = _seed_member_id(token)
+        _exercise_sync_transfer_lifecycle(
+            token, admin_permissions, member_permissions, member_credential, dataset_id, member_id, suffix
+        )
+        asyncio.run(
+            _exercise_async_transfer_lifecycle(
+                token, admin_permissions, member_permissions, member_credential, dataset_id, member_id, suffix
+            )
+        )
+        dataset_ids.clear()
+    finally:
+        errors: list[Exception] = []
+        for dataset_id in dataset_ids:
+            try:
+                assert _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/")[0] in {204, 404}
+            except (AssertionError, OSError, ValueError) as error:
+                errors.append(error)
+        assert not errors, f"cleanup failures: {errors!r}"

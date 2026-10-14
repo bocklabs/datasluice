@@ -1037,3 +1037,46 @@ def test_controlled_harvest_evidence_covers_reads_and_the_refusal_cell() -> None
         controlled["compose_sha256"]
         == hashlib.sha256((_ROOT / "dev/udata-evidence/compose.yaml").read_bytes()).hexdigest()
     )
+
+
+def test_controlled_transfers_evidence_covers_the_state_machine_in_both_modes() -> None:
+    """The transfers evidence binds every assigned route, a real test, and live digests."""
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_transfers_evidence"]
+    evidence = controlled["route_differential"]
+    reads = set(evidence["read_operations"])
+    mutations = set(evidence["mutation_operations"])
+
+    assert reads | mutations == _TRANSFER_ROUTE_OPERATION_IDS
+    assert reads.isdisjoint(mutations)
+    assert controlled["sanitized"] is True
+    assert controlled["local_only"] is True
+    assert controlled["stack_version"] == "17.6.0"
+    assert controlled["udata_image_digest"].startswith("sha256:")
+
+    controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+    tracer_source = (_ROOT / "tests/e2e/udata_wheel_tracer.py").read_text()
+    for test_id in controlled["test_ids"]:
+        assert f"def {test_id}(" in controlled_source, test_id
+    assert "transfers.request_transfer(" in controlled_source
+    assert "transfers.respond_to_transfer(" in controlled_source
+    assert "transfers" in tracer_source, "the tracer must execute the family from installed content"
+
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_modes"] == ["sync", "async"]
+    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+
+    for field, path in (
+        ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),
+        ("wheel_test_sha256", "tests/e2e/test_udata_wheel.py"),
+        ("wheel_tracer_sha256", "tests/e2e/udata_wheel_tracer.py"),
+        ("unit_test_sha256", "tests/unit/connectors/catalog/test_udata_transfers.py"),
+    ):
+        assert controlled[field] == hashlib.sha256((_ROOT / path).read_bytes()).hexdigest(), field
+    assert (
+        controlled["dockerfile_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/Dockerfile").read_bytes()).hexdigest()
+    )
+    assert (
+        controlled["compose_sha256"]
+        == hashlib.sha256((_ROOT / "dev/udata-evidence/compose.yaml").read_bytes()).hexdigest()
+    )

@@ -48,6 +48,10 @@ from datasluice.connectors.catalog.udata.models.topics import (
     TopicElementsCreateInput,
     TopicUpdateInput,
 )
+from datasluice.connectors.catalog.udata.models.transfers import (
+    TransferListQuery,
+    TransferRequestInput,
+)
 from datasluice.connectors.catalog.udata.models.users import ApiTokenCreateInput
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
 from datasluice.connectors.catalog.udata.settings import UDataClientSettings
@@ -375,7 +379,29 @@ def _content_response(url, method):
     return _reuse_response(url, method)
 
 
+def _transfers_response(url, method):
+    _transfer = {
+        "id": "wheel-transfer",
+        "status": "pending",
+        "subject": {"id": "wheel-dataset", "class": "Dataset"},
+        "recipient": {"id": "wheel-user", "class": "User"},
+        "comment": None,
+    }
+    if url.endswith("/api/1/transfer/?subject=wheel-dataset"):
+        return _json([_transfer])
+    if url.endswith("/api/1/transfer/wheel-transfer/"):
+        if method == "DELETE":
+            return _empty()
+        return _json(_transfer)
+    if url.endswith("/api/1/transfer/"):
+        return _json(_transfer)
+    return None
+
+
 def _harvest_response(url, method):
+    transfers = _transfers_response(url, method)
+    if transfers is not None:
+        return transfers
     _source = {
         "id": "wheel-source",
         "name": "wheel-source",
@@ -511,6 +537,7 @@ class Transport:
         response = _harvest_response(url, method)
         if response is not None:
             return response
+        response = _content_response(url, method)
         response = _content_response(url, method)
         if response is not None:
             return response
@@ -908,6 +935,26 @@ wheel_source_created = client.harvest_moderation_admin.create_source(
 )
 assert wheel_source_created.record is not None
 assert dict(wheel_source_created.record.payload)["id"] == "wheel-source"
+wheel_transfer_requested = client.transfers.request_transfer(
+    TransferRequestInput(
+        subject_id="wheel-dataset", subject_class="Dataset", recipient_id="wheel-user", recipient_class="User"
+    ),
+    sync_admin_permissions,
+    MutationPolicy(
+        destructive=False,
+        confirmation=ConfirmationPolicy(
+            confirmed=True, operation="udata/api-v1.request-transfer", target="wheel-dataset:wheel-user"
+        ),
+        concurrency=ConcurrencyPolicy(overwrite=True),
+    ),
+)
+assert wheel_transfer_requested.transfer is not None
+assert dict(wheel_transfer_requested.transfer.payload)["id"] == "wheel-transfer"
+assert dict(client.transfers.get_transfer("wheel-transfer", sync_admin_permissions).payload)["status"] == "pending"
+assert [
+    dict(r.payload)["id"]
+    for r in client.transfers.list_transfers(TransferListQuery(subject="wheel-dataset"), sync_admin_permissions)
+] == ["wheel-transfer"]
 assert (
     dict(client.harvest_moderation_admin.get_source("wheel-source", sync_admin_permissions).payload)["name"]
     == "wheel-source"
@@ -1358,6 +1405,7 @@ async def run_async():
         ).receipt.audit_metadata["status_code"] == 201
         assert [b.payload["id"] for b in await active.harvest_moderation_admin.backends(async_permissions)] == ["csv"]
         assert (await active.harvest_moderation_admin.list_sources(HarvestSourceQuery(), async_permissions)).total == 1
+        assert (await active.transfers.get_transfer("wheel-transfer", async_permissions)).payload["status"] == "pending"
         assert (await active.taxonomies.available_badges()).payload["pivotal-data"] == "Pivotal data"
         assert await active.taxonomies.extensions() == ("csv",)
         assert (await active.taxonomies.suggest_mime(SuggestQuery("js")))[0].payload["text"] == "csv"
@@ -1571,6 +1619,9 @@ expected = [
     "http://127.0.0.1:5640/api/1/harvest/backends/",
     "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
     "http://127.0.0.1:5640/api/1/harvest/sources/",
+    "http://127.0.0.1:5640/api/1/transfer/",
+    "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
+    "http://127.0.0.1:5640/api/1/transfer/?subject=wheel-dataset",
     "http://127.0.0.1:5640/api/1/harvest/source/wheel-source/",
     "http://127.0.0.1:5640/api/1/datasets/badges/",
     "http://127.0.0.1:5640/api/1/datasets/extensions/",
@@ -1666,6 +1717,7 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/workers/jobs/",
     "http://127.0.0.1:5640/api/1/harvest/backends/",
     "http://127.0.0.1:5640/api/1/harvest/sources/?page=1&page_size=20",
+    "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
 }
 assert transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
