@@ -19,7 +19,7 @@ jobs:
   code-review:
     name: AI code review
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
     if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
     steps:
       - name: Setup Node.js
@@ -28,6 +28,8 @@ jobs:
           node-version: 24
 
       - name: Configure OCR
+        env:
+          OCR_VERSION: '1.12.8'  # keep in sync with the pinned action version below
         run: npx -y "@alibaba-group/open-code-review@${OCR_VERSION}" config set max_tokens 1000000
 
       - name: Run OpenCodeReview
