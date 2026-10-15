@@ -63,7 +63,12 @@ class _CacheEntry:
 
 _MAX_CACHE_ENTRIES = 1024
 
-_AsyncFlight = asyncio.Future[EffectiveCapabilityProfile]
+
+@dataclass(slots=True)
+class _AsyncFlight:
+    loop: asyncio.AbstractEventLoop
+    future: asyncio.Future[EffectiveCapabilityProfile]
+    cancelled: bool = False
 
 
 @dataclass(slots=True)
@@ -233,7 +238,8 @@ class EffectiveCapabilityCache:
             flight = self._async_flights.get(cache_key)
             if flight is not None:
                 return flight, False
-            created = asyncio.get_running_loop().create_future()
+            loop = asyncio.get_running_loop()
+            created = _AsyncFlight(loop=loop, future=loop.create_future())
             self._async_flights[cache_key] = created
             return created, True
 
@@ -258,9 +264,9 @@ class EffectiveCapabilityCache:
         """
         with self._lock:
             self._discard_async_flight(cache_key, flight)
-            if not flight.done():
-                flight.set_exception(self._async_follower_failure(operation_id, exc))
-                flight.exception()
+            if not flight.future.done():
+                flight.future.set_exception(self._async_follower_failure(operation_id, exc))
+                flight.future.exception()
 
     def _complete_async_leader(
         self,
@@ -275,13 +281,13 @@ class EffectiveCapabilityCache:
         The caller must hold ``self._lock``; this helper never acquires it,
         because ``threading.Lock`` is not reentrant.
         """
-        if flight.cancelled():
+        if flight.cancelled:
             self._discard_async_flight(cache_key, flight)
             raise self._invalidation_error(operation_id)
         self._store_entry(cache_key, effective, completed_at)
         self._discard_async_flight(cache_key, flight)
-        if not flight.done():
-            flight.set_result(effective)
+        if not flight.future.done():
+            flight.future.set_result(effective)
 
     async def resolve_async(
         self, operation_id: OperationId, *, credential_scope: str = "anonymous"
@@ -299,7 +305,7 @@ class EffectiveCapabilityCache:
 
         flight, leader = self._async_flight(cache_key)
         if not leader:
-            return await flight
+            return await flight.future
 
         try:
             effective = await self._resolve_from_async_runner(operation_id, credential_scope=credential_scope)
@@ -388,9 +394,7 @@ class EffectiveCapabilityCache:
             flight.event.set()
         self._sync_flights.clear()
         for key, async_flight in tuple(self._async_flights.items()):
-            if not async_flight.done():
-                async_flight.set_exception(self._invalidation_error(key[3]))
-                async_flight.exception()
+            self._cancel_async_flight(async_flight, self._invalidation_error(key[3]))
         self._async_flights.clear()
 
     def _invalidate_operation(self, operation_id: OperationId) -> None:
@@ -405,10 +409,21 @@ class EffectiveCapabilityCache:
                 self._sync_flights.pop(key, None)
         for key, async_flight in tuple(self._async_flights.items()):
             if key[3] == operation_id:
-                if not async_flight.done():
-                    async_flight.set_exception(self._invalidation_error(operation_id))
-                    async_flight.exception()
+                self._cancel_async_flight(async_flight, self._invalidation_error(operation_id))
                 self._async_flights.pop(key, None)
+
+    @staticmethod
+    def _cancel_async_flight(flight: _AsyncFlight, error: BaseException) -> None:
+        """Mark one asynchronous probe cancelled and fail it on its owning loop."""
+        flight.cancelled = True
+
+        def complete() -> None:
+            if not flight.future.done():
+                flight.future.set_exception(error)
+                flight.future.exception()
+
+        if not flight.loop.is_closed():
+            flight.loop.call_soon_threadsafe(complete)
 
     def _follower_failure(self, operation_id: OperationId, exc: BaseException) -> BaseException:
         """Convert leader cancellation into a typed failure shared with waiting followers."""
@@ -571,14 +586,14 @@ class EffectiveCapabilityCache:
 def _normalize_deployment_origin(value: str) -> str:
     parsed = urlsplit(value)
     if (
-        parsed.scheme not in {"http", "https"}
+        parsed.scheme != "https"
         or not parsed.netloc
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
     ):
-        raise ValueError("Capability cache deployment origins must be sanitized HTTP(S) origins.")
+        raise ValueError("Capability cache deployment origins must be sanitized HTTPS origins.")
     return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), "", "", ""))
 
 

@@ -13,7 +13,9 @@ import pytest
 def test_connector_contract_imports_without_its_extra(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     """Connector contract packages remain importable in a bare installation."""
     monkeypatch.setitem(sys.modules, "httpx", None)
-    sys.modules.pop(f"datasluice.connectors.catalog.{platform}", None)
+    package = importlib.import_module("datasluice.connectors.catalog")
+    monkeypatch.setattr(package, platform, getattr(package, platform, None), raising=False)
+    monkeypatch.delitem(sys.modules, f"datasluice.connectors.catalog.{platform}", raising=False)
     importlib.import_module(f"datasluice.connectors.catalog.{platform}")
 
 

@@ -195,8 +195,12 @@ class UrllibCatalogTransport(CatalogTransport):
             raise TransportError("urllib could not open the catalog response stream.") from exc
 
         def chunks() -> Iterator[bytes]:
+            size = 0
             try:
                 while chunk := response.read(64 * 1024):
+                    size += len(chunk)
+                    if request.max_response_bytes is not None:
+                        _enforce_body_limit(size, request.max_response_bytes)
                     yield chunk
             except (HTTPException, OSError) as exc:
                 raise TransportError("urllib lost the catalog connection mid-response.") from exc

@@ -175,15 +175,24 @@ class _HttpxTransportBase:
             _retry_after(response.headers.get("retry-after")),
         )
 
-    def _stream_chunks(self, response: Any) -> Iterator[bytes]:
+    def _stream_chunks(self, response: Any, max_bytes: int | None) -> Iterator[bytes]:
+        seen = 0
         try:
-            yield from response.iter_bytes()
+            for chunk in response.iter_bytes():
+                seen += len(chunk)
+                if max_bytes is not None:
+                    _enforce_body_limit(seen, max_bytes)
+                yield chunk
         except self._httpx.HTTPError:
             raise TransportError("httpx could not read the catalog response stream.") from None
 
-    async def _stream_chunks_async(self, response: Any) -> AsyncIterator[bytes]:
+    async def _stream_chunks_async(self, response: Any, max_bytes: int | None) -> AsyncIterator[bytes]:
+        seen = 0
         try:
             async for chunk in response.aiter_bytes():
+                seen += len(chunk)
+                if max_bytes is not None:
+                    _enforce_body_limit(seen, max_bytes)
                 yield chunk
         except self._httpx.HTTPError:
             raise TransportError("httpx could not read the catalog response stream.") from None
@@ -252,7 +261,7 @@ class HttpxCatalogTransport(_HttpxTransportBase):
         return RuntimeStreamResponse(
             status_code=status_code,
             headers=headers,
-            chunks=self._stream_chunks(response),
+            chunks=self._stream_chunks(response, request.max_response_bytes),
             close_callback=response.close,
             retry_after=retry_after,
         )
@@ -323,7 +332,7 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
         return AsyncRuntimeStreamResponse(
             status_code=status_code,
             headers=headers,
-            chunks=self._stream_chunks_async(response),
+            chunks=self._stream_chunks_async(response, request.max_response_bytes),
             close_callback=response.aclose,
             retry_after=retry_after,
         )

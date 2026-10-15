@@ -322,7 +322,7 @@ class SyncCKANClient:
             probe_runner=settings.probe_runner,
             ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
-            deployment_origin=settings.base_url,
+            deployment_origin=settings.base_url if settings.base_url.startswith("https://") else None,
         )
         self._credential_scope = credential_scope(settings.credential)
         self._profile = self._capabilities.baseline_profile
@@ -702,7 +702,7 @@ class AsyncCKANClient:
             async_probe_runner=settings.async_probe_runner,
             ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
-            deployment_origin=settings.base_url,
+            deployment_origin=settings.base_url if settings.base_url.startswith("https://") else None,
         )
         self._credential_scope = credential_scope(settings.credential)
         self._profile = self._capabilities.baseline_profile

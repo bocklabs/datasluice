@@ -3577,7 +3577,6 @@ class SyncUDataClient(_UDataClientCore):
             url=self._origin + path,
             headers=request_headers,
             redirect_policy=RedirectPolicy.NO_FOLLOW,
-            max_response_bytes=self._root_export_max_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -4168,7 +4167,6 @@ class AsyncUDataClient(_UDataClientCore):
             url=self._origin + path,
             headers=request_headers,
             redirect_policy=RedirectPolicy.NO_FOLLOW,
-            max_response_bytes=self._root_export_max_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)

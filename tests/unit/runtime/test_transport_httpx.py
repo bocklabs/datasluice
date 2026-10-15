@@ -60,6 +60,7 @@ def test_httpx_no_follow_returns_the_original_redirect_without_contacting_its_ta
         )
 
     assert response.status_code == 302
+    assert response.headers["location"] == "https://target.test/secret"
     assert [str(request.url) for request in probe.requests] == ["https://origin.test/root"]
 
 
@@ -381,6 +382,7 @@ def test_async_httpx_no_follow_returns_the_original_redirect_without_contacting_
                 RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW)
             )
         assert response.status_code == 302
+        assert response.headers["location"] == "https://target.test/secret"
 
     asyncio.run(send())
 
@@ -567,9 +569,65 @@ def test_async_httpx_send_stream_wraps_midstream_httpx_errors() -> None:
     asyncio.run(send())
 
 
+def test_httpx_send_wraps_midstream_httpx_errors_during_bounded_reads() -> None:
+    def responder(request: Request) -> Response:
+        del request
+        response = httpx.Response(200)
+
+        def failing_bytes(*args: object, **kwargs: object):
+            yield b"ok"
+            raise httpx.ReadError("connection dropped", request=httpx.Request("GET", "https://example.test/"))
+
+        response.iter_bytes = failing_bytes
+        return response
+
+    with SyncProbe(responder) as probe, pytest.raises(TransportError):
+        probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=1024))
+
+
+def test_httpx_send_stream_enforces_max_response_bytes() -> None:
+    with SyncProbe(fixed(200, content=b"abcdef")) as probe:
+        response = probe.stream(
+            RuntimeRequest(
+                "GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW, max_response_bytes=2
+            )
+        )
+        with pytest.raises(TransportError, match="byte limit"):
+            list(response)
+
+
+def test_async_httpx_send_stream_enforces_max_response_bytes() -> None:
+    async def send() -> None:
+        probe = AsyncProbe(fixed(200, content=b"abcdef"))
+        async with probe:
+            response = await probe.stream(
+                RuntimeRequest(
+                    "GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW, max_response_bytes=2
+                )
+            )
+            with pytest.raises(TransportError, match="byte limit"):
+                async for _ in response:
+                    pass
+
+    asyncio.run(send())
+
+
+def test_httpx_send_stream_allows_the_exact_boundary() -> None:
+    with SyncProbe(fixed(200, content=b"abcdef")) as probe:
+        response = probe.stream(
+            RuntimeRequest(
+                "GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW, max_response_bytes=6
+            )
+        )
+        assert b"".join(response) == b"abcdef"
+
+
 def test_httpx_send_enforces_max_response_bytes() -> None:
-    with SyncProbe(fixed(200, content=b"abcdef")) as probe, pytest.raises(TransportError, match="byte limit"):
-        probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+    with SyncProbe(fixed(200, content=b"abcdef")) as probe:
+        with pytest.raises(TransportError, match="byte limit"):
+            probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+        response = probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=6))
+        assert response.body == b"abcdef"
 
 
 def test_async_httpx_send_enforces_max_response_bytes() -> None:
@@ -578,5 +636,7 @@ def test_async_httpx_send_enforces_max_response_bytes() -> None:
         async with probe:
             with pytest.raises(TransportError, match="byte limit"):
                 await probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+            response = await probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=6))
+            assert response.body == b"abcdef"
 
     asyncio.run(send())

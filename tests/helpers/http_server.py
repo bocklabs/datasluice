@@ -18,10 +18,10 @@ from typing import Any, cast
 class MockResponse:
     """Configurable HTTP response.
 
-        Attributes:
-            status: HTTP status code.
+    Attributes:
+        status: HTTP status code.
         headers: Response headers (e.g. ``{"Location": ...}``).
-            extra_headers: Additional raw header pairs, including duplicate names.
+        extra_headers: Additional raw header pairs, including duplicate names.
             body: Raw response bytes.
             chunk_size: When set, the handler emits the body using HTTP/1.1
                 ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —

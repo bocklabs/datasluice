@@ -82,7 +82,12 @@ class AsyncStreamingCatalogTransport(AsyncCatalogTransport, Protocol):
     """Asynchronous transport port that can expose a response body incrementally."""
 
     async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
-        """Send one request without pre-buffering its response body."""
+        """Send one request without pre-buffering its response body.
+
+        Streaming requests must disable redirect following; both in-tree
+        transports enforce ``max_response_bytes`` chunk-wise as the stream is
+        consumed.
+        """
 
 
 def _revealed(value: object) -> str:

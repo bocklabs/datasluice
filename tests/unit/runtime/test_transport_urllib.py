@@ -86,6 +86,34 @@ def test_urllib_uses_read_budget_and_closes_completed_responses() -> None:
     assert response.closed
 
 
+def test_urllib_send_enforces_max_response_bytes() -> None:
+    opener = _RecordingOpener([_FakeResponse(200, {}, body=b"abcdef"), _FakeResponse(200, {}, body=b"abcdef")])
+    transport = UrllibCatalogTransport()
+    cast("Any", transport)._opener = opener
+
+    with pytest.raises(TransportError, match="byte limit"):
+        transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=5))
+
+    assert transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=6)).body == b"abcdef"
+
+
+def test_urllib_send_stream_enforces_max_response_bytes_and_allows_the_boundary() -> None:
+    transport = UrllibCatalogTransport()
+    cast("Any", transport)._opener = _RecordingOpener([_FakeResponse(200, {}, body=b"abcdef")])
+    response = transport.send_stream(
+        RuntimeRequest("GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW, max_response_bytes=5)
+    )
+    with pytest.raises(TransportError, match="byte limit"):
+        list(response)
+
+    transport = UrllibCatalogTransport()
+    cast("Any", transport)._opener = _RecordingOpener([_FakeResponse(200, {}, body=b"abcdef")])
+    response = transport.send_stream(
+        RuntimeRequest("GET", "https://example.test/", redirect_policy=RedirectPolicy.NO_FOLLOW, max_response_bytes=6)
+    )
+    assert b"".join(response) == b"abcdef"
+
+
 def test_urllib_no_follow_returns_the_original_redirect_without_contacting_its_target() -> None:
     response = _FakeResponse(302, {"Location": "https://target.test/secret"})
     opener = _RecordingOpener([response])
@@ -95,6 +123,7 @@ def test_urllib_no_follow_returns_the_original_redirect_without_contacting_its_t
     result = transport.send(RuntimeRequest("GET", "https://origin.test/root", redirect_policy=RedirectPolicy.NO_FOLLOW))
 
     assert result.status_code == 302
+    assert result.headers["Location"] == "https://target.test/secret"
     assert len(opener.requests) == 1
     assert opener.requests[0].full_url == "https://origin.test/root"
     assert response.closed
@@ -115,6 +144,7 @@ def test_urllib_real_socket_no_follow_returns_the_original_redirect() -> None:
         server.server_close()
 
     assert response.status_code == 302
+    assert response.headers["Location"] == f"{base_url}/target"
     assert server.captured_paths == ["/origin"]
 
 
@@ -130,6 +160,7 @@ def test_urllib_real_socket_stream_no_follow_returns_the_original_redirect() -> 
             RuntimeRequest("GET", f"{base_url}/origin", redirect_policy=RedirectPolicy.NO_FOLLOW)
         )
         assert response.status_code == 302
+        assert response.headers["Location"] == f"{base_url}/target"
         response.close()
     finally:
         transport.close()

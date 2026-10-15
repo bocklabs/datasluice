@@ -221,7 +221,7 @@ class RuntimeStreamResponse:
     """One closeable synchronous response whose bytes are yielded incrementally."""
 
     status_code: int
-    headers: Mapping[str, str]
+    headers: Mapping[str, str] = field(repr=False)
     chunks: Iterator[bytes] = field(repr=False)
     close_callback: Callable[[], None] = field(repr=False)
     retry_after: float | None = None
@@ -276,7 +276,7 @@ class AsyncRuntimeStreamResponse:
     """One closeable asynchronous response whose bytes are yielded incrementally."""
 
     status_code: int
-    headers: Mapping[str, str]
+    headers: Mapping[str, str] = field(repr=False)
     chunks: AsyncIterator[bytes] = field(repr=False)
     close_callback: Callable[[], Awaitable[None] | None] = field(repr=False)
     retry_after: float | None = None
@@ -354,4 +354,9 @@ class StreamingCatalogTransport(CatalogTransport, Protocol):
     """Synchronous transport port that can expose a response body incrementally."""
 
     def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
-        """Send one request without pre-buffering its response body."""
+        """Send one request without pre-buffering its response body.
+
+        Streaming requests must disable redirect following; both in-tree
+        transports enforce ``max_response_bytes`` chunk-wise as the stream is
+        consumed.
+        """

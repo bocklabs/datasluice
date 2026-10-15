@@ -19,9 +19,10 @@ from datasluice.domain.catalog.redaction import (
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import RedactingFilter
 from datasluice.runtime.redaction import redact_event_metadata, redact_for_output
+from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import AsyncIterator, Mapping
 
 
 def _receipt(metadata: dict[str, object]) -> MutationReceipt:
@@ -120,6 +121,29 @@ def test_redaction_bounds_recursion_and_metadata_entries() -> None:
     assert len(redacted_oversized) == 32
     assert "[TRUNCATED]" in redacted_oversized.values()
     assert all(len(value) <= 256 for value in redacted_oversized.values() if isinstance(value, str))
+
+
+def test_stream_response_reprs_mask_headers() -> None:
+    sentinel = "https://catalog.example.test/secret-path"
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b""
+
+    sync_response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Location": sentinel},
+        chunks=iter(()),
+        close_callback=lambda: None,
+    )
+    async_response = AsyncRuntimeStreamResponse(
+        status_code=200,
+        headers={"Location": sentinel},
+        chunks=chunks(),
+        close_callback=lambda: None,
+    )
+
+    assert sentinel not in repr(sync_response)
+    assert sentinel not in repr(async_response)
 
 
 def test_redaction_limits_are_exact_boundaries() -> None:
