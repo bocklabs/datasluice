@@ -6,7 +6,7 @@ import re
 import threading
 from dataclasses import dataclass
 from time import monotonic
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.settings import normalize_origin
 from datasluice.domain.catalog.auth import credential_scope
@@ -23,7 +23,6 @@ SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"
 _VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\Z")
 _SITE_KEYS = frozenset({"feed_size", "id", "keywords", "metrics", "title", "version"})
 _SITE_PROBE_MAX_BYTES = 64 * 1024
-_VERSION_STATE = Literal["exact", "missing", "malformed", "ambiguous"]
 
 
 class UDataVersionError(CatalogUnavailableError):
@@ -239,6 +238,16 @@ class SiteVersionGate:
 
 class AsyncSiteVersionGate(SiteVersionGate):
     """Async transport variant of the strict site gate for the async client."""
+
+    def require_current(self, credentials: object | None) -> SiteVersion:
+        """Reject the inherited synchronous entry point regardless of cache state."""
+        raise CatalogUnavailableError(
+            "The asynchronous site gate must be awaited through require_current_async.",
+            operation=SITE_OPERATION_ID,
+            platform="udata",
+            capability_state="unavailable",
+            safe_action="Call require_current_async or construct the client with a synchronous SiteVersionGate.",
+        )
 
     def __init__(
         self,

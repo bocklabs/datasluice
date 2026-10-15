@@ -31,10 +31,12 @@ from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
 
-from .datasets import (
-    _enforce_mutation_policy,
+from ._receipts import (
     _error_status,
     _mutation_outcome,
+)
+from .datasets import (
+    _enforce_mutation_policy,
     _require_mutation_permission,
     _safe_target_value,
 )

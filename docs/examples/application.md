@@ -81,9 +81,9 @@ opens exactly one caller-selected connector:
 
 The context supplies the injected sync and async executors, normalized
 and native service projections, and the pinned effective capability
-profile. In Phase 1 the executors are caller-supplied; deterministic
-reference fakes satisfy every projection, and live CKAN, uData, and
-Socrata endpoint clients arrive in Phases 3–5.
+profile. Executors are caller-supplied and deterministic reference fakes
+satisfy every projection; the live CKAN and uData endpoint clients ship
+today, and the Socrata live client arrives in Phase 5.
 
 ## Verifying contracts with reference fakes
 

@@ -22,14 +22,14 @@ class MockResponse:
         status: HTTP status code.
         headers: Response headers (e.g. ``{"Location": ...}``).
         extra_headers: Additional raw header pairs, including duplicate names.
-            body: Raw response bytes.
-            chunk_size: When set, the handler emits the body using HTTP/1.1
-                ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
-                each ``chunk_size``-byte slice is written as ``<hex-size> CRLF
-                <bytes> CRLF`` followed by the terminating ``0 CRLF CRLF`` frame.
-                This simulates a real streaming HTTP server for tests
-    . Mutually exclusive with a pre-set ``Content-Length``
-                header (the spec forbids both).
+        body: Raw response bytes.
+        chunk_size: When set, the handler emits the body using HTTP/1.1
+            ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
+            each ``chunk_size``-byte slice is written as ``<hex-size> CRLF
+            <bytes> CRLF`` followed by the terminating ``0 CRLF CRLF`` frame.
+            This simulates a real streaming HTTP server for tests. Mutually
+            exclusive with a pre-set ``Content-Length`` header (the spec
+            forbids both).
     """
 
     status: int = 200

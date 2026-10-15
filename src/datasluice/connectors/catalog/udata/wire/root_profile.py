@@ -11,8 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, Never
 from urllib.parse import SplitResult, parse_qsl, quote, urlencode, urljoin, urlsplit
 
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.domain.catalog.udata import (
+from datasluice.connectors.catalog.udata.models.root_profile import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
     SiteDataserviceCsvQuery,
@@ -24,6 +23,7 @@ from datasluice.domain.catalog.udata import (
     SiteProfile,
     SiteReuseCsvQuery,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 if TYPE_CHECKING:
@@ -95,7 +95,6 @@ _CSV_PATHS = {
     "harvests": "/api/1/site/harvests.csv",
     "tags": "/api/1/site/tags.csv",
 }
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FORMAT = re.compile(r"^[A-Za-z0-9-]{1,16}$")
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _MEDIA_TYPE = re.compile(r"^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
@@ -124,7 +123,7 @@ def _format_extension(value: object) -> str:
             "The uData site document format is unsupported.",
             operation=ROOT_OPERATION,
             platform="udata",
-            safe_action="Use xml, n3, ttl, nt, json, jsonld, or trig.",
+            safe_action="Use xml, rdf, owl, n3, ttl, turtle, nt, json, jsonld, or trig.",
         )
     return extension
 

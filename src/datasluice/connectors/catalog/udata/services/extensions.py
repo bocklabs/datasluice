@@ -23,7 +23,8 @@ from datasluice.domain.catalog.profiles import ProbeResponseClass
 from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
 
-from .datasets import _error_status, _header
+from ._receipts import _error_status
+from .datasets import _header
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient

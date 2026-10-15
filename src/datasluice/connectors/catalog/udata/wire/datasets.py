@@ -155,7 +155,7 @@ def _invalid_field(field: str, operation: str, expected: str) -> CatalogValidati
 
 def _validate_dataset_link(value: object, *, field: str, operation: str) -> None:
     if not isinstance(value, Mapping):
-        raise _invalid_field(field, operation, "a list of objects or a link object")
+        raise _invalid_field(field, operation, "a pagination link object")
     for key in ("href", "rel", "type"):
         nested = value.get(key)
         if not isinstance(nested, str) or not nested:
@@ -354,13 +354,15 @@ def atom_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], Non
     return "GET", f"{_DATASET_PATH}recent.atom?{_query(query.query_params())}", {}, None
 
 
-def rdf_request(dataset_id: str, fmt: str | None) -> tuple[str, str, dict[str, str], None]:
+def rdf_request(
+    dataset_id: str, fmt: str | None, *, operation: str = _DATASETS_OPERATION_ID
+) -> tuple[str, str, dict[str, str], None]:
     """Encode GET /api/1/datasets/<id>[/rdf|/rdf.<format>]; validates the format allowlist."""
-    identifier = _path_segment(_required_id(dataset_id))
+    identifier = _path_segment(_required_id(dataset_id, operation=operation))
     if fmt is None:
         return "GET", f"{_DATASET_PATH}{identifier}/rdf", {}, None
-    extension = _format_extension(fmt)
-    media_type_for_format(extension)
+    extension = _format_extension(fmt, operation=operation)
+    media_type_for_format(extension, operation=operation)
     return "GET", f"{_DATASET_PATH}{identifier}/rdf.{_path_segment(extension)}", {}, None
 
 
@@ -504,25 +506,25 @@ RDF_FORMAT_MEDIA_TYPES = {
 }
 
 
-def media_type_for_format(fmt: str) -> str:
+def media_type_for_format(fmt: str, *, operation: str = _DATASETS_OPERATION_ID) -> str:
     """Return the stock media type for one RDF format extension."""
-    extension = _format_extension(fmt)
+    extension = _format_extension(fmt, operation=operation)
     media_type = RDF_FORMAT_MEDIA_TYPES.get(extension)
     if media_type is None:
         raise CatalogValidationError(
             "The uData RDF format is unsupported.",
-            operation=_DATASETS_OPERATION_ID,
+            operation=operation,
             platform=PLATFORM.value,
             safe_action="Use a stock uData RDF extension.",
         )
     return media_type
 
 
-def _format_extension(fmt: object) -> str:
+def _format_extension(fmt: object, *, operation: str = _DATASETS_OPERATION_ID) -> str:
     if not isinstance(fmt, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,16}", fmt) is None:
         raise CatalogValidationError(
             "The uData RDF format is invalid.",
-            operation=_DATASETS_OPERATION_ID,
+            operation=operation,
             platform=PLATFORM.value,
             safe_action="Use a short ASCII uData RDF extension.",
         )

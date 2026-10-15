@@ -40,6 +40,7 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
     UnauthenticatedError,
 )
+from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 
 if TYPE_CHECKING:
@@ -1236,7 +1237,7 @@ def test_wr06_malformed_documented_dataset_fields_fail_with_route_identity() -> 
 def test_wr07_nested_extras_inputs_and_results_are_json_safe_and_immutable() -> None:
     update = DatasetExtrasUpdate({"nested": {"items": [1, 2]}})
     assert update.payload() == {"nested": {"items": [1, 2]}}
-    with pytest.raises(ValueError):
+    with pytest.raises(DataSluiceError, match="udata.dataset.values.not-finite"):
         DatasetExtrasUpdate({"not-finite": float("nan")})
 
     routes = _site_first(
@@ -1296,7 +1297,7 @@ def test_wr08_async_mutations_use_async_credential_resolution() -> None:
             )
         assert result.record is not None
         assert deleted.receipt.audit_metadata["mutation"] == "deleted"
-        assert provider.calls >= 1
+        assert provider.calls == 2
         assert [request.method for request in transport.requests if request.method == "DELETE"] == ["DELETE"]
 
     asyncio.run(run())
@@ -1412,24 +1413,6 @@ def test_dataset_page_serialization_redacts_credentials_for_every_listed_record(
     assert REDACTED in serialized
 
 
-def test_normalized_dataset_projection_keeps_native_identity_and_uses_the_title() -> None:
-    item = {"id": "5f4d2c8e9a1b", "title": "Weather", "slug": "weather", "description": "hourly forecast"}
-
-    record = mapping.normalized_dataset(mapping.parse_dataset_summary(item))
-
-    assert record.id.value == "5f4d2c8e9a1b"
-    assert record.name == "Weather"
-    assert record.description == "hourly forecast"
-
-
-def test_normalized_dataset_projection_falls_back_to_the_slug_and_refuses_an_identityless_record() -> None:
-    slugged = mapping.normalized_dataset(mapping.parse_dataset_summary({"id": "abc", "slug": "abc-slug"}))
-
-    assert slugged.name == "abc-slug"
-    with pytest.raises(CatalogValidationError, match="title or slug"):
-        mapping.normalized_dataset(mapping.parse_dataset_summary({"id": "abc"}))
-
-
 def test_dataset_detail_unknown_fields_are_redacted_but_retained_in_extensions() -> None:
     detail = {**_CREDENTIAL_DATASET_ITEM, "portal_extra": "kept", "unknown_token": "live-unknown-plaintext"}
 
@@ -1493,3 +1476,33 @@ def test_dataset_list_rejects_oversized_responses_before_decoding() -> None:
     routes = _site_first({("GET", "http://127.0.0.1:5640/api/1/datasets/?page=1&page_size=20"): b" " * 1_048_577})
     with _sync_client(routes) as client, pytest.raises(NativeCatalogError, match="configured byte limit"):
         client.datasets.list()
+
+
+def test_v1_delete_decodes_the_response_body_through_the_typed_extras_boundary() -> None:
+    routes = _site_first({("DELETE", "http://127.0.0.1:5640/api/1/datasets/abc/"): (200, ["not", "an", "object"])})
+    transport, client = _sync_client_with_transport(routes, _USER_CREDENTIAL)
+    with client, pytest.raises(CatalogValidationError) as error:
+        client.datasets.delete(
+            "abc",
+            _USER_PERMISSIONS,
+            mutation_policy=_mutation_policy("udata/api-v1.delete-dataset", "abc", destructive=True),
+        )
+
+    assert "mutation_receipt" in error.value.__dict__
+    assert transport is not None
+
+
+def test_v2_search_facets_with_nonfinite_constants_fail_closed_at_the_client_boundary() -> None:
+    body = json.dumps({**json.loads(_page_body()), "facets": {"bad": float("nan")}}).encode()
+    routes = _site_first({("GET", "http://127.0.0.1:5640/api/2/datasets/search/?page=1&page_size=20&q=x"): body})
+    with _sync_client(routes) as client, pytest.raises(NativeCatalogError, match="invalid JSON"):
+        client.datasets.search_v2(DatasetSearchQuery(q="x"))
+
+
+def test_rdf_validation_errors_carry_the_owning_route_operation() -> None:
+    with pytest.raises(CatalogValidationError) as bad_format:
+        wire.rdf_request("abc", "bogus!!", operation=wire.DATASET_OPERATIONS["rdf_format"])
+    assert bad_format.value.operation == wire.DATASET_OPERATIONS["rdf_format"]
+    with pytest.raises(CatalogValidationError) as bad_id:
+        wire.rdf_request("../etc", None, operation=wire.DATASET_OPERATIONS["rdf"])
+    assert bad_id.value.operation == wire.DATASET_OPERATIONS["rdf"]

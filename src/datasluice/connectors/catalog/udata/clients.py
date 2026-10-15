@@ -241,6 +241,7 @@ def _reject_nonfinite_json(_: str) -> None:
 
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
+_DATASET_PAGE_MAX_BYTES = 8 * 1024 * 1024
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
@@ -392,6 +393,45 @@ def _dataset_idempotency(
     return policy or IdempotencyPolicy(safe=method == "GET")
 
 
+def _stream_failure_outcome(error: BaseException) -> str:
+    if isinstance(error, asyncio.CancelledError):
+        return "cancelled"
+    return "failed"
+
+
+def _build_stream_request(
+    *,
+    owning_id: OperationId,
+    origin: str,
+    path: str,
+    headers: Mapping[str, str] | None,
+    resolved_credential: object,
+    budget: TimeBudget,
+    clock: Callable[[], float],
+    transport: object,
+) -> tuple[RuntimeRequest, DeadlineMonitor, object]:
+    """Build the no-follow stream request and prove the transport can stream it."""
+    request_headers = dict(headers or {})
+    request_headers.update(_auth_headers(resolved_credential))
+    request = RuntimeRequest(
+        method="GET",
+        url=origin + path,
+        headers=request_headers,
+        redirect_policy=RedirectPolicy.NO_FOLLOW,
+    )
+    deadline = DeadlineMonitor(budget, clock=clock)
+    deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+    send_stream = getattr(transport, "send_stream", None)
+    if not callable(send_stream):
+        raise CatalogValidationError(
+            "The uData export requires a streaming catalog transport.",
+            operation=str(owning_id),
+            platform=PLATFORM.value,
+            safe_action="Use the default transport or inject one implementing send_stream.",
+        )
+    return request, deadline, send_stream
+
+
 def _operation_id_from(value: str) -> OperationId:
     """Derive the internal OperationId from one pinned profile identity string."""
     platform, _, tail = value.partition("/")
@@ -515,7 +555,13 @@ def _page_request(
     """Build one anonymous-safe paged dataset request; credentials attach later."""
     query = "&".join(f"{key}={value}" for key, value in sorted(params.items()))
     url = f"{origin}{_PAGED_PATH}" + (f"?{query}" if query else "")
-    return RuntimeRequest(method="GET", url=url, headers={}, body=None)
+    return RuntimeRequest(
+        method="GET",
+        url=url,
+        headers={},
+        body=None,
+        max_response_bytes=_DATASET_PAGE_MAX_BYTES,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1842,7 +1888,7 @@ def _controlled_peer_evidence(
         not isinstance(payload, Mapping)
         or not isinstance(payload.get("id"), str)
         or not payload["id"]
-        or payload.get("version") != _CONTROLLED_UDATA_VERSION
+        or payload.get("version") != declared_udata_profile().profile_version
     ):
         raise error_factory("The controlled uData peer did not match the seeded site identity.")
     return payload["id"]
@@ -3558,37 +3604,36 @@ class SyncUDataClient(_UDataClientCore):
         credential: object | None = None,
     ) -> RuntimeStreamResponse:
         """Open one guarded no-follow root response without buffering its bytes."""
-        if self._closed:
-            raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        self._require_site_version()
-        resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
-        scope = _credential_scope(resolved_credential)
-        if scope != self._credential_scope:
-            self._capabilities.invalidate()
-            self._site_gate.invalidate()
-            self._credential_scope = scope
-        effective = self._capabilities.resolve(owning_id, credential_scope=scope)
-        self._require_dispatchable(owning_id, effective)
-        request_headers = dict(headers or {})
-        request_headers.update(_auth_headers(resolved_credential))
-        request = RuntimeRequest(
-            method="GET",
-            url=self._origin + path,
-            headers=request_headers,
-            redirect_policy=RedirectPolicy.NO_FOLLOW,
-        )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        sync_transport = cast("CatalogTransport", self._transport)
-        send_stream = getattr(sync_transport, "send_stream", None)
-        if not callable(send_stream):
-            raise CatalogValidationError(
-                "The uData export requires a streaming catalog transport.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                safe_action="Use the default transport or inject one implementing send_stream.",
+        try:
+            if self._closed:
+                raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
+            self._require_site_version()
+            resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
+            scope = _credential_scope(resolved_credential)
+            if scope != self._credential_scope:
+                self._capabilities.invalidate()
+                self._site_gate.invalidate()
+                self._credential_scope = scope
+            effective = self._capabilities.resolve(owning_id, credential_scope=scope)
+            self._require_dispatchable(owning_id, effective)
+            request, deadline, send_stream = _build_stream_request(
+                owning_id=owning_id,
+                origin=self._origin,
+                path=path,
+                headers=headers,
+                resolved_credential=resolved_credential,
+                budget=self._budget,
+                clock=self._clock,
+                transport=self._transport,
             )
+            send = cast("Callable[[RuntimeRequest], RuntimeStreamResponse]", send_stream)
+        except BudgetExhaustedError:
+            self._emit(owning_id, "budget_exhausted")
+            raise
+        except SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, _stream_failure_outcome(error))
+            raise
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -3603,7 +3648,7 @@ class SyncUDataClient(_UDataClientCore):
         try:
             before = self._breakers.inspect(key)
             try:
-                response = cast("RuntimeStreamResponse", send_stream(request))
+                response = cast("RuntimeStreamResponse", send(request))
             except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
@@ -3611,22 +3656,31 @@ class SyncUDataClient(_UDataClientCore):
                 self._emit(owning_id, "failed")
                 raise
             settled = self._record_stream_response(owning_id, key, response.status_code)
-            try:
-                self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
-                    return response
-            except SETTLEMENT_ERRORS as error:
-                self._emit(owning_id, "failed")
-                try:
-                    response.close()
-                except Exception as cleanup_error:
-                    raise error from cleanup_error
-                raise error
+            redirected = self._settle_stream_redirect(owning_id, response, scope)
+            if redirected is not None:
+                return redirected
         finally:
             if not settled:
                 self._breakers.release_trial(key)
         return _SyncStreamGuard(self, owning_id, key, response, deadline).response_wrapper()
+
+    def _settle_stream_redirect(
+        self, owning_id: OperationId, response: RuntimeStreamResponse, scope: str
+    ) -> RuntimeStreamResponse | None:
+        """Validate one streamed response; return it when a redirect short-circuits the read."""
+        try:
+            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
+                return response
+        except SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, "failed")
+            try:
+                response.close()
+            except Exception as cleanup_error:
+                raise error from cleanup_error
+            raise error
+        return None
 
     def _dispatch(
         self,
@@ -3657,6 +3711,7 @@ class SyncUDataClient(_UDataClientCore):
                 url=request.url,
                 headers=_auth_headers(credential),
                 body=request.body,
+                max_response_bytes=request.max_response_bytes,
             )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -3673,17 +3728,23 @@ class SyncUDataClient(_UDataClientCore):
             )
         attempts = 0
 
+        recorded = False
+
         def send() -> RuntimeResponse:
             nonlocal attempts
             attempts += 1
+            nonlocal recorded
+            recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = sync_transport.send(request)
             except TransportError:
+                recorded = True
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
             after = self._breakers.record_response(key, response.status_code)
+            recorded = True
             self._emit_breaker_change(owning_id, before.open, after.open)
             return response
 
@@ -3706,6 +3767,9 @@ class SyncUDataClient(_UDataClientCore):
         except Exception:
             self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
             raise
+        finally:
+            if not recorded:
+                self._breakers.release_trial(key)
         self._emit(
             owning_id,
             "succeeded",
@@ -3911,6 +3975,7 @@ class AsyncUDataClient(_UDataClientCore):
                 url=request.url,
                 headers=_auth_headers(credential),
                 body=request.body,
+                max_response_bytes=request.max_response_bytes,
             )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
@@ -4146,39 +4211,38 @@ class AsyncUDataClient(_UDataClientCore):
         credential: object | None = None,
     ) -> AsyncRuntimeStreamResponse:
         """Open one guarded no-follow async root response without buffering its bytes."""
-        if self._closed:
-            raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        await self.site_version()
-        resolved_credential = (
-            credential if credential is not None else await _refreshed_credential_async(self._credentials)
-        )
-        scope = _credential_scope(resolved_credential)
-        if scope != self._credential_scope:
-            self._capabilities.invalidate()
-            self._site_gate.invalidate()
-            self._credential_scope = scope
-        effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
-        self._require_dispatchable(owning_id, effective)
-        request_headers = dict(headers or {})
-        request_headers.update(_auth_headers(resolved_credential))
-        request = RuntimeRequest(
-            method="GET",
-            url=self._origin + path,
-            headers=request_headers,
-            redirect_policy=RedirectPolicy.NO_FOLLOW,
-        )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        async_transport = cast("AsyncCatalogTransport", self._transport)
-        send_stream = getattr(async_transport, "send_stream", None)
-        if not callable(send_stream):
-            raise CatalogValidationError(
-                "The uData export requires a streaming catalog transport.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                safe_action="Use the default transport or inject one implementing send_stream.",
+        try:
+            if self._closed:
+                raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
+            await self.site_version()
+            resolved_credential = (
+                credential if credential is not None else await _refreshed_credential_async(self._credentials)
             )
+            scope = _credential_scope(resolved_credential)
+            if scope != self._credential_scope:
+                self._capabilities.invalidate()
+                self._site_gate.invalidate()
+                self._credential_scope = scope
+            effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
+            self._require_dispatchable(owning_id, effective)
+            request, deadline, send_stream = _build_stream_request(
+                owning_id=owning_id,
+                origin=self._origin,
+                path=path,
+                headers=headers,
+                resolved_credential=resolved_credential,
+                budget=self._budget,
+                clock=self._clock,
+                transport=self._transport,
+            )
+            send = cast("Callable[[RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]]", send_stream)
+        except BudgetExhaustedError:
+            self._emit(owning_id, "budget_exhausted")
+            raise
+        except ASYNC_SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, _stream_failure_outcome(error))
+            raise
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -4193,7 +4257,7 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             before = self._breakers.inspect(key)
             try:
-                response = cast("AsyncRuntimeStreamResponse", await send_stream(request))
+                response = cast("AsyncRuntimeStreamResponse", await send(request))
             except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
@@ -4201,22 +4265,31 @@ class AsyncUDataClient(_UDataClientCore):
                 self._emit(owning_id, "failed")
                 raise
             settled = self._record_stream_response(owning_id, key, response.status_code)
-            try:
-                self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
-                    return response
-            except ASYNC_SETTLEMENT_ERRORS as error:
-                self._emit(owning_id, "failed")
-                try:
-                    await response.aclose()
-                except (Exception, asyncio.CancelledError) as cleanup_error:
-                    raise error from cleanup_error
-                raise error
+            redirected = await self._asettle_stream_redirect(owning_id, response, scope)
+            if redirected is not None:
+                return redirected
         finally:
             if not settled:
                 self._breakers.release_trial(key)
         return _AsyncStreamGuard(self, owning_id, key, response, deadline).response_wrapper()
+
+    async def _asettle_stream_redirect(
+        self, owning_id: OperationId, response: AsyncRuntimeStreamResponse, scope: str
+    ) -> AsyncRuntimeStreamResponse | None:
+        """Validate one streamed async response; return it when a redirect short-circuits the read."""
+        try:
+            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
+                return response
+        except ASYNC_SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, "failed")
+            try:
+                await response.aclose()
+            except (Exception, asyncio.CancelledError) as cleanup_error:
+                raise error from cleanup_error
+            raise error
+        return None
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""

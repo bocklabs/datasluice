@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import paging
+from datasluice.domain.catalog.models import _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 
 if TYPE_CHECKING:
@@ -47,37 +47,6 @@ _RESERVED_CREATE_FIELDS = frozenset({"title", "description", "private", "tags"})
 _RESERVED_UPDATE_FIELDS = frozenset({"title", "description", "private", "tags"})
 
 
-def _freeze_json(value: object, path: str = "udata.input") -> object:
-    """Freeze a strictly JSON-safe structure into immutable equivalents."""
-    if isinstance(value, Mapping):
-        frozen: dict[str, object] = {}
-        for key, item in value.items():
-            if not isinstance(key, str):
-                raise ValueError("uData input mappings require string keys.")
-            frozen[key] = _freeze_json(item, f"{path}.{key}")
-        return MappingProxyType(frozen)
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze_json(item, f"{path}[]") for item in value)
-    if value is None or isinstance(value, (str, bool, int)):
-        return value
-    if isinstance(value, float):
-        import math
-
-        if not math.isfinite(value):
-            raise ValueError("uData input mappings require finite JSON numbers.")
-        return value
-    raise ValueError(f"uData input mappings accept JSON-safe values only, got {type(value).__name__}.")
-
-
-def _thaw_json(value: object) -> object:
-    """Thaw a frozen structure into ordinary JSON containers for serialization."""
-    if isinstance(value, Mapping):
-        return {key: _thaw_json(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_thaw_json(item) for item in value]
-    return value
-
-
 def _required_text(value: object, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"uData dataset {field} must be a non-empty string.")
@@ -115,6 +84,8 @@ def _validate_filter(
     if key not in allowed:
         raise ValueError(f"Unknown {field} filters: {[key]}.")
     if isinstance(item, tuple):
+        if key in boolean_filters:
+            raise ValueError(f"{field} filter {key!r} does not accept repeated values.")
         if not item or not all(isinstance(part, str) and part for part in item):
             raise ValueError(f"{field} repeated filters must contain non-empty strings.")
     elif type(item) is bool:
@@ -149,7 +120,7 @@ class DatasetListQuery:
             if not isinstance(self.filters, Mapping):
                 raise ValueError("Dataset list filters must be a mapping.")
             _validate_filters(self.filters, _V1_LIST_FILTERS, "dataset list", boolean_filters=_V1_LIST_BOOLEAN_FILTERS)
-            object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
+            object.__setattr__(self, "filters", _freeze_json(dict(self.filters), "udata.dataset.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the query into exact stock query-string parameter pairs."""
@@ -191,7 +162,7 @@ class DatasetCreateInput:
             reserved = set(self.fields) & _RESERVED_CREATE_FIELDS
             if reserved:
                 raise ValueError(f"Dataset create fields cannot override typed fields: {sorted(reserved)}.")
-            object.__setattr__(self, "fields", _freeze_json(dict(self.fields)))
+            object.__setattr__(self, "fields", _freeze_json(dict(self.fields), "udata.dataset.fields"))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact create JSON body."""
@@ -236,7 +207,7 @@ class DatasetUpdateInput:
             reserved = set(self.fields) & _RESERVED_UPDATE_FIELDS
             if reserved:
                 raise ValueError(f"Dataset update fields cannot override typed fields: {sorted(reserved)}.")
-            object.__setattr__(self, "fields", _freeze_json(dict(self.fields)))
+            object.__setattr__(self, "fields", _freeze_json(dict(self.fields), "udata.dataset.fields"))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact update JSON body with omission semantics."""
@@ -297,7 +268,7 @@ class DatasetExtrasUpdate:
     def __post_init__(self) -> None:
         if not isinstance(self.values, Mapping):
             raise ValueError("Dataset extras update values must be a mapping.")
-        object.__setattr__(self, "values", _freeze_json(dict(self.values)))
+        object.__setattr__(self, "values", _freeze_json(dict(self.values), "udata.dataset.values"))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact extras JSON body."""
@@ -376,7 +347,7 @@ class DatasetSearchQuery:
             _validate_filters(
                 self.filters, _V2_SEARCH_FILTERS, "dataset search", boolean_filters=frozenset({"featured"})
             )
-            object.__setattr__(self, "filters", _freeze_json(dict(self.filters)))
+            object.__setattr__(self, "filters", _freeze_json(dict(self.filters), "udata.dataset.filters"))
 
     def query_params(self) -> list[tuple[str, str]]:
         """Encode the exact v2 search query-string parameter pairs."""

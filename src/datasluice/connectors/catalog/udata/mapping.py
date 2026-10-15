@@ -9,7 +9,6 @@ from typing import cast
 from datasluice.contracts.catalog.native.udata import UDataResultItem
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import (
-    DatasetRecord,
     NativeRecord,
     PageInfo,
     PlatformMetadata,
@@ -206,43 +205,6 @@ def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATAS
         resource_kind=ResourceKind.DATASET,
         id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=identifier),
         payload=redact_record_payload(item),
-    )
-
-
-def normalized_dataset(record: NativeRecord) -> DatasetRecord:
-    """Project one native dataset record onto the normalized catalog core.
-
-    Raises:
-        CatalogValidationError: When the record is not a uData dataset or
-            carries neither a title nor a slug for the normalized name.
-    """
-    if record.platform is not PLATFORM or record.resource_kind is not ResourceKind.DATASET:
-        raise CatalogValidationError(
-            "Normalized dataset projection requires a native uData dataset record.",
-            operation=_DATASETS_OPERATION_ID,
-            platform=PLATFORM.value,
-            safe_action="Project only native uData dataset records.",
-        )
-    title = record.payload.get("title")
-    slug = record.payload.get("slug")
-    if isinstance(title, str) and title:
-        name = title
-    elif isinstance(slug, str) and slug:
-        name = slug
-    else:
-        name = None
-    if not name:
-        raise CatalogValidationError(
-            "The uData dataset summary requires a title or slug for normalized identity.",
-            operation=_DATASETS_OPERATION_ID,
-            platform=PLATFORM.value,
-            safe_action="Verify the page items against the pinned source oracle.",
-        )
-    description = record.payload.get("description")
-    return DatasetRecord(
-        id=record.id,
-        name=name,
-        description=description if isinstance(description, str) and description else None,
     )
 
 

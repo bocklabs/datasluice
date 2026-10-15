@@ -25,12 +25,14 @@ from datasluice.errors.catalog import (
 )
 from datasluice.runtime.mutation import build_mutation_receipt
 
-from .datasets import (
-    _enforce_mutation_policy,
+from ._receipts import (
     _error_status,
     _mutation_outcome,
     _operation_id,
     _receipt_policy,
+)
+from .datasets import (
+    _enforce_mutation_policy,
     _require_mutation_permission,
     _safe_target_value,
 )

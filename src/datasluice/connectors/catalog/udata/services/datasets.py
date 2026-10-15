@@ -22,22 +22,26 @@ from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetSuggestQuery,
     DatasetUpdateInput,
 )
+from datasluice.connectors.catalog.udata.services._receipts import (
+    _error_status,
+    _mutation_outcome,
+    _operation_id,
+    _policy_metadata,
+    _raise_with_receipt,
+    _receipt_policy,
+)
 from datasluice.connectors.catalog.udata.wire import datasets as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, PlatformMetadata
-from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
+from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import (
-    CatalogValidationError,
     ForbiddenError,
     NativeCatalogError,
     UnauthenticatedError,
-    attach_catalog_metadata,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
-from datasluice.runtime.transport.base import TransportError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -100,13 +104,6 @@ def _require_mutation_permission(
     return resolved
 
 
-def _operation_id(operation: str) -> OperationId:
-    """Convert one profile operation string into its typed identity."""
-    platform, _, tail = operation.partition("/")
-    service, _, method = tail.partition(".")
-    return OperationId(platform=platform, service=service or "native", method=method or tail)
-
-
 def _safe_target_value(target_id: object, *, opaque: bool = False) -> str:
     """Return a bounded receipt target without retaining credential-shaped input."""
     raw = target_id if isinstance(target_id, str) else type(target_id).__name__
@@ -126,39 +123,6 @@ def _receipt_target(target_id: object, *, opaque: bool = False) -> CatalogId:
         resource_kind=ResourceKind.DATASET,
         value=_safe_target_value(target_id, opaque=opaque),
     )
-
-
-def _receipt_policy(policy: MutationPolicy | None) -> MutationPolicy:
-    """Create a receipt-only policy that never retains unsupported tokens."""
-    if policy is None:
-        return MutationPolicy(concurrency=ConcurrencyPolicy(overwrite=True))
-    return MutationPolicy(
-        destructive=policy.destructive,
-        concurrency=ConcurrencyPolicy(overwrite=True),
-        idempotency=IdempotencyPolicy(
-            safe=policy.idempotency.safe,
-            explicit_retry_opt_in=policy.idempotency.explicit_retry_opt_in,
-        ),
-        dry_run=policy.dry_run,
-    )
-
-
-def _policy_metadata(policy: MutationPolicy | None) -> dict[str, object]:
-    if policy is None:
-        return {"provided": False}
-    confirmation = policy.confirmation
-    concurrency = policy.concurrency
-    return {
-        "provided": True,
-        "destructive": policy.destructive,
-        "confirmed": confirmation is not None and confirmation.confirmed,
-        "overwrite": concurrency is not None and concurrency.overwrite,
-        "concurrency_provided": concurrency is not None,
-        "retry_safe": policy.idempotency.safe,
-        "retry_opt_in": policy.idempotency.explicit_retry_opt_in,
-        "idempotency_provided": policy.idempotency.key is not None,
-        "dry_run": policy.dry_run.requested,
-    }
 
 
 def _build_receipt(
@@ -182,50 +146,6 @@ def _build_receipt(
             "policy": _policy_metadata(policy),
         },
     )
-
-
-def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseException:
-    """Attach a shared receipt while preserving the original exception type."""
-    attach_catalog_metadata(error, {"receipt": receipt.to_dict()})
-    error_dict = getattr(error, "__dict__", None)
-    if isinstance(error_dict, dict):
-        error_dict["mutation_receipt"] = receipt
-    return error
-
-
-def _raise_with_receipt(error: Exception | asyncio.CancelledError, receipt: MutationReceipt) -> Never:
-    _attach_receipt(error, receipt)
-    raise error
-
-
-def _error_status(error: BaseException, response: object | None = None) -> int:
-    status = getattr(error, "status_code", None)
-    if isinstance(status, int):
-        return status
-    metadata = getattr(error, "metadata", None)
-    if isinstance(metadata, Mapping) and isinstance(metadata.get("status_code"), int):
-        return cast("int", metadata["status_code"])
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else 0
-
-
-def _mutation_outcome(error: BaseException, response: object | None = None) -> str:
-    if isinstance(error, asyncio.CancelledError):
-        return "cancelled"
-    metadata = getattr(error, "metadata", None)
-    if isinstance(metadata, Mapping) and metadata.get("ambiguous") is True:
-        return "ambiguous"
-    response_status = getattr(response, "status_code", None)
-    if isinstance(response_status, int) and 200 <= response_status < 300:
-        return "ambiguous"
-    if isinstance(error, TransportError):
-        return "ambiguous"
-    error_status = _error_status(error, response)
-    if 300 <= error_status < 400:
-        return "ambiguous"
-    if error_status == 0 and isinstance(error, (UnauthenticatedError, ForbiddenError, CatalogValidationError)):
-        return "rejected"
-    return "failed"
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
@@ -289,7 +209,7 @@ def _rdf_redirect_receipt(
         )
     extension = match.group(2)
     if extension is not None:
-        wire.media_type_for_format(extension)
+        wire.media_type_for_format(extension, operation=operation)
     receipt = _build_receipt(
         operation,
         requested_id,
@@ -763,7 +683,7 @@ class SyncDatasetsService:
             lambda: _sync_delete_dispatch(
                 self._client, dataset_id, permissions, options or DatasetDeleteOptions(), mutation_policy, operation
             ),
-            lambda payload: payload,
+            lambda payload: _decode_mutation_extras(payload, operation),
             "deleted",
         )
 
@@ -808,7 +728,7 @@ class SyncDatasetsService:
     def rdf(self, dataset_id: str) -> NativeRecord | MutationReceipt:
         """GET /api/1/datasets/<id>/rdf (row 47)."""
         operation = wire.DATASET_OPERATIONS["rdf"]
-        method, path, _, _ = wire.rdf_request(dataset_id, None)
+        method, path, _, _ = wire.rdf_request(dataset_id, None, operation=operation)
         status, text_or_headers, response = self._client._dataset_call(
             method=method, path=path, owning_operation=operation, raw_text=True, redirect_mode=True
         )
@@ -828,13 +748,16 @@ class SyncDatasetsService:
     def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord:
         """GET /api/1/datasets/<id>/rdf.<format> (row 48)."""
         operation = wire.DATASET_OPERATIONS["rdf_format"]
-        method, path, _, _ = wire.rdf_request(dataset_id, fmt)
+        method, path, _, _ = wire.rdf_request(dataset_id, fmt, operation=operation)
         _, body, response = self._client._dataset_call(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
-        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
+        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt, operation=operation)
         return wire.parse_text_document(
-            cast("bytes", body), wire.media_type_for_format(fmt), response_media_type=negotiated, operation=operation
+            cast("bytes", body),
+            wire.media_type_for_format(fmt, operation=operation),
+            response_media_type=negotiated,
+            operation=operation,
         )
 
     def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]:
@@ -1008,7 +931,9 @@ def _shape_page(payload: object, *, operation: str) -> UDataPageEnvelope:
     extensions = dict(envelope.platform.extensions) if envelope.platform is not None else {}
     extensions.update({"udata.nextpage": page.next_page, "udata.previouspage": page.previous_page})
     if isinstance(payload, Mapping) and "facets" in payload:
-        extensions["udata.facets"] = payload["facets"]
+        facets = payload["facets"]
+        wire._validate_json_value(facets, operation=operation, path="facets")
+        extensions["udata.facets"] = facets
     metadata = PlatformMetadata(platform=CatalogPlatform.UDATA, extensions=extensions)
     return UDataPageEnvelope(
         items=envelope.items,
@@ -1108,7 +1033,7 @@ class AsyncDatasetsService:
             lambda: _async_delete_dispatch(
                 self._client, dataset_id, permissions, options or DatasetDeleteOptions(), mutation_policy, operation
             ),
-            lambda payload: payload,
+            lambda payload: _decode_mutation_extras(payload, operation),
             "deleted",
         )
 
@@ -1153,7 +1078,7 @@ class AsyncDatasetsService:
     async def rdf(self, dataset_id: str) -> NativeRecord | MutationReceipt:
         """GET /api/1/datasets/<id>/rdf (row 47); see the sync variant."""
         operation = wire.DATASET_OPERATIONS["rdf"]
-        method, path, _, _ = wire.rdf_request(dataset_id, None)
+        method, path, _, _ = wire.rdf_request(dataset_id, None, operation=operation)
         status, text_or_headers, response = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=operation, raw_text=True, redirect_mode=True
         )
@@ -1173,13 +1098,16 @@ class AsyncDatasetsService:
     async def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord:
         """GET /api/1/datasets/<id>/rdf.<format> (row 48)."""
         operation = wire.DATASET_OPERATIONS["rdf_format"]
-        method, path, _, _ = wire.rdf_request(dataset_id, fmt)
+        method, path, _, _ = wire.rdf_request(dataset_id, fmt, operation=operation)
         _, body, response = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
-        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
+        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt, operation=operation)
         return wire.parse_text_document(
-            cast("bytes", body), wire.media_type_for_format(fmt), response_media_type=negotiated, operation=operation
+            cast("bytes", body),
+            wire.media_type_for_format(fmt, operation=operation),
+            response_media_type=negotiated,
+            operation=operation,
         )
 
     async def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]:

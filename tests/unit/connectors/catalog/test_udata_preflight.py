@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -43,6 +45,49 @@ def _write_routes(path: Path, routes: list[dict[str, str]], *, commit: str | Non
 
 def _route(method: str = "GET", path: str = "/api/1/site/") -> dict[str, str]:
     return {"method": method, "path": path, "api_version": "v1"}
+
+
+def _candidate_document(
+    *,
+    route_count: int = 268,
+    source_commit: str = oracle.PINNED_COMMIT,
+    url_map_digest: str = "c" * 64,
+) -> dict[str, object]:
+    return {
+        "status": "reconciled",
+        "route_count": route_count,
+        "source_commit": source_commit,
+        "input_digests": {"source": "a" * 64, "swagger": "b" * 64, "url_map": url_map_digest},
+        "routes": [_route()],
+    }
+
+
+def _write_approved_preflight(path: Path, *, decision: str, targets_approved: bool) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                "schema_version: 1",
+                "status: approved",
+                f"decision: {decision}",
+                f"source_commit: {oracle.PINNED_COMMIT}",
+                "route_count: 268",
+                "source_digest: " + "a" * 64,
+                "swagger_digest: " + "b" * 64,
+                "url_map_digest: " + "c" * 64,
+                f"targets_approved: {'true' if targets_approved else 'false'}",
+                "approved_by: human",
+                "approved_at: 2026-08-26T00:00:00Z",
+                "---",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_candidate(path: Path, document: dict[str, object] | None = None) -> None:
+    path.write_text(json.dumps(document or _candidate_document()), encoding="utf-8")
 
 
 def test_reconcile_requires_three_identical_independent_route_sets(tmp_path: Path) -> None:
@@ -142,6 +187,38 @@ def test_extract_source_document_rejects_an_unpinned_checkout(tmp_path: Path, mo
         oracle.extract_source_document(tmp_path)
 
 
+def test_source_commit_rejects_a_dirty_upstream_tree(tmp_path: Path) -> None:
+    """A modified checkout must not stamp the pinned commit on drifted content."""
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    module = checkout / "module.py"
+    module.write_text("PINNED = True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "add", "module.py"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "-c",
+            "user.name=evidence",
+            "-c",
+            "user.email=evidence@example.com",
+            "commit",
+            "-qm",
+            "pin",
+        ],
+        check=True,
+    )
+
+    clean = oracle._source_commit(checkout)
+    module.write_text("PINNED = False\n", encoding="utf-8")
+
+    assert len(clean) == 40
+    with pytest.raises(oracle.PinnedSourceError, match="unmodified"):
+        oracle._source_commit(checkout)
+
+
 def test_extract_source_document_derives_class_methods_when_route_methods_are_implicit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -188,37 +265,47 @@ def test_write_preflight_is_pending_and_does_not_create_production_artifacts(tmp
     assert candidate.is_file()
     assert not (tmp_path / "udata-17.6.json").exists()
     with pytest.raises(oracle.PreflightError, match="pending"):
-        oracle.verify_preflight(preflight)
+        oracle.verify_preflight(preflight, candidate)
 
 
 def test_verify_preflight_accepts_count_only_but_keeps_drift_blocked(tmp_path: Path) -> None:
     preflight = tmp_path / "04-PREFLIGHT.md"
-    preflight.write_text(
-        "\n".join(
-            [
-                "---",
-                "schema_version: 1",
-                "status: approved",
-                "decision: approve-baseline-defer-targets",
-                f"source_commit: {oracle.PINNED_COMMIT}",
-                "route_count: 268",
-                "source_digest: " + "a" * 64,
-                "swagger_digest: " + "b" * 64,
-                "url_map_digest: " + "c" * 64,
-                "targets_approved: false",
-                "approved_by: human",
-                "approved_at: 2026-08-26T00:00:00Z",
-                "---",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    candidate = tmp_path / "candidate.json"
+    _write_approved_preflight(preflight, decision="approve-baseline-defer-targets", targets_approved=False)
+    _write_candidate(candidate)
 
-    result = oracle.verify_preflight(preflight)
+    result = oracle.verify_preflight(preflight, candidate)
 
     assert result["production_approved"] is True
     assert result["drift_approved"] is False
+
+
+def test_verify_preflight_rejects_deferred_targets_that_claim_approval(tmp_path: Path) -> None:
+    preflight = tmp_path / "04-PREFLIGHT.md"
+    candidate = tmp_path / "candidate.json"
+    _write_approved_preflight(preflight, decision="approve-baseline-defer-targets", targets_approved=True)
+    _write_candidate(candidate)
+
+    with pytest.raises(oracle.PreflightError, match="incompatible"):
+        oracle.verify_preflight(preflight, candidate)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        _candidate_document(url_map_digest="d" * 64),
+        _candidate_document(route_count=269),
+        _candidate_document(source_commit="0" * 40),
+    ],
+)
+def test_verify_preflight_rejects_a_candidate_that_disagrees(tmp_path: Path, document: dict[str, object]) -> None:
+    preflight = tmp_path / "04-PREFLIGHT.md"
+    candidate = tmp_path / "candidate.json"
+    _write_approved_preflight(preflight, decision="approve-baseline-and-targets", targets_approved=True)
+    _write_candidate(candidate, document)
+
+    with pytest.raises(oracle.PreflightError, match="does not match the reconciled candidate"):
+        oracle.verify_preflight(preflight, candidate)
 
 
 def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free(tmp_path: Path) -> None:
@@ -245,6 +332,7 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
     assert "ghcr.io/astral-sh/uv@sha256:" in dockerfile
     assert "python@sha256:" in dockerfile
     assert "flask-caching==2.3.1" in dockerfile
+
     output = tmp_path / "capture.json"
     capture.write_capture("http://127.0.0.1:5640", "17.6.0", output)
     record = json.loads(output.read_text(encoding="utf-8"))
@@ -253,7 +341,18 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
         capture.sanitize_origin("https://www.data.gouv.fr")
 
 
-def test_seed_roles_only_executes_the_fixed_loopback_compose_target(
+def test_dockerfile_commit_default_cannot_drift_from_the_compose_override() -> None:
+    """The pinned uData commit has one source of truth, so a single-site bump must fail here loudly."""
+    stack_dir = Path(__file__).resolve().parents[4] / "dev" / "udata-evidence"
+    dockerfile_arg = re.search(
+        r"^ARG UDATA_COMMIT=(\S+)$", (stack_dir / "Dockerfile").read_text(encoding="utf-8"), re.MULTILINE
+    )
+    compose_arg = re.search(r"UDATA_COMMIT:\s*(\S+)", (stack_dir / "compose.yaml").read_text(encoding="utf-8"))
+    assert dockerfile_arg is not None and compose_arg is not None
+    assert dockerfile_arg.group(1) == compose_arg.group(1) == oracle.PINNED_COMMIT
+
+
+def test_seed_stack_only_executes_the_fixed_loopback_compose_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     compose = tmp_path / "compose.yaml"
@@ -266,13 +365,13 @@ def test_seed_roles_only_executes_the_fixed_loopback_compose_target(
 
     monkeypatch.setattr(seed.subprocess, "run", run)
 
-    seed.seed_roles("http://127.0.0.1:5640", compose)
+    seed.seed_stack("http://127.0.0.1:5640", compose)
 
     assert calls == [
         ("docker", "compose", "-f", str(compose), "exec", "-T", "udata", "python", "-c", seed.SEED_PROGRAM)
     ]
     with pytest.raises(ValueError, match="127.0.0.1"):
-        seed.seed_roles("http://localhost:5640", compose)
+        seed.seed_stack("http://localhost:5640", compose)
 
 
 def test_extract_source_document_inherits_base_class_http_methods(
@@ -386,8 +485,10 @@ def test_url_map_capture_filters_infrastructure_and_scoped_namespaces(tmp_path: 
         json.dumps(
             [
                 {"path": "/api/1/", "method": "GET", "endpoint": "api.doc"},
+                {"path": "/api/1/", "method": "POST", "endpoint": "api.doc"},
                 {"path": "/api/1/swagger.json", "method": "GET", "endpoint": "api.specs"},
                 {"path": "/api/1/proconnect/auth", "method": "GET", "endpoint": "api.proconnect_auth"},
+                {"path": "/api/1/proconnect/auth", "method": "POST", "endpoint": "api.proconnect_auth"},
                 {"path": "/api/1/site/", "method": "GET", "endpoint": "api.site"},
                 {"path": "/api/1/site/", "method": "OPTIONS", "endpoint": "api.site"},
                 {"path": "/static/logo.png", "method": "GET", "endpoint": "static"},
@@ -415,32 +516,23 @@ def test_url_map_capture_filters_infrastructure_and_scoped_namespaces(tmp_path: 
 def test_main_routes_verification_before_source_extraction(tmp_path: Path, capsys: Any) -> None:
     """--verify-preflight short-circuits, so it never reaches the extraction guards."""
     preflight = tmp_path / "preflight.md"
-    preflight.write_text(
-        "\n".join(
-            [
-                "---",
-                "schema_version: 1",
-                "status: approved",
-                "decision: approve-baseline-defer-targets",
-                f"source_commit: {oracle.PINNED_COMMIT}",
-                "route_count: 268",
-                "source_digest: " + "a" * 64,
-                "swagger_digest: " + "b" * 64,
-                "url_map_digest: " + "c" * 64,
-                "targets_approved: false",
-                "approved_by: human",
-                "approved_at: 2026-08-26T00:00:00Z",
-                "---",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    candidate = tmp_path / "candidate.json"
+    _write_approved_preflight(preflight, decision="approve-baseline-defer-targets", targets_approved=False)
+    _write_candidate(candidate)
 
-    exit_code = oracle.main(["--verify-preflight", str(preflight)])
+    exit_code = oracle.main(["--verify-preflight", str(preflight), "--candidate", str(candidate)])
 
     assert exit_code == 0
     assert json.loads(capsys.readouterr().out)
+
+
+def test_main_refuses_verification_without_its_candidate(tmp_path: Path) -> None:
+    """A preflight approval is only meaningful bound to its reconciled candidate."""
+    preflight = tmp_path / "preflight.md"
+    _write_approved_preflight(preflight, decision="approve-baseline-defer-targets", targets_approved=False)
+
+    with pytest.raises(SystemExit, match="--verify-preflight requires --candidate"):
+        oracle.main(["--verify-preflight", str(preflight)])
 
 
 @pytest.mark.parametrize(

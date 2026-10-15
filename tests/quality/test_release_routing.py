@@ -300,8 +300,8 @@ def _collect_providers(registry: dict, release_outputs: dict) -> list[dict]:
 
 
 def test_reusable_publish_interface() -> None:
-    """publish.yml is a workflow_call with exactly the typed required inputs and no release-event trigger."""
-    _require(_publish_interface_ready(), "publish.yml is not yet a typed reusable workflow")
+    """publish.yaml is a workflow_call with exactly the typed required inputs and no release-event trigger."""
+    _require(_publish_interface_ready(), "publish.yaml is not yet a typed reusable workflow")
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     assert "workflow_call" in publish["on"]
     inputs = publish["on"]["workflow_call"]["inputs"]
@@ -311,7 +311,7 @@ def test_reusable_publish_interface() -> None:
         assert spec["required"] is True, f"input {name} must be required"
         assert spec["type"] == "string", f"input {name} must be a string"
     for job in ("build", "publish-testpypi", "smoke", "publish-pypi"):
-        assert job in publish["jobs"], f"publish.yml is missing the {job} job"
+        assert job in publish["jobs"], f"publish.yaml is missing the {job} job"
     raw = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "github.event.release" not in raw
     assert "release: published" not in raw
@@ -347,7 +347,7 @@ def test_publish_workflow_delegates_build_without_duplicate_publish_jobs() -> No
 
 def test_exact_artifact_reused() -> None:
     """The exact-ref artifact is attested once, uploaded uniquely, and reused for production with no rebuild."""
-    _require(_publish_interface_ready(), "publish.yml is not yet a typed reusable workflow")
+    _require(_publish_interface_ready(), "publish.yaml is not yet a typed reusable workflow")
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     jobs = publish["jobs"]
     build = _load_gh_yaml(BUILD_WORKFLOW)

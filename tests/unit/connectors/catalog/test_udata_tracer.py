@@ -53,7 +53,6 @@ class RecordingTransport:
     def __init__(self, *, site_version: str = "17.6.0", responses: list[RuntimeResponse] | None = None) -> None:
         self.requests: list[RuntimeRequest] = []
         self.close_count = 0
-        self.aclose_count = 0
         self._site_version = site_version
         self._responses = list(responses or [])
 
@@ -72,7 +71,6 @@ class RecordingTransport:
 class RecordingAsyncTransport:
     def __init__(self, *, site_version: str = "17.6.0") -> None:
         self.requests: list[RuntimeRequest] = []
-        self.close_count = 0
         self.aclose_count = 0
         self._site_version = site_version
 

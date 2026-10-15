@@ -995,7 +995,7 @@ assert client.taxonomies.dataset_schemas("abc") == ()
 taxonomy_badge = client.taxonomies.add_badge(
     "abc",
     BadgeCreateInput("pivotal-data"),
-    sync_permissions,
+    sync_admin_permissions,
     MutationPolicy(
         confirmation=ConfirmationPolicy(confirmed=True, operation="udata/api-v1.add-dataset-badge", target="abc"),
         concurrency=ConcurrencyPolicy(overwrite=True),
@@ -1005,7 +1005,7 @@ assert taxonomy_badge.record is not None
 taxonomy_deleted = client.taxonomies.delete_badge(
     "abc",
     "pivotal-data",
-    sync_permissions,
+    sync_admin_permissions,
     MutationPolicy(
         destructive=True,
         confirmation=ConfirmationPolicy(
@@ -1441,7 +1441,7 @@ async def run_async():
         taxonomy_badge = await active.taxonomies.add_badge(
             "abc",
             BadgeCreateInput("pivotal-data"),
-            permissions,
+            async_permissions,
             MutationPolicy(
                 confirmation=ConfirmationPolicy(
                     confirmed=True, operation="udata/api-v1.add-dataset-badge", target="abc"
@@ -1452,7 +1452,7 @@ async def run_async():
         taxonomy_deleted = await active.taxonomies.delete_badge(
             "abc",
             "pivotal-data",
-            permissions,
+            async_permissions,
             MutationPolicy(
                 destructive=True,
                 confirmation=ConfirmationPolicy(
@@ -1755,6 +1755,7 @@ assert set(async_recorded) == {
     "http://127.0.0.1:5640/api/1/transfer/wheel-transfer/",
 }
 assert transport.close_count == 0
+assert async_transport.close_count == 0
 assert envelope.items[0].id.value == "abc"
 
 

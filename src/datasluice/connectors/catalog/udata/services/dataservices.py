@@ -22,7 +22,10 @@ from datasluice.connectors.catalog.udata.wire import dataservices as wire
 from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.errors.catalog import NativeCatalogError
 
-from .datasets import _header, _rdf_redirect_receipt
+from .datasets import (
+    _header,
+    _rdf_redirect_receipt,
+)
 from .posts_reports import _record_id
 from .taxonomies import (
     AsyncCatalogService,

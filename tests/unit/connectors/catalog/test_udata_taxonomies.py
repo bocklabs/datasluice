@@ -27,6 +27,7 @@ from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from tests.helpers.udata_test_support import (
+    UDATA_ADMIN_PERMISSIONS,
     UDATA_CREDENTIAL,
     UDATA_ORIGIN,
     UDATA_PERMISSIONS,
@@ -48,24 +49,26 @@ if TYPE_CHECKING:
 
 ORIGIN = UDATA_ORIGIN
 PERMISSIONS = UDATA_PERMISSIONS
+ADMIN_PERMISSIONS = UDATA_ADMIN_PERMISSIONS
 _BADGE_REQUIREMENTS = {
     wire.ADD_BADGE_OPERATION: frozenset({"badge-add"}),
     wire.DELETE_BADGE_OPERATION: frozenset({"badge-delete"}),
 }
 
 
-def _badge_permissions(*granted: str) -> EffectivePermissions:
+def _badge_permissions(*granted: str, admin: bool = False) -> EffectivePermissions:
     """Bind both badge requirements to one granted scope set, so the gate can discriminate."""
     return EffectivePermissions.for_credential(
         UDATA_CREDENTIAL,
         platform=CatalogPlatform.UDATA,
         scopes=frozenset(granted),
         operation_scopes=_BADGE_REQUIREMENTS,
+        roles=frozenset({"admin"}) if admin else frozenset(),
     )
 
 
-ADD_ONLY_PERMISSIONS = _badge_permissions("badge-add")
-DELETE_ONLY_PERMISSIONS = _badge_permissions("badge-delete")
+ADD_ONLY_PERMISSIONS = _badge_permissions("badge-add", admin=True)
+DELETE_ONLY_PERMISSIONS = _badge_permissions("badge-delete", admin=True)
 
 
 def _badge_requests(router: SyncRouteRouter | AsyncRouteRouter) -> list[tuple[str, str]]:
@@ -371,8 +374,8 @@ def test_badge_mutations_are_permission_guarded_and_return_redacted_receipts() -
     add_policy = mutation_policy("udata/api-v1.add-dataset-badge", "dataset-1")
     delete_policy = mutation_policy("udata/api-v1.delete-dataset-badge", "dataset-1:certified", destructive=True)
     with sync_client(sync_route_table(with_site_route(routes)), UDATA_CREDENTIAL) as client:
-        added = client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), PERMISSIONS, add_policy)
-        removed = client.taxonomies.delete_badge("dataset-1", "certified", PERMISSIONS, delete_policy)
+        added = client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), ADMIN_PERMISSIONS, add_policy)
+        removed = client.taxonomies.delete_badge("dataset-1", "certified", ADMIN_PERMISSIONS, delete_policy)
         assert isinstance(added, TaxonomyMutationResult)
         assert added.record is not None
         assert added.record.payload == badge
@@ -449,6 +452,57 @@ def test_badge_permissions_discriminate_add_from_delete_in_both_modes() -> None:
             ("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"),
             ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"),
         ]
+
+    run_sync()
+    asyncio.run(run_async())
+
+
+@pytest.mark.parametrize("method_name", ("add_badge", "delete_badge"))
+def test_badge_admin_operations_refuse_non_admin_credentials_in_both_modes(method_name: str) -> None:
+    """The pinned profile marks both badge mutations capability admin, so the role is checked before I/O."""
+    routes = with_site_route(
+        {
+            ("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/"): (201, {"kind": "certified"}),
+            ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/"): (204, None),
+        }
+    )
+    add_policy = mutation_policy(wire.ADD_BADGE_OPERATION, "dataset-1")
+    delete_policy = mutation_policy(wire.DELETE_BADGE_OPERATION, "dataset-1:certified", destructive=True)
+    expected_request = (
+        ("POST", f"{ORIGIN}/api/1/datasets/dataset-1/badges/")
+        if method_name == "add_badge"
+        else ("DELETE", f"{ORIGIN}/api/1/datasets/dataset-1/badges/certified/")
+    )
+
+    def run_sync() -> None:
+        router = sync_route_table(routes)
+        with sync_client(router, UDATA_CREDENTIAL) as client:
+            if method_name == "add_badge":
+                client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), ADMIN_PERMISSIONS, add_policy)
+                with pytest.raises(ForbiddenError):
+                    client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), PERMISSIONS, add_policy)
+            else:
+                client.taxonomies.delete_badge("dataset-1", "certified", ADMIN_PERMISSIONS, delete_policy)
+                with pytest.raises(ForbiddenError):
+                    client.taxonomies.delete_badge("dataset-1", "certified", PERMISSIONS, delete_policy)
+        assert _badge_requests(router) == [expected_request]
+
+    async def run_async() -> None:
+        router = async_route_table(routes)
+        async with async_client(router, UDATA_CREDENTIAL) as client:
+            if method_name == "add_badge":
+                await client.taxonomies.add_badge(
+                    "dataset-1", BadgeCreateInput("certified"), ADMIN_PERMISSIONS, add_policy
+                )
+                with pytest.raises(ForbiddenError):
+                    await client.taxonomies.add_badge(
+                        "dataset-1", BadgeCreateInput("certified"), PERMISSIONS, add_policy
+                    )
+            else:
+                await client.taxonomies.delete_badge("dataset-1", "certified", ADMIN_PERMISSIONS, delete_policy)
+                with pytest.raises(ForbiddenError):
+                    await client.taxonomies.delete_badge("dataset-1", "certified", PERMISSIONS, delete_policy)
+        assert _badge_requests(router) == [expected_request]
 
     run_sync()
     asyncio.run(run_async())

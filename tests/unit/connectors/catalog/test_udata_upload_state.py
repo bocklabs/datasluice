@@ -634,7 +634,7 @@ def test_streaming_deadline_never_rejects_a_source_that_reaches_its_byte_ceiling
     with client:
         result = client.resources.upload(
             "dataset",
-            ResourceUploadInput(source, "data.csv", 4, budget=_budget(4.0), clock=clock),
+            ResourceUploadInput(source, "data.csv", 4, budget=_budget(4.5), clock=clock),
             permissions,
             _upload_policy(),
             resource_id="resource",
@@ -644,6 +644,24 @@ def test_streaming_deadline_never_rejects_a_source_that_reaches_its_byte_ceiling
     assert transport.delivered == 4
     assert source.close_calls == 1
     assert result.receipt.outcome == "succeeded"
+
+
+def test_streaming_deadline_fails_the_end_of_stream_probe_once_the_budget_is_exhausted() -> None:
+    """The probe that detects over-ceiling sources is bound by the same deadline as data reads."""
+    clock = _ManualClock()
+    source = _TickingSource(b"abcd", clock, 1.0)
+    upload = ResourceUploadInput(source, "data.csv", 4, budget=_budget(3.5), clock=clock)
+
+    with pytest.raises(UploadDeadlineExceededError) as raised:
+        part = upload.part()
+        assert not isinstance(part.data, bytes)
+        while part.data.read():
+            pass
+
+    assert raised.value.budget_seconds == 3.5
+    assert raised.value.elapsed_seconds == 4.0
+    assert source.reads == 4
+    assert source.tell() == 4
 
 
 def test_streaming_deadline_failure_still_closes_the_borrowed_source_exactly_once() -> None:

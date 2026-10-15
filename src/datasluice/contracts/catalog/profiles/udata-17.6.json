@@ -51,15 +51,15 @@
     },
     {
       "id": "udata/api-v1.add-dataset-badge",
-      "capability": "authenticated",
-      "authentication": "authenticated",
+      "capability": "admin",
+      "authentication": "privileged",
       "mutation": "create",
       "evidence_requirement": "controlled-environment-only"
     },
     {
       "id": "udata/api-v1.add-organization-badge",
-      "capability": "authenticated",
-      "authentication": "authenticated",
+      "capability": "admin",
+      "authentication": "privileged",
       "mutation": "update",
       "evidence_requirement": "controlled-environment-only"
     },
@@ -366,8 +366,8 @@
     },
     {
       "id": "udata/api-v1.delete-dataset-badge",
-      "capability": "authenticated",
-      "authentication": "authenticated",
+      "capability": "admin",
+      "authentication": "privileged",
       "mutation": "delete",
       "evidence_requirement": "controlled-environment-only"
     },
@@ -401,8 +401,8 @@
     },
     {
       "id": "udata/api-v1.delete-organization-badge",
-      "capability": "authenticated",
-      "authentication": "authenticated",
+      "capability": "admin",
+      "authentication": "privileged",
       "mutation": "delete",
       "evidence_requirement": "controlled-environment-only"
     },

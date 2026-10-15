@@ -27,7 +27,7 @@ from datasluice.connectors.catalog.udata.models.resources import (
     ResourceUpdateInput,
     ResourceUploadInput,
 )
-from datasluice.connectors.catalog.udata.services import datasets as dataset_service
+from datasluice.connectors.catalog.udata.services import _receipts
 from datasluice.connectors.catalog.udata.services import organizations_memberships as organization_service
 from datasluice.connectors.catalog.udata.services.organizations_memberships import (
     AsyncOrganizationsMembershipsService,
@@ -472,7 +472,7 @@ def test_async_organization_get_matches_sync_wire() -> None:
 
 
 def test_organization_family_reuses_the_shared_receipt_attachment_helper() -> None:
-    assert organization_service._attach is dataset_service._attach_receipt
+    assert organization_service._attach is _receipts._attach_receipt
 
 
 def test_organization_page_decoders_delegate_to_the_shared_page_shape(monkeypatch: pytest.MonkeyPatch) -> None:

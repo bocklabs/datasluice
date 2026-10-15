@@ -249,8 +249,10 @@ def _validate_query_text(query: str | None, scope: str, *, non_empty: bool) -> N
 
 def _validate_query_sort(sort: str | None, allowed: frozenset[str], scope: str) -> None:
     if sort is not None:
+        if not isinstance(sort, str) or not sort:
+            raise ValueError(f"{scope} sort must be a non-empty string when supplied.")
         key = sort[1:] if sort.startswith("-") else sort
-        if not sort or key not in allowed:
+        if key not in allowed:
             raise ValueError(f"{scope} sort must be a documented value.")
 
 
@@ -833,6 +835,11 @@ class SiteDataserviceCsvQuery:
         return params
 
 
+def _require_optional_text(value: object, message: str) -> None:
+    if value is not None and (not isinstance(value, str) or not value):
+        raise ValueError(message)
+
+
 @dataclass(frozen=True, slots=True)
 class SiteDocument:
     """A bounded root document or redirect without retaining response bytes."""
@@ -856,13 +863,13 @@ class SiteDocument:
             raise ValueError("uData site document status codes must be successful or redirect statuses.")
         if type(self.size_bytes) is not int or self.size_bytes < 0:
             raise ValueError("uData site document sizes must be non-negative integers.")
-        if _SHA256.fullmatch(self.sha256) is None:
+        if not isinstance(self.sha256, str) or _SHA256.fullmatch(self.sha256) is None:
             raise ValueError("uData site documents require a SHA-256 digest.")
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata, "udata.site_document.metadata"))
         if self.data is not None:
             object.__setattr__(self, "data", _freeze_mapping(self.data, "udata.site_document.data"))
-        if self.location is not None and (not isinstance(self.location, str) or not self.location):
-            raise ValueError("uData site document locations must be non-empty strings when supplied.")
+        _require_optional_text(self.location, "uData site document locations must be non-empty strings when supplied.")
+        _require_optional_text(self.format, "uData site document formats must be non-empty strings when supplied.")
 
     @property
     def payload(self) -> Mapping[str, object]:

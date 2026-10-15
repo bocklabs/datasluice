@@ -31,15 +31,15 @@ from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import RuntimeResponse
 
-from .datasets import (
-    _attach_receipt as _attach,
-)
-from .datasets import (
-    _enforce_mutation_policy,
+from ._receipts import _attach_receipt as _attach
+from ._receipts import (
     _error_status,
     _mutation_outcome,
     _operation_id,
     _receipt_policy,
+)
+from .datasets import (
+    _enforce_mutation_policy,
     _require_mutation_permission,
     _safe_target_value,
 )

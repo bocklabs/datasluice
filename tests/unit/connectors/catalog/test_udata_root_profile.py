@@ -29,6 +29,7 @@ from datasluice.connectors.catalog.udata.clients import (
 from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteCatalogQuery,
     SiteDataserviceCsvQuery,
+    SiteDatasetCatalogQuery,
     SiteDatasetCsvQuery,
     SiteDocument,
     SiteMutationResult,
@@ -2292,3 +2293,36 @@ def test_root_profile_model_reprs_hide_configuration_values() -> None:
     assert marker not in repr(profile)
     assert marker not in repr(patch)
     assert marker not in repr(result)
+
+
+def test_normalize_origin_rejects_a_mount_path() -> None:
+    with pytest.raises(ValueError, match="mount path"):
+        UDataClientSettings(base_url=f"{_ORIGIN}/udata")
+
+
+@pytest.mark.parametrize(
+    "query_type",
+    (SiteDatasetCatalogQuery, SiteDatasetCsvQuery, SiteReuseCsvQuery, SiteDataserviceCsvQuery),
+)
+def test_site_catalog_queries_require_string_sorts(query_type: type[SiteCatalogQuery]) -> None:
+    with pytest.raises(ValueError, match="non-empty string"):
+        query_type(sort=123)  # type: ignore[arg-type]
+
+
+def _site_document() -> SiteDocument:
+    return SiteDocument(
+        endpoint=f"{_ORIGIN}/api/1/site/catalog",
+        media_type="text/csv",
+        status_code=200,
+        size_bytes=4,
+        sha256="0" * 64,
+    )
+
+
+def test_site_document_rejects_non_string_digests_and_formats() -> None:
+    with pytest.raises(ValueError, match="SHA-256"):
+        replace(_site_document(), sha256=123)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="formats"):
+        replace(_site_document(), format="")
+    with pytest.raises(ValueError, match="formats"):
+        replace(_site_document(), format=7)  # type: ignore[arg-type]

@@ -20,7 +20,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import uuid4
 
 import pytest
@@ -231,7 +231,7 @@ def _direct_request(
         headers["Content-Type"] = content_type
     request = Request(f"{ORIGIN}{path}", data=data, headers=headers, method=method)
     try:
-        response = build_opener(_DirectNoRedirect()).open(request, timeout=10)
+        response = build_opener(ProxyHandler({}), _DirectNoRedirect()).open(request, timeout=10)
     except HTTPError as error:
         response = error
     with response:
@@ -1371,13 +1371,13 @@ def _direct_site_patch(
         method=method,
     )
     try:
-        response = build_opener(_DirectNoRedirect()).open(request, timeout=10)
+        response = build_opener(ProxyHandler({}), _DirectNoRedirect()).open(request, timeout=10)
     except HTTPError as error:
         response = error
     with response:
         response_body = response.read(8193)
         assert len(response_body) <= 8192
-        payload = json.loads(response_body)
+        payload = json.loads(response_body) if response_body else {}
         assert isinstance(payload, Mapping)
         status = response.status
         media_type = response.headers.get_content_type()
@@ -1413,8 +1413,9 @@ def test_controlled_stack_proves_dataset_family_reads() -> None:
     assert page.page is not None
     assert page.page.total_items is not None
     assert page.items, "expected seeded datasets on the controlled stack"
-    assert isinstance(suggestions, tuple)
-    assert v2_page.page is not None
+    assert suggestions, "expected seeded suggestions for q='evidence'"
+    assert v2_page.page is not None and v2_page.page.total_items is not None
+    assert v2_page.items, "expected seeded datasets on the controlled v2 list"
 
 
 def _taxonomy_payloads(records: object) -> list[object]:
@@ -2540,6 +2541,7 @@ def test_controlled_stack_proves_authenticated_dataset_mutation_chain() -> None:
             )
             assert updated.record is not None
             assert updated.record.payload["title"] == "Evidence dataset v2"
+            assert updated.record.payload["description"] == "d"
         finally:
             if dataset_id is not None:
                 try:
@@ -2621,7 +2623,7 @@ def test_controlled_resource_family_mutation_and_read_chain() -> None:
             )
             assert created.record is not None
             resource_id = created.record.id.value
-            direct = build_opener(_DirectNoRedirect()).open(
+            direct = build_opener(ProxyHandler({}), _DirectNoRedirect()).open(
                 Request(f"{ORIGIN}/api/1/datasets/{dataset_id}/resources/{resource_id}/"), timeout=10
             )
             with direct:
@@ -3474,20 +3476,23 @@ def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> 
 
     settings = UDataClientSettings(base_url=ORIGIN)
 
-    async def run() -> tuple[str, int | None]:
+    async def run() -> tuple[str, int]:
         async with create_async_client(settings) as client:
             version = (await client.site_version()).version
             envelope = await client.datasets_list(
                 CatalogOperationRequest(operation_id=_FAMILY_OPERATION_ID, payload={}),
                 CatalogOperationGuard(operation_id=_FAMILY_OPERATION_ID),
             )
-            return version, envelope.page.total_items if envelope.page else None
+            assert envelope.page is not None
+            assert envelope.page.total_items is not None
+            assert envelope.page.total_items > 0
+            assert envelope.items
+            return version, envelope.page.total_items
 
     version, total = asyncio.run(run())
 
     assert version == "17.6.0"
-    assert total is not None
-    assert total >= 0
+    assert total > 0
 
 
 _OAUTH_FORM = "application/x-www-form-urlencoded"
@@ -3498,7 +3503,7 @@ def _direct_following_request(
 ) -> tuple[int, object, dict[str, str]]:
     """Raw probe that follows redirects, matching the typed client's default."""
     request = Request(f"{ORIGIN}{path}", headers={"Accept": "*/*", "X-API-KEY": token}, method=method)
-    with build_opener().open(request, timeout=10) as response:
+    with build_opener(ProxyHandler({})).open(request, timeout=10) as response:
         body = response.read(max_bytes + 1)
         assert len(body) <= max_bytes
         media_type = response.headers.get_content_type()

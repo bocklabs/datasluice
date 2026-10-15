@@ -47,7 +47,11 @@ from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationErr
 from datasluice.runtime.bulk import AsyncBulkExecutor, BulkExecutor, BulkItemReceipt, BulkPlan, BulkSummary
 from datasluice.runtime.resilience import DeadlineMonitor
 
-from .datasets import _enforce_mutation_policy, _error_status, _require_mutation_permission
+from ._receipts import _error_status
+from .datasets import (
+    _enforce_mutation_policy,
+    _require_mutation_permission,
+)
 from .resources import _attach, _receipt
 from .taxonomies import (
     AsyncCatalogService,

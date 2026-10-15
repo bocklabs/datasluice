@@ -91,10 +91,10 @@ class _BoundedSource:
     def read(self, size: int = -1) -> bytes:
         if self._closed:
             raise ValueError("uData upload source is closed.")
-        if self._read < self._limit:
-            self._assert_within_deadline()
         remaining = self._limit - self._read
         request_size = remaining + 1 if size < 0 else min(size, remaining + 1)
+        if request_size > 0:
+            self._assert_within_deadline()
         chunk = self._source.read(request_size)
         if not isinstance(chunk, bytes):
             raise MidStreamUploadError("uData upload sources must return bytes.")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import urlsplit
 
@@ -17,13 +16,7 @@ from datasluice.connectors.catalog.udata.clients import (
     _controlled_sync_revalidate,
     _controlled_sync_site_id,
 )
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.connectors.catalog.udata.wire import root_profile as wire
-from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
-from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform
-from datasluice.domain.catalog.operations import OperationId
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
-from datasluice.domain.catalog.udata import (
+from datasluice.connectors.catalog.udata.models.root_profile import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
     SITE_RESOURCE_KIND,
@@ -37,31 +30,40 @@ from datasluice.domain.catalog.udata import (
     SiteProfile,
     SiteReuseCsvQuery,
 )
+from datasluice.connectors.catalog.udata.services._receipts import (
+    _error_status,
+    _failure_event,
+    _mutation_outcome,
+    _operation_id,
+    _policy_metadata,
+    _raise_with_receipt,
+    _receipt_policy,
+)
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire import root_profile as wire
+from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform
+from datasluice.domain.catalog.safety import IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
     CatalogValidationError,
     ForbiddenError,
     NativeCatalogError,
     UnauthenticatedError,
-    attach_catalog_metadata,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
-from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse, TransportError
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Mapping
+
     from datasluice.domain.catalog.receipts import MutationReceipt
+    from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
 
 _JSON_MEDIA_TYPE = "application/json"
 
 _CSV_MEDIA_TYPE = "text/csv"
 _UNKNOWN_SITE = "unknown"
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
-
-
-def _operation_id(operation: str) -> OperationId:
-    platform, _, tail = operation.partition("/")
-    service, _, method = tail.partition(".")
-    return OperationId(platform=platform, service=service or "native", method=method or tail)
 
 
 def _require_mutation_permission(
@@ -105,38 +107,6 @@ def _require_mutation_permission(
     return resolved
 
 
-def _receipt_policy(policy: MutationPolicy | None) -> MutationPolicy:
-    if policy is None:
-        return MutationPolicy(concurrency=ConcurrencyPolicy(overwrite=True))
-    return MutationPolicy(
-        destructive=policy.destructive,
-        concurrency=ConcurrencyPolicy(overwrite=True),
-        idempotency=IdempotencyPolicy(
-            safe=policy.idempotency.safe,
-            explicit_retry_opt_in=policy.idempotency.explicit_retry_opt_in,
-        ),
-        dry_run=policy.dry_run,
-    )
-
-
-def _policy_metadata(policy: MutationPolicy | None) -> dict[str, object]:
-    if policy is None:
-        return {"provided": False}
-    confirmation = policy.confirmation
-    concurrency = policy.concurrency
-    return {
-        "provided": True,
-        "destructive": policy.destructive,
-        "confirmed": confirmation is not None and confirmation.confirmed,
-        "overwrite": concurrency is not None and concurrency.overwrite,
-        "concurrency_provided": concurrency is not None,
-        "retry_safe": policy.idempotency.safe,
-        "retry_opt_in": policy.idempotency.explicit_retry_opt_in,
-        "idempotency_provided": policy.idempotency.key is not None,
-        "dry_run": policy.dry_run.requested,
-    }
-
-
 def _build_receipt(
     policy: MutationPolicy | None,
     outcome: str,
@@ -156,48 +126,6 @@ def _build_receipt(
         outcome,
         metadata,
     )
-
-
-def _error_status(error: BaseException, response: object | None = None) -> int:
-    status = getattr(error, "status_code", None)
-    if isinstance(status, int):
-        return status
-    metadata = getattr(error, "metadata", None)
-    if isinstance(metadata, Mapping) and isinstance(metadata.get("status_code"), int):
-        return cast("int", metadata["status_code"])
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else 0
-
-
-def _mutation_outcome(error: BaseException, response: object | None = None) -> str:
-    if isinstance(error, asyncio.CancelledError):
-        return "cancelled"
-    metadata = getattr(error, "metadata", None)
-    if isinstance(metadata, Mapping) and metadata.get("ambiguous") is True:
-        return "ambiguous"
-    response_status = getattr(response, "status_code", None)
-    if isinstance(response_status, int) and 200 <= response_status < 300:
-        return "ambiguous"
-    if isinstance(error, TransportError):
-        return "ambiguous"
-    if _error_status(error, response) == 0 and isinstance(
-        error, (UnauthenticatedError, ForbiddenError, CatalogValidationError)
-    ):
-        return "rejected"
-    return "failed"
-
-
-def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseException:
-    attach_catalog_metadata(error, {"receipt": receipt.to_dict()})
-    error_dict = getattr(error, "__dict__", None)
-    if isinstance(error_dict, dict):
-        error_dict["mutation_receipt"] = receipt
-    return error
-
-
-def _raise_with_receipt(error: Exception | asyncio.CancelledError, receipt: MutationReceipt) -> Never:
-    _attach_receipt(error, receipt)
-    raise error
 
 
 def _require_controlled_authority(*, authorized: bool, operation: str) -> None:
@@ -265,16 +193,18 @@ def _mutating(
     target: Callable[[], str],
     evidence_digest: Callable[[], str | None],
     emit: Callable[[str], None],
+    *,
+    dispatched: Callable[[], bool] | None = None,
 ) -> SiteMutationResult:
     response: object | None = None
     try:
         status, payload, response = dispatch()
         profile = decode(payload, response)
     except Exception as error:
-        emit("failed")
+        emit(_failure_event(error))
         receipt = _build_receipt(
             policy,
-            _mutation_outcome(error, response),
+            _mutation_outcome(error, response, dispatched=dispatched() if dispatched is not None else True),
             status_code=_error_status(error, response),
             mutation="set_site",
             target=target(),
@@ -295,16 +225,18 @@ async def _amutating(
     target: Callable[[], str],
     evidence_digest: Callable[[], str | None],
     emit: Callable[[str], None],
+    *,
+    dispatched: Callable[[], bool] | None = None,
 ) -> SiteMutationResult:
     response: object | None = None
     try:
         status, payload, response = await dispatch()
         profile = decode(payload, response)
     except (Exception, asyncio.CancelledError) as error:
-        emit("failed")
+        emit(_failure_event(error))
         receipt = _build_receipt(
             policy,
-            _mutation_outcome(error, response),
+            _mutation_outcome(error, response, dispatched=dispatched() if dispatched is not None else True),
             status_code=_error_status(error, response),
             mutation="set_site",
             target=target(),
@@ -408,7 +340,7 @@ def _run_root[T](client: SyncUDataClient, action: Callable[[], T]) -> T:
         client._emit(operation, "budget_exhausted")
         raise
     except SETTLEMENT_ERRORS as error:
-        client._emit(operation, "cancelled" if error.__class__.__name__ == "CancelledError" else "failed")
+        client._emit(operation, _failure_event(error))
         raise
     client._emit(operation, "succeeded")
     return result
@@ -423,7 +355,7 @@ async def _run_root_async[T](client: AsyncUDataClient, action: Callable[[], Awai
         client._emit(operation, "budget_exhausted")
         raise
     except ASYNC_SETTLEMENT_ERRORS as error:
-        client._emit(operation, "cancelled" if error.__class__.__name__ == "CancelledError" else "failed")
+        client._emit(operation, _failure_event(error))
         raise
     client._emit(operation, "succeeded")
     return result
@@ -441,9 +373,10 @@ def _make_sync_set_site():
         operation = SET_SITE_OPERATION
         transport = self._client.transport
         target_id = _controlled_sync_site_id(transport) or _UNKNOWN_SITE
+        patch_dispatched = False
 
         def dispatch() -> tuple[int, object, object]:
-            nonlocal target_id
+            nonlocal target_id, patch_dispatched
             _require_controlled_authority(
                 authorized=_controlled_sync_site_id(transport) is not None,
                 operation=operation,
@@ -470,6 +403,7 @@ def _make_sync_set_site():
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
+            patch_dispatched = True
             status, payload, response = type(self._client)._root_call(
                 self._client,
                 method=method,
@@ -500,6 +434,7 @@ def _make_sync_set_site():
             lambda: target_id,
             lambda: _controlled_sync_evidence_digest(transport),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
+            dispatched=lambda: patch_dispatched,
         )
 
     return set_site
@@ -517,9 +452,10 @@ def _make_async_set_site():
         operation = SET_SITE_OPERATION
         transport = self._client.transport
         target_id = _controlled_async_site_id(transport) or _UNKNOWN_SITE
+        patch_dispatched = False
 
         async def dispatch() -> tuple[int, object, object]:
-            nonlocal target_id
+            nonlocal target_id, patch_dispatched
             _require_controlled_authority(
                 authorized=_controlled_async_site_id(transport) is not None,
                 operation=operation,
@@ -547,6 +483,7 @@ def _make_async_set_site():
             target_id = current.site_id
             _enforce_patch_policy(mutation_policy, target=target_id)
             method, path, headers, body = wire.set_site_request(client_input)
+            patch_dispatched = True
             status, payload, response = await type(self._client)._root_call_async(
                 self._client,
                 method=method,
@@ -577,6 +514,7 @@ def _make_async_set_site():
             lambda: target_id,
             lambda: _controlled_async_evidence_digest(transport),
             lambda outcome: self._client._emit(_operation_id(operation), outcome),
+            dispatched=lambda: patch_dispatched,
         )
 
     return set_site

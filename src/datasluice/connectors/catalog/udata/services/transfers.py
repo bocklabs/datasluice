@@ -18,7 +18,11 @@ from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.errors.catalog import NativeCatalogError, attach_catalog_metadata
 from datasluice.runtime.transport.base import TransportError
 
-from .datasets import _error_status, _mutation_outcome, _require_mutation_permission
+from ._receipts import (
+    _error_status,
+    _mutation_outcome,
+)
+from .datasets import _require_mutation_permission
 from .taxonomies import (
     AsyncCatalogService,
     Permissions,

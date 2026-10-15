@@ -19,7 +19,7 @@ def test_connector_contract_imports_without_its_extra(monkeypatch: pytest.Monkey
     importlib.import_module(f"datasluice.connectors.catalog.{platform}")
 
 
-@pytest.mark.parametrize("platform", ("socrata",))
+@pytest.mark.parametrize("platform", ("socrata", "udata"))
 def test_live_client_requires_its_connector_extra(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     """Stubbed live construction reports the exact missing platform extra."""
     live = importlib.import_module(f"datasluice.connectors.catalog.{platform}.live")

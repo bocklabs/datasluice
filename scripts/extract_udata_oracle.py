@@ -38,7 +38,7 @@ def digest_file(path: Path) -> str:
 
 
 def _source_commit(source_root: Path) -> str:
-    """Read the exact commit checked out in an upstream source tree."""
+    """Read the exact commit checked out in a clean upstream source tree."""
     completed = subprocess.run(
         ["git", "-C", str(source_root), "rev-parse", "HEAD"],
         check=False,
@@ -47,6 +47,12 @@ def _source_commit(source_root: Path) -> str:
     )
     if completed.returncode != 0:
         raise PinnedSourceError("source root must be a git checkout with an exact pinned commit")
+    dirty = subprocess.run(
+        ["git", "-C", str(source_root), "diff-index", "--quiet", "HEAD", "--"],
+        check=False,
+    )
+    if dirty.returncode != 0:
+        raise PinnedSourceError("source root working tree must be unmodified at the pinned commit")
     return completed.stdout.strip()
 
 
@@ -497,9 +503,8 @@ def _frontmatter(path: Path) -> dict[str, str]:
     return values
 
 
-def verify_preflight(path: Path) -> dict[str, bool | int | str]:
-    """Verify a human-approved record and report its narrowly authorized scopes."""
-    values = _frontmatter(path)
+def _approved_frontmatter(values: dict[str, str]) -> tuple[str, int, bool]:
+    """Validate the approval frontmatter and return its decision, route count, and target scope."""
     if values.get("status") != "approved":
         raise PreflightError(f"preflight status is {values.get('status', 'missing')}, not approved")
     decision = values.get("decision")
@@ -521,6 +526,40 @@ def verify_preflight(path: Path) -> dict[str, bool | int | str]:
     targets_approved = values.get("targets_approved") == "true"
     if decision == "approve-baseline-and-targets" and not targets_approved:
         raise PreflightError("target approval decision requires targets_approved: true")
+    if decision == "approve-baseline-defer-targets" and targets_approved:
+        raise PreflightError("defer-targets decision is incompatible with targets_approved: true")
+    return decision, route_count, targets_approved
+
+
+def _verify_reconciled_candidate(values: dict[str, str], candidate: Path, route_count: int) -> None:
+    """Fail unless the reconciled candidate matches the approved frontmatter facts."""
+    try:
+        reconciled = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise PreflightError("preflight verification requires a valid reconciled candidate") from error
+    if not isinstance(reconciled, dict):
+        raise PreflightError("the reconciled candidate must be a JSON object")
+    input_digests = reconciled.get("input_digests")
+    if not isinstance(input_digests, dict):
+        raise PreflightError("the reconciled candidate has no input digest mapping")
+    for recorded, bound in (
+        ("source_digest", "source"),
+        ("swagger_digest", "swagger"),
+        ("url_map_digest", "url_map"),
+    ):
+        if values[recorded] != input_digests.get(bound):
+            raise PreflightError(f"preflight {recorded} does not match the reconciled candidate")
+    if route_count != reconciled.get("route_count"):
+        raise PreflightError("preflight route_count does not match the reconciled candidate")
+    if values.get("source_commit") != reconciled.get("source_commit"):
+        raise PreflightError("preflight source_commit does not match the reconciled candidate")
+
+
+def verify_preflight(path: Path, candidate: Path) -> dict[str, bool | int | str]:
+    """Verify a human-approved record against its reconciled candidate and report its scopes."""
+    values = _frontmatter(path)
+    decision, route_count, targets_approved = _approved_frontmatter(values)
+    _verify_reconciled_candidate(values, candidate, route_count)
     return {
         "production_approved": True,
         "drift_approved": targets_approved,
@@ -605,7 +644,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.exclude_namespace and any(_reconciliation_arguments(args)):
         raise SystemExit("namespace exclusion only applies to source extraction")
     if args.verify_preflight:
-        print(json.dumps(verify_preflight(args.verify_preflight), sort_keys=True))
+        if not args.candidate:
+            raise SystemExit("--verify-preflight requires --candidate")
+        print(json.dumps(verify_preflight(args.verify_preflight, args.candidate), sort_keys=True))
         return 0
     if _source_extraction_requested(args):
         return _run_source_extraction(args)

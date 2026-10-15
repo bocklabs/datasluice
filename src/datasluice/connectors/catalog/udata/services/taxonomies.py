@@ -23,7 +23,14 @@ from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse, UploadPart
 
-from .datasets import _enforce_mutation_policy, _error_status, _mutation_outcome, _require_mutation_permission
+from ._receipts import (
+    _error_status,
+    _mutation_outcome,
+)
+from .datasets import (
+    _enforce_mutation_policy,
+    _require_mutation_permission,
+)
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -256,6 +263,17 @@ class SyncCatalogService:
             self._client._dataset_call, self._client._resolved_credential(), permissions, policy, operation, request
         )
 
+    def _admin_mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
+        return _dataset_mutate(
+            self._client._dataset_call,
+            self._client._resolved_credential(),
+            permissions,
+            policy,
+            operation,
+            request,
+            admin=True,
+        )
+
 
 class AsyncCatalogService:
     _client: AsyncUDataClient
@@ -271,6 +289,19 @@ class AsyncCatalogService:
             policy,
             operation,
             request,
+        )
+
+    async def _admin_mutate(
+        self, request: Request, permissions: Permissions, policy: Policy, operation: str
+    ) -> Response:
+        return await _dataset_mutate(
+            self._client._dataset_call_async,
+            await self._client._resolved_credential_async(),
+            permissions,
+            policy,
+            operation,
+            request,
+            admin=True,
         )
 
 
@@ -300,7 +331,7 @@ class SyncTaxonomiesService(SyncCatalogService):
             "added",
             wire.ADD_BADGE_OPERATION,
             lambda: wire.add_badge_request(dataset_id, client_input),
-            lambda request: self._mutate(request, permissions, mutation_policy, wire.ADD_BADGE_OPERATION),
+            lambda request: self._admin_mutate(request, permissions, mutation_policy, wire.ADD_BADGE_OPERATION),
         )
 
     def delete_badge(
@@ -316,7 +347,7 @@ class SyncTaxonomiesService(SyncCatalogService):
             "deleted",
             wire.DELETE_BADGE_OPERATION,
             lambda: wire.delete_badge_request(dataset_id, kind),
-            lambda request: self._mutate(request, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION),
+            lambda request: self._admin_mutate(request, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION),
             destructive=True,
         )
 
@@ -368,7 +399,7 @@ class AsyncTaxonomiesService(AsyncCatalogService):
             "added",
             wire.ADD_BADGE_OPERATION,
             lambda: wire.add_badge_request(dataset_id, client_input),
-            lambda request: self._mutate(request, permissions, mutation_policy, wire.ADD_BADGE_OPERATION),
+            lambda request: self._admin_mutate(request, permissions, mutation_policy, wire.ADD_BADGE_OPERATION),
         )
 
     async def delete_badge(
@@ -384,7 +415,7 @@ class AsyncTaxonomiesService(AsyncCatalogService):
             "deleted",
             wire.DELETE_BADGE_OPERATION,
             lambda: wire.delete_badge_request(dataset_id, kind),
-            lambda request: self._mutate(request, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION),
+            lambda request: self._admin_mutate(request, permissions, mutation_policy, wire.DELETE_BADGE_OPERATION),
             destructive=True,
         )
 

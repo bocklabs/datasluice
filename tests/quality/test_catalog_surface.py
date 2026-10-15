@@ -881,15 +881,12 @@ LOCKED_DATASET_ROUTE_OPERATIONS = (
 )
 
 LOCKED_EXTRA_OPERATION_IDS = (
-    (
-        LOCKED_DATASET_ROUTE_OPERATIONS
-        & {
-            "udata/api-v1.set_site",
-            "udata/api-v1.resource-reads",
-            "udata/api-v1.resource-mutations",
-            "udata/api-v1.resource-destructive-mutations",
-        }
-    )
+    {
+        "udata/api-v1.set_site",
+        "udata/api-v1.resource-reads",
+        "udata/api-v1.resource-mutations",
+        "udata/api-v1.resource-destructive-mutations",
+    }
     | RESOURCE_ROUTE_OPERATION_IDS
     | ORGANIZATION_ROUTE_OPERATION_IDS
     | USER_ROUTE_OPERATION_IDS

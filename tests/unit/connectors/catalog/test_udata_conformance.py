@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 from importlib import resources
 from typing import TYPE_CHECKING, Any, cast
@@ -379,6 +378,8 @@ def test_dataset_row_has_passing_evidence(row: int) -> None:
     test_name = ASSIGNED_ROWS[row]
     test = getattr(dataset_tests, test_name)
     assert callable(test), test_name
+    if test.__code__.co_argcount == 0 and not getattr(test, "pytestmark", []):
+        test()
 
 
 @pytest.mark.parametrize("finding", sorted(FINDING_EVIDENCE))
@@ -459,12 +460,6 @@ def test_root_profile_rows_are_exhaustively_declared() -> None:
 def test_root_profile_failure_cells_are_exhaustively_declared() -> None:
     failures = cast("list[dict[str, object]]", _root_contract()["failure_cases"])
     assert {cast("str", item["id"]) for item in failures} == ROOT_FAILURE_IDS
-
-
-@pytest.mark.parametrize("row", sorted(ROOT_ROW_NUMBERS))
-def test_root_profile_row_has_declared_evidence(row: int) -> None:
-    rows = cast("list[dict[str, object]]", _root_contract()["rows"])
-    assert any(cast("int", item["row"]) == row for item in rows)
 
 
 @pytest.mark.parametrize("row", _root_read_rows(), ids=lambda row: f"row-{row['row']}")
@@ -791,8 +786,3 @@ def test_root_contract_failure_cells_execute_the_declared_sync_async_behavior(fa
         _assert_async_parity()
     else:
         raise AssertionError(f"Unhandled root failure fixture: {failure_id}")
-
-
-def test_conformance_module_imports_isolated() -> None:
-    module = importlib.import_module("tests.unit.connectors.catalog.test_udata_conformance")
-    assert module.ASSIGNED_ROWS
