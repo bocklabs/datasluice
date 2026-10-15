@@ -9,7 +9,7 @@ and one factory function — nothing else is public.
 | Package | Public surface | Pinned profile |
 |---------|----------------|----------------|
 | `datasluice.connectors.catalog.ckan` | `CKANConnector`, `create_ckan_connector` | CKAN `2.11.5`, Action API v3 |
-| `datasluice.connectors.catalog.udata` | `UDataConnector`, `create_udata_connector` | uData `17.3.0`, API v1 |
+| `datasluice.connectors.catalog.udata` | `UDataConnector`, `create_udata_connector` | uData `17.6.0`, API v1 |
 | `datasluice.connectors.catalog.socrata` | `SocrataConnector`, `create_socrata_connector` | Socrata `3.0`, SODA 3 |
 
 Imports are always explicit and package-level:
@@ -54,7 +54,7 @@ endpoint evidence is recorded.
 ## Capability profiles and evidence
 
 Each platform's behavior is encoded in a versioned profile committed to the
-repository (`ckan-2.11.json`, `udata-17.3.json`, `socrata-soda3.json` under
+repository (`ckan-2.11.json`, `udata-17.6.json`, `socrata-soda3.json` under
 `datasluice.contracts.catalog.profiles`). Profiles distinguish core,
 optional, authenticated, and deployment-unavailable operations, and
 capability evidence is scoped to a single operation ID — a public read

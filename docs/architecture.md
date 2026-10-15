@@ -53,7 +53,7 @@ The executable contract API for built-in and third-party connectors:
   platform-native service group projections, with separate sync and async
   operations executors as the injected dispatch seam.
 - **Profiles and fixtures** — versioned capability profiles
-  (`ckan-2.11.json`, `udata-17.3.json`, `socrata-soda3.json`) and pinned
+  (`ckan-2.11.json`, `udata-17.6.json`, `socrata-soda3.json`) and pinned
   reference fixture sets encoding official platform evidence.
 - **Reference fakes** — deterministic, fixture-backed sync and async
   clients that satisfy the Protocols for PR-time contract testing.

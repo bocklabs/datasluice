@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://pypi.org/project/datasluice/"><img src="https://img.shields.io/pypi/v/datasluice.svg" alt="PyPI version"></a>
-  <a href="https://github.com/bocklabs/datasluice/actions"><img src="https://github.com/bocklabs/datasluice/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/bocklabs/datasluice/actions"><img src="https://github.com/bocklabs/datasluice/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
   <a href="https://bocklabs.github.io/datasluice/"><img src="https://img.shields.io/badge/docs-online-blue" alt="Documentation"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License"></a>
 </p>
