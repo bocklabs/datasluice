@@ -469,12 +469,12 @@ NATIVE_OPERATION_MEMBERS: dict[str, dict[str, tuple[str, str, str]]] = {
         "udata/api-v1.followers-activities-discussions-and-reuses": (
             "SyncUDataServices",
             "AsyncUDataServices",
-            "social",
+            "activity_discussions",
         ),
         "udata/api-v1.topics-territories-contact-points-and-dataservices": (
             "SyncUDataServices",
             "AsyncUDataServices",
-            "geography",
+            "spatial",
         ),
         "udata/api-v1.harvest-moderation-and-admin-operations": (
             "SyncUDataServices",

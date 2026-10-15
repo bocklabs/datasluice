@@ -9,6 +9,8 @@ import pytest
 
 from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient, declared_udata_profile
 from datasluice.connectors.catalog.udata.probes import UDataVersionError
+from datasluice.connectors.catalog.udata.services.extensions import AsyncExtensionsService, SyncExtensionsService
+from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import UDataCredential
 from datasluice.domain.catalog.models import NativeRecord
@@ -216,3 +218,24 @@ def test_async_tracer_probes_anonymously_reads_once_and_owns_closure() -> None:
     assert owned.requests[0].headers == {}
     assert owned.requests[1].headers.get("X-API-KEY") == "secret-key"
     assert owned.aclose_count == 1
+
+
+def test_live_clients_expose_every_declared_native_protocol_member() -> None:
+    """Both live client modes satisfy the declared uData service projections, including extensions."""
+    sync_client = SyncUDataClient(
+        RecordingTransport(),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        owns_transport=False,
+    )
+    async_client = AsyncUDataClient(
+        RecordingAsyncTransport(),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        owns_transport=False,
+    )
+
+    assert isinstance(sync_client, SyncUDataServices)
+    assert isinstance(async_client, AsyncUDataServices)
+    assert isinstance(sync_client.extensions, SyncExtensionsService)
+    assert isinstance(async_client.extensions, AsyncExtensionsService)

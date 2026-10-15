@@ -1412,6 +1412,24 @@ def test_dataset_page_serialization_redacts_credentials_for_every_listed_record(
     assert REDACTED in serialized
 
 
+def test_normalized_dataset_projection_keeps_native_identity_and_uses_the_title() -> None:
+    item = {"id": "5f4d2c8e9a1b", "title": "Weather", "slug": "weather", "description": "hourly forecast"}
+
+    record = mapping.normalized_dataset(mapping.parse_dataset_summary(item))
+
+    assert record.id.value == "5f4d2c8e9a1b"
+    assert record.name == "Weather"
+    assert record.description == "hourly forecast"
+
+
+def test_normalized_dataset_projection_falls_back_to_the_slug_and_refuses_an_identityless_record() -> None:
+    slugged = mapping.normalized_dataset(mapping.parse_dataset_summary({"id": "abc", "slug": "abc-slug"}))
+
+    assert slugged.name == "abc-slug"
+    with pytest.raises(CatalogValidationError, match="title or slug"):
+        mapping.normalized_dataset(mapping.parse_dataset_summary({"id": "abc"}))
+
+
 def test_dataset_detail_unknown_fields_are_redacted_but_retained_in_extensions() -> None:
     detail = {**_CREDENTIAL_DATASET_ITEM, "portal_extra": "kept", "unknown_token": "live-unknown-plaintext"}
 

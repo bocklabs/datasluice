@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from datasluice.connectors.catalog.udata.clients import SyncUDataClient, declared_udata_profile
 from datasluice.contracts.catalog.fakes import SyncReferenceConnector
+from datasluice.contracts.catalog.native.udata import SyncUDataServices
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest, SyncCatalogClient
 from datasluice.domain import HttpDownload, Resource
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
@@ -154,6 +156,20 @@ def test_source_requires_explicit_typed_client_and_query() -> None:
     typed_value_3 = cast("Any", "search")
     with pytest.raises(TypeError, match="CatalogOperationRequest"):
         datasluice_source(typed_value_2, typed_value_3)
+
+
+def test_source_rejects_the_native_only_udata_client() -> None:
+    """The uData live client stays outside the normalized dlt gate until a normalized projection ships."""
+    client = SyncUDataClient(
+        UrllibCatalogTransport(),
+        declared_udata_profile(),
+        origin="http://127.0.0.1:5640",
+        owns_transport=False,
+    )
+
+    assert isinstance(client, SyncUDataServices)
+    with pytest.raises(TypeError, match="SyncCatalogClient"):
+        datasluice_source(client, _query())
 
 
 def test_source_requires_a_client_exposing_the_public_transport_accessor() -> None:

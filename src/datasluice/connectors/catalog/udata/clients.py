@@ -132,6 +132,12 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.datasets import (
         SyncDatasetsService as _SyncDatasetsService,
     )
+    from datasluice.connectors.catalog.udata.services.extensions import (
+        AsyncExtensionsService as _AsyncExtensionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.extensions import (
+        SyncExtensionsService as _SyncExtensionsService,
+    )
     from datasluice.connectors.catalog.udata.services.harvest import (
         AsyncHarvestService as _AsyncHarvestService,
     )
@@ -3367,6 +3373,11 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the typed worker job, task, and budgeted task-wait service."""
         return SyncWorkerJobsService(self)
 
+    @cached_property
+    def extensions(self) -> _SyncExtensionsService:
+        """Expose the typed stock extension and deployment-probe service."""
+        return SyncExtensionsService(self)
+
     def _require_site_version(self) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
@@ -3859,6 +3870,11 @@ class AsyncUDataClient(_UDataClientCore):
     def worker_jobs(self) -> _AsyncWorkerJobsService:
         """Expose the typed worker job, task, and budgeted task-wait service."""
         return AsyncWorkerJobsService(self)
+
+    @cached_property
+    def extensions(self) -> _AsyncExtensionsService:
+        """Expose the typed stock extension and deployment-probe service."""
+        return AsyncExtensionsService(self)
 
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
@@ -4355,6 +4371,10 @@ def _load_services():
         SyncDataservicesService,
     )
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.udata.services.extensions import (
+        AsyncExtensionsService,
+        SyncExtensionsService,
+    )
     from datasluice.connectors.catalog.udata.services.harvest import (
         AsyncHarvestService,
         SyncHarvestService,
@@ -4433,6 +4453,8 @@ def _load_services():
         SyncHarvestService,
         AsyncWorkerJobsService,
         SyncWorkerJobsService,
+        AsyncExtensionsService,
+        SyncExtensionsService,
     )
 
 
@@ -4471,4 +4493,6 @@ def _load_services():
     SyncHarvestService,
     AsyncWorkerJobsService,
     SyncWorkerJobsService,
+    AsyncExtensionsService,
+    SyncExtensionsService,
 ) = _load_services()
