@@ -54,7 +54,6 @@ _DATASET_CATALOG_FILTERS = frozenset(
 _CATALOG_SORTS = frozenset({"title", "created", "last_update", "reuses", "followers", "views"})
 _DATASET_CATALOG_REPEATABLE_FILTERS = frozenset({"tag"})
 _DATASET_BOOLEAN_FILTERS = frozenset({"featured", "archived", "deleted", "private"})
-_ORGANIZATION_CSV_SORTS = frozenset({"name", "reuses", "datasets", "followers", "views", "created", "last_modified"})
 _DATASET_CSV_FILTERS = frozenset(
     {
         "tag",

@@ -379,16 +379,6 @@ def v2_list_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], 
     return "GET", f"{_DATASET_V2_PATH}?{_query(query.query_params())}", {}, None
 
 
-def v2_get_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
-    """Encode GET /api/2/datasets/<id>/."""
-    return "GET", f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/", {}, None
-
-
-def v2_extras_get_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
-    """Encode GET /api/2/datasets/<id>/extras/."""
-    return "GET", f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/extras/", {}, None
-
-
 def v2_extras_put_request(
     dataset_id: str, client_input: DatasetExtrasUpdate
 ) -> tuple[str, str, dict[str, str], dict[str, object]]:
@@ -609,9 +599,7 @@ __all__ = [
     "suggest_request",
     "update_request",
     "v2_extras_delete_request",
-    "v2_extras_get_request",
     "v2_extras_put_request",
-    "v2_get_request",
     "v2_list_request",
     "v2_search_request",
 ]
