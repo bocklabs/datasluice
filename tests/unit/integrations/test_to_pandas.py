@@ -1,17 +1,3 @@
-"""Unit tests for :func:`to_pandas`.
-
-Follows the importorskip + inline-import test pattern. Verifies
-delegation through the shared :func:`to_arrow` substrate.
-
-Note: pandas 3.0.3 has a known bug where ``pd.Index`` / ``pd.DataFrame``
-construction from string-valued data fails after cumulative in-process state
-(the ``future.infer_string=True`` path raises
-``AssertionError: <class 'pandas.arrays.ArrowStringArray'>``). This is a
-pandas environment issue unrelated to the to_pandas implementation, which
-passes in isolation. The autouse fixture below skips cleanly when the bug is
-present at test-execution time.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -28,10 +14,9 @@ from datasluice.integrations.pandas import to_pandas
 def _skip_if_pandas_index_broken() -> None:
     """Skip when pandas 3.0.3 Index construction is corrupted mid-process.
 
-    The pandas bug (AssertionError on ArrowStringArray in Index construction)
-    manifests intermittently after cumulative test state. The to_pandas
-    implementation is correct — this guard skips the test rather than failing
-    on a pandas environment defect.
+    The pandas bug (AssertionError on ArrowStringArray in Index construction) manifests intermittently after cumulative
+    test state. The to_pandas implementation is correct — this guard skips the test rather than failing on a pandas
+    environment defect.
     """
     try:
         pd.Index(["_ds_pandas_probe"])

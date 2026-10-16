@@ -3,27 +3,47 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
-from collections.abc import Callable, Coroutine, Iterator, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PureWindowsPath
+from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
 from datasluice._uri import sanitize_uri
-from datasluice.contracts.catalog.protocols import CatalogConnectorContext
 from datasluice.data.access import DataPlaneResourceReader
 from datasluice.domain import HttpDownload, LocalFile, ObjectStorage, Resource
 from datasluice.domain.artifact import _freeze_extensions
-from datasluice.domain.catalog.auth import CredentialResolver
-from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile, EffectiveCapabilityProfile
+from datasluice.domain.catalog.auth import CredentialResolver as CredentialResolver
 from datasluice.exceptions import (
     DataSluiceError,
     OpenedResourceConsumedError,
     StreamClosedError,
 )
-from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
+from datasluice.runtime.clients import AsyncCatalogClient as AsyncCatalogClient
+from datasluice.runtime.clients import SyncCatalogClient as SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Coroutine, Iterator, Mapping
+
+    from datasluice.contracts.catalog.protocols import CatalogConnectorContext
+    from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile, EffectiveCapabilityProfile
+
+__all__ = [
+    "AsyncCatalogClient",
+    "CredentialResolver",
+    "DataSluice",
+    "DirectResourceLocator",
+    "OpenedResource",
+    "ResourceLocator",
+    "SyncCatalogClient",
+    "materialize",
+    "open_resource",
+    "read_stream",
+    "resource_locator_from_dict",
+    "run_transform_pipeline",
+]
 
 _DIRECT_LOCATOR_KEYS = frozenset({"schema_version", "kind", "uri", "format", "media_type", "extensions"})
 
@@ -40,6 +60,12 @@ def _validate_uri(value: object, path: str) -> str:
     except ValueError as exc:
         raise _contract_error(path) from exc
     if parts.username is not None or parts.password is not None:
+        raise _contract_error(path)
+    if (
+        parts.scheme
+        and parts.scheme not in {"file", "http", "https", *_OBJECT_STORAGE_SCHEMES}
+        and not PureWindowsPath(value).is_absolute()
+    ):
         raise _contract_error(path)
     return value
 
@@ -202,13 +228,14 @@ def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
     parts = urlsplit(locator.uri)
     identity_source = str(locator.to_dict()["uri"])
     resource_id = hashlib.sha256(identity_source.encode()).hexdigest()
-    if parts.scheme == "file":
+    access: LocalFile | ObjectStorage | HttpDownload
+    if PureWindowsPath(locator.uri).is_absolute():
+        access = LocalFile(path=locator.uri)
+    elif parts.scheme == "file":
         access = LocalFile(path=unquote(parts.path))
     elif parts.scheme in _OBJECT_STORAGE_SCHEMES:
         access = ObjectStorage(uri=locator.uri)
     elif parts.scheme in ("http", "https"):
-        access = HttpDownload(url=locator.uri)
-    elif parts.scheme:
         access = HttpDownload(url=locator.uri)
     else:
         access = LocalFile(path=locator.uri)
@@ -258,10 +285,14 @@ class _ApplicationServices:
         """Raw bulk-copy multiple resources into a destination directory."""
         from datasluice.io.downloader import Downloader
 
-        downloader = Downloader(self._session._transport)
+        downloader = Downloader(self._session._transport, cache=self._session._cache, storage=self._session.storage)
         paths = downloader.download_many(resources, destination)
+        if len(paths) != len(resources):
+            from datasluice.exceptions import DownloadError
+
+            raise DownloadError("Bulk download was incomplete; no resource manifest was produced")
         results: list[dict[str, object]] = []
-        for resource, path in zip(resources, paths, strict=False):
+        for resource, path in zip(resources, paths, strict=True):
             try:
                 size = path.stat().st_size
             except OSError:
@@ -569,10 +600,8 @@ class OpenedResource:
             raise first_error
 
     def _finish_after_failure(self, raw_stream: Any | None, stream: Any | None) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._finish(raw_stream, stream)
-        except Exception:
-            pass
 
     def _ensure_available(self) -> None:
         if self._closed or self._consumed:

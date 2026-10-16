@@ -53,13 +53,14 @@ The executable contract API for built-in and third-party connectors:
   platform-native service group projections, with separate sync and async
   operations executors as the injected dispatch seam.
 - **Profiles and fixtures** — versioned capability profiles
-  (`ckan-2.11.json`, `udata-17.3.json`, `socrata-soda3.json`) and pinned
+  (`ckan-2.11.json`, `udata-17.6.json`, `socrata-soda3.json`) and pinned
   reference fixture sets encoding official platform evidence.
 - **Reference fakes** — deterministic, fixture-backed sync and async
   clients that satisfy the Protocols for PR-time contract testing.
 - **Runner and report** — `run_catalog_contract` executes declared cases
   and emits a machine-readable `ComplianceReport` covering core, optional,
-  authenticated, unauthorized, and unavailable behavior.
+  authenticated, unauthorized, and unavailable behavior. Callers inside a running
+  event loop await `run_catalog_contract_async` with the same arguments.
 - **Certification** — `certify_catalog_report` validates explicit
   manifests, declared profiles, fixture fingerprints, and complete
   runner-owned report evidence.
@@ -82,6 +83,18 @@ storage abstraction for materializing resources locally. The public
 `DataSluice` facade (`datasluice.application`) exposes this plane with
 `resolve`, `open`, `materialize`, and `open_catalog` for one
 caller-selected connector.
+
+HTTP resources and Parquet artifacts are processed incrementally. Non-seekable
+Parquet input is spooled to temporary disk. JSONL uses a schema inferred from its
+first block; JSON arrays and GeoJSON documents have a 64 MiB decoded-input limit.
+Geometry with altitude is preserved as JSON in `geometry_wkt`.
+Atomic sync stores must provide a `key_lock` covering publication and state commit;
+`FileStateStore` supports local process locks and in-process memory storage.
+Remote file backends require a store with a distributed transaction lock for sync.
+uData `list_reports(permissions, query)` and `get_report(report_id, permissions)`
+require credential-bound admin permissions. Harvest wait leases bound in-flight
+polls too: async polls are cancelled at expiry; a synchronous read may finish in
+its worker after the wait returns, bounded by the client's transport timeout.
 
 ### 5. Transport (`datasluice.transport`)
 

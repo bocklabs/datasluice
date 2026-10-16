@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlsplit
 
-from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import ProbeEvidence, ProbeResponseClass
 from datasluice.domain.detection import DetectionEvidence, DetectionResult
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.exceptions import PortalError
-from datasluice.runtime.capability import EffectiveCapabilityCache
-from datasluice.runtime.transport.base import TransportFailure
+from datasluice.runtime.transport.base import TransportError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from datasluice.domain.catalog.operations import OperationId
+    from datasluice.runtime.capability import EffectiveCapabilityCache
 
 _CANONICAL_CONNECTORS = (
     ("datasluice/ckan", "ckan"),
@@ -78,7 +81,7 @@ def _probe_operation(
     try:
         effective = engine.resolve(operation_id)
         probe_evidence = effective.for_operation(operation_id).evidence
-    except (PortalError, OSError, TransportFailure) as exc:
+    except (PortalError, OSError, TransportError) as exc:
         return DetectionEvidence(check=str(operation_id), matched=False, detail=f"probe failed: {exc}"), False
     if probe_evidence is None:
         raise CatalogValidationError(

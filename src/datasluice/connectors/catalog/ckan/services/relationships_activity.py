@@ -1,39 +1,38 @@
 """Both-mode CKAN relationship, follow, and activity projections across the v2 ids.
 
-Relationships and follows (31 actions) ride the core
-``relationships-follows`` id while the ckanext.activity tier (13 actions) owns
-its optional ``activity`` id, so the two families resolve capability evidence
-independently (the v2 profile correction from 03-02). Every typed method
-declares its owning v2 OperationId from the checked-in manifest and passes
-documented CKAN 2.11 parameters verbatim (D-04). Follower counts and
-``am_following_*`` booleans shape to scalar ValueRecord envelopes while
-follower/followee lists decode user-kind records — genuine scalar typing per
-the Plan 08 review. Mutations return CKANMutationResult through the shared
-receipt seam; anonymous count reads stay public per platform documentation.
+Relationships and follows (31 actions) ride the core ``relationships-follows`` id while the ckanext.activity tier (13
+actions) owns its optional ``activity`` id, so the two families resolve capability evidence independently (the v2
+profile correction from 03-02). Every typed method declares its owning v2 OperationId from the checked-in manifest and
+passes documented CKAN 2.11 parameters verbatim (D-04). Follower counts and ``am_following_*`` booleans shape to scalar
+ValueRecord envelopes while follower/followee lists decode user-kind records — genuine scalar typing per the Plan 08
+review. Mutations return CKANMutationResult through the shared receipt seam; anonymous count reads stay public per
+platform documentation.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
     _async_typed_read,
-    _AsyncNativeService,
+    _AsyncGroupService,
     _sync_typed_mutation,
     _sync_typed_read,
-    _SyncNativeService,
+    _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import ACTIVITY, PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
+from datasluice.connectors.catalog.ckan.services._shared import drop_unset
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 type WireParams = dict[str, object]
 
@@ -46,10 +45,6 @@ _ENTITY_KINDS: Mapping[str, ResourceKind] = {
 }
 
 
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}
-
-
 _ACTIVITY_TARGETS: Mapping[str, str] = {
     "dashboard_mark_activities_old": "dashboard",
     "send_email_notifications": "activity-notifications",
@@ -58,17 +53,17 @@ _ACTIVITY_TARGETS: Mapping[str, str] = {
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "activity_create":
-        return CatalogId(PLATFORM, ACTIVITY, str(params["object_id"]))
+        return CatalogId(PLATFORM, ACTIVITY, str(params.get("object_id", "")))
     if action in _ACTIVITY_TARGETS:
         return CatalogId(PLATFORM, ACTIVITY, _ACTIVITY_TARGETS[action])
     if action.startswith("package_relationship"):
-        return CatalogId(PLATFORM, ResourceKind.DATASET, str(params["subject"]))
+        return CatalogId(PLATFORM, ResourceKind.DATASET, str(params.get("subject", "")))
     entity = action.rsplit("_", 1)[-1]
     kind = _ENTITY_KINDS[entity]
-    return CatalogId(PLATFORM, kind, str(params["id"]))
+    return CatalogId(PLATFORM, kind, str(params.get("id", "")))
 
 
-class SyncRelationshipsActivityService(_SyncNativeService):
+class SyncRelationshipsActivityService(_SyncGroupService):
     """Synchronous relationship, follow, and activity projection with typed actions."""
 
     __slots__ = ()
@@ -80,7 +75,7 @@ class SyncRelationshipsActivityService(_SyncNativeService):
         self, *, id: str, id2: str | None = None, rel: str | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one dataset's relationships with optional peer and type filters."""
-        return self._invoke_read("package_relationships_list", _drop_unset({"id": id, "id2": id2, "rel": rel}))
+        return self._invoke_read("package_relationships_list", drop_unset({"id": id, "id2": id2, "rel": rel}))
 
     def package_relationship_create(
         self, *, subject: str, object: str, type: str, policy: MutationPolicy | None = None
@@ -215,41 +210,39 @@ class SyncRelationshipsActivityService(_SyncNativeService):
         self, *, id: str, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one dataset's activity stream under the optional activity id."""
-        return self._invoke_read("package_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+        return self._invoke_read("package_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit}))
 
     def group_activity_list(
         self, *, id: str, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one group's activity stream under the optional activity id."""
-        return self._invoke_read("group_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+        return self._invoke_read("group_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit}))
 
     def organization_activity_list(
         self, *, id: str, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one organization's activity stream under the optional activity id."""
-        return self._invoke_read(
-            "organization_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit})
-        )
+        return self._invoke_read("organization_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit}))
 
     def user_activity_list(
         self, *, id: str, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one user's activity stream under the optional activity id."""
-        return self._invoke_read("user_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+        return self._invoke_read("user_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit}))
 
     def recently_changed_packages_activity_list(
         self, *, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List recently changed datasets' activity under the optional activity id."""
         return self._invoke_read(
-            "recently_changed_packages_activity_list", _drop_unset({"offset": offset, "limit": limit})
+            "recently_changed_packages_activity_list", drop_unset({"offset": offset, "limit": limit})
         )
 
     def dashboard_activity_list(
         self, *, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List the authenticated user's dashboard activity under the optional activity id."""
-        return self._invoke_read("dashboard_activity_list", _drop_unset({"offset": offset, "limit": limit}))
+        return self._invoke_read("dashboard_activity_list", drop_unset({"offset": offset, "limit": limit}))
 
     def dashboard_new_activities_count(self) -> ResultEnvelope[CKANResultItem]:
         """Count the dashboard's new activities as an integer ValueRecord."""
@@ -271,7 +264,7 @@ class SyncRelationshipsActivityService(_SyncNativeService):
         self, *, id: str, context: str | None = None, diff_type: str | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Show one activity's structured diff as a lossless mapping."""
-        return self._invoke_read("activity_diff", _drop_unset({"id": id, "context": context, "diff_type": diff_type}))
+        return self._invoke_read("activity_diff", drop_unset({"id": id, "context": context, "diff_type": diff_type}))
 
     def activity_create(
         self,
@@ -304,7 +297,7 @@ class SyncRelationshipsActivityService(_SyncNativeService):
         return _sync_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)
 
 
-class AsyncRelationshipsActivityService(_AsyncNativeService):
+class AsyncRelationshipsActivityService(_AsyncGroupService):
     """Asynchronous relationship, follow, and activity projection with typed actions."""
 
     __slots__ = ()
@@ -316,7 +309,7 @@ class AsyncRelationshipsActivityService(_AsyncNativeService):
         self, *, id: str, id2: str | None = None, rel: str | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one dataset's relationships with optional peer and type filters."""
-        return await self._invoke_read("package_relationships_list", _drop_unset({"id": id, "id2": id2, "rel": rel}))
+        return await self._invoke_read("package_relationships_list", drop_unset({"id": id, "id2": id2, "rel": rel}))
 
     async def package_relationship_create(
         self, *, subject: str, object: str, type: str, policy: MutationPolicy | None = None
@@ -452,42 +445,42 @@ class AsyncRelationshipsActivityService(_AsyncNativeService):
     ) -> ResultEnvelope[CKANResultItem]:
         """List one dataset's activity stream under the optional activity id."""
         return await self._invoke_read(
-            "package_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit})
+            "package_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit})
         )
 
     async def group_activity_list(
         self, *, id: str, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one group's activity stream under the optional activity id."""
-        return await self._invoke_read("group_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+        return await self._invoke_read("group_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit}))
 
     async def organization_activity_list(
         self, *, id: str, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one organization's activity stream under the optional activity id."""
         return await self._invoke_read(
-            "organization_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit})
+            "organization_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit})
         )
 
     async def user_activity_list(
         self, *, id: str, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List one user's activity stream under the optional activity id."""
-        return await self._invoke_read("user_activity_list", _drop_unset({"id": id, "offset": offset, "limit": limit}))
+        return await self._invoke_read("user_activity_list", drop_unset({"id": id, "offset": offset, "limit": limit}))
 
     async def recently_changed_packages_activity_list(
         self, *, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List recently changed datasets' activity under the optional activity id."""
         return await self._invoke_read(
-            "recently_changed_packages_activity_list", _drop_unset({"offset": offset, "limit": limit})
+            "recently_changed_packages_activity_list", drop_unset({"offset": offset, "limit": limit})
         )
 
     async def dashboard_activity_list(
         self, *, offset: int | None = None, limit: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List the authenticated user's dashboard activity under the optional activity id."""
-        return await self._invoke_read("dashboard_activity_list", _drop_unset({"offset": offset, "limit": limit}))
+        return await self._invoke_read("dashboard_activity_list", drop_unset({"offset": offset, "limit": limit}))
 
     async def dashboard_new_activities_count(self) -> ResultEnvelope[CKANResultItem]:
         """Count the dashboard's new activities as an integer ValueRecord."""
@@ -510,7 +503,7 @@ class AsyncRelationshipsActivityService(_AsyncNativeService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Show one activity's structured diff as a lossless mapping."""
         return await self._invoke_read(
-            "activity_diff", _drop_unset({"id": id, "context": context, "diff_type": diff_type})
+            "activity_diff", drop_unset({"id": id, "context": context, "diff_type": diff_type})
         )
 
     async def activity_create(

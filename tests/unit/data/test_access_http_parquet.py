@@ -1,12 +1,3 @@
-"""Regression coverage for Parquet delivered over HTTP through the data plane.
-
-Guards the C16 fix: gzip-compressed Parquet served without a ``Content-Encoding``
-header is detected by magic bytes and decompressed before format dispatch, the
-same body served WITH ``Content-Encoding: gzip`` is decompressed through the
-header hint, and uncompressed bodies take the seekable fast path without ever
-entering the decompression branch.
-"""
-
 from __future__ import annotations
 
 import gzip
@@ -41,7 +32,7 @@ def _open_table(transport: HttpxCatalogTransport | UrllibCatalogTransport, base:
         format="PARQUET",
         access=HttpDownload(url=f"{base}/data.parquet"),
     )
-    with DataPlaneResourceReader(transport=transport).open(resource) as stream:
+    with DataPlaneResourceReader(transport=transport, allow_private_http=True).open(resource) as stream:
         return pa.Table.from_batches(list(stream.iter_batches()), schema=stream.schema)
 
 
@@ -68,9 +59,8 @@ def test_gzip_http_parquet_without_content_encoding_header_parses() -> None:
 def test_gzip_http_parquet_with_content_encoding_header_parses() -> None:
     """A Content-Encoding: gzip header drives decompression of the still-encoded body.
 
-    The stdlib transport is used because httpx decodes Content-Encoding
-    transparently before the data plane sees the response, which leaves no
-    encoded body for the header hint to act on; urllib delivers the raw bytes.
+    The stdlib transport is used because httpx decodes Content-Encoding transparently before the data plane sees the
+    response, which leaves no encoded body for the header hint to act on; urllib delivers the raw bytes.
     """
     response = MockResponse(body=gzip.compress(_parquet_bytes()), headers={"Content-Encoding": "gzip"})
     server, base = start_test_server({"/data.parquet": response})
@@ -89,8 +79,8 @@ def test_gzip_http_parquet_with_content_encoding_header_parses() -> None:
 def test_stale_content_encoding_header_does_not_double_decode() -> None:
     """A decoded body carrying a stale Content-Encoding hint is read uncompressed.
 
-    Body magic bytes win over the header hint, so transports that hand back an
-    already-decoded payload while keeping the response header are not double-decoded.
+    Body magic bytes win over the header hint, so transports that hand back an already-decoded payload while keeping the
+    response header are not double-decoded.
     """
 
     class _StaleHintTransport:

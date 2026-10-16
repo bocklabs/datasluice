@@ -1,23 +1,13 @@
-"""Measure provider branch coverage in the candidate venv, isolated to datasluice.
-
-Builds on the candidate ``run_candidate.py`` harness: the provider wheel
-installs ``airflow.providers.datasluice`` under site-packages, so coverage is
-scoped to that installed package at runtime. Running pytest under an in-process
-``Coverage`` here avoids the module-replacement breakage that a dotted
-``--source`` name triggers in the Airflow provider import path. The reported
-total, ``precision=2`` rounding, and the ``fail-under`` exit code are taken
-straight from coverage 7.14+. The provider directory is derived from
-``sysconfig`` instead of ``importlib.util.find_spec`` because ``find_spec``
-executes the namespace-package portions (including ``get_provider_info``)
-before ``cov.start()``, silently deflating the measured total.
-"""
-
 from __future__ import annotations
 
 import contextlib
 import io
 import os
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from coverage import Coverage
 
 FAIL_UNDER = 80.00
 
@@ -50,8 +40,6 @@ def _provider_dir() -> str:
 
 
 def _reported_total(cov: object) -> float:
-    from coverage import Coverage
-
     cov_obj: Coverage = cov
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

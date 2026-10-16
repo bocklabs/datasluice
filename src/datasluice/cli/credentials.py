@@ -1,21 +1,19 @@
 """Credential discovery inspection and safe explicit credential validation."""
 
-from __future__ import annotations
-
 import importlib.util
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 
-from datasluice.cli._output import render_json, result_console
+from datasluice.cli._output import render_json, result_console, validate_output
 from datasluice.cli._platforms import CATALOG_PLATFORMS
 from datasluice.domain.catalog.auth import CatalogCredential, CKANCredential, SocrataCredential, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
+from datasluice.domain.catalog.redaction import redact_mapping
 from datasluice.runtime.credentials import credential_from_fields
-from datasluice.runtime.redaction import redact_for_output
 
 app = typer.Typer(help="Inspect opt-in credential sources and safely validate explicit credentials.")
 
@@ -32,7 +30,7 @@ def availability(
     output: Annotated[str, typer.Option("--output", help="Output format: human or json")] = "human",
 ) -> None:
     """Show which opt-in credential resolution sources are installed."""
-    _validate_output(output)
+    validate_output(output)
     sources = [_source_status(name, module, extra) for name, module, extra in _SOURCES]
     if output == "json":
         render_json({"sources": sources})
@@ -55,7 +53,7 @@ def validate(
     output: Annotated[str, typer.Option("--output", help="Output format: human or json")] = "human",
 ) -> None:
     """Validate caller-supplied explicit credentials without revealing secret values."""
-    _validate_output(output)
+    validate_output(output)
     if platform not in CATALOG_PLATFORMS:
         raise typer.BadParameter("--platform must be one of: ckan, udata, socrata")
     if (credential_json is None) == (credential_file is None):
@@ -63,10 +61,9 @@ def validate(
     try:
         if credential_json is not None:
             raw_credential = credential_json
-        elif credential_file is not None:
-            raw_credential = credential_file.read_text(encoding="utf-8")
         else:
-            raise ValueError("Credential input is required.")
+            assert credential_file is not None
+            raw_credential = credential_file.read_text(encoding="utf-8")
         fields = json.loads(raw_credential)
         if not isinstance(fields, Mapping):
             raise ValueError("Credential input must be a JSON object.")
@@ -106,10 +103,4 @@ def _credential_output(credential: CatalogCredential) -> Mapping[str, object]:
         }
     else:
         raise TypeError("Unsupported explicit credential type.")
-    return cast(Mapping[str, object], redact_for_output(value))
-
-
-def _validate_output(output: str) -> None:
-    """Reject unsupported machine-output formats before credential processing."""
-    if output not in {"human", "json"}:
-        raise typer.BadParameter("--output must be human or json")
+    return redact_mapping(value)

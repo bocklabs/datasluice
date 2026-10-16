@@ -1,5 +1,3 @@
-"""End-to-end tracer coverage for the checkpointed sync loop."""
-
 from __future__ import annotations
 
 from datasluice.data import DataPlaneResourceReader
@@ -18,7 +16,7 @@ def test_sync_one_resource(tmp_path, csv_server, make_resource, inmemory_state) 
             sync_resources(
                 [resource],
                 state_store=inmemory_state,
-                reader=DataPlaneResourceReader(transport=transport),
+                reader=DataPlaneResourceReader(transport=transport, allow_private_http=True),
                 destination_uri=f"file://{tmp_path}/dest",
             )
         )
@@ -71,7 +69,7 @@ def test_outcome_stream_is_generator(tmp_path, csv_server, make_resource, inmemo
         result = sync_resources(
             resources,
             state_store=inmemory_state,
-            reader=DataPlaneResourceReader(transport=transport),
+            reader=DataPlaneResourceReader(transport=transport, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
         )
 

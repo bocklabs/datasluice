@@ -19,24 +19,27 @@ def _platform_value(platform: CatalogPlatform | str) -> str:
     return value
 
 
+def _freeze_metadata_node(node: object) -> object:
+    """Return one metadata node as a deeply immutable, redacted, finite value."""
+    if isinstance(node, Mapping):
+        return MappingProxyType(
+            {key: _freeze_metadata_node(item) for key, item in node.items() if isinstance(key, str) and key}
+        )
+    if isinstance(node, (list, tuple)):
+        return tuple(_freeze_metadata_node(item) for item in node)
+    if isinstance(node, float):
+        return node if isfinite(node) else redact_string(repr(node))
+    if node is None or isinstance(node, (str, bool, int)):
+        return node
+    return redact_string(repr(node))
+
+
 def _bounded_metadata(value: Mapping[str, object] | None, *, _depth: int = 0) -> Mapping[str, object]:
     """Return total, redacted, deeply immutable error metadata."""
     if value is None:
         return MappingProxyType({})
-
-    def freeze(node: object) -> object:
-        if isinstance(node, Mapping):
-            return MappingProxyType({key: freeze(item) for key, item in node.items() if isinstance(key, str) and key})
-        if isinstance(node, (list, tuple)):
-            return tuple(freeze(item) for item in node)
-        if isinstance(node, float):
-            return node if isfinite(node) else redact_string(repr(node))
-        if node is None or isinstance(node, (str, bool)) or isinstance(node, int):
-            return node
-        return redact_string(repr(node))
-
     redacted = redact_mapping(value, _depth=_depth)
-    return MappingProxyType({key: freeze(item) for key, item in redacted.items()})
+    return MappingProxyType({key: _freeze_metadata_node(item) for key, item in redacted.items()})
 
 
 def attach_catalog_metadata(error: BaseException, additions: Mapping[str, object]) -> BaseException:

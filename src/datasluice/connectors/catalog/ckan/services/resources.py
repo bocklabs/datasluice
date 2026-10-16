@@ -1,9 +1,8 @@
 """Both-mode CKAN resource projections with bounded buffered multipart uploads (D-03).
 
-Uploads accept a filesystem path or an open binary handle, are buffered exactly
-once through the shared transport multipart channel, and are bounded by the
-configured ``max_upload_bytes`` ceiling with a typed pre-dispatch refusal. There
-is no streaming mode: the whole source becomes one immutable ``UploadPart``.
+Uploads accept a filesystem path or an open binary handle, are buffered exactly once through the shared transport
+multipart channel, and are bounded by the configured ``max_upload_bytes`` ceiling with a typed pre-dispatch refusal.
+There is no streaming mode: the whole source becomes one immutable ``UploadPart``.
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, cast
 
@@ -23,17 +23,18 @@ from datasluice.connectors.catalog.ckan.clients import (
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
+from datasluice.connectors.catalog.ckan.services._shared import drop_unset
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import UploadPart
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _RESOURCE_GROUP = "resources"
 _UPLOAD_FIELD = "upload"
@@ -67,8 +68,7 @@ def _buffer_upload(source: str | os.PathLike[str] | BinaryIO, *, max_bytes: int 
         CatalogValidationError: If the source exceeds the ceiling before any
             transport work begins.
     """
-    handle = open(source, "rb") if isinstance(source, str | os.PathLike) else source
-    try:
+    with open(source, "rb") if isinstance(source, str | os.PathLike) else nullcontext(source) as handle:
         chunks: list[bytes] = []
         total = 0
         while chunk := handle.read(_CHUNK_SIZE):
@@ -76,9 +76,6 @@ def _buffer_upload(source: str | os.PathLike[str] | BinaryIO, *, max_bytes: int 
             if max_bytes is not None and total > max_bytes:
                 raise _ceiling_error(total, max_bytes)
             chunks.append(chunk)
-    finally:
-        if isinstance(source, str | os.PathLike):
-            handle.close()
     return b"".join(chunks)
 
 
@@ -103,7 +100,7 @@ def _source_name(source: str | os.PathLike[str] | BinaryIO) -> str | None:
 def _encode_field(value: object) -> bytes:
     if isinstance(value, str):
         return value.encode("utf-8")
-    return json.dumps(value).encode("utf-8")
+    return json.dumps(value, allow_nan=False).encode("utf-8")
 
 
 def _multipart_parts(params: Mapping[str, object], data: bytes, file_name: str | None) -> tuple[UploadPart, ...]:
@@ -139,7 +136,7 @@ class SyncResourcesService(_SyncResourceService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Search resources with native limit/offset paging."""
         return self._invoke_read(
-            "resource_search", _drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
+            "resource_search", drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
         )
 
     def resource_create(
@@ -212,7 +209,7 @@ class SyncResourcesService(_SyncResourceService):
         files = _resolve_files(params, upload, client._max_upload_bytes)
         operation = CatalogOperationRequest(operation_id=owning_id, payload=params, mutation_policy=effective)
         guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
-        envelope = cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry, files=files))
+        envelope = cast("ResultEnvelope[CKANResultItem]", client._dispatch(operation, guard, entry=entry, files=files))
         receipt = build_mutation_receipt(
             owning_id, _receipt_target(entry.name, params, envelope), effective, "succeeded", {"action": entry.name}
         )
@@ -238,7 +235,7 @@ class AsyncResourcesService(_AsyncResourceService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Search resources with native limit/offset paging."""
         return await self._invoke_read(
-            "resource_search", _drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
+            "resource_search", drop_unset({"q": q, "fields": fields, "limit": limit, "offset": offset})
         )
 
     async def resource_create(
@@ -312,7 +309,7 @@ class AsyncResourcesService(_AsyncResourceService):
         operation = CatalogOperationRequest(operation_id=owning_id, payload=params, mutation_policy=effective)
         guard = CatalogOperationGuard(operation_id=owning_id, profile=client._profile)
         envelope = cast(
-            ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry, files=files)
+            "ResultEnvelope[CKANResultItem]", await client._dispatch(operation, guard, entry=entry, files=files)
         )
         receipt = build_mutation_receipt(
             owning_id, _receipt_target(entry.name, params, envelope), effective, "succeeded", {"action": entry.name}
@@ -329,7 +326,3 @@ def _resolve_files(
         return ()
     data = _buffer_upload(upload, max_bytes=max_bytes)
     return _multipart_parts(params, data, _source_name(upload))
-
-
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}

@@ -4,23 +4,25 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic
-from typing import Literal
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.settings import normalize_origin
 from datasluice.domain.catalog.auth import credential_scope
 from datasluice.errors.catalog import CatalogUnavailableError, NativeCatalogError, map_catalog_error
-from datasluice.runtime.clients import AsyncCatalogTransport
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from datasluice.runtime.clients import AsyncCatalogTransport
 
 SITE_PATH = "/api/1/site/"
 SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"
 _VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\Z")
 _SITE_KEYS = frozenset({"feed_size", "id", "keywords", "metrics", "title", "version"})
 _SITE_PROBE_MAX_BYTES = 64 * 1024
-_VERSION_STATE = Literal["exact", "missing", "malformed", "ambiguous"]
 
 
 class UDataVersionError(CatalogUnavailableError):
@@ -157,6 +159,10 @@ class SiteVersionGate:
     def require_current(self, credentials: object | None) -> SiteVersion:
         """Return cached evidence or dispatch one anonymous site probe.
 
+        The probe is dispatched outside the lock without single-flight: cold
+        concurrent callers may each probe once, which is acceptable for an
+        idempotent anonymous read (single-flight is the evidence cache's contract).
+
         Raises:
             UDataVersionError: When the deployment fails the exact-version gate.
             NativeCatalogError: When the probe transport or JSON decode fails.
@@ -196,6 +202,17 @@ class SiteVersionGate:
                     platform="udata",
                 )
             ) from exc
+        if response.status_code in {401, 403, 423}:
+            raise map_catalog_error(
+                NativeCatalogError(
+                    "The uData site probe requires deployment access.",
+                    operation=SITE_OPERATION_ID,
+                    platform="udata",
+                    status_code=response.status_code,
+                    capability_state={401: "unauthorized", 403: "forbidden", 423: "disabled"}[response.status_code],
+                    safe_action="Verify access to the deployment's stock /api/1/site/ document.",
+                )
+            )
         if not 200 <= response.status_code < 300:
             raise UDataVersionError(
                 version_state="missing",
@@ -221,6 +238,16 @@ class SiteVersionGate:
 
 class AsyncSiteVersionGate(SiteVersionGate):
     """Async transport variant of the strict site gate for the async client."""
+
+    def require_current(self, credentials: object | None) -> SiteVersion:
+        """Reject the inherited synchronous entry point regardless of cache state."""
+        raise CatalogUnavailableError(
+            "The asynchronous site gate must be awaited through require_current_async.",
+            operation=SITE_OPERATION_ID,
+            platform="udata",
+            capability_state="unavailable",
+            safe_action="Call require_current_async or construct the client with a synchronous SiteVersionGate.",
+        )
 
     def __init__(
         self,
@@ -273,6 +300,17 @@ class AsyncSiteVersionGate(SiteVersionGate):
                     platform="udata",
                 )
             ) from exc
+        if response.status_code in {401, 403, 423}:
+            raise map_catalog_error(
+                NativeCatalogError(
+                    "The uData site probe requires deployment access.",
+                    operation=SITE_OPERATION_ID,
+                    platform="udata",
+                    status_code=response.status_code,
+                    capability_state={401: "unauthorized", 403: "forbidden", 423: "disabled"}[response.status_code],
+                    safe_action="Verify access to the deployment's stock /api/1/site/ document.",
+                )
+            )
         if not 200 <= response.status_code < 300:
             raise UDataVersionError(
                 version_state="missing",

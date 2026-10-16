@@ -1,12 +1,9 @@
-"""Tests for catalog output redaction primitives, routing, and log filtering."""
-
 from __future__ import annotations
 
 import hashlib
 import logging
 import sys
-from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -20,6 +17,10 @@ from datasluice.domain.catalog.redaction import (
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import RedactingFilter
 from datasluice.runtime.redaction import redact_event_metadata, redact_for_output
+from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Mapping
 
 
 def _receipt(metadata: dict[str, object]) -> MutationReceipt:
@@ -96,9 +97,9 @@ def test_receipt_rejects_compound_credential_query_keys() -> None:
 def test_round_trip_rejects_mutated_audit_metadata() -> None:
     receipt = _receipt({"details": {"response": {"value": "Bearer ***"}}})
     payload = receipt.to_dict()
-    audit_metadata = cast(dict[str, object], payload["audit_metadata"])
-    details = cast(dict[str, object], audit_metadata["details"])
-    response = cast(dict[str, object], details["response"])
+    audit_metadata = cast("dict[str, object]", payload["audit_metadata"])
+    details = cast("dict[str, object]", audit_metadata["details"])
+    response = cast("dict[str, object]", details["response"])
     response["value"] = "Bearer aBcDeFgH1234"
 
     with pytest.raises(DataSluiceError):
@@ -120,12 +121,35 @@ def test_redaction_bounds_recursion_and_metadata_entries() -> None:
     assert all(len(value) <= 256 for value in redacted_oversized.values() if isinstance(value, str))
 
 
+def test_stream_response_reprs_mask_headers() -> None:
+    sentinel = "https://catalog.example.test/secret-path"
+
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b""
+
+    sync_response = RuntimeStreamResponse(
+        status_code=200,
+        headers={"Location": sentinel},
+        chunks=iter(()),
+        close_callback=lambda: None,
+    )
+    async_response = AsyncRuntimeStreamResponse(
+        status_code=200,
+        headers={"Location": sentinel},
+        chunks=chunks(),
+        close_callback=lambda: None,
+    )
+
+    assert sentinel not in repr(sync_response)
+    assert sentinel not in repr(async_response)
+
+
 def test_redaction_limits_are_exact_boundaries() -> None:
     exact_entries = {f"entry_{index}": "x" * 300 for index in range(32)}
     redacted_exact = redact_mapping(exact_entries)
 
     assert len(redacted_exact) == 32
-    assert "[TRUNCATED]" not in redacted_exact.keys()
+    assert "[TRUNCATED]" not in redacted_exact
     assert "[TRUNCATED]" not in redacted_exact.values()
 
     max_text = "a" * 256
@@ -134,7 +158,7 @@ def test_redaction_limits_are_exact_boundaries() -> None:
     deep: dict[str, object] = {"value": 1}
     for index in range(7):
         deep = {f"level_{index}": deep}
-    assert cast(Mapping[str, object], redact_mapping(deep)) == deep
+    assert cast("Mapping[str, object]", redact_mapping(deep)) == deep
 
     digest = hashlib.sha256(b"fixture").hexdigest()
     assert redact_string(digest) == digest
@@ -155,7 +179,7 @@ def test_sequence_values_are_normalized_to_tuples() -> None:
 
 
 def test_non_string_keys_are_skipped_without_raising() -> None:
-    mixed = cast(Mapping[str, object], {1: "Bearer aBcDeFgH1234", "": "empty-key", "ok": "fine"})
+    mixed = cast("Mapping[str, object]", {1: "Bearer aBcDeFgH1234", "": "empty-key", "ok": "fine"})
 
     assert redact_mapping(mixed) == {"ok": "fine"}
 
@@ -220,7 +244,7 @@ def test_redacting_filter_never_touches_log_record_internals() -> None:
 
 
 def test_redacting_filter_survives_hostile_payloads_without_raising() -> None:
-    hostile: Mapping[str, object] = cast(Mapping[str, object], {1: "Bearer aBcDeFgH1234"})
+    hostile: Mapping[str, object] = cast("Mapping[str, object]", {1: "Bearer aBcDeFgH1234"})
     record = logging.LogRecord(
         "datasluice",
         logging.DEBUG,
@@ -233,6 +257,6 @@ def test_redacting_filter_survives_hostile_payloads_without_raising() -> None:
 
     assert RedactingFilter().filter(record)
 
-    args = cast(tuple[object, ...], record.args)
+    args = cast("tuple[object, ...]", record.args)
     assert args[0] == {}
     assert isinstance(args[1], _ExplodingRepr)

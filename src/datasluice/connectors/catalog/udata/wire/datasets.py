@@ -2,26 +2,31 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Mapping
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import _DATASETS_OPERATION_ID, PLATFORM
-from datasluice.connectors.catalog.udata.models.datasets import (
-    DatasetCreateInput,
-    DatasetDeleteOptions,
-    DatasetExtrasDelete,
-    DatasetExtrasUpdate,
-    DatasetListQuery,
-    DatasetSearchQuery,
-    DatasetSuggestQuery,
-    DatasetUpdateInput,
+from datasluice.connectors.catalog.udata.wire._text_document import (
+    APPROVED_TEXT_MEDIA_TYPES,
+    bound_text_document,
 )
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, _freeze_json
-from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.domain.catalog.models import NativeRecord, _freeze_json, redact_record_payload
+from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.udata.models.datasets import (
+        DatasetCreateInput,
+        DatasetDeleteOptions,
+        DatasetExtrasDelete,
+        DatasetExtrasUpdate,
+        DatasetListQuery,
+        DatasetSearchQuery,
+        DatasetSuggestQuery,
+        DatasetUpdateInput,
+    )
 
 _PINNED_SOURCE_ORACLE_ACTION = "Verify the response against the pinned source oracle."
 _RDF_XML_MEDIA_TYPE = "application/rdf+xml"
@@ -150,7 +155,7 @@ def _invalid_field(field: str, operation: str, expected: str) -> CatalogValidati
 
 def _validate_dataset_link(value: object, *, field: str, operation: str) -> None:
     if not isinstance(value, Mapping):
-        raise _invalid_field(field, operation, "a list of objects or a link object")
+        raise _invalid_field(field, operation, "a pagination link object")
     for key in ("href", "rel", "type"):
         nested = value.get(key)
         if not isinstance(nested, str) or not nested:
@@ -170,16 +175,26 @@ def _validate_json_value(value: object, *, operation: str, path: str) -> None:
             return
         raise _invalid_field(path, operation, "a finite JSON value")
     if isinstance(value, Mapping):
-        for key, nested in value.items():
-            if not isinstance(key, str) or not key:
-                raise _invalid_field(path, operation, "an object with string keys")
-            _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+        _validate_json_object(value, operation=operation, path=path)
         return
     if isinstance(value, list):
-        for index, nested in enumerate(value):
-            _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
+        _validate_json_array(value, operation=operation, path=path)
         return
     raise _invalid_field(path, operation, "a JSON value")
+
+
+def _validate_json_object(value: Mapping[object, object], *, operation: str, path: str) -> None:
+    """Validate the string keys and nested values of one JSON object."""
+    for key, nested in value.items():
+        if not isinstance(key, str) or not key:
+            raise _invalid_field(path, operation, "an object with string keys")
+        _validate_json_value(nested, operation=operation, path=f"{path}.{key}")
+
+
+def _validate_json_array(value: list[object], *, operation: str, path: str) -> None:
+    """Validate the nested values of one JSON array."""
+    for index, nested in enumerate(value):
+        _validate_json_value(nested, operation=operation, path=f"{path}[{index}]")
 
 
 def _validate_nested_string_fields(
@@ -288,15 +303,15 @@ def _validate_dataset_list(field: str, value: object, *, operation: str) -> None
 
 
 def _native_dataset(payload: Mapping[str, object]) -> NativeRecord:
-    identifier = cast(str, payload["id"])
+    identifier = cast("str", payload["id"])
     known = {key: value for key, value in payload.items() if key in _DATASET_DETAIL_FIELDS}
-    extensions = {"udata.dataset": {key: value for key, value in payload.items() if key not in _DATASET_DETAIL_FIELDS}}
+    unknown = {key: value for key, value in payload.items() if key not in _DATASET_DETAIL_FIELDS}
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
         id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=identifier),
-        payload=known,
-        extensions=extensions,
+        payload=redact_record_payload(known),
+        extensions={"udata.dataset": redact_record_payload(unknown)},
     )
 
 
@@ -339,13 +354,15 @@ def atom_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], Non
     return "GET", f"{_DATASET_PATH}recent.atom?{_query(query.query_params())}", {}, None
 
 
-def rdf_request(dataset_id: str, fmt: str | None) -> tuple[str, str, dict[str, str], None]:
+def rdf_request(
+    dataset_id: str, fmt: str | None, *, operation: str = _DATASETS_OPERATION_ID
+) -> tuple[str, str, dict[str, str], None]:
     """Encode GET /api/1/datasets/<id>[/rdf|/rdf.<format>]; validates the format allowlist."""
-    identifier = _path_segment(_required_id(dataset_id))
+    identifier = _path_segment(_required_id(dataset_id, operation=operation))
     if fmt is None:
         return "GET", f"{_DATASET_PATH}{identifier}/rdf", {}, None
-    extension = _format_extension(fmt)
-    media_type_for_format(extension)
+    extension = _format_extension(fmt, operation=operation)
+    media_type_for_format(extension, operation=operation)
     return "GET", f"{_DATASET_PATH}{identifier}/rdf.{_path_segment(extension)}", {}, None
 
 
@@ -362,16 +379,6 @@ def v2_search_request(query: DatasetSearchQuery) -> tuple[str, str, dict[str, st
 def v2_list_request(query: DatasetListQuery) -> tuple[str, str, dict[str, str], None]:
     """Encode GET /api/2/datasets/."""
     return "GET", f"{_DATASET_V2_PATH}?{_query(query.query_params())}", {}, None
-
-
-def v2_get_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
-    """Encode GET /api/2/datasets/<id>/."""
-    return "GET", f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/", {}, None
-
-
-def v2_extras_get_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
-    """Encode GET /api/2/datasets/<id>/extras/."""
-    return "GET", f"{_DATASET_V2_PATH}{_path_segment(_required_id(dataset_id))}/extras/", {}, None
 
 
 def v2_extras_put_request(
@@ -401,8 +408,8 @@ def v2_extras_delete_request(
 def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
     """Decode one full v1/v2 dataset document into a native record.
 
-    The documented core fields (``id``, ``title``, ``slug``) are type-checked;
-    unknown portal fields pass through losslessly into the native payload.
+    The documented core fields (``id``, ``title``, ``slug``) are type-checked; unknown portal fields pass through
+    losslessly into the native payload.
     """
     if not isinstance(payload, Mapping):
         raise CatalogValidationError(
@@ -444,9 +451,13 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
                     resource_kind=ResourceKind.DATASET,
                     value=_required_id(item.get("id"), operation=operation),
                 ),
-                payload={key: value for key, value in item.items() if key in _DATASET_DETAIL_FIELDS},
+                payload=redact_record_payload(
+                    {key: value for key, value in item.items() if key in _DATASET_DETAIL_FIELDS}
+                ),
                 extensions={
-                    "udata.dataset": {key: value for key, value in item.items() if key not in _DATASET_DETAIL_FIELDS}
+                    "udata.dataset": redact_record_payload(
+                        {key: value for key, value in item.items() if key not in _DATASET_DETAIL_FIELDS}
+                    )
                 },
             )
         )
@@ -454,7 +465,13 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
 
 
 def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> Mapping[str, object]:
-    """Decode a v2 extras document with typed value validation."""
+    """Decode a v2 extras document with typed validation and redaction.
+
+    Extras are caller-authored free-form JSON, so they are the widest credential surface in the dataset family.
+    Validation runs first so a malformed document still fails with its typed error; the retained mapping is then
+    redacted, keeping every non-credential extra while credential-shaped keys and credential-shaped string content are
+    replaced by the shared marker.
+    """
     if not isinstance(payload, Mapping):
         raise CatalogValidationError(
             "The uData extras response must be a JSON object.",
@@ -464,7 +481,7 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
         )
     for key, value in payload.items():
         _validate_json_value(value, operation=operation, path=key)
-    frozen = _freeze_json(payload, "udata.dataset_extras")
+    frozen = _freeze_json(redact_record_payload(payload), "udata.dataset_extras")
     if not isinstance(frozen, Mapping):
         raise CatalogValidationError(
             "The uData extras response must be a JSON object.",
@@ -487,41 +504,26 @@ RDF_FORMAT_MEDIA_TYPES = {
     "trig": "application/trig",
 }
 
-_APPROVED_TEXT_MEDIA_TYPES = frozenset(
-    {
-        "application/atom+xml",
-        "application/json",
-        _JSON_LD_MEDIA_TYPE,
-        "application/n-triples",
-        _RDF_XML_MEDIA_TYPE,
-        "application/trig",
-        _TURTLE_MEDIA_TYPE,
-        "text/n3",
-        "text/turtle",
-        "text/xml",
-    }
-)
 
-
-def media_type_for_format(fmt: str) -> str:
+def media_type_for_format(fmt: str, *, operation: str = _DATASETS_OPERATION_ID) -> str:
     """Return the stock media type for one RDF format extension."""
-    extension = _format_extension(fmt)
+    extension = _format_extension(fmt, operation=operation)
     media_type = RDF_FORMAT_MEDIA_TYPES.get(extension)
     if media_type is None:
         raise CatalogValidationError(
             "The uData RDF format is unsupported.",
-            operation=_DATASETS_OPERATION_ID,
+            operation=operation,
             platform=PLATFORM.value,
             safe_action="Use a stock uData RDF extension.",
         )
     return media_type
 
 
-def _format_extension(fmt: object) -> str:
+def _format_extension(fmt: object, *, operation: str = _DATASETS_OPERATION_ID) -> str:
     if not isinstance(fmt, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,16}", fmt) is None:
         raise CatalogValidationError(
             "The uData RDF format is invalid.",
-            operation=_DATASETS_OPERATION_ID,
+            operation=operation,
             platform=PLATFORM.value,
             safe_action="Use a short ASCII uData RDF extension.",
         )
@@ -536,34 +538,22 @@ def parse_text_document(
     The no-raw-body contract is preserved: only the approved media type, byte
     count, and SHA-256 digest are retained — never the document content.
     """
-    if not isinstance(body, bytes):
-        raise NativeCatalogError(
-            "The uData document body must be buffered bytes.",
-            operation=operation,
-            platform=PLATFORM.value,
-        )
-    try:
-        body.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise NativeCatalogError(
-            "The uData text document is not valid UTF-8.",
-            operation=operation,
-            platform=PLATFORM.value,
-        ) from exc
-    negotiated = (response_media_type or media_type).split(";", 1)[0].strip().lower()
-    if negotiated not in _APPROVED_TEXT_MEDIA_TYPES:
-        raise NativeCatalogError(
-            f"The uData document media type {negotiated!r} is not an approved text contract.",
-            operation=operation,
-            platform=PLATFORM.value,
-            metadata={"safe_action": f"Request one of the approved media types: {media_type}."},
-        )
-    digest = hashlib.sha256(body).hexdigest()
+    document = bound_text_document(
+        body,
+        media_type,
+        response_media_type=response_media_type,
+        operation=operation,
+        platform=PLATFORM.value,
+        approved_media_types=APPROVED_TEXT_MEDIA_TYPES,
+        list_approved_action=True,
+    )
     return NativeRecord(
         platform=PLATFORM,
         resource_kind=ResourceKind.DATASET,
-        id=CatalogId(platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{operation}:{digest}"),
-        payload={"media_type": negotiated, "size_bytes": len(body), "sha256": digest},
+        id=CatalogId(
+            platform=PLATFORM, resource_kind=ResourceKind.DATASET, value=f"text:{operation}:{document.sha256}"
+        ),
+        payload=document.payload(),
     )
 
 
@@ -610,9 +600,7 @@ __all__ = [
     "suggest_request",
     "update_request",
     "v2_extras_delete_request",
-    "v2_extras_get_request",
     "v2_extras_put_request",
-    "v2_get_request",
     "v2_list_request",
     "v2_search_request",
 ]

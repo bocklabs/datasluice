@@ -1,19 +1,3 @@
-"""Architectural guard: former façade class names are permanently removed.
-
-Two complementary scans over the retired per-platform façade identifiers:
-
-* **source-scan** walks every ``.py`` under ``src/datasluice/connectors/`` and
-  asserts no file contains any former name substring (catches dead files
-  and re-exports alike);
-* **import-scan** uses :func:`pkgutil.walk_packages` to enumerate every
-  ``datasluice.connectors.*`` submodule and asserts none exposes a former
-  name via ``hasattr`` (catches future reintroductions that the source-scan
-  would miss if the symbol were dynamically injected).
-
-Either scan alone is insufficient — both must pass. Mirrors the meta-test
-pattern in ``test_no_global_state.py`` / ``test_no_dead_settings.py``.
-"""
-
 from __future__ import annotations
 
 import importlib

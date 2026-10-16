@@ -10,9 +10,14 @@ from typing import Any
 
 def logical_sha256(table: Any) -> str:
     """Return a SHA-256 digest over an Arrow table's schema and logical rows."""
+    return logical_sha256_batches(table.schema, table.to_batches(max_chunksize=65536))
+
+
+def logical_sha256_batches(schema: Any, batches: Any) -> str:
+    """Hash a schema and incremental batches without collecting their rows."""
     digest = hashlib.sha256()
-    digest.update(_schema_fingerprint(table.schema))
-    for batch in table.to_batches(max_chunksize=65536):
+    digest.update(_schema_fingerprint(schema))
+    for batch in batches:
         for row in batch.to_pylist():
             encoded = {key: _encode(value) for key, value in row.items()}
             digest.update(json.dumps(encoded, sort_keys=True, separators=(",", ":")).encode())
@@ -36,3 +41,12 @@ def _encode(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _encode(item) for key, item in value.items()}
     return {"__s": str(value)}
+
+
+def is_sha256(value: object) -> bool:
+    """Return whether a value is a SHA-256 hexadecimal digest."""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )

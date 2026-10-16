@@ -57,7 +57,7 @@
     },
     {
       "path": "src/datasluice/**/*.py",
-      "rule": "This project supports Python 3.12 and later. Preserve the public API unless a breaking change is intentional and documented. Use PEP 695 type parameter syntax where applicable. Check correctness, typing, error handling, public API compatibility, unnecessary eager imports, and missing tests. Do not suggest cosmetic changes already enforced by Ruff or ty.",
+      "rule": "This project supports Python 3.12 and later. Preserve the public API unless a breaking change is intentional and documented. Use PEP 695 type parameter syntax where applicable. Check correctness, typing, error handling, public API compatibility, unnecessary eager imports, and missing tests. Do not suggest cosmetic changes already enforced by Ruff or mypy.",
       "merge_system_rule": true
     },
     {

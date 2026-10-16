@@ -1,8 +1,7 @@
-"""fsspec-backed storage wrapper satisfying :class:`StoragePort`.
+"""Fsspec-backed storage wrapper satisfying :class:`StoragePort`.
 
-Closes by returning URI strings (never ``pathlib.Path``) from every
-write. Wraps an :class:`fsspec.AbstractFileSystem` instance so local, S3, GCS,
-Azure and HTTP backends share one wrapper. All paths are URI strings.
+Closes by returning URI strings (never ``pathlib.Path``) from every write. Wraps an :class:`fsspec.AbstractFileSystem`
+instance so local, S3, GCS, Azure and HTTP backends share one wrapper. All paths are URI strings.
 """
 
 from typing import Any

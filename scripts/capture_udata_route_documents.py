@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 INFRASTRUCTURE_ENDPOINT_SUFFIXES = (".doc", ".specs")
 INFRASTRUCTURE_PATHS = frozenset(
@@ -85,11 +87,16 @@ def capture_swagger(origin: str, output: Path, excluded_namespaces: Mapping[str,
     """Fetch both generated Swagger specs and emit a compact route document."""
     import urllib.request
 
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
     safe_origin = sanitize_origin(origin)
+    opener = urllib.request.build_opener(_NoRedirect)
     routes: list[dict[str, str]] = []
     excluded: list[dict[str, str]] = []
     for spec_path, api_version in SWAGGER_SPECS:
-        with urllib.request.urlopen(safe_origin + spec_path, timeout=30) as response:
+        with opener.open(safe_origin + spec_path, timeout=30) as response:
             spec = json.loads(response.read().decode("utf-8"))
         spec_routes, spec_excluded = _swagger_routes(spec, api_version, spec_path, excluded_namespaces)
         routes.extend(spec_routes)
@@ -151,10 +158,13 @@ def capture_url_map(
     routes: list[dict[str, str]] = []
     excluded: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
+    seen_excluded: set[str] = set()
     for record in raw_routes:
         route, exclusion = _url_map_entry(record, excluded_namespaces)
         if exclusion is not None:
-            excluded.append(exclusion)
+            if exclusion["path"] not in seen_excluded:
+                seen_excluded.add(exclusion["path"])
+                excluded.append(exclusion)
             continue
         if route is None:
             continue

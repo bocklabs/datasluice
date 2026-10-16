@@ -12,15 +12,15 @@ from functools import lru_cache
 from importlib import resources
 from time import monotonic, sleep
 from types import MappingProxyType, TracebackType
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Self, cast, overload
 
 from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEntry, ActionInventory
 from datasluice.connectors.catalog.ckan.mapping import parse_action_envelope, shape_result_envelope
 from datasluice.connectors.catalog.ckan.rate_limits import resolve_rate_policy
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings, normalize_origin
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import (
     DatasetRecord,
@@ -78,7 +78,7 @@ from datasluice.runtime.transport.base import (
     CatalogTransport,
     RuntimeRequest,
     RuntimeResponse,
-    TransportFailure,
+    TransportError,
     UploadPart,
 )
 
@@ -103,6 +103,7 @@ if TYPE_CHECKING:
         AsyncVocabulariesLicensesService,
         SyncVocabulariesLicensesService,
     )
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
 
 PLATFORM = CatalogPlatform.CKAN
 _ACTION_PATH = "/api/3/action/"
@@ -129,6 +130,7 @@ def _dispatch_request(
     params: Mapping[str, object],
     credential: object,
     files: tuple[UploadPart, ...],
+    max_bytes: int | None,
 ) -> RuntimeRequest:
     """Build one JSON or multipart Action API request for the dispatch pipeline."""
     url = f"{origin}{_ACTION_PATH}{entry.name}"
@@ -141,11 +143,22 @@ def _dispatch_request(
             body=None,
             files=files,
         )
+    try:
+        encoder = json.JSONEncoder(allow_nan=False)
+        body = bytearray()
+        for chunk in encoder.iterencode(dict(params)):
+            body.extend(chunk.encode("utf-8"))
+            if max_bytes is not None and len(body) > max_bytes:
+                raise ValueError("The JSON request exceeds the configured upload byte ceiling.")
+    except (TypeError, ValueError) as exc:
+        raise CatalogValidationError(
+            "CKAN request parameters require finite JSON within the configured upload byte ceiling.",
+            operation=entry.owning_operation_id,
+            platform=PLATFORM.value,
+            safe_action="Use finite JSON values and reduce the request size or raise max_upload_bytes.",
+        ) from exc
     return RuntimeRequest(
-        method="POST",
-        url=url,
-        headers={"Content-Type": "application/json", **headers},
-        body=json.dumps(dict(params)).encode("utf-8"),
+        method="POST", url=url, headers={"Content-Type": "application/json", **headers}, body=bytes(body)
     )
 
 
@@ -180,14 +193,14 @@ def _sync_typed_read(
     client: SyncCKANClient, group: str, action: str, params: dict[str, object]
 ) -> ResultEnvelope[CKANResultItem]:
     entry, operation, guard = _typed_action_request(client, group, action, params)
-    return cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
+    return client._dispatch(operation, guard, entry=entry)
 
 
 async def _async_typed_read(
     client: AsyncCKANClient, group: str, action: str, params: dict[str, object]
 ) -> ResultEnvelope[CKANResultItem]:
     entry, operation, guard = _typed_action_request(client, group, action, params)
-    return cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
+    return await client._dispatch(operation, guard, entry=entry)
 
 
 def _typed_mutation_request(
@@ -211,15 +224,12 @@ def _typed_mutation_request(
 
 def _typed_mutation_result(
     entry: ActionEntry,
-    params: dict[str, object],
     policy: MutationPolicy,
     result: ResultEnvelope[CKANResultItem],
-    target: _MutationTarget,
+    target: CatalogId,
 ) -> CKANMutationResult:
     operation_id = _operation_id_from(entry.owning_operation_id)
-    receipt = build_mutation_receipt(
-        operation_id, target(entry.name, params), policy, "succeeded", {"action": entry.name}
-    )
+    receipt = build_mutation_receipt(operation_id, target, policy, "succeeded", {"action": entry.name})
     return CKANMutationResult(result=result, receipt=receipt)
 
 
@@ -232,8 +242,9 @@ def _sync_typed_mutation(
     target: _MutationTarget,
 ) -> CKANMutationResult:
     entry, effective, operation, guard = _typed_mutation_request(client, group, action, params, policy)
-    result = cast(ResultEnvelope[CKANResultItem], client._dispatch(operation, guard, entry=entry))
-    return _typed_mutation_result(entry, params, effective, result, target)
+    target_id = target(entry.name, params)
+    result = client._dispatch(operation, guard, entry=entry)
+    return _typed_mutation_result(entry, effective, result, target_id)
 
 
 async def _async_typed_mutation(
@@ -245,8 +256,9 @@ async def _async_typed_mutation(
     target: _MutationTarget,
 ) -> CKANMutationResult:
     entry, effective, operation, guard = _typed_mutation_request(client, group, action, params, policy)
-    result = cast(ResultEnvelope[CKANResultItem], await client._dispatch(operation, guard, entry=entry))
-    return _typed_mutation_result(entry, params, effective, result, target)
+    target_id = target(entry.name, params)
+    result = await client._dispatch(operation, guard, entry=entry)
+    return _typed_mutation_result(entry, effective, result, target_id)
 
 
 @lru_cache(maxsize=1)
@@ -310,7 +322,9 @@ class SyncCKANClient:
             probe_runner=settings.probe_runner,
             ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
+            deployment_origin=settings.base_url if settings.base_url.startswith("https://") else None,
         )
+        self._credential_scope = credential_scope(settings.credential)
         self._profile = self._capabilities.baseline_profile
         self._probe_runner = settings.probe_runner
         self._probe_policy = settings.probe_policy
@@ -336,7 +350,7 @@ class SyncCKANClient:
         return self._transport
 
     @property
-    def credentials(self) -> object | None:
+    def credentials(self) -> CKANCredential | CredentialResolver | None:
         """Expose the injected caller-owned credential resolver or provider."""
         return self._credentials
 
@@ -446,27 +460,56 @@ class SyncCKANClient:
             ),
         )
 
+    @overload
     def _dispatch(
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
         *,
         entry: ActionEntry,
-        decoder: Callable[[CKANResultItem], object] | None = None,
+        decoder: None = None,
         files: tuple[UploadPart, ...] = (),
-    ) -> ResultEnvelope[object]:
+    ) -> ResultEnvelope[CKANResultItem]: ...
+
+    @overload
+    def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T],
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T]: ...
+
+    def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T] | None = None,
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T] | ResultEnvelope[CKANResultItem]:
         if self._closed:
             raise RuntimeError("The synchronous CKAN client is closed.")
         _enforce_caller_guards(operation, guard)
+        from datasluice.connectors.catalog.ckan.services._shared import reject_deprecated
+
+        reject_deprecated(entry.name, operation.payload)
         owning_id = _operation_id_from(entry.owning_operation_id)
         self._require_optional_evidence(owning_id)
-        effective = self._capabilities.resolve(owning_id)
+        credential = _refreshed_credential(self._credentials)
+        scope = credential_scope(credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._credential_scope = scope
+        effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective).require_allowed()
         policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
         idempotency = (
             policy.idempotency if policy is not None else IdempotencyPolicy(safe=entry.mutation_class == "read")
         )
-        credential = _refreshed_credential(self._credentials)
         params = {key: value for key, value in operation.payload.items() if key != "action"}
         request = _dispatch_request(
             origin=self._origin,
@@ -474,35 +517,43 @@ class SyncCKANClient:
             params=params,
             credential=credential,
             files=files,
+            max_bytes=self._max_upload_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        key = _circuit_key(request, self._credentials)
-        if not self._breakers.admit(key):
-            self._emit(owning_id, "breaker_open")
-            raise CatalogUnavailableError(
-                "The catalog origin circuit is open after consecutive transport failures.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                capability_state="unavailable",
-                safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
-            )
+        key = _circuit_key(request, credential)
 
         attempts = 0
 
         def send() -> RuntimeResponse:
             nonlocal attempts
+            if not self._breakers.admit(key):
+                self._emit(owning_id, "breaker_open")
+                raise CatalogUnavailableError(
+                    "The catalog origin circuit is open after consecutive transport failures.",
+                    operation=str(owning_id),
+                    platform=PLATFORM.value,
+                    capability_state="unavailable",
+                    safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
+                )
             attempts += 1
             before = self._breakers.inspect(key)
+            recorded = False
             try:
-                response = self._transport.send(request)
-            except TransportFailure:
-                after = self._breakers.record_transport_failure(key)
+                try:
+                    response = self._transport.send(request)
+                except TransportError:
+                    after = self._breakers.record_transport_failure(key)
+                    recorded = True
+                    self._emit_breaker_change(owning_id, before.open, after.open)
+                    raise
+                after = self._breakers.record_response(key, response.status_code)
+                recorded = True
                 self._emit_breaker_change(owning_id, before.open, after.open)
-                raise
-            after = self._breakers.record_response(key, response.status_code)
-            self._emit_breaker_change(owning_id, before.open, after.open)
-            return response
+                return response
+            finally:
+                if not recorded:
+                    self._breakers.release_trial(key)
 
         try:
             response = RetryLoop(
@@ -512,7 +563,7 @@ class SyncCKANClient:
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
             ).run(send)
-            result = self._decode(owning_id, entry, response)
+            result = self._decode(owning_id, entry, response, scope)
         except BudgetExhaustedError:
             self._emit(
                 owning_id,
@@ -531,16 +582,16 @@ class SyncCKANClient:
         )
         if decoder is not None:
             items = tuple(decoder(item) for item in result.items)
-            return ResultEnvelope(items=cast("tuple[object]", items), page=result.page)
-        return cast("ResultEnvelope[object]", result)
+            return ResultEnvelope(items=items, page=result.page)
+        return result
 
     def _decode(
-        self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse
+        self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse, scope: str
     ) -> ResultEnvelope[CKANResultItem]:
         if not 200 <= response.status_code < 300:
             response_class = _STATUS_RESPONSE_CLASSES.get(response.status_code)
             if response_class is not None:
-                self._capabilities.record_response(owning_id, response_class)
+                self._capabilities.record_response(owning_id, response_class, credential_scope=scope)
             raise map_catalog_error(
                 NativeCatalogError(
                     "Catalog operation returned an unsuccessful HTTP status.",
@@ -594,7 +645,7 @@ class SyncCKANClient:
     def capability(self, operation_id: str) -> str:
         """Return the cached effective classification without dispatching transport I/O."""
         operation = _peek_operation_id(operation_id, self._profile)
-        state = self._capabilities.peek(operation).guard(operation).state
+        state = self._capabilities.peek(operation, credential_scope=self._credential_scope).guard(operation).state
         return _capability_value(state)
 
     def invalidate(self, operation_id: str | OperationId | None = None) -> None:
@@ -651,7 +702,9 @@ class AsyncCKANClient:
             async_probe_runner=settings.async_probe_runner,
             ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
+            deployment_origin=settings.base_url if settings.base_url.startswith("https://") else None,
         )
+        self._credential_scope = credential_scope(settings.credential)
         self._profile = self._capabilities.baseline_profile
         self._probe_runner = settings.async_probe_runner
         self._probe_policy = settings.probe_policy
@@ -677,7 +730,7 @@ class AsyncCKANClient:
         return self._transport
 
     @property
-    def credentials(self) -> object | None:
+    def credentials(self) -> CKANCredential | CredentialResolver | None:
         """Expose the injected caller-owned credential resolver or provider."""
         return self._credentials
 
@@ -791,27 +844,56 @@ class AsyncCKANClient:
             ),
         )
 
+    @overload
     async def _dispatch(
         self,
         operation: CatalogOperationRequest,
         guard: CatalogOperationGuard,
         *,
         entry: ActionEntry,
-        decoder: Callable[[CKANResultItem], object] | None = None,
+        decoder: None = None,
         files: tuple[UploadPart, ...] = (),
-    ) -> ResultEnvelope[object]:
+    ) -> ResultEnvelope[CKANResultItem]: ...
+
+    @overload
+    async def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T],
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T]: ...
+
+    async def _dispatch[T](
+        self,
+        operation: CatalogOperationRequest,
+        guard: CatalogOperationGuard,
+        *,
+        entry: ActionEntry,
+        decoder: Callable[[CKANResultItem], T] | None = None,
+        files: tuple[UploadPart, ...] = (),
+    ) -> ResultEnvelope[T] | ResultEnvelope[CKANResultItem]:
         if self._closed:
             raise RuntimeError("The asynchronous CKAN client is closed.")
         _enforce_caller_guards(operation, guard)
+        from datasluice.connectors.catalog.ckan.services._shared import reject_deprecated
+
+        reject_deprecated(entry.name, operation.payload)
         owning_id = _operation_id_from(entry.owning_operation_id)
         self._require_optional_evidence(owning_id)
-        effective = await self._capabilities.resolve_async(owning_id)
+        credential = await _refreshed_credential_async(self._credentials)
+        scope = credential_scope(credential)
+        if scope != self._credential_scope:
+            self._capabilities.invalidate()
+            self._credential_scope = scope
+        effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         build_catalog_operation_guard(owning_id, effective).require_allowed()
         policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
         idempotency = (
             policy.idempotency if policy is not None else IdempotencyPolicy(safe=entry.mutation_class == "read")
         )
-        credential = await _refreshed_credential_async(self._credentials)
         params = {key: value for key, value in operation.payload.items() if key != "action"}
         request = _dispatch_request(
             origin=self._origin,
@@ -819,35 +901,43 @@ class AsyncCKANClient:
             params=params,
             credential=credential,
             files=files,
+            max_bytes=self._max_upload_bytes,
         )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        key = _circuit_key(request, self._credentials)
-        if not self._breakers.admit(key):
-            self._emit(owning_id, "breaker_open")
-            raise CatalogUnavailableError(
-                "The catalog origin circuit is open after consecutive transport failures.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                capability_state="unavailable",
-                safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
-            )
+        key = _circuit_key(request, credential)
 
         attempts = 0
 
         async def send() -> RuntimeResponse:
             nonlocal attempts
+            if not self._breakers.admit(key):
+                self._emit(owning_id, "breaker_open")
+                raise CatalogUnavailableError(
+                    "The catalog origin circuit is open after consecutive transport failures.",
+                    operation=str(owning_id),
+                    platform=PLATFORM.value,
+                    capability_state="unavailable",
+                    safe_action="Wait for the circuit cool-down or explicitly reset the circuit before retrying.",
+                )
             attempts += 1
             before = self._breakers.inspect(key)
+            recorded = False
             try:
-                response = await self._transport.send(request)
-            except TransportFailure:
-                after = self._breakers.record_transport_failure(key)
+                try:
+                    response = await self._transport.send(request)
+                except TransportError:
+                    after = self._breakers.record_transport_failure(key)
+                    recorded = True
+                    self._emit_breaker_change(owning_id, before.open, after.open)
+                    raise
+                after = self._breakers.record_response(key, response.status_code)
+                recorded = True
                 self._emit_breaker_change(owning_id, before.open, after.open)
-                raise
-            after = self._breakers.record_response(key, response.status_code)
-            self._emit_breaker_change(owning_id, before.open, after.open)
-            return response
+                return response
+            finally:
+                if not recorded:
+                    self._breakers.release_trial(key)
 
         try:
             response = await RetryLoop(
@@ -857,7 +947,7 @@ class AsyncCKANClient:
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
             ).run_async(send, sleep=self._retry_sleep)
-            result = self._decode(owning_id, entry, response)
+            result = self._decode(owning_id, entry, response, scope)
         except BudgetExhaustedError:
             self._emit(
                 owning_id,
@@ -876,16 +966,16 @@ class AsyncCKANClient:
         )
         if decoder is not None:
             items = tuple(decoder(item) for item in result.items)
-            return ResultEnvelope(items=cast("tuple[object]", items), page=result.page)
-        return cast("ResultEnvelope[object]", result)
+            return ResultEnvelope(items=items, page=result.page)
+        return result
 
     def _decode(
-        self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse
+        self, owning_id: OperationId, entry: ActionEntry, response: RuntimeResponse, scope: str
     ) -> ResultEnvelope[CKANResultItem]:
         if not 200 <= response.status_code < 300:
             response_class = _STATUS_RESPONSE_CLASSES.get(response.status_code)
             if response_class is not None:
-                self._capabilities.record_response(owning_id, response_class)
+                self._capabilities.record_response(owning_id, response_class, credential_scope=scope)
             raise map_catalog_error(
                 NativeCatalogError(
                     "Catalog operation returned an unsuccessful HTTP status.",
@@ -939,7 +1029,7 @@ class AsyncCKANClient:
     def capability(self, operation_id: str) -> str:
         """Return the cached effective classification without dispatching transport I/O."""
         operation = _peek_operation_id(operation_id, self._profile)
-        state = self._capabilities.peek(operation).guard(operation).state
+        state = self._capabilities.peek(operation, credential_scope=self._credential_scope).guard(operation).state
         return _capability_value(state)
 
     def invalidate(self, operation_id: str | OperationId | None = None) -> None:
@@ -991,14 +1081,11 @@ class _SyncFamilyService[T]:
 
     def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a normalized get through the owning client."""
-        return cast(
-            ResultEnvelope[T],
-            self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("get"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("get"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
@@ -1006,24 +1093,21 @@ class _SyncFamilyService[T]:
         if self._family == "organizations":
             operation = CatalogOperationRequest(
                 operation_id=operation.operation_id,
-                payload={**operation.payload, "all_fields": True},
+                payload={"all_fields": True, **operation.payload},
                 mutation_policy=operation.mutation_policy,
             )
-        return cast(
-            ResultEnvelope[T],
-            self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("list"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("list"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     def _invoke(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[CKANResultItem]:
         entry = self._client._registry_entry(operation.payload.get("action"), self._family, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], self._client._dispatch(operation, guard, entry=entry))
+        return self._client._dispatch(operation, guard, entry=entry)
 
     def _backing(self, verb: str) -> ActionEntry:
         action = _NORMALIZED_BACKING[(self._family, verb)]
@@ -1097,14 +1181,11 @@ class _AsyncFamilyService[T]:
 
     async def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
         """Dispatch a normalized get through the owning client."""
-        return cast(
-            ResultEnvelope[T],
-            await self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("get"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return await self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("get"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     async def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[T]:
@@ -1112,24 +1193,21 @@ class _AsyncFamilyService[T]:
         if self._family == "organizations":
             operation = CatalogOperationRequest(
                 operation_id=operation.operation_id,
-                payload={**operation.payload, "all_fields": True},
+                payload={"all_fields": True, **operation.payload},
                 mutation_policy=operation.mutation_policy,
             )
-        return cast(
-            ResultEnvelope[T],
-            await self._client._dispatch(
-                operation,
-                guard,
-                entry=self._backing("list"),
-                decoder=_normalized_decoder(self._family, self._decoder),
-            ),
+        return await self._client._dispatch(
+            operation,
+            guard,
+            entry=self._backing("list"),
+            decoder=_normalized_decoder(self._family, self._decoder),
         )
 
     async def _invoke(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
     ) -> ResultEnvelope[CKANResultItem]:
         entry = self._client._registry_entry(operation.payload.get("action"), self._family, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], await self._client._dispatch(operation, guard, entry=entry))
+        return await self._client._dispatch(operation, guard, entry=entry)
 
     def _backing(self, verb: str) -> ActionEntry:
         action = _NORMALIZED_BACKING[(self._family, verb)]
@@ -1199,6 +1277,18 @@ class _SyncNativeService:
     def error_type(self) -> type[NativeCatalogError]:
         """Return the native CKAN error type."""
         return NativeCatalogError
+
+    def _invoke(
+        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
+    ) -> ResultEnvelope[CKANResultItem]:
+        entry = self._client._registry_entry(operation.payload.get("action"), self._group, str(operation.operation_id))
+        return self._client._dispatch(operation, guard, entry=entry)
+
+
+class _SyncGroupService(_SyncNativeService):
+    """Sync native group umbrella methods."""
+
+    __slots__ = ()
 
     def discovery_help_and_status(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
@@ -1272,17 +1362,17 @@ class _SyncNativeService:
         """Probe deployment-provided actions and extensions."""
         return self._invoke(operation, guard)
 
-    def _invoke(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        entry = self._client._registry_entry(operation.payload.get("action"), self._group, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], self._client._dispatch(operation, guard, entry=entry))
-
 
 class _SyncDiscoveryService(_SyncNativeService):
     """Synchronous action-discovery projection with typed help and status methods."""
 
     __slots__ = ()
+
+    def discovery_help_and_status(
+        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
+    ) -> ResultEnvelope[CKANResultItem]:
+        """Probe Action API help and status."""
+        return self._invoke(operation, guard)
 
     def status_show(self) -> ResultEnvelope[CKANResultItem]:
         """Return the deployment status mapping through the typed discovery method."""
@@ -1303,7 +1393,7 @@ class _SyncDiscoveryService(_SyncNativeService):
             )
         operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=payload)
         guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=self._client._profile)
-        return cast(ResultEnvelope[CKANResultItem], self._client._dispatch(operation, guard, entry=entry))
+        return self._client._dispatch(operation, guard, entry=entry)
 
 
 class _AsyncNativeService:
@@ -1319,6 +1409,18 @@ class _AsyncNativeService:
     def error_type(self) -> type[NativeCatalogError]:
         """Return the native CKAN error type."""
         return NativeCatalogError
+
+    async def _invoke(
+        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
+    ) -> ResultEnvelope[CKANResultItem]:
+        entry = self._client._registry_entry(operation.payload.get("action"), self._group, str(operation.operation_id))
+        return await self._client._dispatch(operation, guard, entry=entry)
+
+
+class _AsyncGroupService(_AsyncNativeService):
+    """Async native group umbrella methods."""
+
+    __slots__ = ()
 
     async def discovery_help_and_status(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
@@ -1392,17 +1494,17 @@ class _AsyncNativeService:
         """Probe deployment-provided actions and extensions."""
         return await self._invoke(operation, guard)
 
-    async def _invoke(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        entry = self._client._registry_entry(operation.payload.get("action"), self._group, str(operation.operation_id))
-        return cast(ResultEnvelope[CKANResultItem], await self._client._dispatch(operation, guard, entry=entry))
-
 
 class _AsyncDiscoveryService(_AsyncNativeService):
     """Asynchronous action-discovery projection with typed help and status methods."""
 
     __slots__ = ()
+
+    async def discovery_help_and_status(
+        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
+    ) -> ResultEnvelope[CKANResultItem]:
+        """Probe Action API help and status."""
+        return await self._invoke(operation, guard)
 
     async def status_show(self) -> ResultEnvelope[CKANResultItem]:
         """Return the deployment status mapping through the typed discovery method."""
@@ -1423,7 +1525,7 @@ class _AsyncDiscoveryService(_AsyncNativeService):
             )
         operation = CatalogOperationRequest(operation_id=_operation_id_from(entry.owning_operation_id), payload=payload)
         guard = CatalogOperationGuard(operation_id=operation.operation_id, profile=self._client._profile)
-        return cast(ResultEnvelope[CKANResultItem], await self._client._dispatch(operation, guard, entry=entry))
+        return await self._client._dispatch(operation, guard, entry=entry)
 
 
 def _enforce_caller_guards(operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> None:
@@ -1435,10 +1537,10 @@ def _enforce_caller_guards(operation: CatalogOperationRequest, guard: CatalogOpe
     guard.require_allowed()
 
 
-def _normalized_decoder(family: str, record_decoder: Callable[[object], object]) -> Callable[[CKANResultItem], object]:
+def _normalized_decoder[T](family: str, record_decoder: Callable[[object], T]) -> Callable[[CKANResultItem], T]:
     converter = _CONVERTERS[family]
 
-    def decode(item: CKANResultItem) -> object:
+    def decode(item: CKANResultItem) -> T:
         return record_decoder(converter(item))
 
     return decode
@@ -1549,9 +1651,14 @@ _CONVERTERS: Mapping[str, Callable[[CKANResultItem], dict[str, object]]] = Mappi
 
 
 def _peek_operation_id(value: str, profile: EffectiveCapabilityProfile) -> OperationId:
-    return next(
-        (operation_id for operation_id in profile.capabilities if str(operation_id) == value),
-        OperationId("unknown", "unknown", "unknown"),
+    for operation_id in profile.capabilities:
+        if str(operation_id) == value:
+            return operation_id
+    raise CatalogValidationError(
+        "Unknown CKAN operation identifier.",
+        operation=value,
+        platform=PLATFORM.value,
+        safe_action="Use an operation identifier declared by the CKAN profile.",
     )
 
 
@@ -1593,8 +1700,8 @@ def _default_probe_runners(
 
     profile = declared_ckan_profile()
     if inspect.iscoroutinefunction(getattr(transport, "send", None)):
-        return None, CKANAsyncProbeRunner(transport, origin, profile)  # ty: ignore[invalid-argument-type]
-    return CKANProbeRunner(transport, origin, profile), None  # ty: ignore[invalid-argument-type]
+        return None, CKANAsyncProbeRunner(cast("AsyncCatalogTransport", transport), origin, profile)
+    return CKANProbeRunner(cast("CatalogTransport", transport), origin, profile), None
 
 
 def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
@@ -1605,7 +1712,7 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
         transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(CatalogTransport, override)
+        transport = cast("CatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], CatalogTransport]", override)
@@ -1628,12 +1735,13 @@ def create_sync_client(settings: CKANClientSettings) -> SyncCKANClient:
 def create_async_client(settings: CKANClientSettings) -> AsyncCKANClient:
     """Construct one asynchronous CKAN client from immutable settings."""
     require_extra("ckan")
+    transport: AsyncCatalogTransport
     override = settings.async_transport
     if override is None:
         transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(AsyncCatalogTransport, override)
+        transport = cast("AsyncCatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], AsyncCatalogTransport]", override)

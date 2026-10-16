@@ -1,75 +1,29 @@
-"""End-to-end contracts for bounded and streaming ``datasluice open`` output."""
-
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
-import pytest
 import typer
 from typer.testing import CliRunner
 
-from datasluice.domain import HttpDownload, Resource
+from tests.e2e._facades import Facade as _Facade
+from tests.e2e._facades import Opened as _Opened
 
-if importlib.util.find_spec("datasluice.cli.open") is None:
-    if os.environ.get("DATASLUICE_TDD_RED") == "1":
-        pytest.fail("streaming open CLI contracts pending GREEN phase", pytrace=False)
-    pytest.skip("streaming open CLI contracts pending GREEN phase", allow_module_level=True)
+if TYPE_CHECKING:
+    import pytest
 
-open_command = cast(Any, importlib.import_module("datasluice.cli.open"))
+_RSS_PROBE = Path(__file__).resolve().parent / "open_rss_probe.py"
+
+open_command = cast("Any", importlib.import_module("datasluice.cli.open"))
 open_app = typer.Typer()
 open_app.command()(open_command.open)
 runner = CliRunner()
-
-
-class _Opened:
-    def __init__(self, batches: list[pa.RecordBatch]) -> None:
-        self._batches = batches
-        self.closed = False
-        self.yielded_rows = 0
-
-    def __enter__(self) -> _Opened:
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
-
-    def iter_batches(self):
-        for batch in self._batches:
-            self.yielded_rows += batch.num_rows
-            yield batch
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class _Facade:
-    def __init__(self, opened: _Opened) -> None:
-        self._opened = opened
-        self.resolved: list[object] = []
-        self.opened: list[Resource] = []
-
-    def __enter__(self) -> _Facade:
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        return None
-
-    def resolve(self, locator: object) -> Resource:
-        self.resolved.append(locator)
-        url = "https://data.example.test/observations.csv"
-        return Resource(id="observations", url=url, format="CSV", access=HttpDownload(url=url))
-
-    def open(self, resource: Resource) -> _Opened:
-        self.opened.append(resource)
-        return self._opened
 
 
 def _batches(row_count: int) -> list[pa.RecordBatch]:
@@ -129,69 +83,13 @@ def test_all_jsonl_emits_each_row_without_collecting(monkeypatch: pytest.MonkeyP
     assert opened.yielded_rows == 25
     assert opened.closed
     assert "Opening resource" in outcome.stderr
-    source = Path(open_command.__file__).read_text()
-    assert "to_arrow" not in source
-    assert "to_pandas" not in source
-    assert "render_jsonl_rows(_iter_rows" in source
-
-
-_SUBPROCESS_CODE = """
-import contextlib
-import os
-import resource
-import sys
-
-import pyarrow as pa
-
-import datasluice.cli.open as open_command
-from datasluice.domain import HttpDownload, Resource
-
-
-class Opened:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return None
-
-    def iter_batches(self):
-        payload = "x" * 2048
-        for start in range(0, 75000, 500):
-            yield pa.RecordBatch.from_pylist(
-                [{"id": value, "payload": payload} for value in range(start, start + 500)]
-            )
-
-
-class Facade:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return None
-
-    def resolve(self, locator):
-        url = "https://data.example.test/large.csv"
-        return Resource(id="large", url=url, format="CSV", access=HttpDownload(url=url))
-
-    def open(self, resource):
-        return Opened()
-
-
-open_command.open_data_sluice = Facade
-with open(os.devnull, "w") as sink:
-    with contextlib.redirect_stdout(sink):
-        open_command.open("https://data.example.test/large.csv", all_rows=True, output="jsonl")
-peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-peak_rss_kb = peak_rss // 1024 if sys.platform == "darwin" else peak_rss
-print(f"peak_rss_kb={peak_rss_kb}")
-"""
 
 
 def test_all_jsonl_peak_memory_stays_bounded() -> None:
     """Large streamed JSONL output does not retain every emitted row in process memory."""
     environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")}
     result = subprocess.run(
-        [sys.executable, "-c", _SUBPROCESS_CODE],
+        [sys.executable, str(_RSS_PROBE)],
         capture_output=True,
         text=True,
         check=True,

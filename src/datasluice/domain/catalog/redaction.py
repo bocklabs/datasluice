@@ -1,5 +1,3 @@
-"""Pure bounded redaction primitives for catalog output values."""
-
 from __future__ import annotations
 
 import re

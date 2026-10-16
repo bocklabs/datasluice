@@ -1,4 +1,4 @@
-"""uData live-client construction boundary."""
+"""UData live-client construction boundary."""
 
 from __future__ import annotations
 

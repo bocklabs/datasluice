@@ -1,8 +1,7 @@
 """TransformStep Protocol + TransformContext model.
 
-The protocol is the closed-set contract every normalization transform implements
-. The context is the immutable provenance + schema snapshot threaded
-read-only through every step by :class:`~datasluice.transforms.pipeline.Pipeline`.
+The protocol is the closed-set contract every normalization transform implements . The context is the immutable
+provenance + schema snapshot threaded read-only through every step by :class:`~datasluice.transforms.pipeline.Pipeline`.
 """
 
 from __future__ import annotations

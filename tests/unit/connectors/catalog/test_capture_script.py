@@ -1,13 +1,3 @@
-"""Loopback unit coverage for the controlled-stack evidence capture driver.
-
-Pins the driver's credential-file handling (owner-only 0600, zero token flags),
-the declared-baseline loopback posture visible at the settings seam, receipt
-collection through typed methods with confirmed destructive policies, and the
-bulk adapter's mapping of typed create/delete calls onto the BulkExecutor
-receipt contract — all against scripted loopback fakes, before the human gate
-ever runs the driver against the real stack (D-10/D-20/D-25).
-"""
-
 from __future__ import annotations
 
 import importlib.util

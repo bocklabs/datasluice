@@ -1,25 +1,12 @@
-"""Content-addressed cache backed by a SQLite WAL index + content files.
+"""SQLite-indexed cache with atomic content-file publication.
 
-The :class:`ContentCache` keeps downloaded resource bytes in content files under
-*cache_dir* (one file per SHA-256 key), and a small metadata index in
-``cache_dir/cache.db`` (SQLite WAL mode). Writes are two-phase to prevent torn
-reads under concurrency:
+Writers stage bytes in a unique temporary file and rename it into place while holding a SQLite IMMEDIATE transaction.
+Other writers and orphan sweeps wait for that transaction; failed staging rolls back the metadata without replacing the
+previous content. Only complete content files are visible to readers.
 
-1. ``INSERT`` a metadata row with ``status='writing'`` (under ``BEGIN IMMEDIATE``).
-2. Write the content bytes to a unique temp file, then ``mv`` it into place
-   (POSIX-atomic on local backends; ``COPY+DELETE`` on remote — acceptable
-   because content-addressed keys never previously existed).
-3. ``UPDATE`` the row to ``status='ready'`` (under ``BEGIN IMMEDIATE``).
-
-Readers ``SELECT WHERE status='ready'`` and skip any in-flight ``writing`` rows
-. A lazy sweep on every ``get``/``put`` removes ``writing`` rows older
-than :data:`STALE_WRITING_THRESHOLD_SECONDS` and orphaned content files with no
-metadata row, so crashed writers self-heal on the next access.
-
-SQLite connections are short-lived: each method opens a fresh connection via
-:meth:`ContentCache._connect`, uses it for one transaction, and lets the
-connection fall out of scope (sqlite3 closes on GC). No global connection is
-held, so there is nothing to ``close()``.
+The index stores URL, ETag, Last-Modified, fetch time, and content length. Stale in-flight rows and orphaned content
+files are swept lazily, at most once per :data:`SWEEP_INTERVAL_SECONDS`. Connections are short-lived and explicitly
+closed after each operation.
 """
 
 from __future__ import annotations
@@ -44,15 +31,15 @@ _SQL_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
 logger = get_logger("io.content_cache")
 
 STALE_WRITING_THRESHOLD_SECONDS: float = 300.0
+SWEEP_INTERVAL_SECONDS: float = 60.0
 
 
 class ContentCache:
     """Content-addressed cache with a SQLite WAL metadata index.
 
     Satisfies :class:`datasluice.ports.cache.CachePort` (get/put/delete) plus
-    the sidecar :meth:`put_with_metadata` / :meth:`get_metadata` pair that the
-    download-to-cache path uses to capture ETag/Last-Modified for
-    conditional GETs.
+    the sidecar :meth:`put_with_metadata` / :meth:`get_metadata` pair for
+    callers that capture ETag/Last-Modified for conditional GETs.
 
     Args:
         cache_dir: Directory holding ``cache.db`` and the SHA-256-named content
@@ -76,6 +63,7 @@ class ContentCache:
             self._fs = open_filesystem(f"file://{self.cache_dir}")
         self._fs.makedirs(self.cache_dir, exist_ok=True)
         self._db_path = f"{self.cache_dir}/cache.db"
+        self._last_sweep = 0.0
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -155,11 +143,10 @@ class ContentCache:
         etag: str | None = None,
         last_modified: str | None = None,
     ) -> None:
-        """Store *data* under *key* with ETag/Last-Modified sidecar.
+        """Store *data* under *key* with ETag/Last-Modified sidecar metadata.
 
-        download-to-cache path calls this after capturing headers via
-        :meth:`StreamingTransport.stream`. reads the sidecar
-        for conditional GETs.
+        Callers capture the headers after a fetch and store them alongside the bytes so later conditional GETs can
+        revalidate against the origin.
         """
         self._put_internal(key, data, etag=etag, last_modified=last_modified)
 
@@ -170,7 +157,7 @@ class ContentCache:
         etag: str | None,
         last_modified: str | None,
     ) -> None:
-        """Two-phase atomic write."""
+        """Serialize staging, publication, and metadata updates with other writers."""
         sha = self._sha(key)
         content_path = self._content_path(sha)
         tmp_path = f"{self.cache_dir}/.{sha}.tmp.{os.getpid()}.{secrets.token_hex(8)}"
@@ -182,35 +169,17 @@ class ContentCache:
             conn.execute(
                 "INSERT OR REPLACE INTO cache "
                 "(sha256, url, etag, last_modified, fetched_at, content_length, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'writing')",
+                "VALUES (?, ?, ?, ?, ?, ?, 'ready')",
                 (sha, key, etag, last_modified, fetched_at, len(data)),
             )
-            conn.execute("COMMIT")
-        finally:
-            conn.close()
-
-        try:
             self._fs.pipe_file(tmp_path, data)
             self._fs.mv(tmp_path, content_path)
-        except Exception as exc:
-            rollback = self._connect()
-            try:
-                rollback.execute(_SQL_BEGIN_IMMEDIATE)
-                rollback.execute(
-                    "DELETE FROM cache WHERE sha256=? AND status='writing'",
-                    (sha,),
-                )
-                rollback.execute("COMMIT")
-            finally:
-                rollback.close()
-            safe_remove(self._fs, tmp_path)
-            raise DownloadError(f"Failed to write content for key {key!r}: {exc}") from exc
-
-        conn = self._connect()
-        try:
-            conn.execute(_SQL_BEGIN_IMMEDIATE)
-            conn.execute("UPDATE cache SET status='ready' WHERE sha256=?", (sha,))
             conn.execute("COMMIT")
+        except Exception as exc:
+            if conn.in_transaction:
+                conn.rollback()
+            safe_remove(self._fs, tmp_path)
+            raise DownloadError("Failed to publish cache content") from exc
         finally:
             conn.close()
 
@@ -231,10 +200,7 @@ class ContentCache:
             self._fs.rm(content_path)
 
     def get_metadata(self, key: str) -> dict[str, Any] | None:
-        """Return the sidecar metadata for *key*, or ``None`` if missing/writing.
-
-        reads this for conditional GETs.
-        """
+        """Return the sidecar metadata for *key*, or ``None`` if missing/writing."""
         sha = self._sha(key)
         conn = self._connect()
         try:
@@ -245,7 +211,7 @@ class ContentCache:
             if row is None:
                 return None
             etag, last_modified, fetched_at, content_length, status = row
-            if status == "writing":
+            if status == "writing" or fetched_at + self.ttl < time.time():
                 return None
             return {
                 "etag": etag,
@@ -257,11 +223,14 @@ class ContentCache:
             conn.close()
 
     def _maybe_sweep(self) -> None:
-        """Lazily sweep stale ``writing`` rows and orphaned content files.
+        """Sweep stale ``writing`` rows and orphaned content files, at most once per interval.
 
-        Sweep failures are logged at DEBUG and never propagate — a sweep bug
-        must never break ``get``/``put``.
+        Sweep failures are logged at DEBUG and never propagate — a sweep bug must never break ``get``/``put``.
         """
+        now = time.time()
+        if now - self._last_sweep < SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_sweep = now
         try:
             conn = self._connect()
             try:
@@ -270,21 +239,13 @@ class ContentCache:
                     "DELETE FROM cache WHERE status='writing' AND fetched_at + ? < ?",
                     (STALE_WRITING_THRESHOLD_SECONDS, time.time()),
                 )
-                conn.execute("COMMIT")
                 known = {row[0] for row in conn.execute("SELECT sha256 FROM cache")}
+                for entry in self._fs.ls(self.cache_dir):
+                    base = entry.rsplit("/", 1)[-1]
+                    if len(base) == 64 and all(c in "0123456789abcdef" for c in base) and base not in known:
+                        safe_remove(self._fs, entry)
+                conn.execute("COMMIT")
             finally:
                 conn.close()
-
-            try:
-                entries = self._fs.ls(self.cache_dir)
-            except Exception:
-                entries = []
-            for entry in entries:
-                base = entry.rsplit("/", 1)[-1]
-                if len(base) == 64 and all(c in "0123456789abcdef" for c in base) and base not in known:
-                    try:
-                        self._fs.rm(entry)
-                    except Exception:
-                        logger.debug("Sweep: could not remove orphaned content file %s", entry)
         except Exception as exc:
             logger.debug("Sweep failed (non-fatal): %s", exc)

@@ -1,14 +1,9 @@
-"""Idempotent Parquet and raw materialization behavior."""
-
 from __future__ import annotations
 
 import hashlib
 import importlib
-import os
 from typing import Any
 from unittest.mock import patch
-
-import pytest
 
 from datasluice.data import DataPlaneResourceReader
 from datasluice.domain import Artifact, LocalFile, Resource
@@ -20,8 +15,6 @@ from tests.unit.sync.conftest import CSV_BYTES, write_counting_fs
 
 materialize_module = importlib.import_module("datasluice.sync.materialize")
 materialize: Any = materialize_module.materialize
-if not hasattr(materialize_module, "_IDEMPOTENT_MATERIALIZE_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("idempotent materialize implementation pending GREEN phase", allow_module_level=True)
 
 
 def _sync(tmp_path, resource, state_store, transport):
@@ -29,7 +22,7 @@ def _sync(tmp_path, resource, state_store, transport):
         sync_resources(
             [resource],
             state_store=state_store,
-            reader=DataPlaneResourceReader(transport=transport),
+            reader=DataPlaneResourceReader(transport=transport, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=transport,
         )
@@ -127,6 +120,41 @@ def test_two_passes_zero_writes_checkpointed_local_parquet(tmp_path) -> None:
     assert second[0].record == first[0].record
 
 
+def test_unchanged_checkpointed_source_skips_the_materializer(tmp_path) -> None:
+    """Pass 2 on an unchanged checkpointed source never enters the materializer."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    source_path = tmp_path / "source.parquet"
+    pq.write_table(pa.table({"id": [1, 2]}), source_path)
+    resource = Resource(
+        id="unchanged-local",
+        name="unchanged-local",
+        format="PARQUET",
+        access=LocalFile(path=str(source_path)),
+    )
+    destination = f"file://{tmp_path}/dest"
+    store = InMemoryStateStore()
+
+    with (
+        patch.object(materialize_module, "materialize", wraps=materialize_module.materialize) as plain_spy,
+        patch.object(
+            materialize_module, "materialize_checkpointed", wraps=materialize_module.materialize_checkpointed
+        ) as checkpointed_spy,
+    ):
+        first = list(
+            sync_resources([resource], state_store=store, reader=DataPlaneResourceReader(), destination_uri=destination)
+        )
+        second = list(
+            sync_resources([resource], state_store=store, reader=DataPlaneResourceReader(), destination_uri=destination)
+        )
+
+    assert first[0].action == "materialized"
+    assert second[0].action == "skipped-unchanged"
+    assert checkpointed_spy.call_count == 1
+    plain_spy.assert_not_called()
+
+
 class _RawReader:
     def __init__(self, data: bytes) -> None:
         self.data = data
@@ -171,7 +199,7 @@ def test_destination_uri_is_uri_not_path(tmp_path, csv_server, make_resource) ->
 
     record = materialize(
         resource,
-        reader=DataPlaneResourceReader(transport=transport),
+        reader=DataPlaneResourceReader(transport=transport, allow_private_http=True),
         destination_uri=f"file://{tmp_path}/dest",
     )
 

@@ -1,5 +1,3 @@
-"""Security boundary tests for deterministic reference catalog fakes."""
-
 from __future__ import annotations
 
 import json

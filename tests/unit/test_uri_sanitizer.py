@@ -1,5 +1,3 @@
-"""Tests for the URI display sanitizer."""
-
 from __future__ import annotations
 
 from datasluice._uri import sanitize_uri
@@ -17,7 +15,19 @@ def test_redacts_sensitive_query_values() -> None:
 
 
 def test_redacts_known_secret_query_keys() -> None:
-    for key in ("token", "access_token", "signature", "credential", "X-API-Key"):
+    for key in (
+        "token",
+        "access_token",
+        "signature",
+        "credential",
+        "X-API-Key",
+        "X-Amz-Signature",
+        "X-Amz-Credential",
+        "X-Amz-Security-Token",
+        "sig",
+        "X-Goog-Signature",
+        "X-Goog-Credential",
+    ):
         sanitized = sanitize_uri(f"https://api.example.test/x?{key}=secret-value")
         assert "secret-value" not in sanitized, key
 

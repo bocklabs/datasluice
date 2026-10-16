@@ -1,12 +1,10 @@
 """Streaming format readers yielding Arrow ``RecordBatch``.
 
-Registry and ``get_reader`` factory migrated verbatim from
-``datasluice.formats`` (v0.1.0); only the reader classes change (from
-``list[dict]``-returning to ``Iterator[RecordBatch]``-returning).
+Registry and ``get_reader`` factory migrated verbatim from ``datasluice.formats`` (v0.1.0); only the reader classes
+change (from ``list[dict]``-returning to ``Iterator[RecordBatch]``-returning).
 
-Each reader lazy-imports its heavy optional dependency (``pyarrow`` for CSV,
-JSON, Parquet, GeoJSON; ``openpyxl`` for XLSX) inside ``read_batches`` so
-that importing this package does not require the streaming extra.
+Each reader lazy-imports its heavy optional dependency (``pyarrow`` for CSV, JSON, Parquet, GeoJSON; ``openpyxl`` for
+XLSX) inside ``read_batches`` so that importing this package does not require the streaming extra.
 """
 
 from __future__ import annotations

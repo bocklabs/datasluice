@@ -1,5 +1,3 @@
-"""Unit tests for the streaming XLSX reader."""
-
 from __future__ import annotations
 
 import importlib

@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from types import TracebackType
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
-from datasluice.contracts.catalog.fixtures import ReferenceCase, ReferenceFixtureSet
-from datasluice.contracts.catalog.protocols import CapabilityState, CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import DatasetRecord, NativeRecord, PlatformMetadata, ResultEnvelope
 from datasluice.domain.catalog.observability import DiagnosticPolicy, StructuredEvent, TelemetryPolicy, TLSPolicy
-from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.receipts import BulkCheckpoint, BulkItemReceipt, BulkPlan, MutationReceipt
 from datasluice.domain.catalog.resilience import CircuitKey, CircuitState, RetryDecision, TimeBudget
 from datasluice.domain.catalog.safety import IdempotencyPolicy, MutationPolicy
@@ -24,6 +21,13 @@ from datasluice.errors.catalog import (
     UnauthenticatedError,
     UnsupportedCapabilityError,
 )
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from datasluice.contracts.catalog.fixtures import ReferenceCase, ReferenceFixtureSet
+    from datasluice.contracts.catalog.protocols import CapabilityState, CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.domain.catalog.operations import OperationId
 
 _DATASETS_GET_OPERATION = "datasets.get"
 

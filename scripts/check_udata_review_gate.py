@@ -12,17 +12,25 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SENSITIVE = tuple(
     re.compile(pattern, re.IGNORECASE)
-    for pattern in (r"authorization\s*:", r"bearer\s+", r"api[_-]?key\s*[:=]", r"https?://[^\s/:]+:[^\s/@]+@")
+    for pattern in (
+        r"authorization\s*[\"']?\s*:\s*[\"']?\s*(?:bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{8,}",
+        r"bearer\s+[A-Za-z0-9._~+/=-]{16,}",
+        r"(?:\"api[_-]?key\"|api[_-]?key)\s*[:=]\s*[\"']?\s*\S{8,}",
+        r"https?://[^\s/:]+:[^\s/@]+@",
+    )
 )
 REDACTION_VIOLATION = re.compile(
-    r"\b(?:raw[_ -]?(?:request|response)|credential(?:s)?|token(?:s)?)\s*[:=]", re.IGNORECASE
+    r"\b(?:raw[_ -]?(?:request|response)|credential(?:s)?|token(?:s)?)[\"']?\s*[:=]", re.IGNORECASE
 )
 URL = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 RESOLVED = frozenset({"fixed", "invalid", "not_actionable"})
+PRIVATE_HOSTS = frozenset({"localhost"})
+PRIVATE_HOST_SUFFIXES = (".localhost", ".local", ".internal", ".home.arpa")
 _SOURCE_REVIEW = "source-review.md"
 _CURRENT_THREAD = "current-thread.json"
 _REVIEW_RECEIPT = "review-receipt.json"
@@ -48,22 +56,36 @@ def _validate_sha(value: str, name: str) -> None:
         raise ReviewGateError(f"{name} must be a lowercase 40-character SHA")
 
 
+def _private_origin(content: str) -> bool:
+    """Report whether any URL in the content names a private or reserved origin."""
+    for match in URL.finditer(content):
+        parsed = match.group().rstrip(".,;:)]}")
+        try:
+            host = urlsplit(parsed).hostname
+        except ValueError:
+            return True
+        if host is None:
+            continue
+        host = host.lower().rstrip(".")
+        if host in PRIVATE_HOSTS or host.endswith(PRIVATE_HOST_SUFFIXES):
+            return True
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            return True
+    return False
+
+
 def _safe_artifact(path: Path) -> None:
     if not path.is_file():
         raise ReviewGateError(f"review artifact is missing: {path.name}")
     content = path.read_text(encoding="utf-8")
     if _contains_sensitive(content) or REDACTION_VIOLATION.search(content):
         raise ReviewGateError(f"review artifact contains sensitive content: {path.name}")
-    for match in URL.finditer(content):
-        parsed = match.group().rstrip(".,;:)]}")
-        hostname = re.match(r"https?://([^/:?#]+)", parsed, re.IGNORECASE)
-        assert hostname is not None
-        try:
-            address = ipaddress.ip_address(hostname.group(1).strip("[]"))
-        except ValueError:
-            continue
-        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
-            raise ReviewGateError(f"review artifact contains a private origin: {path.name}")
+    if _private_origin(content):
+        raise ReviewGateError(f"review artifact contains a private origin: {path.name}")
 
 
 def _git_head(repo_root: Path) -> str:
@@ -125,7 +147,7 @@ def _validate_capture_metadata(
 ) -> None:
     _validate_sha(reviewed_sha, "reviewed_sha")
     _validate_sha(base_sha, "base_sha")
-    if not family or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", family) or family in {".", ".."}:
+    if not family or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", family):
         raise ReviewGateError("family, reviewer, and implementation authors are required")
     if not reviewer_id or not author_ids:
         raise ReviewGateError("family, reviewer, and implementation authors are required")
@@ -165,14 +187,6 @@ def capture_review(
     )
     _safe_artifact(source_review)
     _validate_threads(current_threads, reviewed_sha)
-    directory = reviews_root / family / reviewed_sha
-    if directory.exists():
-        raise ReviewGateError(f"review directory already exists for SHA {reviewed_sha}")
-    directory.mkdir(parents=True)
-    copied_source = directory / _SOURCE_REVIEW
-    copied_threads = directory / _CURRENT_THREAD
-    shutil.copyfile(source_review, copied_source)
-    shutil.copyfile(current_threads, copied_threads)
     timestamp = created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
     _validate_timestamp(timestamp)
     receipt = {
@@ -181,8 +195,8 @@ def capture_review(
         "base_sha": base_sha,
         "reviewer_id": reviewer_id,
         "author_ids": list(author_ids),
-        "source_review_sha256": digest_file(copied_source),
-        "current_thread_sha256": digest_file(copied_threads),
+        "source_review_sha256": digest_file(source_review),
+        "current_thread_sha256": digest_file(current_threads),
         "created_at": timestamp,
         "parent_receipt": parent_receipt,
         "post_fix": post_fix,
@@ -190,7 +204,18 @@ def capture_review(
     receipt_text = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
     if _contains_sensitive(receipt_text) or REDACTION_VIOLATION.search(receipt_text):
         raise ReviewGateError("review receipt contains sensitive metadata")
-    (directory / _REVIEW_RECEIPT).write_text(receipt_text, encoding="utf-8")
+    directory = reviews_root / family / reviewed_sha
+    try:
+        directory.mkdir(parents=True)
+    except FileExistsError as error:
+        raise ReviewGateError(f"review directory already exists for SHA {reviewed_sha}") from error
+    try:
+        shutil.copyfile(source_review, directory / _SOURCE_REVIEW)
+        shutil.copyfile(current_threads, directory / _CURRENT_THREAD)
+        (directory / _REVIEW_RECEIPT).write_text(receipt_text, encoding="utf-8")
+    except BaseException:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
     return directory
 
 

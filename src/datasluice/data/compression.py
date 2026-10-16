@@ -21,16 +21,19 @@ logger = get_logger("data.compression")
 class _ErrorTranslatingReader(io.RawIOBase):
     """Wrap a decompressed stream, translating stdlib decode errors to DecompressionError.
 
-    GZIP/BZIP2/ZSTD/ZIP all surface truncated-frame errors only on ``read`` (the
-    decompressor is constructed lazily and decodes incrementally). Wrapping the
-    stdlib decompressor here keeps that translation in one place so callers see
+    GZIP/BZIP2/ZSTD/ZIP all surface truncated-frame errors only on ``read`` (the decompressor is constructed lazily and
+    decodes incrementally). Wrapping the stdlib decompressor here keeps that translation in one place so callers see
     only :class:`DecompressionError`.
     """
 
-    def __init__(self, inner: Any, exc_types: tuple[type[BaseException], ...], label: str) -> None:
+    def __init__(
+        self, inner: Any, exc_types: tuple[type[BaseException], ...], label: str, owned: tuple[Any, ...] = ()
+    ) -> None:
         self._inner = inner
         self._exc_types = exc_types
         self._label = label
+        self._owned = owned
+        self._bytes_read = 0
 
     def readable(self) -> bool:
         return True
@@ -47,16 +50,18 @@ class _ErrorTranslatingReader(io.RawIOBase):
 
     def read(self, n: int = -1) -> bytes:
         try:
-            return self._inner.read(n)
+            remaining = _MAX_DECOMPRESSED_BYTES - self._bytes_read
+            chunk = self._inner.read(min(n, remaining + 1) if n >= 0 else remaining + 1)
+            self._bytes_read += len(chunk)
+            if self._bytes_read > _MAX_DECOMPRESSED_BYTES:
+                raise DecompressionError(f"{self._label} exceeds the decompressed byte limit")
+            return chunk
         except self._exc_types as exc:
             raise DecompressionError(f"{self._label} decompression failed: {exc}") from exc
 
     def readinto(self, b: WriteableBuffer) -> int:
         mv = memoryview(b)
-        try:
-            chunk = self._inner.read(len(mv))
-        except self._exc_types as exc:
-            raise DecompressionError(f"{self._label} decompression failed: {exc}") from exc
+        chunk = self.read(len(mv))
         if not chunk:
             return 0
         n = min(len(mv), len(chunk))
@@ -64,14 +69,18 @@ class _ErrorTranslatingReader(io.RawIOBase):
         return n
 
     def close(self) -> None:
-        if hasattr(self._inner, "close"):
+        try:
             self._inner.close()
+        finally:
+            for source in self._owned:
+                source.close()
 
 
 _GZIP_MAGIC = b"\x1f\x8b"
 _BZIP2_MAGIC = b"BZh"
 _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 _ZIP_MAGIC = b"PK\x03\x04"
+_PARQUET_MAGIC = b"PAR1"
 
 _PEEK_SIZE = 6
 
@@ -80,15 +89,15 @@ _PEEK_SIZE = 6
 # oversized bodies keeps the bounded-memory contract instead of spooling an
 # unbounded blob into RAM.
 _MAX_ZIP_BODY_BYTES = 512 * 1024 * 1024
+_MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024
 
 
 class PeekableReader(io.RawIOBase):
     """Wrap a ``BinaryIO`` byte source with one-chunk lookahead.
 
-    Buffers peeked bytes (via :meth:`peek`) and prepends them to subsequent
-    reads so downstream consumers see the full stream from offset 0. Works on
-    both seekable and non-seekable sources (the only operations used are
-    ``read`` and iteration).
+    Buffers peeked bytes (via :meth:`peek`) and prepends them to subsequent reads so downstream consumers see the full
+    stream from offset 0. Works on both seekable and non-seekable sources (the only operations used are ``read`` and
+    iteration).
     """
 
     def __init__(self, source: Any) -> None:
@@ -100,7 +109,7 @@ class PeekableReader(io.RawIOBase):
         return True
 
     def seekable(self) -> bool:
-        return getattr(self._source, "seekable", lambda: False)()
+        return False
 
     def writable(self) -> bool:
         return False
@@ -116,7 +125,6 @@ class PeekableReader(io.RawIOBase):
         :meth:`read` sees them. If fewer than *n* bytes remain, returns
         whatever is available (possibly empty).
         """
-
         if self._closed:
             raise ValueError(_CLOSED_FILE_IO_ERROR)
         needed = n - len(self._buffer)
@@ -188,7 +196,6 @@ def _detect_format(magic: bytes, content_encoding: str | None) -> str:
     Returns:
         One of ``"gzip"``, ``"bzip2"``, ``"zstd"``, ``"zip"`` or ``"none"``.
     """
-
     ce = (content_encoding or "").lower().strip()
     if magic.startswith(_GZIP_MAGIC) or ce in {"gzip", "x-gzip"}:
         return "gzip"
@@ -201,12 +208,24 @@ def _detect_format(magic: bytes, content_encoding: str | None) -> str:
     return "none"
 
 
+def container_format(magic: bytes) -> str | None:
+    """Return ``"zip"`` or ``"parquet"`` for recognized magic bytes.
+
+    Otherwise, return ``None``.
+    """
+    if magic.startswith(_ZIP_MAGIC):
+        return "zip"
+    if magic.startswith(_PARQUET_MAGIC):
+        return "parquet"
+    return None
+
+
 def _wrap_gzip(source: Any) -> Any:
     try:
         decompressor = gzip.GzipFile(fileobj=source)
     except (EOFError, OSError) as exc:
         raise DecompressionError(f"GZIP decompression failed: {exc}") from exc
-    return _ErrorTranslatingReader(decompressor, (EOFError, OSError), "GZIP")
+    return _ErrorTranslatingReader(decompressor, (EOFError, OSError), "GZIP", (source,))
 
 
 def _wrap_bzip2(source: Any) -> Any:
@@ -214,7 +233,7 @@ def _wrap_bzip2(source: Any) -> Any:
         decompressor = bz2.BZ2File(source)
     except (OSError, ValueError, EOFError) as exc:
         raise DecompressionError(f"BZIP2 decompression failed: {exc}") from exc
-    return _ErrorTranslatingReader(decompressor, (OSError, ValueError, EOFError), "BZIP2")
+    return _ErrorTranslatingReader(decompressor, (OSError, ValueError, EOFError), "BZIP2", (source,))
 
 
 def _wrap_zstd(source: Any) -> Any | None:
@@ -237,7 +256,6 @@ def _wrap_zstd(source: Any) -> Any | None:
 
 def _zip_largest_member(source: Any) -> Any:
     """Spool ZIP body to BytesIO, extract the largest member."""
-
     body = source.read(_MAX_ZIP_BODY_BYTES + 1)
     if len(body) > _MAX_ZIP_BODY_BYTES:
         raise DecompressionError(
@@ -254,6 +272,9 @@ def _zip_largest_member(source: Any) -> Any:
         zf.close()
         raise DecompressionError("ZIP archive contains no file members")
     largest = max(members, key=lambda info: info.file_size)
+    if largest.file_size > _MAX_DECOMPRESSED_BYTES:
+        zf.close()
+        raise DecompressionError("ZIP member exceeds the decompressed byte limit")
     if len(members) > 1:
         skipped = [m.filename for m in members if m is not largest]
         logger.warning(
@@ -263,11 +284,15 @@ def _zip_largest_member(source: Any) -> Any:
             skipped,
         )
     try:
-        member_bytes = zf.read(largest)
+        with zf.open(largest) as member:
+            member_bytes = member.read(_MAX_DECOMPRESSED_BYTES + 1)
+        if len(member_bytes) > _MAX_DECOMPRESSED_BYTES:
+            raise DecompressionError("ZIP member exceeds the decompressed byte limit")
     except (zipfile.BadZipFile, RuntimeError, OSError, zlib.error) as exc:
         zf.close()
         raise DecompressionError(f"ZIP member {largest.filename!r} could not be extracted: {exc}") from exc
     zf.close()
+    source.close()
     return io.BytesIO(member_bytes)
 
 
@@ -299,7 +324,6 @@ def apply_compression(source: Any, content_encoding: str | None = None) -> Any:
     Raises:
         DecompressionError: If the compressed frame is truncated or malformed.
     """
-
     peekable = source if isinstance(source, PeekableReader) else PeekableReader(source)
     magic = peekable.peek(_PEEK_SIZE)
     fmt = _detect_format(magic, content_encoding)

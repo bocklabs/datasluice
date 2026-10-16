@@ -1,16 +1,3 @@
-"""Release-routing contracts for the dual-distribution manifest and publication gates.
-
-establishes the typed reusable publication interface in
-``.github/workflows/publish.yaml``: build/attest the exact Release Please ref,
-publish the candidate to the selected TestPyPI environment, install the exact
-``name==version`` candidate from TestPyPI with PyPI resolving dependencies,
-smoke the package, and only then promote the SAME attested artifact through the
-caller-selected PyPI environment. configures the two-component Release
-Please manifest and routes its path-prefixed outputs into that interface with
-core-before-provider ordering. Nothing is published here; these are structural
-YAML/JSON contract tests plus a local release-proposal model.
-"""
-
 from __future__ import annotations
 
 import json
@@ -121,20 +108,29 @@ def _provider_registry_ready() -> bool:
     return REGISTRY_PATH.exists()
 
 
-def _manifest_ready() -> bool:
-    if not (RELEASE_CONFIG.exists() and RELEASE_MANIFEST.exists()):
-        return False
-    config = _load_json(RELEASE_CONFIG)
+ROOT_PACKAGE = "."
+
+
+def _inherits_top_level_defaults(entry: dict) -> bool:
+    """Return whether a package entry inherits changelog types and release type from the top level."""
+    return "changelog-types" not in entry and "release-type" not in entry
+
+
+def _config_defaults_ready(config: dict) -> bool:
+    """Return whether the config declares the shared top-level release defaults."""
     if config.get("release-type") != "python":
         return False
-    if not isinstance(config.get("changelog-types"), list) or not config["changelog-types"]:
+    changelog_types = config.get("changelog-types")
+    if not isinstance(changelog_types, list) or not changelog_types:
         return False
-    if config.get("include-component-in-tag") is not True:
+    return config.get("include-component-in-tag") is True
+
+
+def _package_entries_ready(packages: dict) -> bool:
+    """Return whether the packages map locks the core and provider component entries."""
+    if set(packages) != {ROOT_PACKAGE, PROVIDER_PATH}:
         return False
-    packages = config.get("packages") or {}
-    if set(packages) != {".", PROVIDER_PATH}:
-        return False
-    root = packages.get(".") or {}
+    root = packages.get(ROOT_PACKAGE) or {}
     provider = packages.get(PROVIDER_PATH) or {}
     if root.get("component") != "datasluice":
         return False
@@ -142,14 +138,32 @@ def _manifest_ready() -> bool:
         return False
     if provider.get("initial-version") != "0.1.0":
         return False
-    if "changelog-types" in root or "changelog-types" in provider:
-        return False
-    if "release-type" in root or "release-type" in provider:
-        return False
-    manifest = _load_json(RELEASE_MANIFEST)
+    return _inherits_top_level_defaults(root) and _inherits_top_level_defaults(provider)
+
+
+def _is_pinned_version(value: object) -> bool:
+    """Return whether a value is a pinned three-part semantic version string."""
+    return isinstance(value, str) and bool(re.fullmatch(r"\d+\.\d+\.\d+", value))
+
+
+def _manifest_versions_ready(manifest: dict, packages: dict) -> bool:
+    """Return whether the manifest pins a semantic version for exactly the configured packages."""
     if set(manifest) != set(packages):
         return False
-    return all(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version) for version in manifest.values())
+    return all(_is_pinned_version(version) for version in manifest.values())
+
+
+def _manifest_ready() -> bool:
+    """Return whether the Release Please config and manifest form the locked two-component release."""
+    if not (RELEASE_CONFIG.exists() and RELEASE_MANIFEST.exists()):
+        return False
+    config = _load_json(RELEASE_CONFIG)
+    if not _config_defaults_ready(config):
+        return False
+    packages = config.get("packages") or {}
+    if not _package_entries_ready(packages):
+        return False
+    return _manifest_versions_ready(_load_json(RELEASE_MANIFEST), packages)
 
 
 def _package_version(path: Path) -> str:
@@ -273,8 +287,8 @@ def _collect_providers(registry: dict, release_outputs: dict) -> list[dict]:
 
 
 def test_reusable_publish_interface() -> None:
-    """publish.yml is a workflow_call with exactly the typed required inputs and no release-event trigger."""
-    _require(_publish_interface_ready(), "publish.yml is not yet a typed reusable workflow")
+    """publish.yaml is a workflow_call with exactly the typed required inputs and no release-event trigger."""
+    _require(_publish_interface_ready(), "publish.yaml is not yet a typed reusable workflow")
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     assert "workflow_call" in publish["on"]
     inputs = publish["on"]["workflow_call"]["inputs"]
@@ -284,7 +298,7 @@ def test_reusable_publish_interface() -> None:
         assert spec["required"] is True, f"input {name} must be required"
         assert spec["type"] == "string", f"input {name} must be a string"
     for job in ("build", "publish-testpypi", "smoke", "publish-pypi"):
-        assert job in publish["jobs"], f"publish.yml is missing the {job} job"
+        assert job in publish["jobs"], f"publish.yaml is missing the {job} job"
     raw = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "github.event.release" not in raw
     assert "release: published" not in raw
@@ -320,7 +334,7 @@ def test_publish_workflow_delegates_build_without_duplicate_publish_jobs() -> No
 
 def test_exact_artifact_reused() -> None:
     """The exact-ref artifact is attested once, uploaded uniquely, and reused for production with no rebuild."""
-    _require(_publish_interface_ready(), "publish.yml is not yet a typed reusable workflow")
+    _require(_publish_interface_ready(), "publish.yaml is not yet a typed reusable workflow")
     publish = _load_gh_yaml(PUBLISH_WORKFLOW)
     jobs = publish["jobs"]
     build = _load_gh_yaml(BUILD_WORKFLOW)
@@ -669,7 +683,7 @@ def test_collect_step_filters_providers() -> None:
 
 
 def test_matrix_expands_from_collect_output() -> None:
-    """publish-providers uses fromJson(provider-releases) as its matrix with seven inputs from matrix.provider.*."""
+    """Publish-providers uses fromJson(provider-releases) as its matrix with seven inputs from matrix.provider.*."""
     _require(_routing_ready(), "matrix routing not yet implemented")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     providers_job = workflow["jobs"]["publish-providers-build"]
@@ -695,7 +709,7 @@ def test_matrix_expands_from_collect_output() -> None:
 
 
 def test_core_not_in_matrix() -> None:
-    """publish-core is a standalone job; the matrix job has no hardcoded core reference."""
+    """Publish-core is a standalone job; the matrix job has no hardcoded core reference."""
     _require(_routing_ready(), "core/matrix separation not yet implemented")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]

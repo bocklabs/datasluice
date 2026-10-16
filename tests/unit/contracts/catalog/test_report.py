@@ -1,14 +1,14 @@
-"""Tests for versioned catalog compliance reports."""
-
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
 from datasluice.contracts.catalog.report import CaseOutcome, ComplianceReport
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _outcome(
@@ -81,7 +81,7 @@ def test_reports_are_immutable_bounded_and_redact_diagnostics_by_default(tmp_pat
     assert "credential-value" not in path.read_text(encoding="utf-8")
     assert json.loads(path.read_text(encoding="utf-8")) == report.to_dict()
     with pytest.raises(TypeError):
-        cast(dict[str, object], report.platform_metadata)["platform"] = "other"
+        cast("dict[str, object]", report.platform_metadata)["platform"] = "other"
     with pytest.raises(ValueError):
         CaseOutcome(
             operation_id="ckan/datasets/get",
@@ -96,6 +96,11 @@ def test_report_rejects_unversioned_or_non_strict_payloads() -> None:
     """Report decoding requires a complete schema-versioned envelope."""
     with pytest.raises(ValueError):
         ComplianceReport.from_dict({"schema_version": 1})
+
+
+def test_report_rejects_outcomes_outside_its_required_cases() -> None:
+    with pytest.raises(ValueError, match="expected_case_ids"):
+        ComplianceReport(outcomes=(_outcome(), _outcome(mode="async")), expected_case_ids=(_outcome().case_id,))
 
 
 def test_report_rejects_payload_missing_its_schema_version_key() -> None:

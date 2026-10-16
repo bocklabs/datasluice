@@ -1,10 +1,7 @@
-"""Within-resource checkpoint and production Parquet continuation behavior."""
-
 from __future__ import annotations
 
 import hashlib
 import importlib
-import os
 from typing import Any
 from unittest.mock import patch
 
@@ -22,35 +19,20 @@ from tests.unit.sync.conftest import FaultInjectingStateStore
 batch_stream_module = importlib.import_module("datasluice.data.batch_stream")
 parquet_module = importlib.import_module("datasluice.data.readers.parquet")
 sync_module = importlib.import_module("datasluice.sync.sync")
-if not hasattr(sync_module, "_WITHIN_RESOURCE_RESUME_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("within-resource resume implementation pending GREEN phase", allow_module_level=True)
-if not hasattr(sync_module, "_FAILURE_BOUNDARY_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("checkpoint failure-boundary hardening pending GREEN phase", allow_module_level=True)
 
 
-def _checkpoint(next_batch_index: int) -> dict[str, Any]:
-    return {
-        "version": 1,
-        "status": "in_progress",
-        "next_batch_index": next_batch_index,
-        "position": {
-            "kind": "parquet_row_group",
-            "row_group_index": next_batch_index,
-        },
-    }
-
-
-def _checkpoint_v2(next_batch_index: int, row_group_index: int, source_version: str | None = None) -> dict[str, Any]:
-    return {
-        "version": 2,
-        "status": "in_progress",
-        "next_batch_index": next_batch_index,
-        "position": {
-            "kind": "parquet_row_group",
-            "row_group_index": row_group_index,
-        },
-        "source_version": source_version,
-    }
+def test_memory_store_warns_when_resume_is_requested(tmp_path, caplog) -> None:
+    list(
+        sync_resources(
+            [],
+            state_store=InMemoryStateStore(),
+            reader=DataPlaneResourceReader(),
+            destination_uri=f"file://{tmp_path}/dest",
+            resume=True,
+        )
+    )
+    assert "InMemoryStateStore" in caplog.text
+    assert "FileStateStore" in caplog.text
 
 
 def _checkpoint_v3(
@@ -73,8 +55,6 @@ def _checkpoint_v3(
 
 
 _EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-_ARTIFACT_HEALTH_READY = hasattr(sync_module, "_ARTIFACT_HEALTH_READY")
-_SKIP_ARTIFACT_HEALTH = not _ARTIFACT_HEALTH_READY and os.environ.get("DATASLUICE_TDD_RED") != "1"
 
 
 def _file_sha256(path: str) -> str:
@@ -254,10 +234,11 @@ def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_p
             raise AssertionError("batch zero must not be accessed")
 
     resource = Resource(id="incapable", name="incapable", format="PARQUET", access=LocalFile(path="/dev/null"))
+    destination = f"file://{tmp_path}/dest"
     store = InMemoryStateStore()
     store.put(
         canonical_identity(resource),
-        SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}),
+        SyncState(extra={"datasluice_checkpoint": _checkpoint_v3(2, 2, _EMPTY_SHA, destination)}),
     )
     reader = IncapableReader()
 
@@ -267,7 +248,7 @@ def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_p
                 [resource],
                 state_store=store,
                 reader=reader,
-                destination_uri=f"file://{tmp_path}/dest",
+                destination_uri=destination,
                 resume=True,
             )
         )
@@ -312,16 +293,11 @@ def test_failure_before_shard_move_does_not_advance_checkpoint(tmp_path) -> None
     destination = f"file://{tmp_path}/pre-move"
     fs = _FailBeforeSelectedMoveFS(open_filesystem(destination), "00000000000000000001.parquet")
 
-    with patch("datasluice.io.filesystem.open_filesystem", return_value=fs):
-        with pytest.raises(DataSluiceError, match="injected pre-shard-move failure"):
-            list(
-                sync_resources(
-                    [resource],
-                    state_store=store,
-                    reader=reader,
-                    destination_uri=destination,
-                )
-            )
+    with (
+        patch("datasluice.io.filesystem.open_filesystem", return_value=fs),
+        pytest.raises(DataSluiceError, match="injected pre-shard-move failure"),
+    ):
+        list(sync_resources([resource], state_store=store, reader=reader, destination_uri=destination))
 
     state = store.get(canonical_identity(resource))
     assert state is not None
@@ -415,9 +391,12 @@ def test_missing_checkpoint_referenced_shard_fails_as_corrupt_state(tmp_path) ->
 
     resource = Resource(id="missing-shard", name="missing-shard", format="PARQUET", access=LocalFile(path="/dev/null"))
     reader = _CursorAwareReader(fail_at=None)
-    store = InMemoryStateStore()
-    store.put(canonical_identity(resource), SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}))
     destination = f"file://{tmp_path}/missing-shard"
+    store = InMemoryStateStore()
+    store.put(
+        canonical_identity(resource),
+        SyncState(extra={"datasluice_checkpoint": _checkpoint_v3(2, 2, _EMPTY_SHA, destination)}),
+    )
     fs = open_filesystem(destination)
     partial = _partial_uri(destination, canonical_identity(resource))
     fs.makedirs(partial, exist_ok=True)
@@ -574,7 +553,9 @@ def test_source_replacement_detected_and_restarted(tmp_path) -> None:
         writer.write_table(pa.table({"group_id": [100, 101], "value": ["x", "y"]}, schema=schema))
         writer.write_table(pa.table({"group_id": [102, 103], "value": ["z", "w"]}, schema=schema))
 
-    store = InMemoryStateStore()
+    from datasluice.sync.state_store import FileStateStore
+
+    store = FileStateStore(f"file://{tmp_path}/state")
     store.put(canonical_identity(resource), SyncState(extra=dict(interrupted.extra)))
     outcomes = list(
         sync_resources(
@@ -701,7 +682,7 @@ def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> N
     resource = make_resource(url, format="PARQUET", resource_id="http-parquet")
     transport = HttpxCatalogTransport()
     store = InMemoryStateStore()
-    reader = DataPlaneResourceReader(transport=transport)
+    reader = DataPlaneResourceReader(transport=transport, allow_private_http=True)
     destination = f"file://{tmp_path}/http-parquet"
 
     with patch("datasluice.sync.materialize.materialize_checkpointed") as mock_mc:
@@ -722,7 +703,6 @@ def test_http_parquet_not_checkpointed(tmp_path, csv_server, make_resource) -> N
     assert "datasluice_checkpoint" not in state.extra
 
 
-@pytest.mark.skipif(_SKIP_ARTIFACT_HEALTH, reason="publication ordering implementation pending GREEN phase")
 def test_publication_failure_leaves_artifact_and_prior_checkpoint_recoverable(tmp_path) -> None:
     import pyarrow.parquet as pq
 

@@ -1,0 +1,31 @@
+name: uData public drift status
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: catalog-drift
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: Report public drift state
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Report the reviewed allowlist state
+        run: uv run python scripts/check_udata_drift.py --allow-disabled
+
+      - name: Guard that the reviewed allowlist remains empty
+        run: >-
+          uv run python -c 'from datasluice.connectors.catalog.udata.drift import APPROVED_TARGETS;
+          raise SystemExit("Allowlist is no longer empty but no schedule trigger was restored" if APPROVED_TARGETS else 0)'

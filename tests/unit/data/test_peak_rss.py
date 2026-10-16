@@ -1,33 +1,3 @@
-"""peak-RSS subprocess memory-bound test for the streaming data plane.
-
-Proves that the streaming data plane keeps memory bounded on large inputs —
-the core promise. Two tests:
-
-- ``test_peak_rss_bounded``: streams ~5M rows of synthetic CSV through the
-  production ``IterableBytesIO`` adapter into ``pyarrow.csv.open_csv``. The
-  input is generated lazily row-by-row (never materialised) so peak RSS
-  reflects only pyarrow's batch buffers + Python interpreter baseline, NOT
-  the full input size. A regression that switched the data plane to
-  full-buffer semantics would push peak RSS well above the threshold.
-- ``test_json_peak_rss_bounded``: parses ~200K rows of synthetic JSONL via
-  ``pyarrow.json.read_json``. JSON is inherently non-streaming (the reader
-  materialises a full ``Table`` internally — documented in
-  ``data/readers/json.py``), so the threshold accommodates the parsed
-  Table in addition to the input bytes; the test catches accidental
-  double-buffering regressions.
-
-CRITICAL: uses ``resource.getrusage(RUSAGE_SELF).ru_maxrss`` in a subprocess
-— NOT ``tracemalloc``. verified that pyarrow allocates
-from the mimalloc native pool which ``tracemalloc`` does NOT track; a
-tracemalloc-based test would pass trivially even when pyarrow buffers a
-multi-GB file. ``ru_maxrss`` is a process-lifetime high-water mark that
-includes native allocations; the subprocess isolates the measurement from
-accumulated pytest process memory.
-
-Both tests run in the DEFAULT pytest suite (NOT marked ``slow``) per
- so CI catches buffering regressions every run.
-"""
-
 from __future__ import annotations
 
 import subprocess
@@ -121,11 +91,9 @@ def _run_isolated(code: str, timeout: int) -> subprocess.CompletedProcess[str]:
 def test_peak_rss_bounded() -> None:
     """Streaming ~145MB of synthetic CSV through IterableBytesIO keeps peak RSS well below input.
 
-    The threshold of 250 MB accommodates Python 3.14 + pyarrow allocator
-    pressure during the full suite while remaining below the ~290 MB+
-    materialisation regression (str + bytes + BytesIO). The isolated streaming
-    path remains near 90 MB; this margin keeps the default-suite test stable
-    without accepting full-buffer semantics.
+    The threshold of 250 MB accommodates Python 3.14 + pyarrow allocator pressure during the full suite while remaining
+    below the ~290 MB+ materialisation regression (str + bytes + BytesIO). The isolated streaming path remains near 90
+    MB; this margin keeps the default-suite test stable without accepting full-buffer semantics.
     """
     result = _run_isolated(_CSV_SUBPROCESS_CODE, 180)
     assert result.returncode == 0, f"subprocess failed: {result.stderr}"

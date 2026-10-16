@@ -1,11 +1,9 @@
 """Both-mode CKAN resource-view projections under the optional views v2 id.
 
-Resource views exist only when the deployment registers a view plugin, so the
-whole family rides the optional ``resource-views`` id and resolves capability
-evidence independently per deployment (the D-06 correction from 03-02). Typed
-methods pass documented CKAN 2.11 parameters verbatim (D-04) and view payloads
-stay lossless mapping records; mutations return CKANMutationResult through the
-shared receipt seam.
+Resource views exist only when the deployment registers a view plugin, so the whole family rides the optional
+``resource-views`` id and resolves capability evidence independently per deployment (the D-06 correction from 03-02).
+Typed methods pass documented CKAN 2.11 parameters verbatim (D-04) and view payloads stay lossless mapping records;
+mutations return CKANMutationResult through the shared receipt seam.
 """
 
 from __future__ import annotations
@@ -16,27 +14,24 @@ from typing import TYPE_CHECKING
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
     _async_typed_read,
-    _AsyncNativeService,
+    _AsyncGroupService,
     _sync_typed_mutation,
     _sync_typed_read,
-    _SyncNativeService,
+    _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
+from datasluice.connectors.catalog.ckan.services._shared import WireParams, drop_unset, wire_params
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _GROUP = "views"
 _VIEW = ResourceKind("view")
-
-
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}
 
 
 def _mapping_identity(value: object, *keys: str) -> str:
@@ -50,24 +45,24 @@ def _mapping_identity(value: object, *keys: str) -> str:
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "package_create_default_resource_views":
-        return CatalogId(PLATFORM, ResourceKind.DATASET, _mapping_identity(params["package"], "id", "name"))
+        return CatalogId(PLATFORM, ResourceKind.DATASET, _mapping_identity(params.get("package", ""), "id", "name"))
     if action == "resource_create_default_resource_views":
-        return CatalogId(PLATFORM, ResourceKind.RESOURCE, _mapping_identity(params["resource"], "id"))
+        return CatalogId(PLATFORM, ResourceKind.RESOURCE, _mapping_identity(params.get("resource", ""), "id"))
     if action in {"resource_view_update", "resource_view_delete"}:
-        return CatalogId(PLATFORM, _VIEW, str(params["id"]))
+        return CatalogId(PLATFORM, _VIEW, str(params.get("id", "")))
     for key in ("resource_id", "id"):
         if key in params:
-            return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params[key]))
-    raise KeyError("the view mutation carried no resource-targeting id")
+            return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params.get(key, "")))
+    return CatalogId(PLATFORM, ResourceKind.RESOURCE, "")
 
 
-class SyncViewsService(_SyncNativeService):
+class SyncViewsService(_SyncGroupService):
     """Synchronous resource-view projection carrying nine typed actions."""
 
     __slots__ = ()
 
     def __init__(self, client: SyncCKANClient) -> None:
-        super().__init__(client, "views")
+        super().__init__(client, _GROUP)
 
     def resource_view_create(
         self,
@@ -80,9 +75,14 @@ class SyncViewsService(_SyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create one view configuration on a resource."""
-        params: dict[str, object] = {"resource_id": resource_id, "view_type": view_type}
-        params.update(_drop_unset({"title": title, "description": description, "config": config}))
-        return self._invoke_mutation("resource_view_create", params, policy)
+        return self._invoke_mutation(
+            "resource_view_create",
+            wire_params(
+                {"resource_id": resource_id, "view_type": view_type},
+                {"title": title, "description": description, "config": config},
+            ),
+            policy,
+        )
 
     def resource_view_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
         """Show one view configuration as a lossless mapping."""
@@ -103,11 +103,13 @@ class SyncViewsService(_SyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one view configuration on the standard tier."""
-        params: dict[str, object] = {"id": id}
-        params.update(
-            _drop_unset({"title": title, "description": description, "config": config, "view_type": view_type})
+        return self._invoke_mutation(
+            "resource_view_update",
+            wire_params(
+                {"id": id}, {"title": title, "description": description, "config": config, "view_type": view_type}
+            ),
+            policy,
         )
-        return self._invoke_mutation("resource_view_update", params, policy)
 
     def resource_view_reorder(
         self, *, id: str, order: list[str], policy: MutationPolicy | None = None
@@ -131,8 +133,11 @@ class SyncViewsService(_SyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create the default views for one package's resources."""
-        params = _drop_unset({"package": package, "create_datastore_views": create_datastore_views})
-        return self._invoke_mutation("package_create_default_resource_views", params, policy)
+        return self._invoke_mutation(
+            "package_create_default_resource_views",
+            drop_unset({"package": package, "create_datastore_views": create_datastore_views}),
+            policy,
+        )
 
     def resource_create_default_resource_views(
         self,
@@ -143,27 +148,26 @@ class SyncViewsService(_SyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create the default views for one resource."""
-        params = _drop_unset(
-            {"resource": resource, "package": package, "create_datastore_views": create_datastore_views}
+        return self._invoke_mutation(
+            "resource_create_default_resource_views",
+            drop_unset({"resource": resource, "package": package, "create_datastore_views": create_datastore_views}),
+            policy,
         )
-        return self._invoke_mutation("resource_create_default_resource_views", params, policy)
 
     def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
         return _sync_typed_read(self._client, _GROUP, action, params)
 
-    def _invoke_mutation(
-        self, action: str, params: dict[str, object], policy: MutationPolicy | None
-    ) -> CKANMutationResult:
+    def _invoke_mutation(self, action: str, params: WireParams, policy: MutationPolicy | None) -> CKANMutationResult:
         return _sync_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)
 
 
-class AsyncViewsService(_AsyncNativeService):
+class AsyncViewsService(_AsyncGroupService):
     """Asynchronous resource-view projection carrying nine typed actions."""
 
     __slots__ = ()
 
     def __init__(self, client: AsyncCKANClient) -> None:
-        super().__init__(client, "views")
+        super().__init__(client, _GROUP)
 
     async def resource_view_create(
         self,
@@ -176,9 +180,14 @@ class AsyncViewsService(_AsyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create one view configuration on a resource."""
-        params: dict[str, object] = {"resource_id": resource_id, "view_type": view_type}
-        params.update(_drop_unset({"title": title, "description": description, "config": config}))
-        return await self._invoke_mutation("resource_view_create", params, policy)
+        return await self._invoke_mutation(
+            "resource_view_create",
+            wire_params(
+                {"resource_id": resource_id, "view_type": view_type},
+                {"title": title, "description": description, "config": config},
+            ),
+            policy,
+        )
 
     async def resource_view_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
         """Show one view configuration as a lossless mapping."""
@@ -199,11 +208,13 @@ class AsyncViewsService(_AsyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one view configuration on the standard tier."""
-        params: dict[str, object] = {"id": id}
-        params.update(
-            _drop_unset({"title": title, "description": description, "config": config, "view_type": view_type})
+        return await self._invoke_mutation(
+            "resource_view_update",
+            wire_params(
+                {"id": id}, {"title": title, "description": description, "config": config, "view_type": view_type}
+            ),
+            policy,
         )
-        return await self._invoke_mutation("resource_view_update", params, policy)
 
     async def resource_view_reorder(
         self, *, id: str, order: list[str], policy: MutationPolicy | None = None
@@ -227,8 +238,11 @@ class AsyncViewsService(_AsyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create the default views for one package's resources."""
-        params = _drop_unset({"package": package, "create_datastore_views": create_datastore_views})
-        return await self._invoke_mutation("package_create_default_resource_views", params, policy)
+        return await self._invoke_mutation(
+            "package_create_default_resource_views",
+            drop_unset({"package": package, "create_datastore_views": create_datastore_views}),
+            policy,
+        )
 
     async def resource_create_default_resource_views(
         self,
@@ -239,15 +253,16 @@ class AsyncViewsService(_AsyncNativeService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create the default views for one resource."""
-        params = _drop_unset(
-            {"resource": resource, "package": package, "create_datastore_views": create_datastore_views}
+        return await self._invoke_mutation(
+            "resource_create_default_resource_views",
+            drop_unset({"resource": resource, "package": package, "create_datastore_views": create_datastore_views}),
+            policy,
         )
-        return await self._invoke_mutation("resource_create_default_resource_views", params, policy)
 
     async def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
         return await _async_typed_read(self._client, _GROUP, action, params)
 
     async def _invoke_mutation(
-        self, action: str, params: dict[str, object], policy: MutationPolicy | None
+        self, action: str, params: WireParams, policy: MutationPolicy | None
     ) -> CKANMutationResult:
         return await _async_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)

@@ -1,5 +1,3 @@
-"""Tests for optional-extras execution boundaries."""
-
 from __future__ import annotations
 
 import importlib
@@ -13,11 +11,13 @@ import pytest
 def test_connector_contract_imports_without_its_extra(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     """Connector contract packages remain importable in a bare installation."""
     monkeypatch.setitem(sys.modules, "httpx", None)
-    sys.modules.pop(f"datasluice.connectors.catalog.{platform}", None)
+    package = importlib.import_module("datasluice.connectors.catalog")
+    monkeypatch.setattr(package, platform, getattr(package, platform, None), raising=False)
+    monkeypatch.delitem(sys.modules, f"datasluice.connectors.catalog.{platform}", raising=False)
     importlib.import_module(f"datasluice.connectors.catalog.{platform}")
 
 
-@pytest.mark.parametrize("platform", ("socrata",))
+@pytest.mark.parametrize("platform", ("socrata", "udata"))
 def test_live_client_requires_its_connector_extra(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
     """Stubbed live construction reports the exact missing platform extra."""
     live = importlib.import_module(f"datasluice.connectors.catalog.{platform}.live")

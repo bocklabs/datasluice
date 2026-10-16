@@ -1,5 +1,3 @@
-"""OAuth runtime flow tests."""
-
 from __future__ import annotations
 
 import asyncio
@@ -141,17 +139,19 @@ def test_authorization_code_uses_rfc7636_s256_only() -> None:
     transport = _SyncTransport(_token_response())
     flow = AuthorizationCodeFlow(_flow(), transport)
 
-    authorization_url = flow.authorization_url(state="state")
+    authorization_url = flow.authorization_url()
     query = parse_qs(urlsplit(authorization_url).query)
     verifier = flow.verifier
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    bound = AuthorizationCodeFlow(_flow(), _SyncTransport(_token_response()), state="state")
 
     assert 43 <= len(verifier) <= 128
     assert AuthorizationCodeFlow(_flow(), _SyncTransport(_token_response())).verifier != verifier
     assert query["code_challenge"] == [expected]
     assert query["code_challenge_method"] == ["S256"]
     assert query["response_type"] == ["code"]
-    assert query["state"] == ["state"]
+    assert query["state"] == [flow.expected_state]
+    assert parse_qs(urlsplit(bound.authorization_url()).query)["state"] == ["state"]
     assert "plain" not in authorization_url
 
 
@@ -164,8 +164,8 @@ def test_authorization_url_and_exchange_carry_the_registered_redirect_uri() -> N
     transport = _SyncTransport(_token_response())
     flow = AuthorizationCodeFlow(_flow(redirect_uri="https://app.example.test/callback"), transport)
 
-    query = parse_qs(urlsplit(flow.authorization_url(state="state")).query)
-    credential = flow.exchange("authorization-code")
+    query = parse_qs(urlsplit(flow.authorization_url()).query)
+    credential = flow.exchange("authorization-code", state=flow.expected_state)
 
     assert transport.requests[0].body is not None
     exchange_body = parse_qs(transport.requests[0].body.decode())
@@ -179,7 +179,7 @@ def test_authorization_code_exchanges_verifier() -> None:
     transport = _SyncTransport(_token_response())
     flow = AuthorizationCodeFlow(_flow(), transport)
 
-    credential = flow.exchange("authorization-code")
+    credential = flow.exchange("authorization-code", state=flow.expected_state)
 
     assert transport.requests[0].body is not None
     body = parse_qs(transport.requests[0].body.decode())
@@ -187,6 +187,76 @@ def test_authorization_code_exchanges_verifier() -> None:
     assert body["grant_type"] == ["authorization_code"]
     assert body["code"] == ["authorization-code"]
     assert body["code_verifier"] == [flow.verifier]
+
+
+def test_authorization_code_binds_one_exact_state_per_flow() -> None:
+    bound = AuthorizationCodeFlow(_flow(), state="state")
+    generated = AuthorizationCodeFlow(_flow())
+
+    assert bound.expected_state == "state"
+    assert generated.expected_state
+    assert generated.expected_state != AuthorizationCodeFlow(_flow()).expected_state
+
+
+def test_authorization_code_rejects_an_empty_bound_state() -> None:
+    with pytest.raises(ValueError, match="non-empty string"):
+        AuthorizationCodeFlow(_flow(), state="")
+
+
+def test_mismatched_authorization_state_fails_before_dispatch() -> None:
+    transport = _SyncTransport(_token_response())
+    flow = AuthorizationCodeFlow(_flow(), transport)
+
+    with pytest.raises(CatalogValidationError, match="does not match"):
+        flow.exchange("authorization-code", state="attacker-state")
+
+    assert transport.requests == []
+
+
+def test_async_mismatched_authorization_state_fails_before_dispatch() -> None:
+    transport = _AsyncTransport(_token_response())
+    flow = AuthorizationCodeFlow(_flow(), transport)
+
+    with pytest.raises(CatalogValidationError, match="does not match"):
+        asyncio.run(flow.exchange_async("authorization-code", state="attacker-state"))
+
+    assert transport.requests == []
+
+
+def test_empty_observed_authorization_state_fails_before_dispatch() -> None:
+    transport = _SyncTransport(_token_response())
+    flow = AuthorizationCodeFlow(_flow(), transport)
+
+    with pytest.raises(CatalogValidationError, match="usable state"):
+        flow.exchange("authorization-code", state="")
+
+    assert transport.requests == []
+
+
+@pytest.mark.parametrize("observed", ["", None, 5, b"state"])
+def test_authorization_state_validation_rejects_non_strings(observed: object) -> None:
+    flow = AuthorizationCodeFlow(_flow(), state="state")
+
+    with pytest.raises(CatalogValidationError, match="usable state"):
+        flow.validate_state(observed)
+
+
+def test_authorization_state_validation_handles_non_ascii_states() -> None:
+    flow = AuthorizationCodeFlow(_flow(), state="st\u00e4te")
+
+    flow.validate_state("st\u00e4te")
+    with pytest.raises(CatalogValidationError, match="does not match"):
+        flow.validate_state("state")
+
+
+def test_transportless_authorization_code_flow_cannot_exchange() -> None:
+    flow = AuthorizationCodeFlow(_flow())
+
+    assert flow.authorization_url().startswith("https://auth.example.test/authorize?")
+    with pytest.raises(TypeError, match="without a transport"):
+        flow.exchange("authorization-code", state=flow.expected_state)
+    with pytest.raises(TypeError, match="asynchronous runtime transport"):
+        asyncio.run(flow.exchange_async("authorization-code", state=flow.expected_state))
 
 
 def test_domain_rejects_non_https_token_endpoint() -> None:

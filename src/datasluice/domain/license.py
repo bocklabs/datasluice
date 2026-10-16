@@ -1,5 +1,3 @@
-"""License model representing the license under which data is published."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -13,10 +13,8 @@ if TYPE_CHECKING:
 class ResourceReader(Protocol):
     """Boundary protocol for opening a resource for streaming reads.
 
-        The ``open`` method returns a :class:`BatchStream` — a context-managed
-        Arrow ``RecordBatch`` stream. The
-        ``batch_size`` keyword controls the row count per yielded batch
-    .
+    The ``open`` method returns a :class:`BatchStream` — a context-managed     Arrow ``RecordBatch`` stream. The
+    ``batch_size`` keyword controls the row count per yielded batch .
     """
 
     def open(self, resource: Resource, *, batch_size: int = 65536) -> BatchStream: ...

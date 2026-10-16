@@ -1,9 +1,10 @@
-"""Tests for DirectResourceLocator scheme routing in _resolve_direct_resource."""
-
 from __future__ import annotations
+
+import pytest
 
 from datasluice.application import DirectResourceLocator, _resolve_direct_resource
 from datasluice.domain import HttpDownload, LocalFile, ObjectStorage
+from datasluice.exceptions import DataSluiceError
 
 
 def test_file_scheme_routes_to_local_file() -> None:
@@ -40,3 +41,15 @@ def test_bare_path_routes_to_local_file() -> None:
     locator = DirectResourceLocator(uri="/tmp/local.csv")
     resource = _resolve_direct_resource(locator)
     assert isinstance(resource.access, LocalFile)
+
+
+def test_unknown_scheme_is_rejected() -> None:
+    with pytest.raises(DataSluiceError):
+        DirectResourceLocator(uri="ftp://example.test/data.csv")
+
+
+def test_windows_drive_path_routes_to_local_file() -> None:
+    path = r"C:\data\source.csv"
+    resource = _resolve_direct_resource(DirectResourceLocator(uri=path))
+    assert isinstance(resource.access, LocalFile)
+    assert resource.access.path == path

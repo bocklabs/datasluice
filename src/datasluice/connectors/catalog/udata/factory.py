@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.udata.connector import UDataConnector
-from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     AsyncCatalogOperationExecutor,
@@ -13,7 +12,10 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogClient,
     SyncCatalogOperationExecutor,
 )
-from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUDataServices
+    from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 _UDATA_PROFILE_VERSION = "17.6.0"
 _UDATA_API_VERSION = "uData API v1"
@@ -37,10 +39,10 @@ def create_udata_connector(ctx: CatalogConnectorContext) -> UDataConnector:
     profile = _require_udata_profile(ctx.effective_profile)
     return UDataConnector(
         context=ctx,
-        normalized_sync=cast(SyncCatalogClient, ctx.normalized_sync),
-        normalized_async=cast(AsyncCatalogClient, ctx.normalized_async),
-        native_sync=cast(SyncUDataServices, ctx.native_sync),
-        native_async=cast(AsyncUDataServices, ctx.native_async),
+        normalized_sync=cast("SyncCatalogClient", ctx.normalized_sync),
+        normalized_async=cast("AsyncCatalogClient", ctx.normalized_async),
+        native_sync=cast("SyncUDataServices", ctx.native_sync),
+        native_async=cast("AsyncUDataServices", ctx.native_async),
         effective_profile=profile,
     )
 

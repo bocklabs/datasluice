@@ -1,5 +1,3 @@
-"""Shared fixtures for datasluice.sync unit tests."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -41,9 +39,9 @@ class WriteCountingFS:
         self.fs = fs
         self.pipe_file_count = 0
 
-    def pipe_file(self, path: str, data: bytes) -> None:
+    def mv(self, source: str, destination: str) -> None:
         self.pipe_file_count += 1
-        self.fs.pipe_file(path, data)
+        self.fs.mv(source, destination)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.fs, name)

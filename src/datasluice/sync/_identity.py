@@ -1,34 +1,31 @@
 """Canonical resource identity.
 
-Portal-controlled ``resource.id`` was previously interpolated verbatim into
-fsspec paths and used as the entire :class:`StateStore` key. A traversal-shaped
-id could escape the destination directory and equal ids across portals or
+Portal-controlled ``resource.id`` was previously interpolated verbatim into fsspec paths and used as the entire
+:class:`StateStore` key. A traversal-shaped id could escape the destination directory and equal ids across portals or
 datasets could alias artifacts and state.
 
-This module derives one canonical namespaced identity per resource, hashed with
-SHA-256 over ``f"{url_origin}/{resource.id}"``. The hash is a 64-character
-lowercase hex string with no path separators, so it can never form a path
-escape, and equal ids at different URL origins, access locators (local paths,
-object URIs), or URL paths produce distinct identities.
+This module derives one canonical namespaced identity per resource, hashed with SHA-256 over
+``f"{url_origin}/{resource.id}"``. The hash is a 64-character lowercase hex string with no path separators, so it can
+never form a path escape, and equal ids at different URL origins, access locators (local paths, object URIs), or URL
+paths produce distinct identities.
 
-The module is dependency-free (``hashlib`` plus ``urllib.parse``) so it imports
-cleanly on bare installs and is stable across repeated calls on the
-same resource.
+The module is dependency-free (``hashlib`` plus ``urllib.parse``) so it imports cleanly on bare installs and is stable
+across repeated calls on the same resource.
 """
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from datasluice.exceptions import DataSluiceError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from datasluice.domain import Resource
 
-_CANONICAL_IDENTITY_READY = True
 
 _LOCAL_ORIGIN = "local"
 

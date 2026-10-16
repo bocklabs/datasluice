@@ -18,28 +18,27 @@ alias d := docs-serve
 alias t := test
 alias tc := type-check
 
-# Type check the project with ty
+# Type check the project with mypy
 type-check:
-    uv run --all-extras ty check .
+    uv run --all-extras mypy src scripts tests
 
 # Type check with concise output (one diagnostic per line)
 type-check-concise:
-    uv run --all-extras ty check --output-format=concise .
+    uv run --all-extras mypy src scripts tests
 
 # Type check in watch mode (rechecks on file changes)
 type-check-watch:
-    uv run --all-extras ty check --watch .
+    uv run --all-extras mypy src scripts tests
 
 # Run all the formatting, linting, and testing commands
 qa:
     uv run ruff format .
     uv run ruff check . --fix
-    uv run --all-extras ty check --output-format=concise .
+    uv run --all-extras mypy src scripts tests
     uv run pytest
 
 # Run all the tests for all the supported Python versions
 testall:
-    uv run --python=3.12 pytest
     uv run --python=3.13 pytest
     uv run --python=3.14 pytest
 
@@ -55,7 +54,6 @@ pdb *ARGS:
 
 # Run tests with coverage across all supported Python versions
 coverage:
-    uv run --python=3.12 coverage run -m pytest
     uv run --python=3.13 coverage run -m pytest
     uv run --python=3.14 coverage run -m pytest
     uv run coverage combine

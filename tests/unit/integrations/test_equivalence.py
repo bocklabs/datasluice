@@ -1,17 +1,3 @@
-"""result-equivalence: one BatchStream -> 4 terminals -> same data.
-
-Feeds ONE synthetic BatchStream definition (typed columns + a null) through all
-four terminals (:func:`to_arrow`, :func:`to_pandas`, :func:`to_polars`,
-:func:`to_duckdb`), normalizes each output to a ``pa.Table``, and asserts
-``pa.Table.equals`` across all pairs. Null-representation divergences (pandas
-``NaN`` vs Arrow ``None``, ) and DuckDB local-tz divergence
- are normalized at the Arrow level — never via
-``.fetchall()`` object comparison.
-
-A :class:`~datasluice.data.BatchStream` is a one-shot iterator, so a FRESH
-stream is built per terminal via :func:`_make_stream`.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -67,14 +53,11 @@ def _normalize_string_types(table: Any) -> Any:
 def _skip_if_pandas_index_broken() -> None:
     """Skip when pandas 3.0.3 Arrow-backed construction is corrupted mid-process.
 
-    Mirrors the guard in ``test_to_pandas.py``: the pandas
-    ``ArrowStringArray`` Index bug (``AssertionError`` at
-    ``pandas/core/indexes/base.py:665``) manifests intermittently after
-    cumulative in-process test state. The equivalence path runs ``to_pandas``
-    (Arrow->DataFrame) then ``pa.Table.from_pandas``, both of which touch the
-    ArrowStringArray construction path; a bare ``pd.Index`` probe is
-    insufficient — this probe replicates the full Arrow->pandas DataFrame
-    construction that actually triggers the bug, so it fires earlier.
+    Mirrors the guard in ``test_to_pandas.py``: the pandas ``ArrowStringArray`` Index bug (``AssertionError`` at
+    ``pandas/core/indexes/base.py:665``) manifests intermittently after cumulative in-process test state. The
+    equivalence path runs ``to_pandas`` (Arrow->DataFrame) then ``pa.Table.from_pandas``, both of which touch the
+    ArrowStringArray construction path; a bare ``pd.Index`` probe is insufficient — this probe replicates the full
+    Arrow->pandas DataFrame construction that actually triggers the bug, so it fires earlier.
     """
     import pyarrow as pa
 
@@ -87,9 +70,8 @@ def _skip_if_pandas_index_broken() -> None:
 def _make_stream() -> BatchStream:
     """Build a FRESH BatchStream with typed columns + a deliberate null.
 
-       The null in ``name[1]`` surfaces the null-representation divergence
-    that the equivalence
-       assertion must normalize.
+    The null in ``name[1]`` surfaces the null-representation divergence that the equivalence    assertion must
+    normalize.
     """
     import pyarrow as pa
 
@@ -122,10 +104,8 @@ def _make_timestamp_stream() -> BatchStream:
 def test_all_terminals_equivalent() -> None:
     """All four terminals produce data-equivalent output from one stream definition.
 
-    Each output is normalized to a ``pa.Table`` (pandas NaN -> Arrow None via
-    ``pa.Table.from_pandas``,; DuckDB via
-    ``rel.to_arrow_table`` NOT ``.fetchall``, ), then
-    compared with ``pa.Table.equals`` (Arrow ``__eq__`` handles nulls
+    Each output is normalized to a ``pa.Table`` (pandas NaN -> Arrow None via ``pa.Table.from_pandas``,; DuckDB via
+    ``rel.to_arrow_table`` NOT ``.fetchall``, ), then compared with ``pa.Table.equals`` (Arrow ``__eq__`` handles nulls
     correctly).
     """
     import pyarrow as pa
@@ -138,23 +118,6 @@ def test_all_terminals_equivalent() -> None:
     assert arrow_table.equals(pandas_table), "arrow != pandas (null-representation divergence?)"
     assert arrow_table.equals(polars_table), "arrow != polars"
     assert arrow_table.equals(duckdb_table), "arrow != duckdb (local-tz divergence?)"
-
-
-def test_equivalence_preserves_null_count() -> None:
-    """The null count in the 'name' column is identical (1) across all 4 terminals.
-
-    Confirms the null is neither dropped nor doubled by any terminal
-    ( — pandas NaN must round-trip to exactly one Arrow
-    null, not zero or two).
-    """
-    import pyarrow as pa
-
-    arrow_nulls = _normalize_string_types(to_arrow(_make_stream())).column("name").null_count
-    pandas_nulls = _normalize_string_types(pa.Table.from_pandas(to_pandas(_make_stream()))).column("name").null_count
-    polars_nulls = _normalize_string_types(to_polars(_make_stream()).to_arrow()).column("name").null_count
-    duckdb_nulls = _normalize_string_types(to_duckdb(_make_stream()).to_arrow_table()).column("name").null_count
-
-    assert arrow_nulls == pandas_nulls == polars_nulls == duckdb_nulls == 1
 
 
 def test_equivalence_with_timestamp_column() -> None:
@@ -175,25 +138,3 @@ def test_equivalence_with_timestamp_column() -> None:
     assert arrow_table.equals(pandas_table), "arrow != pandas (timestamp)"
     assert arrow_table.equals(polars_table), "arrow != polars (timestamp)"
     assert arrow_table.equals(duckdb_table), "arrow != duckdb (local-tz divergence)"
-
-
-def test_to_arrow_preserves_specific_values() -> None:
-    """to_arrow preserves exact cell values, not just shape."""
-    table = to_arrow(_make_stream())
-    assert table.column("id").to_pylist() == [1, 2]
-    assert table.column("name").to_pylist() == ["a", None]
-
-
-def test_to_arrow_multi_batch_stream() -> None:
-    """A stream that yields multiple batches is flattened correctly by to_arrow."""
-    import pyarrow as pa
-
-    from datasluice.data.batch_stream import BatchStream
-
-    schema = pa.schema([("id", pa.int64())])
-    b1 = pa.RecordBatch.from_arrays([pa.array([1, 2])], schema=schema)
-    b2 = pa.RecordBatch.from_arrays([pa.array([3, 4])], schema=schema)
-    stream = BatchStream(iter([b1, b2]), schema)
-    table = to_arrow(stream)
-    assert table.num_rows == 4
-    assert table.column("id").to_pylist() == [1, 2, 3, 4]

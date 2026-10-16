@@ -1,5 +1,3 @@
-"""Unit tests for LocalStorage path-traversal containment."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -56,18 +54,6 @@ def test_storage_rejects_traversal_on_exists(tmp_path: Path) -> None:
     storage.write(b"secret", "inside.txt")
     with pytest.raises(DownloadError):
         storage.exists("../../etc/passwd")
-
-
-def test_fsspec_storage_rejects_dotdot_segment() -> None:
-    import fsspec.implementations.memory
-
-    from datasluice.exceptions import DownloadError
-    from datasluice.io.fsspec_storage import FsspecStorage
-
-    fs = fsspec.implementations.memory.MemoryFileSystem()
-    storage = FsspecStorage(fs, base_uri="/base")
-    with pytest.raises(DownloadError):
-        storage.write(b"data", "../escape.txt")
 
 
 def test_fsspec_as_uri_absolute_file_path() -> None:

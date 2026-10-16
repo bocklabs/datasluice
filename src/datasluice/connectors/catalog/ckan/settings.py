@@ -6,8 +6,9 @@ import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
+from datasluice._uri import validate_http_target
 from datasluice.connectors.catalog.ckan.rate_limits import PortalRatePolicy
 from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver
 from datasluice.domain.catalog.observability import TLSPolicy
@@ -51,6 +52,9 @@ def normalize_origin(value: str) -> str:
         raise ValueError("CKAN base URLs cannot carry query strings or fragments.")
     if parsed.scheme == "http" and parsed.hostname not in LOOPBACK_HOSTS:
         raise ValueError("Plain-text HTTP origins are restricted to loopback CKAN deployments.")
+    validate_http_target(value, allow_private=parsed.hostname in LOOPBACK_HOSTS)
+    if any(segment in {".", ".."} for segment in unquote(parsed.path).split("/")):
+        raise ValueError("CKAN base URLs cannot carry dot path segments.")
     return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
 
 
@@ -90,7 +94,7 @@ class CKANClientSettings:
     probe_policy: Literal["auto", "declared-baseline"] = "auto"
     capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
     rate_policy: PortalRatePolicy | None = None
-    max_upload_bytes: int | None = None
+    max_upload_bytes: int | None = 64 * 1024 * 1024
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", normalize_origin(self.base_url))

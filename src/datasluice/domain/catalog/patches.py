@@ -1,5 +1,3 @@
-"""Exact create and patch request serialization for catalog mutations."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

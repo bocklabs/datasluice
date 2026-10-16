@@ -1,5 +1,3 @@
-"""Validated connector extension and certification metadata."""
-
 from __future__ import annotations
 
 import re

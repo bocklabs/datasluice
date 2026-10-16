@@ -1,29 +1,15 @@
-"""Streaming JSON reader yielding Arrow ``RecordBatch``.
-
-Migrated from ``datasluice.formats.json``. The v0.1.0 ``list[dict]`` contract
-is replaced by the streaming RecordBatch contract.
-
-pyarrow's ``pyarrow.json.read_json`` only handles newline-delimited JSONL
-natively; JSON arrays of objects (``[{...}, {...}]``) trip a column-type
-mismatch error. The migrated reader therefore peeks the first non-whitespace
-byte and dispatches: ``{`` -> JSONL via ``pyarrow.json.read_json``; ``[`` ->
-JSON array via ``json.loads`` plus ``pyarrow.Table.from_pylist``. Both paths
-yield ``RecordBatch`` objects in roughly ``batch_size`` chunks.
-
-pyarrow's JSON reader materialises a full ``Table`` internally (it is not a
-true row-group streamer like the CSV or Parquet readers), so this reader
-buffers the source into ``io.BytesIO`` before handing it to pyarrow. This
-matches the underlying library's actual behaviour and keeps the public
-contract uniform with the other readers.
-"""
+"""Incremental JSONL reads and size-limited JSON arrays of objects."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from datasluice.data.readers.base import BaseFormatReader
+from datasluice.data.compression import PeekableReader
+from datasluice.data.readers.base import BaseFormatReader, read_document
 from datasluice.exceptions import FormatError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class JSONReader(BaseFormatReader):
@@ -48,35 +34,32 @@ class JSONReader(BaseFormatReader):
                 "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
-        data = source.read()
-        if data.startswith(b"\xef\xbb\xbf"):
-            data = data[3:]
-        first = _first_non_whitespace_byte(data)
-        if first is None:
+        source = PeekableReader(source)
+        if source.peek(3) == b"\xef\xbb\xbf":
+            source.read(3)
+        while source.peek(1) and source.peek(1) in b" \t\r\n":
+            source.read(1)
+        first = source.peek(1)
+        if not first:
             return
-
-        if first == 91:  # ord('[') == 91
-            table = self._read_array(data, pa)
-        elif first == 123:  # ord('{') == 123
-            table = self._read_jsonl(data, pa)
+        if first == b"[":
+            table = self._read_array(read_document(source), pa)
+            yield from table.to_batches(max_chunksize=batch_size)
+        elif first == b"{":
+            yield from self._read_jsonl(source, pa, batch_size)
         else:
-            raise FormatError(f"Unexpected JSON leading byte: {bytes([first])!r}")
-
-        if table.num_rows == 0:
-            return
-        for batch in table.to_batches(max_chunksize=batch_size):
-            if batch.num_rows > 0:
-                yield batch
+            raise FormatError(f"Unexpected JSON leading byte: {first!r}")
 
     @staticmethod
-    def _read_jsonl(data: bytes, pa: Any) -> Any:
-        import io
-
+    def _read_jsonl(source: Any, pa: Any, batch_size: int) -> Iterator[Any]:
         import pyarrow.json as paj
 
-        read_options = paj.ReadOptions(block_size=1 << 20)
+        read_options = paj.ReadOptions(block_size=65536, use_threads=False)
         try:
-            return paj.read_json(io.BytesIO(data), read_options=read_options)
+            with paj.open_json(source, read_options=read_options) as reader:
+                for batch in reader:
+                    for offset in range(0, batch.num_rows, batch_size):
+                        yield batch.slice(offset, batch_size)
         except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid JSONL: {exc}") from exc
 
@@ -90,17 +73,11 @@ class JSONReader(BaseFormatReader):
             raise FormatError(f"Invalid JSON array: {exc}") from exc
         if not isinstance(parsed, list):
             raise FormatError(f"Expected JSON array, got {type(parsed).__name__}")
-        records = [r for r in parsed if isinstance(r, dict)]
-        if not records:
+        if not all(isinstance(record, dict) for record in parsed):
+            raise FormatError("JSON array elements must be objects")
+        if not parsed:
             return pa.table({})
         try:
-            return pa.Table.from_pylist(records)
+            return pa.Table.from_pylist(parsed)
         except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Could not coerce JSON array to Arrow: {exc}") from exc
-
-
-def _first_non_whitespace_byte(data: bytes) -> int | None:
-    for byte in data:
-        if byte not in b" \t\r\n":
-            return byte
-    return None

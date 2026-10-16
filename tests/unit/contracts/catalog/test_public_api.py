@@ -1,5 +1,3 @@
-"""Public API stability tests for the catalog contract tracer."""
-
 from __future__ import annotations
 
 import inspect
@@ -31,6 +29,7 @@ def test_catalog_contract_package_exports_only_the_documented_contract_surface()
     assert catalog.__all__ == [
         "catalog_contract_cases",
         "run_catalog_contract",
+        "run_catalog_contract_async",
         "certify_catalog_report",
         "CatalogContractCase",
         "CaseOutcome",

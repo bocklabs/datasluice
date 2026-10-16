@@ -1,9 +1,6 @@
-"""Two-pass checkpoint and resume behavior under a deterministic crash."""
-
 from __future__ import annotations
 
 import importlib
-import os
 from typing import Any
 
 import pytest
@@ -16,8 +13,6 @@ from datasluice.sync.state_store import InMemoryStateStore
 from tests.unit.sync.conftest import CSV_BYTES, FaultInjectingStateStore
 
 sync_module = importlib.import_module("datasluice.sync.sync")
-if not hasattr(sync_module, "_CONDITIONAL_SYNC_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("resume implementation pending GREEN phase", allow_module_level=True)
 
 
 def test_crash_then_resume_skips_completed_resource(
@@ -42,7 +37,7 @@ def test_crash_then_resume_skips_completed_resource(
     crashing_store = FaultInjectingStateStore(first_store, raise_on_put=2)
     first_transport = HttpxCatalogTransport()
 
-    reader = DataPlaneResourceReader(transport=first_transport)
+    reader = DataPlaneResourceReader(transport=first_transport, allow_private_http=True)
     sync_resources_2 = sync_resources(
         resources,
         state_store=crashing_store,
@@ -71,7 +66,7 @@ def test_crash_then_resume_skips_completed_resource(
         resume_sync(
             resources,
             state_store=resumed_store,
-            reader=DataPlaneResourceReader(transport=second_transport),
+            reader=DataPlaneResourceReader(transport=second_transport, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=second_transport,
             resume=True,

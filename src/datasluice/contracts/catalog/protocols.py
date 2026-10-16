@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass, field
-from types import TracebackType
-from typing import Literal, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, Self, runtime_checkable
 
 from datasluice.domain.catalog.auth import CatalogCredential, EffectivePermissions
-from datasluice.domain.catalog.models import DatasetRecord, OrganizationRecord, ResourceRecord, ResultEnvelope
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from datasluice.domain.catalog.models import DatasetRecord, OrganizationRecord, ResourceRecord, ResultEnvelope
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 CapabilityState = Literal["available", "unavailable"]
 

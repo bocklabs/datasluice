@@ -1,9 +1,3 @@
-"""Unit tests for :func:`to_polars`.
-
-Follows the importorskip + inline-import test pattern. Verifies
-delegation through the shared :func:`to_arrow` substrate.
-"""
-
 from __future__ import annotations
 
 import pytest

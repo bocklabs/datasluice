@@ -1,5 +1,3 @@
-"""Unit tests for discovery fingerprints."""
-
 from __future__ import annotations
 
 from datasluice.discovery import HTML_FINGERPRINTS, PATH_FINGERPRINTS, PortalMetadata

@@ -1,10 +1,8 @@
 """Streaming data-plane package: BatchStream, byte-source adapter, schema mapper.
 
-Re-exports are resolved lazily via PEP 562 ``__getattr__`` so that importing
-``datasluice.data`` does not trigger a pyarrow import on bare installs. All
-symbols (``BatchStream``, ``IterableBytesIO``, ``to_arrow_schema``,
-``DataPlaneResourceReader``) depend on lazy pyarrow, so the ``__getattr__``
-discipline keeps the bare import light.
+Re-exports are resolved lazily via PEP 562 ``__getattr__`` so that importing ``datasluice.data`` does not trigger a
+pyarrow import on bare installs. All symbols (``BatchStream``, ``IterableBytesIO``, ``to_arrow_schema``,
+``DataPlaneResourceReader``) depend on lazy pyarrow, so the ``__getattr__`` discipline keeps the bare import light.
 """
 
 __all__ = [
@@ -18,9 +16,8 @@ __all__ = [
 def __getattr__(name: str):  # PEP 562
     """Lazily export BatchStream, IterableBytesIO, to_arrow_schema, DataPlaneResourceReader.
 
-    Importing any of these eagerly would pull pyarrow at package import
-    time and break bare installs. Each symbol is resolved on first
-    attribute access.
+    Importing any of these eagerly would pull pyarrow at package import time and break bare installs. Each symbol is
+    resolved on first attribute access.
     """
     if name == "BatchStream":
         from datasluice.data.batch_stream import BatchStream

@@ -1,5 +1,3 @@
-"""Parity checks for catalog-native Protocol families."""
-
 from __future__ import annotations
 
 import inspect
@@ -39,12 +37,19 @@ from datasluice.contracts.catalog.native.udata import AsyncUDataServices, SyncUD
                 "root_profile",
                 "datasets",
                 "resources",
+                "dataservices",
+                "reuses",
+                "posts_reports",
                 "organizations_memberships",
                 "users_tokens",
                 "auth_oauth",
+                "spatial",
                 "taxonomies",
-                "social",
-                "geography",
+                "topics",
+                "transfers",
+                "contact_visualization",
+                "activity_discussions",
+                "worker_jobs",
                 "harvest_moderation_admin",
                 "extensions",
             },
@@ -92,7 +97,11 @@ def test_native_service_projections_are_signature_equivalent(
         async_property = async_services.__dict__[member]
         assert isinstance(sync_property, property)
         assert isinstance(async_property, property)
-        assert inspect.signature(sync_property.fget).parameters == inspect.signature(async_property.fget).parameters
+        sync_getter = sync_property.fget
+        async_getter = async_property.fget
+        assert sync_getter is not None
+        assert async_getter is not None
+        assert inspect.signature(sync_getter).parameters == inspect.signature(async_getter).parameters
 
 
 def test_opted_out_legacy_surfaces_are_absent_from_native_contracts() -> None:

@@ -1,9 +1,7 @@
-"""Asynchronous catalog runtime client tests."""
-
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -30,6 +28,9 @@ from datasluice.errors.catalog import CatalogNotFoundError, ForbiddenError, Unsu
 from datasluice.runtime.clients import AsyncCatalogClient
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 from tests.unit.runtime._fixtures import _envelope, _guard, _profile, _request
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class _AsyncTransport:

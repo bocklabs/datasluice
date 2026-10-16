@@ -1,11 +1,3 @@
-"""Unit tests for the Pipeline + compose runner.
-
-Covers: identity round-trip, left-to-right step threading (no intermediate
-materialization), (output schema matches transformed batches, not
-stale input), empty-stream handling, introspectable ``.steps``, and
-``__repr__``.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -49,7 +41,7 @@ class _DropName:
 
 
 def test_compose_empty_round_trips_schema(synthetic_batch_stream: Any) -> None:
-    """compose([]) round-trips the schema and preserves row count."""
+    """Compose([]) round-trips the schema and preserves row count."""
     out = compose([]).run(synthetic_batch_stream)
     assert out.schema == synthetic_batch_stream.schema
     rows = list(out.iter_batches())
@@ -57,11 +49,10 @@ def test_compose_empty_round_trips_schema(synthetic_batch_stream: Any) -> None:
 
 
 def test_compose_threads_steps_left_to_right() -> None:
-    """step2 (_SelectAmount) sees step1's (_RenameValueToAmount) renamed output.
+    """Step2 (_SelectAmount) sees step1's (_RenameValueToAmount) renamed output.
 
-    The input has a ``value`` column, NOT ``amount`` — so _SelectAmount would
-    fail if it ran first. Its success proves _RenameValueToAmount ran before it
-    (left-to-right threading, no reordering).
+    The input has a ``value`` column, NOT ``amount`` — so _SelectAmount would fail if it ran first. Its success proves
+    _RenameValueToAmount ran before it (left-to-right threading, no reordering).
     """
     import pyarrow as pa
 
@@ -94,7 +85,7 @@ def test_pipeline_output_schema_matches_transformed_batches() -> None:
 
 
 def test_pipeline_empty_stream_yields_empty_schema() -> None:
-    """compose([]) over an empty stream yields a BatchStream with an empty schema."""
+    """Compose([]) over an empty stream yields a BatchStream with an empty schema."""
     import pyarrow as pa
 
     empty = BatchStream(iter(()), pa.schema([]))

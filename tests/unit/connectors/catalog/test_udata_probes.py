@@ -1,5 +1,3 @@
-"""Unit tests for the strict uData site-version gate."""
-
 from __future__ import annotations
 
 import json
@@ -90,3 +88,17 @@ def test_gate_caches_one_anonymous_probe_per_caller_identity() -> None:
     assert transport.calls == 2
     gate.require_current(UDataCredential(api_key="other-key"))
     assert transport.calls == 3
+
+
+@pytest.mark.parametrize("status", [401, 403, 423])
+def test_site_access_errors_preserve_status_and_capability_state(status: int) -> None:
+    from datasluice.connectors.catalog.udata.probes import SiteVersionGate
+    from datasluice.errors.catalog import CatalogError
+    from tests.helpers.udata_test_support import sync_route_table
+
+    router = sync_route_table({("GET", "http://127.0.0.1:5640/api/1/site/"): (status, {})})
+    gate = SiteVersionGate(pinned_version="17.6.0", origin="http://127.0.0.1:5640", transport=router, ttl_seconds=60)
+    with pytest.raises(CatalogError) as raised:
+        gate.require_current(None)
+    assert raised.value.metadata["status_code"] == status
+    assert raised.value.capability_state == {401: "unauthorized", 403: "forbidden", 423: "deployment-disabled"}[status]

@@ -9,7 +9,7 @@ and one factory function — nothing else is public.
 | Package | Public surface | Pinned profile |
 |---------|----------------|----------------|
 | `datasluice.connectors.catalog.ckan` | `CKANConnector`, `create_ckan_connector` | CKAN `2.11.5`, Action API v3 |
-| `datasluice.connectors.catalog.udata` | `UDataConnector`, `create_udata_connector` | uData `17.3.0`, API v1 |
+| `datasluice.connectors.catalog.udata` | `UDataConnector`, `create_udata_connector` | uData `17.6.0`, API v1 |
 | `datasluice.connectors.catalog.socrata` | `SocrataConnector`, `create_socrata_connector` | Socrata `3.0`, SODA 3 |
 
 Imports are always explicit and package-level:
@@ -54,7 +54,7 @@ endpoint evidence is recorded.
 ## Capability profiles and evidence
 
 Each platform's behavior is encoded in a versioned profile committed to the
-repository (`ckan-2.11.json`, `udata-17.3.json`, `socrata-soda3.json` under
+repository (`ckan-2.11.json`, `udata-17.6.json`, `socrata-soda3.json` under
 `datasluice.contracts.catalog.profiles`). Profiles distinguish core,
 optional, authenticated, and deployment-unavailable operations, and
 capability evidence is scoped to a single operation ID — a public read
@@ -99,8 +99,8 @@ Three selection criteria govern every configured check, and each
    `current_package_list_with_resources`) with fixed parameters; generic
    action invocation stays unavailable.
 2. **Stable ordering** — sequences compare under a declared ordering
-   mode; `platform-deterministic` compares positions as the platform
-   returns them, while `canonicalized` sorts both sides before
+   mode; `platform-deterministic` compares the platform sequence
+   against the sorted expectation, while `canonicalized` sorts both sides before
    comparing, so accidental reordering never reports as drift.
 3. **No time-varying fields** — expectations are exact key-set
    skeletons; volatile keys are excluded by configuration in the
