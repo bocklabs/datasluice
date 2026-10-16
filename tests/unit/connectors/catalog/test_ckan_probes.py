@@ -1,5 +1,3 @@
-"""Deterministic loopback coverage for the concrete CKAN capability probe runners."""
-
 from __future__ import annotations
 
 import asyncio

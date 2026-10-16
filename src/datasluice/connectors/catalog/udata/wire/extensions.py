@@ -123,10 +123,9 @@ def parse_tag_suggestions(payload: object, operation: str) -> tuple[MappingRecor
 def parse_captchetat(body: object, *, response_media_type: str | None, operation: str) -> MappingRecord:
     """Bound the proxied captcha image to its media type, size, and digest.
 
-    Upstream 17.6.0 proxies the remote CaptchEtat service and returns its raw
-    image bytes with a passthrough content type (or aborts 500 when the
-    backend is unconfigured), so only the approved media type, byte count,
-    and SHA-256 digest are retained.
+    Upstream 17.6.0 proxies the remote CaptchEtat service and returns its raw image bytes with a passthrough content
+    type (or aborts 500 when the backend is unconfigured), so only the approved media type, byte count, and SHA-256
+    digest are retained.
     """
     if not isinstance(body, (bytes, bytearray)):
         raise NativeCatalogError(

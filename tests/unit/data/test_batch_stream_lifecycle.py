@@ -1,5 +1,3 @@
-"""BatchStream source ownership and data-plane batch-size validation."""
-
 from __future__ import annotations
 
 import importlib

@@ -1,18 +1,14 @@
 """Streaming GeoJSON reader yielding Arrow ``RecordBatch``.
 
-Migrated from ``datasluice.formats.geojson``. GeoJSON is nested (not
-tabular), so it cannot use ``pyarrow.json`` directly. Each Feature is
-flattened to ONE row: ``properties`` becomes typed columns and
-``geometry`` becomes a single ``geometry_wkt`` string column.
+Migrated from ``datasluice.formats.geojson``. GeoJSON is nested (not tabular), so it cannot use ``pyarrow.json``
+directly. Each Feature is flattened to ONE row: ``properties`` becomes typed columns and ``geometry`` becomes a single
+``geometry_wkt`` string column.
 
-WKT encoding is handled by a minimal hand-rolled encoder for
-``Point``, ``LineString`` and ``Polygon`` geometries. Complex geometries
-(``MultiPoint``, ``MultiLineString``, ``MultiPolygon``,
-``GeometryCollection``) are stored as the raw JSON string of the
-geometry object in the ``geometry_wkt`` column with a documented caveat
-(RESEARCH A3): open-data geometries are overwhelmingly simple, and
-shapely is not installed to avoid bloating the dep tree. + can
-swap in shapely if richer WKT coverage is needed.
+WKT encoding is handled by a minimal hand-rolled encoder for ``Point``, ``LineString`` and ``Polygon`` geometries.
+Complex geometries (``MultiPoint``, ``MultiLineString``, ``MultiPolygon``, ``GeometryCollection``) are stored as the raw
+JSON string of the geometry object in the ``geometry_wkt`` column with a documented caveat (RESEARCH A3): open-data
+geometries are overwhelmingly simple, and shapely is not installed to avoid bloating the dep tree. + can swap in shapely
+if richer WKT coverage is needed.
 """
 
 from __future__ import annotations
@@ -30,9 +26,8 @@ if TYPE_CHECKING:
 class GeoJSONReader(BaseFormatReader):
     """Stream a GeoJSON ``BinaryIO`` source into Arrow ``RecordBatch`` objects.
 
-    Each Feature is flattened to a row whose columns are the Feature's
-    ``properties`` plus a ``geometry_wkt`` string column carrying the
-    WKT-encoded geometry (or raw JSON for complex geometry types).
+    Each Feature is flattened to a row whose columns are the Feature's ``properties`` plus a ``geometry_wkt`` string
+    column carrying the WKT-encoded geometry (or raw JSON for complex geometry types).
     """
 
     format_name = "GEOJSON"
@@ -98,10 +93,9 @@ def _batch_from_rows(rows: list[dict[str, Any]], pa: Any) -> Any:
 def _to_wkt(geometry: Any) -> str:
     """Encode a GeoJSON ``geometry`` object as WKT (or fall back to raw JSON).
 
-    Handles ``Point``, ``LineString`` and ``Polygon``. Complex geometries
-    (``MultiPoint``, ``MultiLineString``, ``MultiPolygon``,
-    ``GeometryCollection``) and unknown types are stored as the raw JSON
-    string of the geometry object so no information is lost.
+    Handles ``Point``, ``LineString`` and ``Polygon``. Complex geometries (``MultiPoint``, ``MultiLineString``,
+    ``MultiPolygon``, ``GeometryCollection``) and unknown types are stored as the raw JSON string of the geometry object
+    so no information is lost.
     """
     if geometry is None:
         return ""

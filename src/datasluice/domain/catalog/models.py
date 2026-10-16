@@ -1,5 +1,3 @@
-"""Immutable normalized and native catalog record envelopes."""
-
 from __future__ import annotations
 
 import math
@@ -399,9 +397,8 @@ class NativeRecord:
     def to_dict(self) -> dict[str, object]:
         """Return a fresh JSON-safe redacted native record envelope.
 
-        The retained payload and extensions keep every non-credential field
-        (CON-04/D-07) while credential-shaped keys and credential-shaped string
-        content are redacted and nesting stays bounded.
+        The retained payload and extensions keep every non-credential field (CON-04/D-07) while credential-shaped keys
+        and credential-shaped string content are redacted and nesting stays bounded.
         """
         return {
             "schema_version": 1,
@@ -483,9 +480,8 @@ class MappingRecord:
     def to_dict(self) -> dict[str, object]:
         """Return a fresh JSON-safe redacted mapping record envelope.
 
-        The retained payload keeps every non-credential field (CON-04/D-07)
-        while credential-shaped keys and credential-shaped string content are
-        redacted and nesting stays bounded.
+        The retained payload keeps every non-credential field (CON-04/D-07) while credential-shaped keys and credential-
+        shaped string content are redacted and nesting stays bounded.
         """
         return {"schema_version": 1, "kind": "mapping_record", "payload": _redacted_thawed(self.payload)}
 

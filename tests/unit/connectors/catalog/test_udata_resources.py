@@ -1,5 +1,3 @@
-"""Exact wire and streaming resource contract tests."""
-
 from __future__ import annotations
 
 import asyncio

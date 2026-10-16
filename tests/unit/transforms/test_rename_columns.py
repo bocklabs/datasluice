@@ -1,9 +1,3 @@
-"""Unit tests for the RenameColumns transform.
-
-Covers renaming, the idempotent self-rename, and the actionable missing-source
-error (naming the missing source AND the available columns).
-"""
-
 from __future__ import annotations
 
 from typing import Any

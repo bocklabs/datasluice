@@ -1,5 +1,3 @@
-"""Artifact schema-v1 producer and codec contracts."""
-
 from __future__ import annotations
 
 import hashlib

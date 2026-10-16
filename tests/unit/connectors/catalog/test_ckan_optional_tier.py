@@ -1,11 +1,3 @@
-"""Seed-based dual-state coverage for the optional activity and resource-view tiers.
-
-Stub probe runners drive ``EffectiveCapabilityCache`` states so each optional
-family proves both the blocked (pre-dispatch, zero transport I/O) and allowed
-paths independently — the RUN-01 observable distinction the v2 ids make
-executable per family.
-"""
-
 from __future__ import annotations
 
 import asyncio

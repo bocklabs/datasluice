@@ -1,5 +1,3 @@
-"""Exact-wire and failure evidence for the complete uData dataset family."""
-
 from __future__ import annotations
 
 import asyncio

@@ -25,9 +25,8 @@ def _xlsx_dependencies() -> tuple[Any, Any]:
 def _deduplicated_headers(header_row: tuple[Any, ...]) -> list[str]:
     """Return the column names of one XLSX row with duplicates and blanks suffixed by occurrence.
 
-    openpyxl can emit duplicate column headers in messy real-world workbooks, so
-    later cells would otherwise overwrite earlier ones inside the zipped row
-    dicts.
+    openpyxl can emit duplicate column headers in messy real-world workbooks, so later cells would otherwise overwrite
+    earlier ones inside the zipped row dicts.
     """
     seen: dict[str, int] = {}
     headers: list[str] = []

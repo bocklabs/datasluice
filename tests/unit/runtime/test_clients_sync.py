@@ -1,5 +1,3 @@
-"""Synchronous catalog runtime client tests."""
-
 from __future__ import annotations
 
 import hashlib

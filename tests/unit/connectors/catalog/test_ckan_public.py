@@ -1,5 +1,3 @@
-"""Public-contract tests for the canonical CKAN connector façade."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

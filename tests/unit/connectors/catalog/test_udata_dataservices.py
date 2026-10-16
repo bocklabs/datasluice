@@ -1,11 +1,3 @@
-"""Exact wire and safety coverage for the uData dataservice and dataservice-follower family.
-
-Expectations are transcribed from the pinned uData 17.6.0 source
-(`udata.core.dataservices.api`, `udata.core.dataservices.apiv2`, and
-`udata.core.followers.api` at commit 0546582), not from the production
-request builders.
-"""
-
 from __future__ import annotations
 
 import asyncio

@@ -1,5 +1,3 @@
-"""Deterministic loopback coverage for the CKAN live clients."""
-
 from __future__ import annotations
 
 import asyncio

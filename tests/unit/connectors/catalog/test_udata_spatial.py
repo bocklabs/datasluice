@@ -1,11 +1,3 @@
-"""Exact wire and safety coverage for the uData spatial zones and coverage family.
-
-Expectations are transcribed from the pinned uData 17.6.0 source
-(`udata.core.spatial.api` and `udata.core.spatial.api_fields` at commit
-0546582058d84706812a1c37387576efc4e5ad1f), not from the production request
-builders.
-"""
-
 from __future__ import annotations
 
 import asyncio

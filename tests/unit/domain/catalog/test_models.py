@@ -1,5 +1,3 @@
-"""Tests for immutable catalog domain values."""
-
 from __future__ import annotations
 
 import dataclasses

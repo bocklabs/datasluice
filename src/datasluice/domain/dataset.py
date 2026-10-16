@@ -1,5 +1,3 @@
-"""Dataset model representing a collection of related open-data resources."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

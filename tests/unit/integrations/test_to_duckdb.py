@@ -1,11 +1,3 @@
-"""Unit tests for :func:`to_duckdb`.
-
-Follows the importorskip + inline-import test pattern. Verifies the
-relation-API registration path (``conn.register`` + ``conn.table`` — no SQL
-string interpolation, ) and the preserved
-:func:`_validate_table_name` injection guard at the to_duckdb boundary.
-"""
-
 from __future__ import annotations
 
 import importlib

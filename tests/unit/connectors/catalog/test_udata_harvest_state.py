@@ -1,5 +1,3 @@
-"""Budgeted job-wait lease and state-transition coverage for the uData harvest family."""
-
 from __future__ import annotations
 
 import asyncio

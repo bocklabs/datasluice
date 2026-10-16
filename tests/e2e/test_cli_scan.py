@@ -1,5 +1,3 @@
-"""End-to-end contracts for the bounded ``datasluice scan`` workflow."""
-
 from __future__ import annotations
 
 import json

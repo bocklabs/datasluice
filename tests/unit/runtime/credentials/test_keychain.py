@@ -1,5 +1,3 @@
-"""Tests for opt-in OS keychain credential discovery."""
-
 from __future__ import annotations
 
 import sys

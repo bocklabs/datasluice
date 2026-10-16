@@ -32,8 +32,8 @@ def segment(value: str, operation: str) -> str:
 class TagSuggestQuery:
     """Stock tag-suggestion query: required ``q`` and connector bounds on ``size``.
 
-    Upstream applies no ceiling and defaults to 8; the connector's default and
-    100-value cap are stricter client-side policy, always sending an explicit size.
+    Upstream applies no ceiling and defaults to 8; the connector's default and 100-value cap are stricter client-side
+    policy, always sending an explicit size.
     """
 
     q: str
@@ -67,9 +67,8 @@ class AvatarRequest:
 class ExtensionEvidence:
     """One bounded allowlisted extension capability proof.
 
-    Only the four allowlisted identity fields are retained. Response bodies,
-    deployment configuration, settings, internal endpoint metadata, private
-    origins, and credential material never enter an evidence record.
+    Only the four allowlisted identity fields are retained. Response bodies, deployment configuration, settings,
+    internal endpoint metadata, private origins, and credential material never enter an evidence record.
     """
 
     operation_id: str

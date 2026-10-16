@@ -1,11 +1,10 @@
 """Both-mode CKAN organization projections: exhaustive org and membership actions.
 
-Every typed method declares its owning v2 OperationId from the checked-in manifest
-and passes documented CKAN 2.11 parameters verbatim (D-04). Admin-tier honesty is
-structural, not probed: privileged writes dispatch on the declared profile and the
-SERVER's authorization responses are the runtime evidence. ``organization_purge``
-refuses pre-dispatch without a confirmed destructive policy through the shared
-03-03 gate and returns a ``CKANMutationResult`` with a redacted receipt (D-09).
+Every typed method declares its owning v2 OperationId from the checked-in manifest and passes documented CKAN 2.11
+parameters verbatim (D-04). Admin-tier honesty is structural, not probed: privileged writes dispatch on the declared
+profile and the SERVER's authorization responses are the runtime evidence. ``organization_purge`` refuses pre-dispatch
+without a confirmed destructive policy through the shared 03-03 gate and returns a ``CKANMutationResult`` with a
+redacted receipt (D-09).
 """
 
 from __future__ import annotations

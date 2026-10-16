@@ -1,12 +1,3 @@
-"""Quality gate contract for independent 80.00% branch coverage.
-
-Core and provider must each measure only their own package source at
-``branch=true``, ``precision=2``, and ``fail_under=80.00`` with separate data
-files, and neither report may be combined with tests or the sibling package.
-The two-decimal rounding rule and non-zero exit code are delegated to
-coverage.py 7.14+, never reimplemented in shell or test-side math.
-"""
-
 from __future__ import annotations
 
 import os

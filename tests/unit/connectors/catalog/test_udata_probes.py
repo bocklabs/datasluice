@@ -1,5 +1,3 @@
-"""Unit tests for the strict uData site-version gate."""
-
 from __future__ import annotations
 
 import json

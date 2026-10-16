@@ -1,5 +1,3 @@
-"""Unit tests for IO utilities (checksums, cache, local, storage)."""
-
 from __future__ import annotations
 
 import stat

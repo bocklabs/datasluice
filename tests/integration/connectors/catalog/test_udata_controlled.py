@@ -1,5 +1,3 @@
-"""Controlled-environment tracer proof against the loopback uData 17.6 stack."""
-
 from __future__ import annotations
 
 import asyncio
@@ -3687,8 +3685,8 @@ def _check_sync_oauth_mutations(
 ) -> None:
     """Assert the synchronous token exchange and every OAuth mutation match their raw status.
 
-    The RFC 6749 exchange carries its own client secret, so the uData API key must
-    never accompany it and no token may be retained.
+    The RFC 6749 exchange carries its own client secret, so the uData API key must never accompany it and no token may
+    be retained.
     """
     with pytest.raises(CatalogError) as token_error:
         client.auth_oauth.access_token(_CONTROLLED_OAUTH_TOKEN_BODY, permissions)
@@ -3980,6 +3978,7 @@ def _exercise_sync_reuse_reads() -> None:
 
 async def _exercise_async_reuse_reads() -> None:
     """Compare every asynchronous reuse read route against its raw loopback response."""
+
     async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:
         for path, method, args in _controlled_reuse_async_read_cases():
             status, payload, _ = _direct_request("", "GET", path)
@@ -4638,9 +4637,8 @@ def test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up() -
 def _spatial_oracle_routes() -> dict[str, str]:
     """Return every spatial path the pinned source oracle records, keyed by its upstream endpoint name.
 
-    The oracle lives under the gitignored planning directory, so a fresh clone has no
-    independent oracle at all and every function that needs one skips loudly instead of
-    falling back to hand-transcribed paths.
+    The oracle lives under the gitignored planning directory, so a fresh clone has no independent oracle at all and
+    every function that needs one skips loudly instead of falling back to hand-transcribed paths.
     """
     if not _SPATIAL_ORACLE_PATH.exists():
         pytest.skip(
@@ -4674,8 +4672,8 @@ def _spatial_path(endpoint: str) -> str:
 def _spatial_read_routes() -> tuple[tuple[str, str, tuple[object, ...]], ...]:
     """Return every assigned spatial read route as its raw path, method, and typed arguments.
 
-    Every base path comes from the pinned source oracle; only the absent-target arguments
-    and the stock query strings belong to the controlled scenario.
+    Every base path comes from the pinned source oracle; only the absent-target arguments and the stock query strings
+    belong to the controlled scenario.
     """
     return (
         (_spatial_path("SpatialGranularities"), "spatial_granularities", ()),
@@ -4769,9 +4767,8 @@ def test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error() ->
 def _dataservice_oracle_routes() -> dict[tuple[str, str], str]:
     """Return every dataservice path the pinned source oracle records, keyed by method and endpoint.
 
-    The oracle lives under the gitignored planning directory, so a fresh clone has no
-    independent oracle at all and every function that needs one skips loudly instead of
-    falling back to hand-transcribed paths.
+    The oracle lives under the gitignored planning directory, so a fresh clone has no independent oracle at all and
+    every function that needs one skips loudly instead of falling back to hand-transcribed paths.
     """
     if not _DATASERVICE_ORACLE_PATH.exists():
         pytest.skip(
@@ -4802,8 +4799,8 @@ def _dataservice_path(method: str, endpoint: str) -> str:
 def _dataservice_read_routes() -> tuple[tuple[str, str, str, tuple[object, ...]], ...]:
     """Return every assigned dataservice read as its raw path, method, typed name, and arguments.
 
-    Every base path comes from the pinned source oracle; only the absent-target arguments
-    and the stock query strings belong to the controlled scenario.
+    Every base path comes from the pinned source oracle; only the absent-target arguments and the stock query strings
+    belong to the controlled scenario.
     """
     return (
         (f"{_dataservice_path('GET', 'Dataservices')}?page=1&page_size=20", "GET", "list_dataservices", ()),
@@ -5412,9 +5409,8 @@ _ABSENT_TOPIC = "missing-topic"
 def _topic_oracle_routes() -> dict[tuple[str, str], str]:
     """Return every topic path the pinned source oracle records, keyed by method and endpoint.
 
-    The oracle lives under the gitignored planning directory, so a fresh clone has no
-    independent oracle at all and every function needing one skips loudly rather than
-    falling back to hand-transcribed paths.
+    The oracle lives under the gitignored planning directory, so a fresh clone has no independent oracle at all and
+    every function needing one skips loudly rather than falling back to hand-transcribed paths.
     """
     if not _TOPIC_ORACLE_PATH.exists():
         pytest.skip(
@@ -5445,8 +5441,8 @@ def _topic_path(method: str, endpoint: str) -> str:
 def _topic_read_routes() -> tuple[tuple[str, str, str, tuple[object, ...]], ...]:
     """Return every assigned topic read as its raw path, method, typed name, and arguments.
 
-    Every base path comes from the pinned source oracle; only the absent-target arguments
-    and the stock query strings belong to the controlled scenario.
+    Every base path comes from the pinned source oracle; only the absent-target arguments and the stock query strings
+    belong to the controlled scenario.
     """
     return (
         (f"{_topic_path('GET', 'Topics')}?page=1&page_size=20", "GET", "list_topics", ()),
@@ -5548,9 +5544,9 @@ def _assert_topic_mutation_matches_raw(
 ) -> None:
     """Assert one typed topic mutation agrees with its raw twin on operation, status, and payload.
 
-    The pinned element-collection create answers 201 with a list, and a bounded typed result
-    keeps no ``MappingRecord`` for a list-valued payload. That cell compares the status and
-    the created element count instead of the discarded list body.
+    The pinned element-collection create answers 201 with a list, and a bounded typed result keeps no ``MappingRecord``
+    for a list-valued payload. That cell compares the status and the created element count instead of the discarded list
+    body.
     """
     assert str(typed.receipt.operation) == operation
     assert typed.receipt.audit_metadata["status_code"] == raw[0]
@@ -5923,9 +5919,8 @@ _CV_ABSENT_TARGETS = {"contact_point": "missing-contact", "visualization": "miss
 def _cv_oracle_routes() -> dict[tuple[str, str], str]:
     """Return every contact-point and visualization path the pinned source oracle records.
 
-    The oracle lives under the gitignored planning directory, so a fresh clone has no
-    independent oracle at all and every function needing one skips loudly rather than
-    falling back to hand-transcribed paths.
+    The oracle lives under the gitignored planning directory, so a fresh clone has no independent oracle at all and
+    every function needing one skips loudly rather than falling back to hand-transcribed paths.
     """
     if not _CONTACT_VISUALIZATION_ORACLE_PATH.exists():
         pytest.skip(
@@ -6055,8 +6050,8 @@ def _cv_mutation_policy(operation: str, target: str, *, destructive: bool = Fals
 def _cv_differential_payload(payload: object) -> object:
     """Normalize a family record so a typed and a raw twin compare on stable fields only.
 
-    The identifier, title, name, and slug are server-owned or server-derived, so
-    each twin is normalized beside its own values before the two compare.
+    The identifier, title, name, and slug are server-owned or server-derived, so each twin is normalized beside its own
+    values before the two compare.
     """
     assert isinstance(payload, Mapping)
     record = _timestamp_free(payload)

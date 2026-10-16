@@ -1,9 +1,8 @@
 """Plugin manager for entry-point-based connector discovery.
 
-The :class:`PluginManager` replaces the former module-level registry
-singleton. Discovery is eager (performed in ``__init__``) and per-entry
-isolated: a broken third-party plugin is recorded as a :class:`PluginFailure`
-and never crashes session creation.
+The :class:`PluginManager` replaces the former module-level registry singleton. Discovery is eager (performed in
+``__init__``) and per-entry isolated: a broken third-party plugin is recorded as a :class:`PluginFailure` and never
+crashes session creation.
 """
 
 from __future__ import annotations
@@ -37,10 +36,9 @@ class PluginFailure:
 class PluginManager:
     """Registry-free connector manager backed by ``importlib.metadata``.
 
-    Built-in connectors are declared in the ``datasluice.connectors``
-    entry-points group in ``pyproject.toml``; third-party connectors register
-    their own entry points in the same group. The manager is an injected
-    instance — never a module-level singleton.
+    Built-in connectors are declared in the ``datasluice.connectors`` entry-points group in ``pyproject.toml``; third-
+    party connectors register their own entry points in the same group. The manager is an injected instance — never a
+    module-level singleton.
     """
 
     def __init__(self, group: str = "datasluice.connectors") -> None:

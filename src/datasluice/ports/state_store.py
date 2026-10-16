@@ -55,9 +55,8 @@ class AtomicStateStore(Protocol):
     def read_version(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key*, or ``None`` if absent.
 
-        The returned bytes are opaque to the caller — they are passed verbatim
-        back into :meth:`conditional_put` as ``expected_prior`` so a concurrent
-        write between the read and the put is detected.
+        The returned bytes are opaque to the caller — they are passed verbatim back into :meth:`conditional_put` as
+        ``expected_prior`` so a concurrent write between the read and the put is detected.
         """
         ...
 

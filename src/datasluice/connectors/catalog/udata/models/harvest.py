@@ -140,9 +140,8 @@ def job_segment(value: str, operation: str = HARVEST_OPERATION) -> str:
 def linked_identifier(value: str, operation: str, label: str) -> str:
     """Return *value* after applying the identifier policy to a body reference.
 
-    Harvest owner and organization references travel in the JSON body rather
-    than in the path, so the segment policy is applied for its identifier rules
-    and the value itself is returned unencoded.
+    Harvest owner and organization references travel in the JSON body rather than in the path, so the segment policy is
+    applied for its identifier rules and the value itself is returned unencoded.
     """
     path_segment(value, operation, label)
     return value
@@ -152,10 +151,9 @@ def linked_identifier(value: str, operation: str, label: str) -> str:
 class HarvestSourceInput:
     """Presence-aware write payload for the harvest source routes.
 
-    ``url`` is the crawl target the deployment fetches, so it is validated
-    before the value ever reaches a request builder. ``allow_private_endpoint``
-    is the explicit per-input consent that relaxes the non-public target rule;
-    it is never sent to the deployment and never appears in a receipt.
+    ``url`` is the crawl target the deployment fetches, so it is validated before the value ever reaches a request
+    builder. ``allow_private_endpoint`` is the explicit per-input consent that relaxes the non-public target rule; it is
+    never sent to the deployment and never appears in a receipt.
     """
 
     name: str
@@ -270,8 +268,8 @@ class HarvestValidationInput:
 class HarvestSourceQuery:
     """The documented harvest source index query surface.
 
-    Only ``owner``, ``organization``, ``q``, ``deleted``, and the pager are
-    accepted; the source index parser declares no sort argument.
+    Only ``owner``, ``organization``, ``q``, ``deleted``, and the pager are accepted; the source index parser declares
+    no sort argument.
     """
 
     q: str | None = None
@@ -584,8 +582,8 @@ class HarvestBulkTargets:
 def bulk_target(action: str, source_ids: Sequence[str]) -> str:
     """Return the bounded exact confirmation target for one ordered bulk plan.
 
-    The digest binds the confirmation to the action and to the exact ordered
-    source set without retaining any identifier in a receipt target.
+    The digest binds the confirmation to the action and to the exact ordered source set without retaining any identifier
+    in a receipt target.
     """
     if action not in HARVEST_BULK_ACTIONS:
         raise ValueError(f"uData harvest bulk action must be one of {sorted(HARVEST_BULK_ACTIONS)}.")

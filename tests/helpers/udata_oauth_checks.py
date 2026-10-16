@@ -1,5 +1,3 @@
-"""Shared OAuth-mutation parity checks for the uData connector test suites."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -34,9 +32,8 @@ def assert_oauth_mutation_sync(
 ) -> None:
     """Assert the typed sync OAuth mutation reproduces the raw loopback outcome.
 
-    The disposable stack has no OAuth client, so the stock endpoints reject every
-    form. Either outcome is valid; what matters is that the typed status equals
-    the raw status and that no access token is ever retained.
+    The disposable stack has no OAuth client, so the stock endpoints reject every form. Either outcome is valid; what
+    matters is that the typed status equals the raw status and that no access token is ever retained.
     """
     try:
         result = getattr(client.auth_oauth, name)(body, permissions, oauth_mutation_policy(name))

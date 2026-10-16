@@ -1,5 +1,3 @@
-"""Fixture-owned local servers for catalog reference transport tests."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

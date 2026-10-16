@@ -408,8 +408,8 @@ def v2_extras_delete_request(
 def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
     """Decode one full v1/v2 dataset document into a native record.
 
-    The documented core fields (``id``, ``title``, ``slug``) are type-checked;
-    unknown portal fields pass through losslessly into the native payload.
+    The documented core fields (``id``, ``title``, ``slug``) are type-checked; unknown portal fields pass through
+    losslessly into the native payload.
     """
     if not isinstance(payload, Mapping):
         raise CatalogValidationError(
@@ -467,11 +467,10 @@ def parse_suggestions(payload: object, *, operation: str = _DATASETS_OPERATION_I
 def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> Mapping[str, object]:
     """Decode a v2 extras document with typed validation and redaction.
 
-    Extras are caller-authored free-form JSON, so they are the widest
-    credential surface in the dataset family. Validation runs first so a
-    malformed document still fails with its typed error; the retained mapping is
-    then redacted, keeping every non-credential extra while credential-shaped
-    keys and credential-shaped string content are replaced by the shared marker.
+    Extras are caller-authored free-form JSON, so they are the widest credential surface in the dataset family.
+    Validation runs first so a malformed document still fails with its typed error; the retained mapping is then
+    redacted, keeping every non-credential extra while credential-shaped keys and credential-shaped string content are
+    replaced by the shared marker.
     """
     if not isinstance(payload, Mapping):
         raise CatalogValidationError(

@@ -1,5 +1,3 @@
-"""Seam contracts: dual-surface CKAN live clients through the dlt extraction integration."""
-
 from __future__ import annotations
 
 import importlib

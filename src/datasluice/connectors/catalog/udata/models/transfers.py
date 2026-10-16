@@ -70,10 +70,9 @@ def _optional_comment(value: object, label: str) -> str | None:
 class TransferListQuery:
     """Stock v1 transfer collection filter surface.
 
-    The upstream parser accepts ``subject``, ``subject_type``, ``recipient``, and
-    ``status``, and answers 400 unless ``subject`` or ``recipient`` is supplied. A
-    query carrying neither is therefore refused here instead of being dispatched,
-    and a query has no valid default because of that rule.
+    The upstream parser accepts ``subject``, ``subject_type``, ``recipient``, and ``status``, and answers 400 unless
+    ``subject`` or ``recipient`` is supplied. A query carrying neither is therefore refused here instead of being
+    dispatched, and a query has no valid default because of that rule.
     """
 
     subject: str | None = None
@@ -111,11 +110,9 @@ class TransferListQuery:
 class TransferRequestInput:
     """The documented body POST /api/1/transfer/ resolves into one transfer request.
 
-    ``subject`` and ``recipient`` are the ``{"id": ..., "class": ...}`` references
-    the stock route resolves through its model registry. A transfer request moves
-    its subject towards a new owner, so both identifiers and both class
-    discriminators are required explicitly and the mutation target binds the pair
-    rather than the subject alone.
+    ``subject`` and ``recipient`` are the ``{"id": ..., "class": ...}`` references the stock route resolves through its
+    model registry. A transfer request moves its subject towards a new owner, so both identifiers and both class
+    discriminators are required explicitly and the mutation target binds the pair rather than the subject alone.
     """
 
     subject_id: str
@@ -152,8 +149,8 @@ class TransferRequestInput:
 class TransferResponseInput:
     """The documented body POST /api/1/transfer/<id>/ answers a transfer with.
 
-    ``accept`` reassigns ownership of the transfer subject to the recipient, so it
-    is the destructive half of the route; ``refuse`` leaves ownership untouched.
+    ``accept`` reassigns ownership of the transfer subject to the recipient, so it is the destructive half of the route;
+    ``refuse`` leaves ownership untouched.
     """
 
     response: str

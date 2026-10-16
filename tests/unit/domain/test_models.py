@@ -1,5 +1,3 @@
-"""Unit tests for domain models."""
-
 from __future__ import annotations
 
 from datetime import date

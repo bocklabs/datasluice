@@ -1,5 +1,3 @@
-"""Opened-resource lifecycle and fluent terminal contracts."""
-
 from __future__ import annotations
 
 from typing import Any

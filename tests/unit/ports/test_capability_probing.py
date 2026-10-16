@@ -1,5 +1,3 @@
-"""Per-operation capability guard probing for the canonical catalog contract."""
-
 from __future__ import annotations
 
 from datetime import date

@@ -1,4 +1,4 @@
-"""dlt (data load tool) integration for explicit normalized catalog clients."""
+"""Dlt (data load tool) integration for explicit normalized catalog clients."""
 
 from __future__ import annotations
 

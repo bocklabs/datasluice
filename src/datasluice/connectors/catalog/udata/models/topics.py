@@ -150,8 +150,8 @@ def _element_reference(value: object, operation: str) -> Mapping[str, str]:
 class TopicListQuery:
     """Stock v2 topic collection query over the pinned ``TopicApiParser``.
 
-    ``q`` and every documented filter are omitted unless supplied, while
-    ``page``/``page_size`` keep their stock names and defaults.
+    ``q`` and every documented filter are omitted unless supplied, while ``page``/``page_size`` keep their stock names
+    and defaults.
     """
 
     q: str | None = None
@@ -258,10 +258,9 @@ def _elements_carry_a_title_or_link(elements: tuple[TopicElementInput, ...] | No
 class TopicElementInput:
     """One documented topic-element body.
 
-    The pinned element update merges the body onto the stored element, so a
-    description-only, tags-only, or extras-only change is stock-accepted there.
-    Create and replace payloads still require a title or a linked element, which
-    their own validation enforces.
+    The pinned element update merges the body onto the stored element, so a description-only, tags-only, or extras-only
+    change is stock-accepted there. Create and replace payloads still require a title or a linked element, which their
+    own validation enforces.
     """
 
     title: str | None = None

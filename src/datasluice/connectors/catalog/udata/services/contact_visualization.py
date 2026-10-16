@@ -173,9 +173,8 @@ class SyncContactVisualizationService(SyncCatalogService):
     ) -> ContactVisualizationMutationResult:
         """Create one contact point.
 
-        The receipt target is the contact-point collection rather than the
-        caller-supplied name, so a contact-point name never enters a retained
-        receipt; the server-returned identifier replaces it on success.
+        The receipt target is the contact-point collection rather than the caller-supplied name, so a contact-point name
+        never enters a retained receipt; the server-returned identifier replaces it on success.
         """
         return _contact_mutation(
             _CONTACT_POINT_COLLECTION_TARGET,
@@ -342,9 +341,8 @@ class AsyncContactVisualizationService(AsyncCatalogService):
     ) -> ContactVisualizationMutationResult:
         """Create one contact point.
 
-        The receipt target is the contact-point collection rather than the
-        caller-supplied name, so a contact-point name never enters a retained
-        receipt; the server-returned identifier replaces it on success.
+        The receipt target is the contact-point collection rather than the caller-supplied name, so a contact-point name
+        never enters a retained receipt; the server-returned identifier replaces it on success.
         """
         return await _contact_mutation_async(
             _CONTACT_POINT_COLLECTION_TARGET,

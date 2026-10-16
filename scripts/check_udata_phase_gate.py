@@ -1,8 +1,8 @@
 """Fail-closed uData phase gate: independent inventory, semantic, review, and cleanup checks.
 
-The gate reads checked-in artifacts and runs the authoritative suites; it never
-trusts connector-reported or hand-written totals. Every check fails closed: an
-unreadable artifact, a pending status, or an unverifiable claim fails the phase.
+The gate reads checked-in artifacts and runs the authoritative suites; it never trusts connector-reported or hand-
+written totals. Every check fails closed: an unreadable artifact, a pending status, or an unverifiable claim fails the
+phase.
 """
 
 from __future__ import annotations
@@ -98,8 +98,8 @@ def coverage_inventory() -> set[str]:
 def surface_completeness() -> tuple[int, int]:
     """Return (covered, denominator) for the locked inventory versus the profile.
 
-    The inventory-to-profile mapping is owned by the quality surface gate; this
-    check delegates to it mechanically so the two gates cannot drift.
+    The inventory-to-profile mapping is owned by the quality surface gate; this check delegates to it mechanically so
+    the two gates cannot drift.
     """
     code, output = _run(
         [
@@ -175,11 +175,10 @@ def _family_semantic_gaps(family: str, evidence: dict[str, object]) -> list[str]
 def semantic_conformance() -> tuple[int, int]:
     """Return (families with green controlled evidence and a passed review, families).
 
-    A family is covered when its controlled evidence record exists, its latest
-    review receipt exists, and the review gate classifies the family as passed.
-    The three pre-convention families (tracer, datasets, root_profile) predate
-    controlled evidence records; their controlled proof lives in the shared
-    controlled-stack tests, so the receipt alone carries their review credit.
+    A family is covered when its controlled evidence record exists, its latest review receipt exists, and the review
+    gate classifies the family as passed. The three pre-convention families (tracer, datasets, root_profile) predate
+    controlled evidence records; their controlled proof lives in the shared controlled-stack tests, so the receipt alone
+    carries their review credit.
     """
     evidence = json.loads(
         (ROOT / "src/datasluice/contracts/catalog/fixtures/udata/evidence.json").read_text(encoding="utf-8")

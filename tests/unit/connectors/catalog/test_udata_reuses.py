@@ -1,11 +1,3 @@
-"""Exact wire and safety coverage for the uData reuse and reuse-follower family.
-
-Expectations are transcribed from the pinned uData 17.6.0 source
-(`udata.core.reuse.api`, `udata.core.reuse.apiv2`, and
-`udata.core.followers.api` at commit 0546582), not from the production
-request builders.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -338,9 +330,8 @@ def test_reuse_link_mutations_bind_the_relationship_target(
 ) -> None:
     """Both relationship mutations confirm and receipt against the whole relationship.
 
-    Binding only the reuse identifier lets a confirmation approved for one
-    dataset be replayed against another. The target must carry the linked
-    identifier so a mismatched confirmation is refused before dispatch.
+    Binding only the reuse identifier lets a confirmation approved for one dataset be replayed against another. The
+    target must carry the linked identifier so a mismatched confirmation is refused before dispatch.
     """
     router = atom_sync_route_table(
         with_site_route(
@@ -406,9 +397,8 @@ def test_reuse_link_mutations_bind_the_relationship_target_in_async_mode(
 def test_reuse_create_retargets_the_success_receipt_to_the_assigned_reuse_id() -> None:
     """A created reuse is receipted against its assigned id, not the submitted title.
 
-    Without the re-target the receipt stays bound to the caller-supplied title
-    for its whole lifetime, so the redacted audit trail cannot be joined to the
-    created record by identifier.
+    Without the re-target the receipt stays bound to the caller-supplied title for its whole lifetime, so the redacted
+    audit trail cannot be joined to the created record by identifier.
     """
     router = atom_sync_route_table(with_site_route({("POST", f"{ORIGIN}/api/1/reuses/"): (201, _reuse("assigned-1"))}))
     with sync_client(router, UDATA_CREDENTIAL) as client:

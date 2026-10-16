@@ -1,5 +1,3 @@
-"""Exact wire and safety coverage for the uData topic and topic-element family."""
-
 from __future__ import annotations
 
 import asyncio

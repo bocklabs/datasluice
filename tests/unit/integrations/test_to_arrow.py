@@ -1,9 +1,3 @@
-"""Unit tests for :func:`to_arrow`.
-
-Follows the importorskip + inline-import test pattern (matches
-``tests/unit/data/test_batch_stream.py``).
-"""
-
 from __future__ import annotations
 
 import pytest

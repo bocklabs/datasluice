@@ -1,17 +1,3 @@
-"""Unit tests for :class:`DataPlaneResourceReader` access dispatch.
-
-Covers the dispatch by ``resource.access.kind``: HttpDownload through buffered
-``CatalogTransport.send()`` responses,
-ObjectStorage via ``open_filesystem``, LocalFile via ``open(path, 'rb')``, and
-QueryAccess raising :class:`UnsupportedAccessError`. Also covers the zero-config
-default (``access=None`` → ``HttpDownload(url=resource.url)``) and the full
-end-to-end pipeline (access → compression → format reader → BatchStream).
-
-Follows the / 04-01 RED→GREEN pattern: the module skips cleanly at
-collection time while ``access.py`` is missing, then runs and passes once the
-GREEN step ships :class:`DataPlaneResourceReader`.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -37,7 +23,6 @@ def _csv_text(rows: int = 10) -> bytes:
 
 def test_local_file_dispatch_yields_batch_stream(tmp_path) -> None:
     """LocalFile dispatch opens path 'rb' and yields RecordBatch via CSV reader."""
-
     import pyarrow as pa
 
     from datasluice.domain import LocalFile, Resource
@@ -63,7 +48,6 @@ def test_local_file_dispatch_yields_batch_stream(tmp_path) -> None:
 
 def test_default_http_download_when_access_is_none() -> None:
     """resource.access=None defaults to HttpDownload(url=resource.url)."""
-
     from datasluice.domain import HttpDownload, Resource
 
     resource = Resource(id="r1", url="https://example.com/data.csv", format="CSV", access=None)
@@ -76,7 +60,6 @@ def test_default_http_download_when_access_is_none() -> None:
 
 def test_query_access_raises_unsupported() -> None:
     """QueryAccess raises UnsupportedAccessError with message."""
-
     from datasluice.domain import QueryAccess, Resource
     from datasluice.exceptions import UnsupportedAccessError
 
@@ -96,7 +79,6 @@ def test_query_access_raises_unsupported() -> None:
 
 def test_stream_access_raises_unsupported() -> None:
     """StreamAccess raises UnsupportedAccessError (out of scope per REQUIREMENTS)."""
-
     from datasluice.domain import Resource, StreamAccess
     from datasluice.exceptions import UnsupportedAccessError
 
@@ -113,7 +95,6 @@ def test_stream_access_raises_unsupported() -> None:
 
 def test_object_storage_dispatch_via_memory_fs() -> None:
     """ObjectStorage dispatch resolves via open_filesystem().open() (seekable BinaryIO)."""
-
     pytest.importorskip("fsspec")
     import pyarrow as pa
     from fsspec.implementations.memory import MemoryFileSystem
@@ -140,7 +121,6 @@ def test_object_storage_dispatch_via_memory_fs() -> None:
 
 def test_http_download_with_buffered_transport() -> None:
     """HttpDownload consumes a buffered CatalogTransport response."""
-
     import pyarrow as pa
 
     from tests.helpers.http_server import MockResponse, start_test_server
@@ -171,7 +151,6 @@ def test_http_download_with_buffered_transport() -> None:
 
 def test_full_pipeline_csv_with_gzip_local_file(tmp_path) -> None:
     """Full pipeline: gzip-compressed CSV → decompress → format reader → BatchStream."""
-
     import gzip
 
     import pyarrow as pa
@@ -197,8 +176,10 @@ def test_full_pipeline_csv_with_gzip_local_file(tmp_path) -> None:
 
 
 def test_undeclared_container_formats_raise_unless_declared(tmp_path) -> None:
-    """Reject ZIP and Parquet payloads without a declared format. Read declared CSV from a ZIP archive."""
+    """Reject ZIP and Parquet payloads without a declared format.
 
+    Read declared CSV from a ZIP archive.
+    """
     import zipfile
 
     import pyarrow as pa

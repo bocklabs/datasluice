@@ -1,5 +1,3 @@
-"""Contract guards for the import-purity probe that gates optional-dependency claims."""
-
 from __future__ import annotations
 
 import subprocess

@@ -1,13 +1,3 @@
-"""D-20/D-25 verify-time evidence gates over the versioned CKAN corpus.
-
-G1: every purge-class action family carries at least one receipt-bearing
-    authenticated-success row tied to a manifest-registered operation.
-G2: the versioned bulk-run provenance is internally consistent with the
-    runtime bulk invariants (plan size, ordered indexes, settled state).
-G3: every tracked evidence artifact round-trips sanitization — no
-    credential-shaped substrings and no JWT/seed-token literals anywhere.
-"""
-
 from __future__ import annotations
 
 import json

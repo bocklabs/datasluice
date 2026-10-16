@@ -1,5 +1,3 @@
-"""Golden logical-content SHA-256 behavior."""
-
 from __future__ import annotations
 
 import importlib

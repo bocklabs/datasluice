@@ -38,9 +38,8 @@ _PINNED_HARVEST_ACTION = "Verify the response against the pinned uData 17.6 harv
 def _write_body(client_input: HarvestSourceInput) -> dict[str, object]:
     """Return the exact write body after re-validating the deployment crawl target.
 
-    The deployment, not this client, fetches a harvest source URL, so the
-    endpoint policy is re-applied at the request boundary rather than trusted
-    from the model alone. A refusal here is raised before any dispatch.
+    The deployment, not this client, fetches a harvest source URL, so the endpoint policy is re-applied at the request
+    boundary rather than trusted from the model alone. A refusal here is raised before any dispatch.
     """
     crawl_endpoint(client_input.url, allow_private=client_input.allow_private_endpoint)
     return client_input.payload()

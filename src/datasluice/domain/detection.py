@@ -1,5 +1,3 @@
-"""Detection models for evidence-based portal identification."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

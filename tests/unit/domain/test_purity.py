@@ -1,10 +1,3 @@
-"""Purity test: datasluice.domain imports zero optional dependencies.
-
-Guards criterion #1 — the domain package must remain a zero-dependency
-vocabulary layer so subsequent layers (ports, runtime, connectors) can depend
-on it without pulling heavy optional deps into the import graph.
-"""
-
 from __future__ import annotations
 
 from tests.helpers.import_purity import assert_import_pulls_no_distributions, assert_import_pulls_no_modules

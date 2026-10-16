@@ -1,5 +1,3 @@
-"""Immutable uData site-profile values and root operation inputs."""
-
 from __future__ import annotations
 
 import re

@@ -1,5 +1,3 @@
-"""Tests for opt-in secret-manager credential discovery."""
-
 from __future__ import annotations
 
 import sys

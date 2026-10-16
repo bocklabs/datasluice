@@ -21,9 +21,8 @@ logger = get_logger("data.compression")
 class _ErrorTranslatingReader(io.RawIOBase):
     """Wrap a decompressed stream, translating stdlib decode errors to DecompressionError.
 
-    GZIP/BZIP2/ZSTD/ZIP all surface truncated-frame errors only on ``read`` (the
-    decompressor is constructed lazily and decodes incrementally). Wrapping the
-    stdlib decompressor here keeps that translation in one place so callers see
+    GZIP/BZIP2/ZSTD/ZIP all surface truncated-frame errors only on ``read`` (the decompressor is constructed lazily and
+    decodes incrementally). Wrapping the stdlib decompressor here keeps that translation in one place so callers see
     only :class:`DecompressionError`.
     """
 
@@ -96,10 +95,9 @@ _MAX_DECOMPRESSED_BYTES = 512 * 1024 * 1024
 class PeekableReader(io.RawIOBase):
     """Wrap a ``BinaryIO`` byte source with one-chunk lookahead.
 
-    Buffers peeked bytes (via :meth:`peek`) and prepends them to subsequent
-    reads so downstream consumers see the full stream from offset 0. Works on
-    both seekable and non-seekable sources (the only operations used are
-    ``read`` and iteration).
+    Buffers peeked bytes (via :meth:`peek`) and prepends them to subsequent reads so downstream consumers see the full
+    stream from offset 0. Works on both seekable and non-seekable sources (the only operations used are ``read`` and
+    iteration).
     """
 
     def __init__(self, source: Any) -> None:
@@ -127,7 +125,6 @@ class PeekableReader(io.RawIOBase):
         :meth:`read` sees them. If fewer than *n* bytes remain, returns
         whatever is available (possibly empty).
         """
-
         if self._closed:
             raise ValueError(_CLOSED_FILE_IO_ERROR)
         needed = n - len(self._buffer)
@@ -199,7 +196,6 @@ def _detect_format(magic: bytes, content_encoding: str | None) -> str:
     Returns:
         One of ``"gzip"``, ``"bzip2"``, ``"zstd"``, ``"zip"`` or ``"none"``.
     """
-
     ce = (content_encoding or "").lower().strip()
     if magic.startswith(_GZIP_MAGIC) or ce in {"gzip", "x-gzip"}:
         return "gzip"
@@ -213,7 +209,10 @@ def _detect_format(magic: bytes, content_encoding: str | None) -> str:
 
 
 def container_format(magic: bytes) -> str | None:
-    """Return ``"zip"`` or ``"parquet"`` for recognized magic bytes. Otherwise, return ``None``."""
+    """Return ``"zip"`` or ``"parquet"`` for recognized magic bytes.
+
+    Otherwise, return ``None``.
+    """
     if magic.startswith(_ZIP_MAGIC):
         return "zip"
     if magic.startswith(_PARQUET_MAGIC):
@@ -257,7 +256,6 @@ def _wrap_zstd(source: Any) -> Any | None:
 
 def _zip_largest_member(source: Any) -> Any:
     """Spool ZIP body to BytesIO, extract the largest member."""
-
     body = source.read(_MAX_ZIP_BODY_BYTES + 1)
     if len(body) > _MAX_ZIP_BODY_BYTES:
         raise DecompressionError(
@@ -326,7 +324,6 @@ def apply_compression(source: Any, content_encoding: str | None = None) -> Any:
     Raises:
         DecompressionError: If the compressed frame is truncated or malformed.
     """
-
     peekable = source if isinstance(source, PeekableReader) else PeekableReader(source)
     magic = peekable.peek(_PEEK_SIZE)
     fmt = _detect_format(magic, content_encoding)

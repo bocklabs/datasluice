@@ -1,5 +1,3 @@
-"""Contract tests for direct-resource CLI commands and the retained command inventory."""
-
 from __future__ import annotations
 
 import inspect

@@ -1,13 +1,11 @@
 """SQLite-indexed cache with atomic content-file publication.
 
-Writers stage bytes in a unique temporary file and rename it into place while
-holding a SQLite IMMEDIATE transaction. Other writers and orphan sweeps wait
-for that transaction; failed staging rolls back the metadata without replacing
-the previous content. Only complete content files are visible to readers.
+Writers stage bytes in a unique temporary file and rename it into place while holding a SQLite IMMEDIATE transaction.
+Other writers and orphan sweeps wait for that transaction; failed staging rolls back the metadata without replacing the
+previous content. Only complete content files are visible to readers.
 
-The index stores URL, ETag, Last-Modified, fetch time, and content length.
-Stale in-flight rows and orphaned content files are swept lazily, at most once
-per :data:`SWEEP_INTERVAL_SECONDS`. Connections are short-lived and explicitly
+The index stores URL, ETag, Last-Modified, fetch time, and content length. Stale in-flight rows and orphaned content
+files are swept lazily, at most once per :data:`SWEEP_INTERVAL_SECONDS`. Connections are short-lived and explicitly
 closed after each operation.
 """
 
@@ -147,8 +145,8 @@ class ContentCache:
     ) -> None:
         """Store *data* under *key* with ETag/Last-Modified sidecar metadata.
 
-        Callers capture the headers after a fetch and store them alongside the
-        bytes so later conditional GETs can revalidate against the origin.
+        Callers capture the headers after a fetch and store them alongside the bytes so later conditional GETs can
+        revalidate against the origin.
         """
         self._put_internal(key, data, etag=etag, last_modified=last_modified)
 
@@ -227,8 +225,7 @@ class ContentCache:
     def _maybe_sweep(self) -> None:
         """Sweep stale ``writing`` rows and orphaned content files, at most once per interval.
 
-        Sweep failures are logged at DEBUG and never propagate — a sweep bug
-        must never break ``get``/``put``.
+        Sweep failures are logged at DEBUG and never propagate — a sweep bug must never break ``get``/``put``.
         """
         now = time.time()
         if now - self._last_sweep < SWEEP_INTERVAL_SECONDS:

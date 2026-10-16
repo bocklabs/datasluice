@@ -1,36 +1,3 @@
-"""Repository-wide clean-break, coverage-linkage, and compliance audit.
-
-Phase 1 final gate: the whole tracked repository—not any single plan—must
-satisfy the locked connector contract. This module proves four things:
-
-1. The canonical platform packages, classes, factories, and namespaced
-   entry points are exactly the declared public surface, and neither the
-   package root nor the catalog contract suite re-exports platform APIs.
-2. Every removed module, symbol, identifier, portal type, runner, runtime
-   method, CLI command, fixture tree, documentation page, navigation
-   entry, and Airflow provider hook/operator/DAG is absent from all
-   tracked production, test, documentation, and provider surfaces except
-   the explicit negative-audit allowlist below.
-3. Every INTEGRATE row of the official API coverage matrix links uniquely
-   to a pinned profile operation, typed native sync and async Protocols,
-   deterministic fixture cases, runner report outcomes, and reference
-   certification; only the two locked OPT-OUT rows are absent.
-4. Public models, errors, lifecycle, auth, safety, extension, and
-   certification invariants hold: typed frozen values, import-light
-   packages, redacted secret-safe outputs, no raw HTTP surface, no
-   implicit activation, no runtime installation, no mutable extension
-   bag, no global write flag, no sync-thread async wrapper, and no alias,
-   shim, or deprecation wrapper.
-
-Untracked working-tree files (build artifacts, ``graphify-out`` knowledge
-graphs, ignored provider ``dist/`` wheels) are outside this audit: only
-tracked files shape the installed, documented, or CI-tested surface.
-
-Historical identifiers stay legal only in this module and in the explicit
-per-file allowlist, which contains solely negative guards that assert the
-same absence this gate enforces.
-"""
-
 from __future__ import annotations
 
 import ast
@@ -1262,9 +1229,8 @@ def test_catalog_root_packages_do_not_re_export_platform_apis(package: str) -> N
 def test_connector_namespaces_are_import_light_and_non_reexporting(package: str) -> None:
     """Test 1: the connector namespaces declare no published API and pull no optional runtime.
 
-    ``__all__ == []`` is the declared contract of both namespaces, so a re-export
-    that forgets to widen it is caught here rather than silently enlarging the
-    surface. Importing either namespace must also stay free of optional
+    ``__all__ == []`` is the declared contract of both namespaces, so a re-export that forgets to widen it is caught
+    here rather than silently enlarging the surface. Importing either namespace must also stay free of optional
     distributions, so the contract cannot be met by eagerly loading a connector.
     """
     module = importlib.import_module(package)

@@ -1,11 +1,3 @@
-"""Exact wire and safety coverage for the uData activity and discussion family.
-
-Expectations are transcribed from the pinned uData 17.6.0 source
-(`udata.core.activity.api`, `udata.core.discussions.api`, and
-`udata.core.discussions.apiv2` at commit 0546582), not from the
-production request builders.
-"""
-
 from __future__ import annotations
 
 import asyncio

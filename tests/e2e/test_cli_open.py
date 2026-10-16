@@ -1,5 +1,3 @@
-"""End-to-end contracts for bounded and streaming ``datasluice open`` output."""
-
 from __future__ import annotations
 
 import importlib

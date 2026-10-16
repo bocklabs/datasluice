@@ -1,11 +1,9 @@
 """Both-mode CKAN group projections across the split v2 read and write ids.
 
-Every typed method declares its owning v2 OperationId from the checked-in manifest
-and passes documented CKAN 2.11 parameters verbatim (D-04). ``group_purge`` refuses
-pre-dispatch without a confirmed destructive policy through the shared 03-03 gate;
-group member variants decode the connector-declared member kind. Privileged writes
-ride the declared profile plus server authorization responses, never synthesized
-capability claims.
+Every typed method declares its owning v2 OperationId from the checked-in manifest and passes documented CKAN 2.11
+parameters verbatim (D-04). ``group_purge`` refuses pre-dispatch without a confirmed destructive policy through the
+shared 03-03 gate; group member variants decode the connector-declared member kind. Privileged writes ride the declared
+profile plus server authorization responses, never synthesized capability claims.
 """
 
 from __future__ import annotations

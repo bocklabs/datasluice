@@ -1,5 +1,3 @@
-"""Exact wire and safety coverage for the uData post, report, and notification family."""
-
 from __future__ import annotations
 
 import asyncio
@@ -460,9 +458,8 @@ _NESTED = {"on_success": {"retry": {"count": 3}}, "tags": ["a", "b"]}
 def test_frozen_report_mappings_stay_json_serializable(factory: Any, field: str) -> None:
     """Frozen mappings must thaw back to plain JSON in payload().
 
-    A nested value raised TypeError from json.dumps once the mapping was frozen
-    without thawing, so the deep case is pinned explicitly rather than only the
-    flat one.
+    A nested value raised TypeError from json.dumps once the mapping was frozen without thawing, so the deep case is
+    pinned explicitly rather than only the flat one.
     """
     encoded = factory(_NESTED).payload()
 

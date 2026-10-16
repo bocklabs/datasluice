@@ -1,11 +1,3 @@
-"""Optimistic CAS coverage for concurrent FileStateStore writers.
-
-Closes the TOCTOU blocker: the per-key threading lock makes the
-compare-read and atomic-move indivisible within a process, so two barrier-
-synchronized expected-absent writers cannot both succeed. Closes by
-declaring which fsspec backends provide an atomic rename.
-"""
-
 from __future__ import annotations
 
 import multiprocessing
@@ -224,12 +216,10 @@ class _ConditionalPutSpy:
 def test_sync_uses_cas_for_checkpoint_write(tmp_path) -> None:
     """Checkpointed local Parquet writes use conditional_put for both in-progress and completed state.
 
-    The previous version served an HTTP Parquet body, which the production
-    guard deliberately excludes from checkpointed materialization — so its
-    observed conditional write was only the completed-state write, not the
-    intermediate per-batch checkpoint writes the test name claims to cover.
-    Use local Parquet with multiple row groups so materialize_checkpointed
-    actually runs and emits in-progress checkpoints before the final write.
+    The previous version served an HTTP Parquet body, which the production guard deliberately excludes from checkpointed
+    materialization — so its observed conditional write was only the completed-state write, not the intermediate per-
+    batch checkpoint writes the test name claims to cover. Use local Parquet with multiple row groups so
+    materialize_checkpointed actually runs and emits in-progress checkpoints before the final write.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq

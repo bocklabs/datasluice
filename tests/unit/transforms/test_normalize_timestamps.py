@@ -1,11 +1,3 @@
-"""Unit tests for the NormalizeTimestamps transform.
-
-Covers the three-way branch: tz-naive → assume_timezone then cast (NEVER a
-direct naive→aware cast, ), tz-aware non-UTC → target tz,
-same-tz unit change, and the non-timestamp pass-through. Each test asserts the
-OUTPUT TYPE (not internal calls) to confirm the branch was taken correctly.
-"""
-
 from __future__ import annotations
 
 from typing import Any

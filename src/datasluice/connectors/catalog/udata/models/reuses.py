@@ -82,9 +82,8 @@ def linked_identifier(value: str, operation: str, label: str) -> str:
 class ReuseListQuery:
     """Stock v1 reuse collection query surface.
 
-    ``q`` and the documented filters are omitted unless supplied, mirroring the
-    upstream index parser. Paging keeps the stock ``page``/``page_size`` names
-    and defaults.
+    ``q`` and the documented filters are omitted unless supplied, mirroring the upstream index parser. Paging keeps the
+    stock ``page``/``page_size`` names and defaults.
     """
 
     q: str | None = None

@@ -9,9 +9,8 @@ from typing import SupportsIndex
 class OneTimeUDataToken:
     """Hold plaintext only until the caller explicitly reveals it once.
 
-    Reveal and discard are the only two ways to release the plaintext, and
-    both are serialised so that exactly one caller ever receives the token
-    even when several threads race on the same holder.
+    Reveal and discard are the only two ways to release the plaintext, and both are serialised so that exactly one
+    caller ever receives the token even when several threads race on the same holder.
     """
 
     __slots__ = ("_lock", "_value")

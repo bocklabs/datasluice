@@ -53,9 +53,8 @@ def bound_text_document(
 ) -> BoundedDocument:
     """Validate one buffered text document and reduce it to a bounded projection.
 
-    ``subject`` qualifies the error messages for the owning service and is empty
-    for documents that carry no service noun. ``list_approved_action`` adds the
-    remediation hint listing the approved media types.
+    ``subject`` qualifies the error messages for the owning service and is empty for documents that carry no service
+    noun. ``list_approved_action`` adds the remediation hint listing the approved media types.
     """
     qualifier = f"{subject} " if subject else ""
     if not isinstance(body, bytes):

@@ -1,5 +1,3 @@
-"""Unit coverage for CKAN wire envelope decoding and result shaping."""
-
 from __future__ import annotations
 
 import json

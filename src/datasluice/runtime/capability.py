@@ -206,8 +206,7 @@ class EffectiveCapabilityCache:
     ) -> None:
         """Cache one successful synchronous probe and release its waiting followers.
 
-        The caller must hold ``self._lock``; this helper never acquires it,
-        because ``threading.Lock`` is not reentrant.
+        The caller must hold ``self._lock``; this helper never acquires it, because ``threading.Lock`` is not reentrant.
         """
         if flight.cancelled:
             self._discard_sync_flight(cache_key, flight)
@@ -278,8 +277,7 @@ class EffectiveCapabilityCache:
     ) -> None:
         """Cache one successful asynchronous probe and release its waiting followers.
 
-        The caller must hold ``self._lock``; this helper never acquires it,
-        because ``threading.Lock`` is not reentrant.
+        The caller must hold ``self._lock``; this helper never acquires it, because ``threading.Lock`` is not reentrant.
         """
         if flight.cancelled:
             self._discard_async_flight(cache_key, flight)

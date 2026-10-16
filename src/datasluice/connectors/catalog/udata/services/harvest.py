@@ -1,8 +1,7 @@
 """Dual-mode uData harvest source, job, and bounded admin bulk service.
 
-Harvest is the one uData family where a caller-supplied value becomes a URL the
-*deployment* fetches, so every write re-applies the crawl-target policy at the
-request boundary, and every queued or bulk action is bounded by a caller-owned
+Harvest is the one uData family where a caller-supplied value becomes a URL the *deployment* fetches, so every write re-
+applies the crawl-target policy at the request boundary, and every queued or bulk action is bounded by a caller-owned
 lease instead of an unbounded wait.
 """
 

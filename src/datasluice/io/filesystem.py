@@ -1,9 +1,8 @@
 """Centralised filesystem factory.
 
-All fsspec backend instantiation flows through :func:`open_filesystem` so that
-S3 / GCS / Azure / HTTP / local dispatch is resolved in exactly one place via
-``fsspec.core.url_to_fs``. fsspec is imported lazily inside the function body
-so ``datasluice`` stays importable on a bare install.
+All fsspec backend instantiation flows through :func:`open_filesystem` so that S3 / GCS / Azure / HTTP / local dispatch
+is resolved in exactly one place via ``fsspec.core.url_to_fs``. fsspec is imported lazily inside the function body so
+``datasluice`` stays importable on a bare install.
 """
 
 from __future__ import annotations
@@ -55,7 +54,6 @@ def open_filesystem(uri: str, credentials: dict[str, Any] | None = None) -> fssp
 
 def strip_scheme(uri: str, fs: Any) -> str:
     """Strip *fs*'s storage scheme from *uri* to produce the path component."""
-
     protocol = getattr(fs, "protocol", None)
     if isinstance(protocol, str):
         prefix = f"{protocol}://"
@@ -72,10 +70,9 @@ def strip_scheme(uri: str, fs: Any) -> str:
 def safe_remove(fs: Any, path: str) -> None:
     """Best-effort removal of *path* on *fs*; ignore absence and secondary OSError.
 
-    Used by atomic-publish paths (temp-file + ``mv``) to clean up an orphaned
-    temporary file after a failed ``pipe_file``/``mv``. A missing path and any
-    OSError raised while removing are swallowed so the original failure (which
-    is re-raised by the caller) is never masked by a cleanup error.
+    Used by atomic-publish paths (temp-file + ``mv``) to clean up an orphaned temporary file after a failed
+    ``pipe_file``/``mv``. A missing path and any OSError raised while removing are swallowed so the original failure
+    (which is re-raised by the caller) is never masked by a cleanup error.
     """
     try:
         if fs.exists(path):

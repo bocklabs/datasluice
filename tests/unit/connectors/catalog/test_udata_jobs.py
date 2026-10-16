@@ -1,5 +1,3 @@
-"""Exact wire and safety coverage for the uData worker job, task, and schedulable family."""
-
 from __future__ import annotations
 
 import asyncio

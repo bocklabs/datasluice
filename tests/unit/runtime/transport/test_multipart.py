@@ -1,5 +1,3 @@
-"""Multipart transport contract tests for UploadPart and RuntimeRequest.files."""
-
 from __future__ import annotations
 
 import asyncio

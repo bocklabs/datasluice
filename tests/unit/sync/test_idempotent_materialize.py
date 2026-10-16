@@ -1,5 +1,3 @@
-"""Idempotent Parquet and raw materialization behavior."""
-
 from __future__ import annotations
 
 import hashlib

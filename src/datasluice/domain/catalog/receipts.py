@@ -1,5 +1,3 @@
-"""Immutable mutation and bulk execution receipts for catalog contracts."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping

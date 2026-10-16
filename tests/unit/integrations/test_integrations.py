@@ -1,5 +1,3 @@
-"""Unit tests for integration module imports (no heavy deps required)."""
-
 from __future__ import annotations
 
 import importlib

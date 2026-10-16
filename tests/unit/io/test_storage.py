@@ -1,5 +1,3 @@
-"""Unit tests for LocalStorage path-traversal containment."""
-
 from __future__ import annotations
 
 from pathlib import Path

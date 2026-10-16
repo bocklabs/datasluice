@@ -1,10 +1,3 @@
-"""Unit tests for the streaming JSON reader.
-
-Follows the -01 RED->GREEN TDD pattern: the module skips cleanly at
-collection time while the readers package is not yet importable, then runs and
-passes once GREEN lands the real implementation.
-"""
-
 from __future__ import annotations
 
 import importlib

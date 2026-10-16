@@ -84,9 +84,8 @@ class AsyncStreamingCatalogTransport(AsyncCatalogTransport, Protocol):
     async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
         """Send one request without pre-buffering its response body.
 
-        Streaming requests must disable redirect following; both in-tree
-        transports enforce ``max_response_bytes`` chunk-wise as the stream is
-        consumed.
+        Streaming requests must disable redirect following; both in-tree transports enforce ``max_response_bytes``
+        chunk-wise as the stream is consumed.
         """
 
 

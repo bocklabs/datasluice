@@ -77,15 +77,12 @@ def _build_opener(context: ssl.SSLContext) -> OpenerDirector:
 class UrllibCatalogTransport(CatalogTransport):
     """Synchronous urllib transport with runtime-owned redirect security.
 
-    Redirect targets are limited to ``http`` and ``https`` and are requested
-    verbatim, so presigned query strings survive every hop; sensitive headers
-    are re-evaluated against the target origin and any configured
-    :class:`CredentialScope`. A hop whose normalized origin differs from the
-    current one refuses to carry a request body whatever the scope allows, so
-    a cross-origin 307/308 never relays a body. Note that urllib applies its
-    timeout to each individual socket operation (connect and read) rather than
-    bounding the whole request; callers needing a hard deadline must enforce it
-    themselves.
+    Redirect targets are limited to ``http`` and ``https`` and are requested verbatim, so presigned query strings
+    survive every hop; sensitive headers are re-evaluated against the target origin and any configured
+    :class:`CredentialScope`. A hop whose normalized origin differs from the current one refuses to carry a request body
+    whatever the scope allows, so a cross-origin 307/308 never relays a body. Note that urllib applies its timeout to
+    each individual socket operation (connect and read) rather than bounding the whole request; callers needing a hard
+    deadline must enforce it themselves.
     """
 
     def __init__(

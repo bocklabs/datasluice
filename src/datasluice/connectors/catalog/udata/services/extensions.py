@@ -45,11 +45,9 @@ class _SyncFlight:
 class ExtensionEvidenceCache:
     """Credential-scoped bounded extension evidence with an expiring single-flight TTL cache.
 
-    Cache keys pair one credential scope with one operation, so evidence for
-    one capability never satisfies another and a rotated credential starts
-    from an empty cache. Exactly one harmless probe runs per key and mode at a
-    time, and an explicit refresh discards every entry plus any result still
-    in flight.
+    Cache keys pair one credential scope with one operation, so evidence for one capability never satisfies another and
+    a rotated credential starts from an empty cache. Exactly one harmless probe runs per key and mode at a time, and an
+    explicit refresh discards every entry plus any result still in flight.
     """
 
     def __init__(self, *, ttl_seconds: float, clock: Callable[[], float] = monotonic) -> None:
@@ -185,9 +183,8 @@ def _evidence(operation: str, scope: str, response_class: ProbeResponseClass) ->
 def _classify_failure(error: Exception) -> ProbeResponseClass:
     """Classify one failed harmless read into a fail-closed response class.
 
-    Route absence resolves unsupported, authorization failures resolve to
-    their own classes, and every transport failure, unexpected status, or
-    ambiguous decode resolves unavailable instead of assuming availability.
+    Route absence resolves unsupported, authorization failures resolve to their own classes, and every transport
+    failure, unexpected status, or ambiguous decode resolves unavailable instead of assuming availability.
     """
     status = _error_status(error)
     if status == 401:
@@ -360,10 +357,9 @@ class SyncExtensionsService(SyncCatalogService):
     def capability(self, operation: str) -> ExtensionEvidence:
         """Return bounded evidence for one stock extension operation, proving it harmlessly.
 
-        The proof dispatches only that operation's own harmless read-only
-        probe, so availability is never inferred from another capability's
-        successful read. Absence, ambiguity, or an unsafe-to-confirm state
-        resolves to a fail-closed state instead of an assumption.
+        The proof dispatches only that operation's own harmless read-only probe, so availability is never inferred from
+        another capability's successful read. Absence, ambiguity, or an unsafe-to-confirm state resolves to a fail-
+        closed state instead of an assumption.
         """
         wire.require_extension_operation(operation)
         scope = credential_scope(self._client.credentials)

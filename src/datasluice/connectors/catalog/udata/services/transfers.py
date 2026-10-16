@@ -62,12 +62,10 @@ _mutation_async = partial(
 def _settle_ambiguous(error: BaseException) -> None:
     """Record that one unsettled transfer write may already have changed its target.
 
-    A transfer write is irreversible from the caller's seat: accepting a request
-    moves the subject's owner and the deployment may fail between recording the
-    accepted transfer and saving the subject. Any failure that leaves the
-    deployment state unknown must therefore settle ``ambiguous``, because
-    ``failed`` would assert the target is unchanged. A pre-dispatch refusal, an
-    exhausted budget, an open breaker, and a definitive 4xx refusal all do assert
+    A transfer write is irreversible from the caller's seat: accepting a request moves the subject's owner and the
+    deployment may fail between recording the accepted transfer and saving the subject. Any failure that leaves the
+    deployment state unknown must therefore settle ``ambiguous``, because ``failed`` would assert the target is
+    unchanged. A pre-dispatch refusal, an exhausted budget, an open breaker, and a definitive 4xx refusal all do assert
     an unchanged target and are left to the shared classification.
     """
     if isinstance(error, (*_CANCELLATIONS, TransportError)) or _mutation_outcome(error, None) == "rejected":

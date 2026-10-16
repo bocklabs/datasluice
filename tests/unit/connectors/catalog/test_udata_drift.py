@@ -1,13 +1,3 @@
-"""Advisory-only, bounded, read-only evidence for public uData drift monitoring.
-
-Every test runs against an injected in-process transport so no public request is
-ever dispatched. The suite covers the empty reviewed allowlist fail-closed path,
-exact-version and mismatched-version classification, outage and timeout
-choreography, sync/async parity, bounded redacted fingerprints, immutable
-advisory output, and the structural refusal of any mutation-class row inserted
-into the drift read allowlist.
-"""
-
 from __future__ import annotations
 
 import asyncio

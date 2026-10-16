@@ -1,13 +1,3 @@
-"""Unit tests for :class:`BatchStream` and :class:`IterableBytesIO`.
-
-Covers the streaming data-plane contracts: RecordBatchReader wrapping,
-context-manager discipline, idempotent close, StreamClosedError on
-use-after-close, ``__arrow_c_stream__`` delegation, and the byte-source
-adapter. Follows the RED→GREEN TDD pattern: the module skips
-cleanly at collection time while the implementation is still the
-stub, then runs and passes once GREEN lands the real classes.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -90,7 +80,7 @@ def test_exit_closes_reader() -> None:
 
 
 def test_idempotent_close() -> None:
-    """close() is idempotent — second call is a no-op."""
+    """Close() is idempotent — second call is a no-op."""
     import pyarrow as pa
 
     schema = pa.schema([("x", pa.int64())])

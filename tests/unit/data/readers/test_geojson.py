@@ -1,12 +1,3 @@
-"""Unit tests for the streaming GeoJSON reader.
-
-Covers the Feature-flatten + geometry_wkt column contract:
-- FeatureCollection flattens to one row per Feature
-- properties dict becomes typed columns
-- geometry becomes a ``geometry_wkt`` string column
-- minimal WKT encoder handles Point, LineString, Polygon
-"""
-
 from __future__ import annotations
 
 import importlib

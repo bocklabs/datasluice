@@ -1,5 +1,3 @@
-"""Explicit typed credential and permission contracts for catalog connectors."""
-
 from __future__ import annotations
 
 import hashlib

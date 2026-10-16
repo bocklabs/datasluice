@@ -1,5 +1,3 @@
-"""Shared runtime test fixtures for client and OAuth suites."""
-
 from __future__ import annotations
 
 import json

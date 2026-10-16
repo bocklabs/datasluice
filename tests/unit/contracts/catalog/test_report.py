@@ -1,5 +1,3 @@
-"""Tests for versioned catalog compliance reports."""
-
 from __future__ import annotations
 
 import json

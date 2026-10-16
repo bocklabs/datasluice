@@ -1,5 +1,3 @@
-"""Tests for retry and circuit-breaker runtime holders."""
-
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor

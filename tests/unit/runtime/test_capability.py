@@ -1,5 +1,3 @@
-"""Capability probing engine and cache tests."""
-
 from __future__ import annotations
 
 import asyncio

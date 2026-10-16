@@ -1,15 +1,11 @@
 """Domain Schema → Arrow Schema mapper and batch unification helper.
 
-The :func:`to_arrow_schema` mapper derives a ``pa.Schema``
-from a domain :class:`~datasluice.domain.schema.Schema` for DISPLAY purposes
-— advisory only, NOT enforced. Readers infer the Arrow schema from actual
-data bytes.
+The :func:`to_arrow_schema` mapper derives a ``pa.Schema`` from a domain :class:`~datasluice.domain.schema.Schema` for
+DISPLAY purposes — advisory only, NOT enforced. Readers infer the Arrow schema from actual data bytes.
 
-The :func:`unify_batches` helper concatenates a sequence
-of ``RecordBatch`` objects under a unified schema by delegating entirely to
-``pa.concat_tables`` with ``promote_options="permissive"``. datasluice does
-NOT hand-roll an Arrow type lattice — pyarrow owns promotion (RESEARCH
-Anti-Patterns). The promotion lattice is documented in the function
+The :func:`unify_batches` helper concatenates a sequence of ``RecordBatch`` objects under a unified schema by delegating
+entirely to ``pa.concat_tables`` with ``promote_options="permissive"``. datasluice does NOT hand-roll an Arrow type
+lattice — pyarrow owns promotion (RESEARCH Anti-Patterns). The promotion lattice is documented in the function
 docstring.
 """
 

@@ -1,9 +1,8 @@
 """Portal-derived CKAN rate-policy resolution as an explicit metadata-only contract.
 
-Resolution here is deliberately metadata-only: politeness derives from each
-portal's OWN officially documented Action API limits, DataSluice invents no
-throttle while no portal documents a limit, and an enforcement seam remains
-future reviewed work for when a real documented limit exists.
+Resolution here is deliberately metadata-only: politeness derives from each portal's OWN officially documented Action
+API limits, DataSluice invents no throttle while no portal documents a limit, and an enforcement seam remains future
+reviewed work for when a real documented limit exists.
 """
 
 from __future__ import annotations

@@ -126,9 +126,8 @@ def build_request(name: str, body: object = None) -> Request:
 def sends_credential(name: str) -> bool:
     """Return whether this stock route may carry the uData API-key header.
 
-    This is the family's single credential-transmission contract, derived from the
-    route's declared authentication mechanism rather than a per-call-site opt-in, so
-    no dispatch site can forget to apply it.
+    This is the family's single credential-transmission contract, derived from the route's declared authentication
+    mechanism rather than a per-call-site opt-in, so no dispatch site can forget to apply it.
     """
     return name in _CREDENTIAL_ROUTES
 
@@ -158,8 +157,8 @@ def parse_token(name: str, payload: object, receipt: MutationReceipt) -> OAuthTo
 def parse_consent_summary(name: str, payload: object, status_code: int, media_type: str) -> OAuthConsentSummary:
     """Decode the stock consent document, or report a session-gated reply as-is.
 
-    The stock routes are ``login_required``: without a browser session they
-    answer a redirect or an unauthorized page rather than a consent JSON body.
+    The stock routes are ``login_required``: without a browser session they answer a redirect or an unauthorized page
+    rather than a consent JSON body.
     """
     if not isinstance(media_type, str) or not media_type:
         raise _invalid(name, "omitted its media type", _SCHEMA_ACTION)

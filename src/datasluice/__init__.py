@@ -1,6 +1,5 @@
-"""DataSluice — one Python interface for open-data discovery, extraction,
-format normalization, and pipeline integration.
-"""
+"""DataSluice — one Python interface for open-data discovery, extraction, format normalization, and pipeline
+integration."""
 
 from datasluice._version import __version__
 from datasluice.application import (

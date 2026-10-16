@@ -1,5 +1,3 @@
-"""Shared fixtures for datasluice.sync unit tests."""
-
 from __future__ import annotations
 
 from typing import Any

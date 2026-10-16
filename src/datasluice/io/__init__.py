@@ -26,10 +26,9 @@ __all__ = [
 def __getattr__(name: str):  # PEP 562
     """Lazily export ContentCache, FsspecStorage, and open_filesystem.
 
-    Importing any of these eagerly would pull optional deps (fsspec for the
-    storage pair; sqlite3 is stdlib so ContentCache is cheap, but the lazy
-    discipline keeps the io surface uniform) at package import time and break
-    bare installs. All three symbols are resolved on first attribute access.
+    Importing any of these eagerly would pull optional deps (fsspec for the storage pair; sqlite3 is stdlib so
+    ContentCache is cheap, but the lazy discipline keeps the io surface uniform) at package import time and break bare
+    installs. All three symbols are resolved on first attribute access.
     """
     if name == "ContentCache":
         from datasluice.io.content_cache import ContentCache

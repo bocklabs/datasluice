@@ -1,11 +1,3 @@
-"""Installed-wheel E2E for a bare (no-extras) core install.
-
-A bare ``datasluice`` wheel must install, expose its console script, and run
-commands that do not require optional data-plane extras (http/parquet/storage).
-This isolates the release proof that the minimal distribution is functional, as
-distinct from the full all-extras profile exercised by ``test_cli_existing.py``.
-"""
-
 from __future__ import annotations
 
 import os

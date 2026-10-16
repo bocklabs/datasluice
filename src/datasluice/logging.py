@@ -1,8 +1,7 @@
 """Structured logging utilities for DataSluice.
 
-Owns the canonical ``SENSITIVE_HEADERS`` frozenset shared by the
-:class:`RedactingFilter` and the redirect handler without a circular
-import — the redirect handler imports it from here.
+Owns the canonical ``SENSITIVE_HEADERS`` frozenset shared by the :class:`RedactingFilter` and the redirect handler
+without a circular import — the redirect handler imports it from here.
 """
 
 from __future__ import annotations
@@ -81,14 +80,11 @@ def _redacted_args(args: object) -> tuple[Any, ...]:
 class RedactingFilter(logging.Filter):
     """Redact sensitive extras and args without touching LogRecord internals.
 
-    Only caller-supplied ``extra`` keys and ``record.args`` entries pass
-    through the central runtime gate. Standard :class:`~logging.LogRecord`
-    internals (``exc_info``, ``exc_text``, ``msg``, ``pathname``,
-    ``stack_info``, …) stay untouched so traceback formatting and message
-    rendering keep working. Targeted: only known sensitive keys are touched —
-    never value-pattern heuristics — so legitimate base64 / open-data payloads
-    pass through unchanged. The central runtime gate owns the escape hatch for
-    test fixtures and debugging.
+    Only caller-supplied ``extra`` keys and ``record.args`` entries pass through the central runtime gate. Standard
+    :class:`~logging.LogRecord` internals (``exc_info``, ``exc_text``, ``msg``, ``pathname``, ``stack_info``, …) stay
+    untouched so traceback formatting and message rendering keep working. Targeted: only known sensitive keys are
+    touched — never value-pattern heuristics — so legitimate base64 / open-data payloads pass through unchanged. The
+    central runtime gate owns the escape hatch for test fixtures and debugging.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:

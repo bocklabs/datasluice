@@ -1,5 +1,3 @@
-"""Hardening coverage for StateStore persistence, envelopes, and backends."""
-
 from __future__ import annotations
 
 import hashlib

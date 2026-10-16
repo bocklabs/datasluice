@@ -1,9 +1,3 @@
-"""PROHIB-04-01 deployment boundary for uData dispatch.
-
-A public deployment may serve declared reads, and refuses every non-read route
-before any request is built.
-"""
-
 from __future__ import annotations
 
 import asyncio

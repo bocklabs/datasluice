@@ -99,9 +99,8 @@ def _validate_filter(
 class DatasetListQuery:
     """The pinned v1/v2 dataset collection query surface.
 
-    ``sort`` accepts the stock keys (optionally ``-`` prefixed); ``tag``
-    accepts repeated values; ``featured``, ``archived``, ``deleted``, and
-    ``private`` accept explicit booleans only.
+    ``sort`` accepts the stock keys (optionally ``-`` prefixed); ``tag`` accepts repeated values; ``featured``,
+    ``archived``, ``deleted``, and ``private`` accept explicit booleans only.
     """
 
     q: str | None = None
@@ -182,8 +181,8 @@ class DatasetCreateInput:
 class DatasetUpdateInput:
     """Presence-aware full-replace payload for PUT /api/1/datasets/<id>/.
 
-    Only supplied fields are sent; absent fields are omitted from the JSON
-    body exactly as the stock form performs a partial-safe replace.
+    Only supplied fields are sent; absent fields are omitted from the JSON body exactly as the stock form performs a
+    partial-safe replace.
     """
 
     title: str | None = None
@@ -370,8 +369,8 @@ class DatasetSearchQuery:
 class DatasetMutationResult:
     """The unified mutation outcome: a redacted receipt plus any returned value.
 
-    Every dataset mutation produces this result on success; failures raise
-    typed errors carrying the same bounded receipt in their metadata.
+    Every dataset mutation produces this result on success; failures raise typed errors carrying the same bounded
+    receipt in their metadata.
     """
 
     receipt: MutationReceipt

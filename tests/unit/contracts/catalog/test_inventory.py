@@ -1,5 +1,3 @@
-"""Contract tests for catalog operation and capability profile values."""
-
 from collections.abc import Sequence
 from datetime import date
 from typing import TYPE_CHECKING
@@ -286,11 +284,10 @@ def test_relationships_follows_manifest_holds_exactly_the_thirty_one_core_action
 def test_inventory_complete() -> None:
     """Assert three-way completeness of the exhaustive 157-action CKAN inventory.
 
-    The checked-in ``action_manifest.json`` is the single source of registered
-    action names (D-22): registry, mapping truth table, declared v2 profile
-    operations, and the typed methods of BOTH projection modes must agree with
-    it exactly. Extending or regenerating the manifest requires a reviewed
-    manifest amendment — this gate fails on any addition or omission.
+    The checked-in ``action_manifest.json`` is the single source of registered action names (D-22): registry, mapping
+    truth table, declared v2 profile operations, and the typed methods of BOTH projection modes must agree with it
+    exactly. Extending or regenerating the manifest requires a reviewed manifest amendment — this gate fails on any
+    addition or omission.
     """
     import json
     from importlib import resources

@@ -51,13 +51,10 @@ def drop_body_transfer_headers(headers: Mapping[str, str]) -> dict[str, str]:
 class UploadPart:
     """One immutable multipart form part.
 
-    ``data`` is either fully buffered ``bytes`` or a one-shot closeable
-    stream, which the request consumes in place exactly once instead of
-    buffering; the caller owns that stream's read position and must close
-    it, because transports never close it. Part data is excluded from
-    ``repr`` so debugging or logging a part can never surface uploaded
-    file contents; only field name, file name, content type, and the data
-    byte length render.
+    ``data`` is either fully buffered ``bytes`` or a one-shot closeable stream, which the request consumes in place
+    exactly once instead of buffering; the caller owns that stream's read position and must close it, because transports
+    never close it. Part data is excluded from ``repr`` so debugging or logging a part can never surface uploaded file
+    contents; only field name, file name, content type, and the data byte length render.
     """
 
     field_name: str
@@ -93,10 +90,8 @@ def redirect_method_and_body(
 ) -> tuple[str, bytes | None, tuple[UploadPart, ...]]:
     """Rewrite the request method, body, and multipart parts for one redirect hop per RFC 9110.
 
-    A ``303`` always downgrades to a bodyless, fileless ``GET``; a
-    ``301``/``302`` historically converts ``POST`` to a bodyless, fileless
-    ``GET``; ``307`` and ``308`` preserve the original method, body, and parts
-    untouched.
+    A ``303`` always downgrades to a bodyless, fileless ``GET``; a ``301``/``302`` historically converts ``POST`` to a
+    bodyless, fileless ``GET``; ``307`` and ``308`` preserve the original method, body, and parts untouched.
     """
     if status == 303:
         return "GET", None, ()
@@ -134,12 +129,10 @@ def _freeze_request_headers(headers: Mapping[str, str]) -> Mapping[str, str]:
 class RuntimeRequest:
     """Immutable HTTP request supplied by a catalog client.
 
-    Headers, bodies, and multipart parts are excluded from ``repr`` so
-    accidental logging or debugging of requests cannot expose credentials or
-    uploaded file contents, and the URL renders through the shared redaction
-    helper. ``__hash__`` projects over the hashable ``method`` and ``url``
-    fields only; equality remains full-field via the generated ``eq`` and
-    still compares headers, body, and parts.
+    Headers, bodies, and multipart parts are excluded from ``repr`` so accidental logging or debugging of requests
+    cannot expose credentials or uploaded file contents, and the URL renders through the shared redaction helper.
+    ``__hash__`` projects over the hashable ``method`` and ``url`` fields only; equality remains full-field via the
+    generated ``eq`` and still compares headers, body, and parts.
     """
 
     method: str
@@ -177,11 +170,9 @@ class RuntimeRequest:
 class RuntimeResponse:
     """Fully buffered HTTP response returned by a catalog transport.
 
-    The custom ``repr`` masks the body (rendering only its byte length) and
-    omits headers, so debugging cannot expose credential-bearing payloads.
-    ``__hash__`` projects over the hashable ``status_code`` and ``retry_after``
-    fields; equality remains full-field via the generated ``eq`` and still
-    compares headers and body.
+    The custom ``repr`` masks the body (rendering only its byte length) and omits headers, so debugging cannot expose
+    credential-bearing payloads. ``__hash__`` projects over the hashable ``status_code`` and ``retry_after`` fields;
+    equality remains full-field via the generated ``eq`` and still compares headers and body.
     """
 
     status_code: int
@@ -356,7 +347,6 @@ class StreamingCatalogTransport(CatalogTransport, Protocol):
     def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
         """Send one request without pre-buffering its response body.
 
-        Streaming requests must disable redirect following; both in-tree
-        transports enforce ``max_response_bytes`` chunk-wise as the stream is
-        consumed.
+        Streaming requests must disable redirect following; both in-tree transports enforce ``max_response_bytes``
+        chunk-wise as the stream is consumed.
         """

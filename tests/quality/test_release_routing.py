@@ -1,16 +1,3 @@
-"""Release-routing contracts for the dual-distribution manifest and publication gates.
-
-establishes the typed reusable publication interface in
-``.github/workflows/publish.yaml``: build/attest the exact Release Please ref,
-publish the candidate to the selected TestPyPI environment, install the exact
-``name==version`` candidate from TestPyPI with PyPI resolving dependencies,
-smoke the package, and only then promote the SAME attested artifact through the
-caller-selected PyPI environment. configures the two-component Release
-Please manifest and routes its path-prefixed outputs into that interface with
-core-before-provider ordering. Nothing is published here; these are structural
-YAML/JSON contract tests plus a local release-proposal model.
-"""
-
 from __future__ import annotations
 
 import json
@@ -696,7 +683,7 @@ def test_collect_step_filters_providers() -> None:
 
 
 def test_matrix_expands_from_collect_output() -> None:
-    """publish-providers uses fromJson(provider-releases) as its matrix with seven inputs from matrix.provider.*."""
+    """Publish-providers uses fromJson(provider-releases) as its matrix with seven inputs from matrix.provider.*."""
     _require(_routing_ready(), "matrix routing not yet implemented")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     providers_job = workflow["jobs"]["publish-providers-build"]
@@ -722,7 +709,7 @@ def test_matrix_expands_from_collect_output() -> None:
 
 
 def test_core_not_in_matrix() -> None:
-    """publish-core is a standalone job; the matrix job has no hardcoded core reference."""
+    """Publish-core is a standalone job; the matrix job has no hardcoded core reference."""
     _require(_routing_ready(), "core/matrix separation not yet implemented")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]

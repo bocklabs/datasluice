@@ -97,11 +97,10 @@ class IntervalSchedule:
 class JobScheduleInput:
     """One typed create or update write for a periodic worker job.
 
-    The pinned ``JobsAPI`` refuses a body carrying both schedule forms with a
-    400 and picks the form from whichever key the body carries, so the typed
-    input enforces exactly one schedule before any dispatch. The stock PUT
-    treats an omitted ``enabled`` key as false, so updating a schedule without
-    ``enabled=True`` disables the job; the typed input mirrors that wire rule.
+    The pinned ``JobsAPI`` refuses a body carrying both schedule forms with a 400 and picks the form from whichever key
+    the body carries, so the typed input enforces exactly one schedule before any dispatch. The stock PUT treats an
+    omitted ``enabled`` key as false, so updating a schedule without ``enabled=True`` disables the job; the typed input
+    mirrors that wire rule.
     """
 
     name: str
@@ -154,10 +153,9 @@ class JobScheduleInput:
 class UDataJobHandle:
     """Immutable typed lease for one queued worker task and its bounded wait.
 
-    Worker dispatch is asynchronous on the deployment, so a task can only be
-    awaited under this explicit finite lease; the handle owns the caller's wait
-    budget, the poll interval, and the poll ceiling. This is the worker-task
-    lease and is distinct from the harvest job handle carried by harvest runs.
+    Worker dispatch is asynchronous on the deployment, so a task can only be awaited under this explicit finite lease;
+    the handle owns the caller's wait budget, the poll interval, and the poll ceiling. This is the worker-task lease and
+    is distinct from the harvest job handle carried by harvest runs.
     """
 
     task_id: str

@@ -1,5 +1,3 @@
-"""End-to-end proof that public uData drift fails closed while the reviewed allowlist is empty."""
-
 from __future__ import annotations
 
 import asyncio

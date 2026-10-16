@@ -1,5 +1,3 @@
-"""Contract guards for the installed-wheel probe CLI entry point."""
-
 from __future__ import annotations
 
 from tests.e2e import installed_probe

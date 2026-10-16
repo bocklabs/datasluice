@@ -1,12 +1,3 @@
-"""Compatibility matrix contract for the supported release surface.
-
-The checked-in ``providers/apache-airflow/compatibility.json`` is the finite
-source of truth for verified *external* support (Airflow, Python). The core
-datasluice version is always the current source version, read from the root
-``pyproject.toml`` — never a static pin — so certified support tracks each
-core release automatically without manual edits.
-"""
-
 from __future__ import annotations
 
 import itertools

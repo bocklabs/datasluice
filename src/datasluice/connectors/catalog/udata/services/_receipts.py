@@ -128,7 +128,10 @@ def _run_mutation[T](
     precondition: Callable[[], None] | None = None,
     errors: tuple[type[BaseException], ...] = (Exception,),
 ) -> T:
-    """Run one mutation. On a covered error, attach a receipt and raise the original error."""
+    """Run one mutation.
+
+    On a covered error, attach a receipt and raise the original error.
+    """
     response: object | None = None
     try:
         if precondition is not None:
@@ -147,7 +150,10 @@ async def _run_mutation_async[T](
     precondition: Callable[[], None] | None = None,
     errors: tuple[type[BaseException], ...] = (Exception, asyncio.CancelledError),
 ) -> T:
-    """Run one mutation on the async path. The receipt seam matches the sync path."""
+    """Run one mutation on the async path.
+
+    The receipt seam matches the sync path.
+    """
     response: object | None = None
     try:
         if precondition is not None:

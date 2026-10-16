@@ -1,5 +1,3 @@
-"""End-to-end contracts for the one-resource ``datasluice materialize`` workflow."""
-
 from __future__ import annotations
 
 import inspect

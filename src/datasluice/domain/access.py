@@ -1,5 +1,3 @@
-"""ResourceAccess sum-type describing how a resource is reached."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

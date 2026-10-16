@@ -1,5 +1,3 @@
-"""Deterministic loopback coverage for the CKAN group and user surfaces."""
-
 from __future__ import annotations
 
 import asyncio

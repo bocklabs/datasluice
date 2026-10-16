@@ -232,9 +232,8 @@ def _validated_series(value: object, label: str, *, required: bool = False) -> t
 class VisualizationListQuery:
     """The stock v1 visualization collection query decoded from ``Chart.__index_parser__``.
 
-    ``page`` and ``page_size`` keep the stock pager names and defaults, ``sort``
-    accepts the documented sortable keys with an optional ``-`` prefix, and the
-    ``private``, ``owner``, and ``organization`` filters are omitted unless
+    ``page`` and ``page_size`` keep the stock pager names and defaults, ``sort`` accepts the documented sortable keys
+    with an optional ``-`` prefix, and the ``private``, ``owner``, and ``organization`` filters are omitted unless
     supplied.
     """
 
@@ -275,9 +274,8 @@ class VisualizationListQuery:
 class ContactPointCreateInput:
     """Presence-aware create payload for POST /api/1/contacts/.
 
-    ``name`` and ``role`` are the documented required fields; ``email``,
-    ``contact_form``, ``owner``, and ``organization`` are omitted unless
-    supplied. The stock ``contact`` role requires an email or a contact form.
+    ``name`` and ``role`` are the documented required fields; ``email``, ``contact_form``, ``owner``, and
+    ``organization`` are omitted unless supplied. The stock ``contact`` role requires an email or a contact form.
     """
 
     name: str
@@ -318,9 +316,8 @@ class ContactPointCreateInput:
 class ContactPointUpdateInput:
     """Presence-aware patch payload for PUT /api/1/contacts/<id>/.
 
-    Only the supplied fields are sent, so an absent key leaves the stored value
-    unchanged. ``owner`` and ``organization`` are creation-only on the stock
-    route, so they are not part of the documented update surface.
+    Only the supplied fields are sent, so an absent key leaves the stored value unchanged. ``owner`` and
+    ``organization`` are creation-only on the stock route, so they are not part of the documented update surface.
     """
 
     name: str | None = None
@@ -351,10 +348,8 @@ class ContactPointUpdateInput:
 class VisualizationCreateInput:
     """Presence-aware create payload for POST /api/1/visualizations/.
 
-    ``title``, ``description``, ``x_axis``, and ``series`` are the documented
-    required fields; ``private``, ``y_axis``, ``extras``, ``owner``, and
-    ``organization`` are omitted or defaulted exactly as the stock write fields
-    document.
+    ``title``, ``description``, ``x_axis``, and ``series`` are the documented required fields; ``private``, ``y_axis``,
+    ``extras``, ``owner``, and ``organization`` are omitted or defaulted exactly as the stock write fields document.
     """
 
     title: str
@@ -465,9 +460,8 @@ class VisualizationUpdateInput:
 class VisualizationImageInput:
     """Bounded visualization image upload input; bytes never enter the result record.
 
-    The stock route also accepts an optional ``bbox`` cropping hint, but the
-    shared multipart seam carries the file part alone, so the typed surface
-    exposes only the file the stock parser requires.
+    The stock route also accepts an optional ``bbox`` cropping hint, but the shared multipart seam carries the file part
+    alone, so the typed surface exposes only the file the stock parser requires.
     """
 
     data: bytes = field(repr=False)

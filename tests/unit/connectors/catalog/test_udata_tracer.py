@@ -1,5 +1,3 @@
-"""Tracer unit tests: strict gate, one dataset read, and close ownership."""
-
 from __future__ import annotations
 
 import asyncio

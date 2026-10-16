@@ -1,5 +1,3 @@
-"""Token failure paths retain only bounded safe metadata."""
-
 from __future__ import annotations
 
 import hmac

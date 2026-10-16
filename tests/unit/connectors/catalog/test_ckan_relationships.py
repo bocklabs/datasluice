@@ -1,5 +1,3 @@
-"""Deterministic loopback coverage for the exhaustive CKAN relationships/follows core."""
-
 from __future__ import annotations
 
 import asyncio

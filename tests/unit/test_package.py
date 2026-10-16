@@ -1,5 +1,3 @@
-"""Tests for the exact retained public surface of the top-level datasluice package."""
-
 from __future__ import annotations
 
 import re

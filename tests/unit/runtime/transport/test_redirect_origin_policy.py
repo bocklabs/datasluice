@@ -1,11 +1,3 @@
-"""Cross-origin redirect body refusal pinned against an explicit CredentialScope opt-in.
-
-``CredentialScope.send_on_redirect`` authorizes relaying credential headers
-to an allowed host; it never authorizes relaying a request body to a
-different origin. These tests hold that asymmetry down in the urllib
-transport and in both httpx loops.
-"""
-
 from __future__ import annotations
 
 import asyncio

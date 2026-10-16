@@ -1,5 +1,3 @@
-"""Contract tests for canonical built-in connector metadata."""
-
 from __future__ import annotations
 
 import tomllib

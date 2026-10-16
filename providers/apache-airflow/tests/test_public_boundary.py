@@ -1,5 +1,3 @@
-"""Provider public-boundary, metadata-surface, and documentation checks."""
-
 from __future__ import annotations
 
 import ast
@@ -72,7 +70,10 @@ def _root_name(value: ast.expr) -> str | None:
 
 
 def _import_from_core_names(path: Path, node: ast.ImportFrom) -> set[str]:
-    """Return the public core names bound by one ``from datasluice... import`` statement."""
+    """Return the public core names bound by one ``from datasluice...
+
+    import`` statement.
+    """
     if node.module == "datasluice":
         return {alias.asname or alias.name for alias in node.names}
     if node.module and node.module.startswith("datasluice."):
@@ -142,7 +143,10 @@ def _imported_module_names(tree: ast.Module) -> list[str]:
 
 
 def _imported_from_names(tree: ast.Module) -> list[str]:
-    """Return every absolute ``module.name`` pair *tree* imports via ``from ... import``."""
+    """Return every absolute ``module.name`` pair *tree* imports via ``from ...
+
+    import``.
+    """
     names: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:

@@ -1,5 +1,3 @@
-"""Asynchronous catalog runtime client tests."""
-
 from __future__ import annotations
 
 import asyncio

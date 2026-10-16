@@ -1,10 +1,3 @@
-"""Backend-error discrimination for FileStateStore.
-
-Closes the blocker: only FileNotFoundError maps to None (absent state);
-backend PermissionError, TimeoutError, and other OSError subclasses surface as
-StateStoreError and are never swallowed as missing state.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

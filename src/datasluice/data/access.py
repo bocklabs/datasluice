@@ -77,7 +77,6 @@ class DataPlaneResourceReader:
 
     def _resolve_access(self, resource: Resource) -> Any:
         """Return the resource's access descriptor, defaulting to HttpDownload."""
-
         from datasluice.domain import HttpDownload
 
         if resource.access is not None:
@@ -109,7 +108,6 @@ class DataPlaneResourceReader:
             UnsupportedAccessError: If the access kind has no implementation
                 (``query``, ``stream``) or no transport was supplied for HTTP.
         """
-
         effective_batch_size = batch_size if batch_size is not None else self.default_batch_size
         _validate_batch_size(effective_batch_size)
         access = self._resolve_access(resource)
@@ -324,7 +322,6 @@ class DataPlaneResourceReader:
         batch_size: int,
     ) -> BatchStream:
         """Dispatch to the format reader and wrap output in BatchStream."""
-
         try:
             format_name = resource.format or "CSV"
             reader = get_reader(format_name)
@@ -345,7 +342,6 @@ class DataPlaneResourceReader:
 
     def _open_http_download(self, access: Any, resource: Resource) -> tuple[Any, str | None]:
         """HttpDownload: read through the bounded catalog transport seam."""
-
         if self.transport is None:
             raise UnsupportedAccessError(
                 f"HttpDownload for {sanitize_uri(getattr(access, 'url', '<unknown>'))!r} requires a transport; "
@@ -383,7 +379,6 @@ class DataPlaneResourceReader:
 
     def _open_object_storage(self, access: Any) -> tuple[Any, str | None]:
         """ObjectStorage: open via open_filesystem.open."""
-
         from datasluice.io.filesystem import open_filesystem, strip_scheme
 
         uri = access.uri
@@ -393,7 +388,6 @@ class DataPlaneResourceReader:
 
     def _open_local_file(self, access: Any) -> tuple[Any, str | None]:
         """LocalFile: open(path, 'rb')."""
-
         return open(access.path, "rb"), None
 
 
@@ -424,7 +418,6 @@ def _close_source(source: Any) -> None:
 
 def _content_encoding_from_headers(headers: dict[str, str]) -> str | None:
     """Extract a lowercased Content-Encoding value from response headers."""
-
     for key, value in headers.items():
         if key.lower() == "content-encoding":
             return value.lower()

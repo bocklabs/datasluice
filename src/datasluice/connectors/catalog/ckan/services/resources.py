@@ -1,9 +1,8 @@
 """Both-mode CKAN resource projections with bounded buffered multipart uploads (D-03).
 
-Uploads accept a filesystem path or an open binary handle, are buffered exactly
-once through the shared transport multipart channel, and are bounded by the
-configured ``max_upload_bytes`` ceiling with a typed pre-dispatch refusal. There
-is no streaming mode: the whole source becomes one immutable ``UploadPart``.
+Uploads accept a filesystem path or an open binary handle, are buffered exactly once through the shared transport
+multipart channel, and are bounded by the configured ``max_upload_bytes`` ceiling with a typed pre-dispatch refusal.
+There is no streaming mode: the whole source becomes one immutable ``UploadPart``.
 """
 
 from __future__ import annotations

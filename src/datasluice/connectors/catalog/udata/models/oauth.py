@@ -163,9 +163,8 @@ class OAuthRevokeRequest:
 class OAuthClientRequest:
     """The query parameters stock uData reads on the GET /oauth routes.
 
-    ``client_info`` requires the token presented by the browser session, and
-    ``authorize`` requires a client identifier and a response type; without
-    them stock answers an error page instead of the requested document.
+    ``client_info`` requires the token presented by the browser session, and ``authorize`` requires a client identifier
+    and a response type; without them stock answers an error page instead of the requested document.
     """
 
     client_id: str | None = None
@@ -296,10 +295,9 @@ class OAuthConsentSummary:
 class OAuthConsentOutcome:
     """The observed result of one consent decision, never a fabricated consent.
 
-    Stock answers a redirect or a confirmation page rather than a consent
-    document, and never reports which decision the user made. The outcome
-    therefore carries only what the deployment actually returned, so an accept
-    and a decline stay distinguishable to the caller.
+    Stock answers a redirect or a confirmation page rather than a consent document, and never reports which decision the
+    user made. The outcome therefore carries only what the deployment actually returned, so an accept and a decline stay
+    distinguishable to the caller.
     """
 
     accepted: bool
@@ -325,9 +323,8 @@ class OAuthConsentOutcome:
 class OAuthErrorDocument:
     """The bounded metadata of the stock /oauth/error HTML page.
 
-    The stock route renders ``api/oauth_error.html`` and never returns a JSON
-    body, so only the status and media type are typed here. The rendered bytes
-    are deliberately not retained.
+    The stock route renders ``api/oauth_error.html`` and never returns a JSON body, so only the status and media type
+    are typed here. The rendered bytes are deliberately not retained.
     """
 
     status_code: int

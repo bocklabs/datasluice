@@ -1,11 +1,10 @@
 """Both-mode CKAN tag, vocabulary, and license projections across the split v2 ids.
 
-Every typed method declares its owning v2 OperationId from the checked-in manifest
-and passes documented CKAN 2.11 parameters verbatim (D-04). The deprecated
-``fields`` parameter of ``tag_search``/``tag_autocomplete`` is unrepresentable on
-typed signatures and refused pre-dispatch on umbrella payloads (D-01, identical
-discipline to the dataset group). Vocabulary CRUD decodes the connector-declared
-vocabulary kind; translation batches cross the wire untouched.
+Every typed method declares its owning v2 OperationId from the checked-in manifest and passes documented CKAN 2.11
+parameters verbatim (D-04). The deprecated ``fields`` parameter of ``tag_search``/``tag_autocomplete`` is
+unrepresentable on typed signatures and refused pre-dispatch on umbrella payloads (D-01, identical discipline to the
+dataset group). Vocabulary CRUD decodes the connector-declared vocabulary kind; translation batches cross the wire
+untouched.
 """
 
 from __future__ import annotations

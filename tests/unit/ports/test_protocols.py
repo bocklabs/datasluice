@@ -1,5 +1,3 @@
-"""Unit tests for port Protocol definitions — runtime-checkability and surface."""
-
 from __future__ import annotations
 
 from typing import Protocol

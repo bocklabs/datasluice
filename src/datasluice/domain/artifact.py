@@ -1,5 +1,3 @@
-"""Strict schema-v1 Artifact wire contracts."""
-
 from __future__ import annotations
 
 import math

@@ -60,7 +60,6 @@ def _require_mutation_permission(
     admin: bool = False,
 ) -> UDataCredential:
     """Require a resolved uData credential plus permission evidence before dispatch."""
-
     if not isinstance(resolved, UDataCredential):
         raise UnauthenticatedError(
             "Dataset mutations require an explicitly resolved uData API credential.",
@@ -851,12 +850,10 @@ def _enforce_mutation_policy(
 ) -> None:
     """Enforce the shared mutation policy contract for any mutating dispatch.
 
-    Every mutation requires an explicit confirmed policy. Destructive
-    transitions additionally require the destructive flag, an explicit
-    overwrite concurrency instruction, and no unsupported dry-run request
-    or concurrency token (the stock uData API supports neither).
-    Idempotency keys alone never authorize retries because the stock uData
-    API has no idempotency-key header support.
+    Every mutation requires an explicit confirmed policy. Destructive transitions additionally require the destructive
+    flag, an explicit overwrite concurrency instruction, and no unsupported dry-run request or concurrency token (the
+    stock uData API supports neither). Idempotency keys alone never authorize retries because the stock uData API has no
+    idempotency-key header support.
     """
 
     def _reject(message: str, safe_action: str) -> Never:

@@ -1,5 +1,3 @@
-"""Controlled uData evidence: docker command plumbing for evidence stack tests."""
-
 from __future__ import annotations
 
 import asyncio

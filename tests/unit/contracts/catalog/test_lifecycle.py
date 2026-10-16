@@ -1,5 +1,3 @@
-"""Lifecycle invariants for injected catalog executors and streams."""
-
 from __future__ import annotations
 
 import asyncio

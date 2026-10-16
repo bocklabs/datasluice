@@ -1,9 +1,3 @@
-"""Pinned OAuth and authentication route contract for stock uData 17.6.0.
-
-Expectations are derived from the independent upstream oracle
-``udata/api/oauth2.py`` at tag ``v17.6.0``, not from production helpers.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -267,8 +261,7 @@ def test_form_bodies_keep_their_declared_media_type() -> None:
 def test_oauth_error_returns_the_stock_missing_template_status() -> None:
     """The 17.6.0 image ships no api/oauth_error.html, so stock answers 500.
 
-    The typed surface exists to report that page, so the status must be returned
-    rather than raised past the model.
+    The typed surface exists to report that page, so the status must be returned rather than raised past the model.
     """
     router = html_sync_route_table(declared_routes(("GET", "/oauth/error", 500, None), site=SITE))
     with sync_client(router, CREDENTIAL) as client:

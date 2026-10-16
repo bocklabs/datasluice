@@ -1,5 +1,3 @@
-"""Exact wire, capability, receipt, and settlement coverage for the uData transfer family."""
-
 from __future__ import annotations
 
 import asyncio

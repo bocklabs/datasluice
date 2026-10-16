@@ -1,5 +1,3 @@
-"""Runtime cutover tests for explicit catalog construction."""
-
 from __future__ import annotations
 
 import inspect

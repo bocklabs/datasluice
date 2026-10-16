@@ -1,5 +1,3 @@
-"""Tests for public catalog connector certification."""
-
 from __future__ import annotations
 
 import importlib

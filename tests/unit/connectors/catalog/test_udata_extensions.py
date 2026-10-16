@@ -1,5 +1,3 @@
-"""Exact-wire, failure, and harmless capability-probe evidence for the uData extension family."""
-
 from __future__ import annotations
 
 import asyncio

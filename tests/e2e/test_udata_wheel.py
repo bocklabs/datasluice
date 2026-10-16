@@ -1,5 +1,3 @@
-"""Installed-artifact proof for the strict uData tracer slice."""
-
 from __future__ import annotations
 
 import json

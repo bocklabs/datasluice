@@ -1,5 +1,3 @@
-"""Contract tests for catalog connector extension metadata."""
-
 import pytest
 
 from datasluice.domain.catalog.extensions import (

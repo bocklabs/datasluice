@@ -1,10 +1,3 @@
-"""Unit tests for the SelectColumns transform.
-
-Covers subset projection, re-ordering, the actionable missing-column error
-(naming the missing column AND the available ones), and the fail-fast empty
-tuple guard at construction.
-"""
-
 from __future__ import annotations
 
 from typing import Any

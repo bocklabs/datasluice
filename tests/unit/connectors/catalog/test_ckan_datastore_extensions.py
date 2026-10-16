@@ -1,11 +1,3 @@
-"""Deterministic loopback coverage for the datastore and extension surfaces.
-
-Covers the deployment-gated sql-search id (D-02), destructive scoping of
-``datastore_delete`` versus record-scoped deletes, sysadmin config options,
-and the job/task-status family — plus the per-id classification agreement
-with the 03-05 probe mapper (Pitfall 5).
-"""
-
 from __future__ import annotations
 
 import asyncio

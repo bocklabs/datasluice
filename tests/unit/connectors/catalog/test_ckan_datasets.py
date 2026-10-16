@@ -1,5 +1,3 @@
-"""Deterministic loopback coverage for the exhaustive CKAN dataset action surface."""
-
 from __future__ import annotations
 
 import asyncio

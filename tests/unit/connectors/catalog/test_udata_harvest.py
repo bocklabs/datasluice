@@ -1,5 +1,3 @@
-"""Exact wire, SSRF, receipt, and budget coverage for the uData harvest family."""
-
 from __future__ import annotations
 
 import asyncio

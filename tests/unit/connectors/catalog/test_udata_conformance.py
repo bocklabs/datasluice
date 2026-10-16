@@ -1,5 +1,3 @@
-"""uData family conformance ledgers: every assigned COVERAGE row carries evidence."""
-
 from __future__ import annotations
 
 import asyncio

@@ -1,5 +1,3 @@
-"""Bounded uData upload failure behavior."""
-
 from __future__ import annotations
 
 import asyncio
@@ -87,10 +85,10 @@ class _CloseFailingSource(BytesIO):
 def test_mid_stream_deadline_exceeded_is_ambiguous_like_any_other_os_error() -> None:
     """A deadline exhaustion is an OSError, so it settles ambiguously like the byte ceiling.
 
-    ``MidStreamUploadError`` and ``UploadDeadlineExceededError`` both subclass ``OSError``, so the
-    settlement check must test the base class. Narrowing it to the connector-local subclass
-    would silently downgrade a bare transport ``OSError`` to ``failed`` after dispatch, which
-    claims the target is unchanged when bytes may already be on the wire.
+    ``MidStreamUploadError`` and ``UploadDeadlineExceededError`` both subclass ``OSError``, so the settlement check must
+    test the base class. Narrowing it to the connector-local subclass would silently downgrade a bare transport
+    ``OSError`` to ``failed`` after dispatch, which claims the target is unchanged when bytes may already be on the
+    wire.
     """
     from datasluice.connectors.catalog.udata.models.resources import (
         MidStreamUploadError,

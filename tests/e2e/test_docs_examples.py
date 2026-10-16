@@ -1,22 +1,3 @@
-"""Executable canonical documentation examples gate.
-
-Every Python fence in the canonical documentation must run against the
-installed package using deterministic fixtures only: canonical platform
-imports, pinned-profile fixture inspection, the reference-fake compliance
-run, and the retained direct-resource data plane. The former local-CKAN
-endpoint and removed-command execution is gone with the surfaces it
-documented.
-
-Data-plane example URLs are rebound to a fixture-owned local file before
-execution, and a socket guard proves the examples never contact external
-hosts or require credentials: reference fakes, pinned fixtures, and local
-files are the only inputs. ``docs/examples/dlt.md`` shows the Phase 3+
-caller-owned client pattern with an unbound placeholder, so it is scanned
-statically but not executed; ``tests/helpers/http_server.py`` remains the
-pattern for transport and lifecycle boundary tests, which this gate does
-not exercise.
-"""
-
 from __future__ import annotations
 
 import importlib

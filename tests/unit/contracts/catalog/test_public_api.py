@@ -1,5 +1,3 @@
-"""Public API stability tests for the catalog contract tracer."""
-
 from __future__ import annotations
 
 import inspect

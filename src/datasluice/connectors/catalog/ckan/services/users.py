@@ -1,12 +1,10 @@
 """Both-mode CKAN user projections with first-class API-token management (D-05).
 
-Authentication on CKAN is token-only: every privileged call rides the
-``Authorization`` header seam, and no cookie/session or legacy-key path exists
-anywhere in this module. ``api_token_create`` returns the reveal-only
-``CKANTokenResult`` wrapper so issued secrets disclose exclusively through an
-explicit accessor; list and revoke keep standard shaping. Privileged writes ride
-the declared profile plus the server's authorization responses, never synthesized
-capability claims.
+Authentication on CKAN is token-only: every privileged call rides the ``Authorization`` header seam, and no
+cookie/session or legacy-key path exists anywhere in this module. ``api_token_create`` returns the reveal-only
+``CKANTokenResult`` wrapper so issued secrets disclose exclusively through an explicit accessor; list and revoke keep
+standard shaping. Privileged writes ride the declared profile plus the server's authorization responses, never
+synthesized capability claims.
 """
 
 from __future__ import annotations
@@ -56,7 +54,10 @@ def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
 
 
 class SyncUsersService(_SyncGroupService):
-    """Synchronous user projection carrying twelve typed actions incl. the token trio."""
+    """Synchronous user projection carrying twelve typed actions incl.
+
+    the token trio.
+    """
 
     __slots__ = ()
 
@@ -165,7 +166,10 @@ class SyncUsersService(_SyncGroupService):
 
 
 class AsyncUsersService(_AsyncGroupService):
-    """Asynchronous user projection carrying twelve typed actions incl. the token trio."""
+    """Asynchronous user projection carrying twelve typed actions incl.
+
+    the token trio.
+    """
 
     __slots__ = ()
 

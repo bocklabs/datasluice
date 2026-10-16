@@ -1,5 +1,3 @@
-"""End-to-end tracer coverage for the checkpointed sync loop."""
-
 from __future__ import annotations
 
 from datasluice.data import DataPlaneResourceReader

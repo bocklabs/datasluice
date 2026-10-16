@@ -1,5 +1,3 @@
-"""Exact wire and safety coverage for the uData organization family."""
-
 from __future__ import annotations
 
 import asyncio
@@ -578,9 +576,9 @@ def test_organization_page_decoders_drop_the_next_cursor_without_a_next_page() -
 def test_organization_records_and_extras_redact_credentials_at_construction() -> None:
     """Retained organization payloads must be redacted before birth, not only on serialize.
 
-    NativeRecord/MappingRecord.to_dict() redacts, but .payload, repr() and the
-    OrganizationMutationResult.value path expose the retained mapping directly, so a
-    credential-shaped server field would otherwise leave the typed surface unredacted.
+    NativeRecord/MappingRecord.to_dict() redacts, but .payload, repr() and the OrganizationMutationResult.value path
+    expose the retained mapping directly, so a credential-shaped server field would otherwise leave the typed surface
+    unredacted.
     """
     organization = wire.parse_organization(
         {
@@ -665,10 +663,9 @@ def test_resource_reorder_schema_violation_reaches_the_typed_catalog_surface() -
 def test_preflight_upload_value_error_is_not_reported_as_ambiguous() -> None:
     """Only a bounded-source failure proves bytes reached the transport.
 
-    ResourceUploadInput.part() raises a plain ValueError before dispatch when the
-    source is reused or closed, so classifying every OSError/ValueError as
-    "ambiguous" recorded a successful-rejection audit trail for a write that never
-    left the client.
+    ResourceUploadInput.part() raises a plain ValueError before dispatch when the source is reused or closed, so
+    classifying every OSError/ValueError as "ambiguous" recorded a successful-rejection audit trail for a write that
+    never left the client.
     """
     transport = _Router(_routes({}))
     client = SyncUDataClient(

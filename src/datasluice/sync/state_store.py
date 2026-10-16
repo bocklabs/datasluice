@@ -1,8 +1,7 @@
 """Incremental sync state stores: file-backed and in-memory ``StateStore`` impls.
 
-The :class:`datasluice.ports.state_store.StateStore` Protocol is the
-contract; this module provides its two concrete implementations. Both stores
-are dep-free at import time (stdlib + fsspec); pyarrow/dlt are never imported here.
+The :class:`datasluice.ports.state_store.StateStore` Protocol is the contract; this module provides its two concrete
+implementations. Both stores are dep-free at import time (stdlib + fsspec); pyarrow/dlt are never imported here.
 """
 
 from __future__ import annotations
@@ -299,9 +298,8 @@ class FileStateStore:
     def read_version(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key*, or ``None`` if absent (:class:`AtomicStateStore`).
 
-        Alias for :meth:`read_raw`. Callers pass the returned bytes back into
-        :meth:`conditional_put` as ``expected_prior`` so a concurrent writer's
-        intervening commit is detected instead of silently overwritten.
+        Alias for :meth:`read_raw`. Callers pass the returned bytes back into :meth:`conditional_put` as
+        ``expected_prior`` so a concurrent writer's intervening commit is detected instead of silently overwritten.
         """
         return self.read_raw(key)
 
@@ -607,9 +605,8 @@ def _validate_completed_artifact(artifact: Any) -> None:
 class InMemoryStateStore:
     """Ephemeral in-process :class:`StateStore` backed by a plain dict.
 
-    State dies with the process — the canonical default for tests and
-    dry-runs. Implements the Protocol exactly (get/put/delete) with no
-    persistence obligation.
+    State dies with the process — the canonical default for tests and dry-runs. Implements the Protocol exactly
+    (get/put/delete) with no persistence obligation.
     """
 
     def __init__(self) -> None:

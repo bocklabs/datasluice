@@ -577,9 +577,8 @@ def _preferred_watermark(headers: Any) -> str | None:
 def _compute_source_version(resource: Any) -> str | None:
     """Return a SHA-256 hex digest of the raw source bytes for checkpoint identity.
 
-    The digest is computed once per resource per pass and carried through every
-    batch checkpoint so resume can detect a source replacement between passes.
-    Returns ``None`` for access kinds that are not checkpointed (HTTP).
+    The digest is computed once per resource per pass and carried through every batch checkpoint so resume can detect a
+    source replacement between passes. Returns ``None`` for access kinds that are not checkpointed (HTTP).
     """
     import hashlib
 

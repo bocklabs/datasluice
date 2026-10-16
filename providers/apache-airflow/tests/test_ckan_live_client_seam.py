@@ -1,9 +1,3 @@
-"""Seam contracts for the provider hook composing real dual-surface CKAN live clients.
-
-Runs inside the wheel-only candidate venv built by ``run_candidate.py`` so every
-assertion reflects the installed-wheel experience Airflow will encounter.
-"""
-
 from __future__ import annotations
 
 import json
@@ -161,7 +155,7 @@ def test_ckan_token_field_mapping_is_locked() -> None:
 
 
 def test_non_ckan_platforms_keep_the_deferred_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """udata connections still build the deferred facade client instead of a live client."""
+    """Udata connections still build the deferred facade client instead of a live client."""
     hook = _hook_with(monkeypatch, Connection({"platform": "udata", "api_key": "loopback-key"}))
 
     client = hook.get_conn()

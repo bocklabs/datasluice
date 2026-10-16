@@ -1,5 +1,3 @@
-"""Probe-engine discovery tests for canonical catalog connectors."""
-
 from __future__ import annotations
 
 import inspect

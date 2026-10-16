@@ -1,5 +1,3 @@
-"""Unit tests for the six new frozen domain models added."""
-
 from __future__ import annotations
 
 import dataclasses

@@ -1,19 +1,3 @@
-"""ContentCache behavior tests.
-
-Covers:
-- CachePort Protocol conformance
-- put/get/delete round-trip + missing-key semantics
-- SHA-256 hexdigest keying
-- ETag/Last-Modified sidecar round-trip
-- Readers skip status='writing' rows
-- Lazy sweep removes stale 'writing' rows + orphaned content files
-- concurrency matrix:
-    * N=10 threads, distinct keys -> all puts succeed, all gets correct
-    * N=10 threads, SAME key -> exactly one payload wins, no corruption
-    * N=5 writers + N=5 readers -> never observe torn reads
-    * Writer crash mid-two-phase -> metadata rolled back, DownloadError raised
-"""
-
 from __future__ import annotations
 
 import concurrent.futures

@@ -1,5 +1,3 @@
-"""Conditional validation and headerless fallback behavior."""
-
 from __future__ import annotations
 
 from pathlib import Path

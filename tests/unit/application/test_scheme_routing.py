@@ -1,5 +1,3 @@
-"""Tests for DirectResourceLocator scheme routing in _resolve_direct_resource."""
-
 from __future__ import annotations
 
 import pytest

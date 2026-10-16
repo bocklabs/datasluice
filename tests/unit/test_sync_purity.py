@@ -1,5 +1,3 @@
-"""Bare-import guards for the dep-free datasluice.sync package core."""
-
 from __future__ import annotations
 
 import importlib

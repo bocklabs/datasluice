@@ -1,5 +1,3 @@
-"""Tests for exhaustive catalog contract case execution."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast

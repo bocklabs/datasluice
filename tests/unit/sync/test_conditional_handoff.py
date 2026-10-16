@@ -1,5 +1,3 @@
-"""Conditional response handoff behavior for resource readers."""
-
 from __future__ import annotations
 
 import importlib

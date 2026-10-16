@@ -1,5 +1,3 @@
-"""Contract tests for normalized catalog client Protocols."""
-
 from __future__ import annotations
 
 import inspect

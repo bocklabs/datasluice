@@ -1,5 +1,3 @@
-"""Tests for explicit catalog-backed dlt extraction and state mirroring."""
-
 from __future__ import annotations
 
 import importlib

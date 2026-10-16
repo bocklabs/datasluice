@@ -1,5 +1,3 @@
-"""Independent loopback transports used only by catalog contract tests."""
-
 from __future__ import annotations
 
 import asyncio

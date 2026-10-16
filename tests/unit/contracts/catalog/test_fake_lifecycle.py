@@ -1,5 +1,3 @@
-"""Lifecycle tests for independent catalog loopback test transports."""
-
 from __future__ import annotations
 
 import asyncio

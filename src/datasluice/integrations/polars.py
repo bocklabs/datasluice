@@ -1,9 +1,7 @@
 """to_polars terminal: convert a BatchStream to a polars DataFrame.
 
-Lazy-imports polars; zero-copy Arrow interop via the :func:`to_arrow` substrate
-. The v0.1.0 polars read path was fully
-removed; rebuilds it over the shared
-:class:`datasluice.data.BatchStream`.
+Lazy-imports polars; zero-copy Arrow interop via the :func:`to_arrow` substrate . The v0.1.0 polars read path was fully
+removed; rebuilds it over the shared :class:`datasluice.data.BatchStream`.
 """
 
 from __future__ import annotations

@@ -1,5 +1,3 @@
-"""Exact-wire and safety evidence for the uData root-profile family."""
-
 from __future__ import annotations
 
 import asyncio
@@ -522,10 +520,9 @@ def test_controlled_client_accepts_a_stack_running_the_pinned_udata_version() ->
 def test_controlled_service_image_identity_skips_the_repo_digest_for_a_locally_built_image() -> None:
     """A locally built image has no RepoDigests, so no repository digest may be required.
 
-    The image ID changes on every `docker compose up --build`, so pinning it made the
-    controlled stack reject its own builds, and the pinned local image never appears in
-    docker's RepoDigests list at all. The Dockerfile/compose digests plus the running
-    version and the in-container source commit carry the source identity instead.
+    The image ID changes on every `docker compose up --build`, so pinning it made the controlled stack reject its own
+    builds, and the pinned local image never appears in docker's RepoDigests list at all. The Dockerfile/compose digests
+    plus the running version and the in-container source commit carry the source identity instead.
     """
     container_id = "a" * 64
     repository = "udata-evidence-udata"
@@ -1232,8 +1229,8 @@ def _controlled_process_setup(
 def _controlled_stack_fixture(stack: ExitStack, transport: RouterTransport, udata_version: str = "17.6.0") -> None:
     """Bind the docker commands, stack nonce, and controlled probe behind one stack.
 
-    The httpx client is replaced so the controlled transport's site probe and any
-    request through it resolve against the router instead of a live deployment.
+    The httpx client is replaced so the controlled transport's site probe and any request through it resolve against the
+    router instead of a live deployment.
     """
     sync_transport = cast("RouterTransport", transport)
     stack.enter_context(patch.dict(os.environ, {"UDATA_EVIDENCE_STACK_NONCE": "unit-test-stack"}))

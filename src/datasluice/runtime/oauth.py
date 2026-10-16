@@ -499,6 +499,7 @@ class RefreshingCredentialProvider:
 
     async def resolve_async(self) -> OAuthCredential:
         """Asynchronously return the current credential, refreshing only on the async transport."""
+
         async with self._async_lock_for():
             with self._sync_lock:
                 if self._needs_refresh():

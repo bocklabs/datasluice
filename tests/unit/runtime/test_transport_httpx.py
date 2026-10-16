@@ -1,5 +1,3 @@
-"""Optional httpx catalog transport tests."""
-
 from __future__ import annotations
 
 import asyncio

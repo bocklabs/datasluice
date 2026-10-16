@@ -1,15 +1,3 @@
-"""Unit tests for :class:`FsspecStorage`.
-
-Closes by asserting ``write`` returns a ``str`` URI (never a
-``pathlib.Path``), and by asserting the adapter structurally
-satisfies :class:`datasluice.ports.storage.StoragePort`.
-
-The implementation module is resolved via ``importlib.import_module`` (rather
-than a static ``import``) so the RED commit can land under this repo's
-full-suite pre-commit hook: until the GREEN step ships, the whole module
-skips cleanly instead of erroring at collection.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -51,7 +39,7 @@ def test_fsspec_storage_satisfies_storage_port_protocol() -> None:
 
 
 def test_write_returns_uri() -> None:
-    """write return value starts with the backend protocol prefix."""
+    """Write return value starts with the backend protocol prefix."""
     storage = _memory_storage()
     uri = storage.write(b"data", "file.txt")
     assert isinstance(uri, str)
@@ -59,7 +47,7 @@ def test_write_returns_uri() -> None:
 
 
 def test_round_trip() -> None:
-    """write -> read round-trips the bytes; exists flips False -> True."""
+    """Write -> read round-trips the bytes; exists flips False -> True."""
     storage = _memory_storage()
     assert not storage.exists("rt.txt")
     storage.write(b"content", "rt.txt")
@@ -95,7 +83,7 @@ def test_absolute_uri_passthrough() -> None:
 
 
 def test_init_signature_storage_port_compat() -> None:
-    """write signature matches the StoragePort contract: (self, data: bytes, path: str) -> str."""
+    """Write signature matches the StoragePort contract: (self, data: bytes, path: str) -> str."""
     sig = inspect.signature(FsspecStorage.write)
     params = list(sig.parameters.keys())
     assert params == ["self", "data", "path"]

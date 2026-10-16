@@ -1,5 +1,3 @@
-"""HTTP streaming correctness and incremental consumption regressions."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

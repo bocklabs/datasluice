@@ -1,15 +1,3 @@
-"""Unit tests for :func:`unify_batches` — schema unification via ``pa.concat_tables``.
-
-Covers the documented promotion lattice: int→float widening, missing-column
-null-fill, string+binary→binary,
-and the tz-aware vs tz-naive timestamp hard-fail case.
-
-Follows the established RED→GREEN TDD pattern: the module skips
-cleanly at collection time while ``unify_batches`` is not yet exported from
-``datasluice.data.schema`` (RED), then runs and passes once GREEN lands
-the implementation.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -34,7 +22,7 @@ if unify_batches is None:
 
 
 def test_int_to_float_widening() -> None:
-    """int64 + float64 columns unify to float64 with values preserved."""
+    """Int64 + float64 columns unify to float64 with values preserved."""
     import pyarrow as pa
 
     b1 = pa.RecordBatch.from_arrays([pa.array([1, 2, 3], type=pa.int64())], names=["v"])
@@ -64,7 +52,7 @@ def test_missing_column_null_fills() -> None:
 
 
 def test_string_plus_binary_unifies_to_binary() -> None:
-    """string + binary columns unify to binary."""
+    """String + binary columns unify to binary."""
     import pyarrow as pa
 
     b1 = pa.RecordBatch.from_arrays([pa.array(["hello"], type=pa.string())], names=["s"])
@@ -75,7 +63,7 @@ def test_string_plus_binary_unifies_to_binary() -> None:
 
 
 def test_tz_mismatch_raises() -> None:
-    """tz-aware vs tz-naive timestamp columns cannot unify — SchemaUnificationError fires."""
+    """Tz-aware vs tz-naive timestamp columns cannot unify — SchemaUnificationError fires."""
     import pyarrow as pa
 
     from datasluice.exceptions import SchemaUnificationError

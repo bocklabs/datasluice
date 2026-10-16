@@ -1,5 +1,3 @@
-"""Contract tests for the independent uData 17.6 preflight tooling."""
-
 from __future__ import annotations
 
 import importlib.util

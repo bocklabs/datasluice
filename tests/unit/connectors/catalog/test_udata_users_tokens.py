@@ -1,5 +1,3 @@
-"""Pinned user and token service contract."""
-
 from __future__ import annotations
 
 import asyncio

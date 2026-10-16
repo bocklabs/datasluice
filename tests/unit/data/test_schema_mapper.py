@@ -1,12 +1,3 @@
-"""Unit tests for :func:`to_arrow_schema` — domain Schema to pa.Schema mapper.
-
-Covers portal type-string → Arrow type mapping, unknown-type defaulting,
-nullable propagation, and empty-schema handling. Follows the
-RED→GREEN TDD pattern: the module skips cleanly at collection time while
-``datasluice.data.schema`` does not exist, then runs and passes once
-GREEN lands the mapper.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -87,7 +78,6 @@ def test_unknown_type_defaults_to_string() -> None:
 
 def test_nullable_propagation() -> None:
     """Columns with nullable=False produce non-nullable pa fields."""
-
     schema = _make_schema(
         [
             {"name": "req", "type": "integer", "nullable": False},

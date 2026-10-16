@@ -41,9 +41,8 @@ _PLATFORMS = frozenset(platform.value for platform in _TOKEN_FIELDS)
 class DatasluiceHook(BaseHook):
     """Build a sync catalog client from connection-defined explicit credentials.
 
-    Platform ``ckan`` connections compose real dual-surface CKAN live clients
-    from the connection origin; other platforms build the deferred runtime
-    client pending their canonical executors.
+    Platform ``ckan`` connections compose real dual-surface CKAN live clients from the connection origin; other
+    platforms build the deferred runtime client pending their canonical executors.
     """
 
     conn_name_attr = "airflow_conn_id"

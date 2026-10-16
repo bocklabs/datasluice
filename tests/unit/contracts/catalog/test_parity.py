@@ -1,5 +1,3 @@
-"""Parity checks for catalog-native Protocol families."""
-
 from __future__ import annotations
 
 import inspect

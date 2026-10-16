@@ -1,15 +1,12 @@
 """Both-mode CKAN relationship, follow, and activity projections across the v2 ids.
 
-Relationships and follows (31 actions) ride the core
-``relationships-follows`` id while the ckanext.activity tier (13 actions) owns
-its optional ``activity`` id, so the two families resolve capability evidence
-independently (the v2 profile correction from 03-02). Every typed method
-declares its owning v2 OperationId from the checked-in manifest and passes
-documented CKAN 2.11 parameters verbatim (D-04). Follower counts and
-``am_following_*`` booleans shape to scalar ValueRecord envelopes while
-follower/followee lists decode user-kind records — genuine scalar typing per
-the Plan 08 review. Mutations return CKANMutationResult through the shared
-receipt seam; anonymous count reads stay public per platform documentation.
+Relationships and follows (31 actions) ride the core ``relationships-follows`` id while the ckanext.activity tier (13
+actions) owns its optional ``activity`` id, so the two families resolve capability evidence independently (the v2
+profile correction from 03-02). Every typed method declares its owning v2 OperationId from the checked-in manifest and
+passes documented CKAN 2.11 parameters verbatim (D-04). Follower counts and ``am_following_*`` booleans shape to scalar
+ValueRecord envelopes while follower/followee lists decode user-kind records — genuine scalar typing per the Plan 08
+review. Mutations return CKANMutationResult through the shared receipt seam; anonymous count reads stay public per
+platform documentation.
 """
 
 from __future__ import annotations

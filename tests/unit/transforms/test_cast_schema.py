@@ -1,10 +1,3 @@
-"""Unit tests for the CastSchema transform.
-
-Covers a safe widening cast, the strict truncating-cast failure (raises
-``TransformError`` wrapping ``ArrowInvalid`` — no silent data loss, mitigates
-), and an identity safe cast.
-"""
-
 from __future__ import annotations
 
 from typing import Any

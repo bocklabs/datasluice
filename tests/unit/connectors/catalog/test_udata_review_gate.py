@@ -1,5 +1,3 @@
-"""Fail-closed tests for SHA-bound independent uData review evidence."""
-
 from __future__ import annotations
 
 import importlib.util

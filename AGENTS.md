@@ -55,7 +55,7 @@ Pre-commit includes **local hooks** for `mypy` and `pytest` (see `.pre-commit-co
 - **PEP 695 type params**: use `def func[T](...)` syntax, not `TypeVar`. The project targets Python 3.13+.
 - **Typer commands**: use `Annotated[str, typer.Option(...)]` pattern, not `param: str = typer.Option(...)`. The B008 rule (flake8-bugbear) rejects function calls in argument defaults.
 - **No comments** in code unless explicitly requested.
-- **Docstrings**: Google style. First line is a summary. A docstring documents the object; it is never a place to park an explanation of the implementation, a fix rationale, or a restatement of the line below it. That is comment duty, and comments are off by default.
+- **Docstrings**: Google style. Add one only for public behavior, a non-obvious contract, or context callers cannot infer from the signature. Test modules need no module docstring. Omit other module docstrings unless they state a module-level contract or package purpose. Keep the first line concise. Add `Args`, `Returns`, and `Raises` sections only when they add information. Remove boilerplate, implementation narration, fix rationale, and restatements of code. No docstring is better than a redundant one.
 
 ## Docs
 

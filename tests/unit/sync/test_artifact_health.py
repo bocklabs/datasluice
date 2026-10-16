@@ -1,5 +1,3 @@
-"""Destination health verification for idempotent sync outcomes."""
-
 from __future__ import annotations
 
 from typing import cast

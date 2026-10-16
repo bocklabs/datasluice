@@ -47,10 +47,9 @@ def _default_budget() -> TimeBudget:
 class DataSluiceSession:
     """Compose explicitly injected catalog-runtime dependencies and safe defaults.
 
-    The session owns every transport it constructs and remains their sole
-    closer; clients created through :meth:`sync_client` and
-    :meth:`async_client` borrow the shared transports without closing them.
-    Injected transports stay caller-owned and are never closed by the session.
+    The session owns every transport it constructs and remains their sole closer; clients created through
+    :meth:`sync_client` and :meth:`async_client` borrow the shared transports without closing them. Injected transports
+    stay caller-owned and are never closed by the session.
     """
 
     def __init__(
@@ -102,8 +101,8 @@ class DataSluiceSession:
     def sync_client(self, profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile) -> SyncCatalogClient:
         """Create one synchronous catalog client over this session's pipeline.
 
-        The client borrows the session-owned transport and never closes it;
-        the session (or its owning facade) remains the sole closer.
+        The client borrows the session-owned transport and never closes it; the session (or its owning facade) remains
+        the sole closer.
         """
         return SyncCatalogClient(
             self._transport,
@@ -118,9 +117,8 @@ class DataSluiceSession:
     def async_client(self, profile: DeclaredCapabilityProfile | EffectiveCapabilityProfile) -> AsyncCatalogClient:
         """Create one asynchronous catalog client over this session's pipeline.
 
-        The lazily-created default async transport is cached on the session and
-        reused across calls; ownership mirrors the synchronous path — the
-        session (or its owning facade) remains the sole closer.
+        The lazily-created default async transport is cached on the session and reused across calls; ownership mirrors
+        the synchronous path — the session (or its owning facade) remains the sole closer.
         """
         if self._async_transport is None:
             self._async_transport = create_default_async_transport(tls_policy=self.tls_policy, budget=self.budget)

@@ -1,11 +1,3 @@
-"""Session injection tests for non-catalog ownership and canonical catalog handoff.
-
-Covers the ``transport=``, ``credentials=``, ``storage=``, ``cache=``, and
-``state_store=`` injectables the session owns directly, plus the canonical
-``open_catalog`` handoff where a caller-selected factory receives one exact
-:class:`CatalogConnectorContext`.
-"""
-
 from __future__ import annotations
 
 import asyncio

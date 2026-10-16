@@ -1,5 +1,3 @@
-"""Tests for catalog output redaction primitives, routing, and log filtering."""
-
 from __future__ import annotations
 
 import hashlib

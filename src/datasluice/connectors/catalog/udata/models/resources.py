@@ -58,10 +58,9 @@ class MidStreamUploadError(OSError):
 class UploadDeadlineExceededError(MidStreamUploadError):
     """A bounded upload source exhausted its streaming time budget mid-request.
 
-    The byte ceiling alone does not bound how long a source may hold the
-    request open, so the streaming boundary is also time-bounded. The typed
-    budget error is retained as the cause so budget accounting survives the
-    translation into the mid-stream ``OSError`` family.
+    The byte ceiling alone does not bound how long a source may hold the request open, so the streaming boundary is also
+    time-bounded. The typed budget error is retained as the cause so budget accounting survives the translation into the
+    mid-stream ``OSError`` family.
     """
 
     def __init__(self, message: str, *, budget_seconds: float, elapsed_seconds: float) -> None:
@@ -172,9 +171,8 @@ class ResourceUpdateInput:
 class ResourceUploadInput:
     """One bounded, single-use upload source.
 
-    ``max_upload_bytes`` bounds how many bytes the source may ever serve and
-    ``budget`` bounds how long serving them may take, so a source that drips
-    fewer bytes than its ceiling still cannot hold a request open forever.
+    ``max_upload_bytes`` bounds how many bytes the source may ever serve and ``budget`` bounds how long serving them may
+    take, so a source that drips fewer bytes than its ceiling still cannot hold a request open forever.
     """
 
     source: BinaryIO = field(repr=False)

@@ -1,5 +1,3 @@
-"""Offline loopback coverage for the runnable CKAN drift-read checker."""
-
 from __future__ import annotations
 
 import inspect

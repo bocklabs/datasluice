@@ -1,10 +1,3 @@
-"""Shared fixtures for data-plane unit tests.
-
-Provides synthetic row generators and a
-small pa.Schema helper for test convenience. The HTTP streaming server
-fixture lands in 04-03 which extends ``tests/helpers/http_server.py``.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -21,8 +14,8 @@ if TYPE_CHECKING:
 def synthetic_csv_rows() -> Iterator[str]:
     """Yield rows of CSV-formatted text for streaming/memory tests.
 
-    Returns a generator of ``N`` rows (default 100). Each row is
-    ``id,name,value\\n``. Deterministic and in-process — no fixture files.
+    Returns a generator of ``N`` rows (default 100). Each row is ``id,name,value\\n``. Deterministic and in-process — no
+    fixture files.
     """
 
     def _generate(n: int = 100) -> Iterator[str]:
@@ -36,11 +29,9 @@ def synthetic_csv_rows() -> Iterator[str]:
 def synthetic_json_rows() -> Iterator[str]:
     """Yield JSONL lines for streaming/memory tests.
 
-    Returns a generator of ``N`` lines (default 100). Each line is a JSON
-    object ``{"id": i, "name": "item_i", "value": i * 1.5}``. Deterministic
-    and in-process — no fixture files.
+    Returns a generator of ``N`` lines (default 100). Each line is a JSON object ``{"id": i, "name": "item_i", "value":
+    i * 1.5}``. Deterministic and in-process — no fixture files.
     """
-
     import json
 
     def _generate(n: int = 100) -> Iterator[str]:

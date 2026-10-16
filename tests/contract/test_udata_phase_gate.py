@@ -1,5 +1,3 @@
-"""Known-bad discrimination and contract coverage for the uData phase gate."""
-
 from __future__ import annotations
 
 import json

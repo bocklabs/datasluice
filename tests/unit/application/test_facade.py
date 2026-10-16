@@ -1,10 +1,3 @@
-"""Application facade tests for direct data-plane work and explicit catalog composition.
-
-The facade exposes direct resource access through caller-owned readers and
-canonical catalog construction through an explicit
-``Callable[[CatalogConnectorContext], T]`` factory handoff only.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast

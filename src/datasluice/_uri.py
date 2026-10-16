@@ -1,13 +1,10 @@
 """URI display sanitizer: redact userinfo and sensitive query values.
 
-Query-position API keys, bearer tokens, signed-URL signatures, and
-``user:password@`` userinfo routinely end up embedded inside URI strings
-that flow into log records and exception messages. The package
-:class:`datasluice.logging.RedactingFilter` only inspects named dict
-keys, so it cannot redact a secret buried inside a positional URL string.
-This module provides :func:`sanitize_uri` for every call site that needs
-a URI for human-facing display. The unsanitized URI is still used for
-actual I/O.
+Query-position API keys, bearer tokens, signed-URL signatures, and ``user:password@`` userinfo routinely end up embedded
+inside URI strings that flow into log records and exception messages. The package
+:class:`datasluice.logging.RedactingFilter` only inspects named dict keys, so it cannot redact a secret buried inside a
+positional URL string. This module provides :func:`sanitize_uri` for every call site that needs a URI for human-facing
+display. The unsanitized URI is still used for actual I/O.
 """
 
 from __future__ import annotations
@@ -74,15 +71,13 @@ def _redacted_query(query: str) -> str:
 def sanitize_uri(uri: str) -> str:
     """Return *uri* with userinfo and sensitive query values redacted for safe display.
 
-    Strips ``user:password@`` from the netloc (keeping host and port) and
-    replaces the value of every sensitive query parameter (``api_key``,
-    ``token``, ``signature``, …) with ``"***"``. The returned value is
-    suitable only for logs, exception text, and other human-facing display;
-    never reuse it for actual I/O, because the redaction discards
+    Strips ``user:password@`` from the netloc (keeping host and port) and replaces the value of every sensitive query
+    parameter (``api_key``, ``token``, ``signature``, …) with ``"***"``. The returned value is suitable only for logs,
+    exception text, and other human-facing display; never reuse it for actual I/O, because the redaction discards
     credentials the destination filesystem still needs.
 
-    Strings without a scheme are returned unchanged so this helper is safe to
-    call on path-like state keys, bare paths, or opaque identifiers.
+    Strings without a scheme are returned unchanged so this helper is safe to call on path-like state keys, bare paths,
+    or opaque identifiers.
     """
     try:
         parts = urlsplit(uri)
@@ -96,7 +91,10 @@ def sanitize_uri(uri: str) -> str:
 
 
 def validate_http_target(value: object, *, allow_private: bool = False, resolve: bool = False) -> str:
-    """Validate HTTP syntax and target locality. Set ``resolve=True`` to check DNS answers."""
+    """Validate HTTP syntax and target locality.
+
+    Set ``resolve=True`` to check DNS answers.
+    """
     if not isinstance(value, str) or not value:
         raise ValueError("missing")
     if len(value) > 2048:
@@ -110,7 +108,10 @@ def validate_http_target(value: object, *, allow_private: bool = False, resolve:
 
 
 def _http_target_host(value: str) -> str:
-    """Return the validated host. Reject an invalid scheme, userinfo, port, or host."""
+    """Return the validated host.
+
+    Reject an invalid scheme, userinfo, port, or host.
+    """
     try:
         parsed = urlsplit(value)
         host = parsed.hostname

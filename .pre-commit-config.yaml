@@ -22,6 +22,14 @@ repos:
       - id: debug-statements
       - id: mixed-line-ending
         args: ["--fix=lf"]
+
+  - repo: https://github.com/PyCQA/docformatter
+    rev: v1.7.8
+    hooks:
+      - id: docformatter
+        args: [--in-place, --wrap-summaries=120, --wrap-descriptions=120]
+        exclude: ^(src/datasluice/connectors/catalog/(ckan|udata)/drift\.py|src/datasluice/contracts/catalog/native/ckan\.py|src/datasluice/runtime/credentials/aws\.py)$  # Ruff requires two blank lines before the next module-level type alias.
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.13.2
     hooks:

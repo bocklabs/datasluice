@@ -1,13 +1,3 @@
-"""Canonical resource identity proofs.
-
-The portal-controlled ``resource.id`` is no longer interpolated verbatim into
-fsspec paths or used as the entire StateStore key. Every artifact path and
-state key now derives from a SHA-256 canonical identity scoped by URL origin
-plus ``resource.id`` so traversal-shaped ids cannot escape the destination
-directory and equal ids across portals or datasets cannot alias artifacts or
-state.
-"""
-
 from __future__ import annotations
 
 from typing import Any

@@ -1,11 +1,9 @@
 """CKAN filestore projections routing upload-and-replacement semantics onto resource paths.
 
-The CKAN FileStore defines zero dedicated Action API endpoints: uploads and
-resource file replacement ride the multipart ``upload`` parameter of the
-documented resource_create / resource_update / resource_patch actions. This
-façade exists so callers can express intent semantically while every wire call
-routes through the manifest-owned resource entries — no filestore group action
-is or will be registered in the checked-in action manifest.
+The CKAN FileStore defines zero dedicated Action API endpoints: uploads and resource file replacement ride the multipart
+``upload`` parameter of the documented resource_create / resource_update / resource_patch actions. This façade exists so
+callers can express intent semantically while every wire call routes through the manifest-owned resource entries — no
+filestore group action is or will be registered in the checked-in action manifest.
 """
 
 from __future__ import annotations

@@ -1,5 +1,3 @@
-"""Two-pass checkpoint and resume behavior under a deterministic crash."""
-
 from __future__ import annotations
 
 import importlib

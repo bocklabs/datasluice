@@ -1,5 +1,3 @@
-"""Deterministic loopback coverage for the CKAN resource surface and bounded uploads."""
-
 from __future__ import annotations
 
 import asyncio

@@ -1,12 +1,3 @@
-"""Installed-wheel end-to-end contracts for the retained direct-resource CLI.
-
-Builds the datasluice wheel once per session, installs it into an isolated
-venv, and runs the ``datasluice`` console script against local deterministic
-fixtures — never the repository checkout and never live portals. Only the
-retained direct-resource commands (scan, open, materialize) are exercised;
-former portal-era commands must be absent, not redirected.
-"""
-
 from __future__ import annotations
 
 import json

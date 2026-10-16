@@ -1,18 +1,3 @@
-"""Documentation guard for the canonical connector clean break.
-
-The published documentation must teach only the canonical explicit
-connector contract: platform packages under
-``datasluice.connectors.catalog``, the public contract suite in
-``datasluice.contracts.catalog``, and the retained direct-resource data
-plane. Any documented route to removed modules, symbols, portal types,
-URL-driven facade construction, or deleted CLI commands fails this gate.
-Removed identifiers stay legal only inside this file, which defines the
-negative audit, and inside the explicit per-file allowlist below.
-
-Any detected violation fails module collection, so a documentation
-regression can never surface as a green CI run with skipped gates.
-"""
-
 from __future__ import annotations
 
 import re

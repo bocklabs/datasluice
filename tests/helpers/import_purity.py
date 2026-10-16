@@ -35,8 +35,7 @@ def assert_import_pulls_no_distributions(targets: str | tuple[str, ...], forbidd
 def assert_import_pulls_no_modules(targets: str | tuple[str, ...], forbidden: tuple[str, ...]) -> None:
     """Assert importing ``targets`` loads no module equal to or under ``forbidden``.
 
-    Matches on the full module path, so naming a package also covers every one
-    of its submodules.
+    Matches on the full module path, so naming a package also covers every one of its submodules.
     """
     resolved = (targets,) if isinstance(targets, str) else targets
     result = _run_probe(resolved, forbidden, "module")

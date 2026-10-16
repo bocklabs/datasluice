@@ -1,5 +1,3 @@
-"""Tests for session-level incremental sync composition."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

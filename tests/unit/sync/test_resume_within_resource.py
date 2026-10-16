@@ -1,5 +1,3 @@
-"""Within-resource checkpoint and production Parquet continuation behavior."""
-
 from __future__ import annotations
 
 import hashlib

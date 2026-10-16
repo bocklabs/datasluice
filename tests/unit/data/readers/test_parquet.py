@@ -1,9 +1,3 @@
-"""Unit tests for the streaming Parquet reader.
-
-Covers both seekable (BytesIO) and non-seekable (IterableBytesIO) paths —
-Non-seekable sources are spooled to temporary disk because footers require a seek.
-"""
-
 from __future__ import annotations
 
 import importlib

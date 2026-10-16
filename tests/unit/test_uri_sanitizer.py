@@ -1,5 +1,3 @@
-"""Tests for the URI display sanitizer."""
-
 from __future__ import annotations
 
 from datasluice._uri import sanitize_uri

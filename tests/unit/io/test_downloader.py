@@ -1,5 +1,3 @@
-"""Downloader transport-boundary tests."""
-
 from __future__ import annotations
 
 import socket

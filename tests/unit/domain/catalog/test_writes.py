@@ -1,5 +1,3 @@
-"""Tests for catalog create, patch, and mutation receipt values."""
-
 from __future__ import annotations
 
 import dataclasses

@@ -185,10 +185,9 @@ class BatchStream:
     def __arrow_c_stream__(self, requested_schema: Any = None) -> Any:
         """Return a PyCapsule for zero-copy Arrow interop (terminals).
 
-        Delegates to the wrapped reader's ``__arrow_c_stream__`` when present
-        (``pa.RecordBatchReader`` implements it). For bare iterators, builds the
-        ``RecordBatchReader`` on top of this stream's batch generator so batches
-        are still pulled lazily (avoiding an eager full materialization).
+        Delegates to the wrapped reader's ``__arrow_c_stream__`` when present (``pa.RecordBatchReader`` implements it).
+        For bare iterators, builds the ``RecordBatchReader`` on top of this stream's batch generator so batches are
+        still pulled lazily (avoiding an eager full materialization).
         """
         import pyarrow as pa
 

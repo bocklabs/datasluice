@@ -259,10 +259,9 @@ def _forwarded_parameters(function: Def, callee: Def, forwarded: set[str], own: 
 def _forwarded_method_parameters(functions: Mapping[str, Def], method_parameters: dict[str, set[str]]) -> bool:
     """Mark parameters a helper forwards into another helper's method-name position.
 
-    A wrapper such as ``_user_call(run, token, name, *args)`` never calls ``getattr``
-    itself; it forwards ``name`` to ``_typed_call``, which does. Without this the
-    outer call site never seeds the binding and every wrapped method reads as
-    unexecuted.
+    A wrapper such as ``_user_call(run, token, name, *args)`` never calls ``getattr`` itself; it forwards ``name`` to
+    ``_typed_call``, which does. Without this the outer call site never seeds the binding and every wrapped method reads
+    as unexecuted.
     """
     changed = False
     for name, function in functions.items():

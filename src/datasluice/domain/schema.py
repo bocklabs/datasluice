@@ -1,5 +1,3 @@
-"""Schema model describing the column-level shape of a resource."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

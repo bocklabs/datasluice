@@ -71,9 +71,8 @@ class SyncTopicsService(SyncCatalogService):
     def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
         """Run one guarded topic mutation, requiring the admin role for the featured routes.
 
-        The pinned ``TopicFeaturedAPI`` guards both transitions with
-        ``@apiv2.secure(admin_permission)``, so that role is part of the
-        pre-dispatch evidence rather than something the deployment decides later.
+        The pinned ``TopicFeaturedAPI`` guards both transitions with ``@apiv2.secure(admin_permission)``, so that role
+        is part of the pre-dispatch evidence rather than something the deployment decides later.
         """
         return _dataset_mutate(
             self._client._dataset_call,

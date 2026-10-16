@@ -358,9 +358,8 @@ def _introducing_commit(family: str, revisions: list[str]) -> str | None:
 def test_each_controlled_record_digests_the_files_at_its_introducing_commit() -> None:
     """A controlled record is bound to the stack it was captured against, not to HEAD.
 
-    Rebinding a historical record to a digest minted after its capture silently
-    rewrites provenance, so every recorded digest must equal the real digest of
-    the file at the commit that first wrote that record.
+    Rebinding a historical record to a digest minted after its capture silently rewrites provenance, so every recorded
+    digest must equal the real digest of the file at the commit that first wrote that record.
     """
     document = _read_json(_EVIDENCE_PATH)
     families = {name: record for name, record in document.items() if name.startswith("controlled_")}
@@ -640,9 +639,8 @@ def test_cases_cover_required_effective_capability_outcomes() -> None:
 def test_controlled_oauth_evidence_covers_every_route_in_both_modes() -> None:
     """The recorded coverage must match what the named tests actually execute.
 
-    Asserting the recorded lists against themselves would ratify a false claim, so
-    this reads the controlled test and requires every claimed operation and mode to
-    be present in it.
+    Asserting the recorded lists against themselves would ratify a false claim, so this reads the controlled test and
+    requires every claimed operation and mode to be present in it.
     """
     controlled = _read_json(_EVIDENCE_PATH)["controlled_oauth_evidence"]
     evidence = controlled["route_differential"]
@@ -780,11 +778,10 @@ def _without_async_passes(source: str, test_name: str) -> str:
 def test_controlled_evidence_coverage_is_derived_from_executed_passes() -> None:
     """Every recorded route must be driven by a real client pass in every claimed mode.
 
-    A recorded list compared against itself ratifies a false claim, so the recorded
-    coverage is checked against the controlled test's parsed structure: each claimed
-    read and mutation must be reached by a pass that constructs a client of every
-    claimed mode. The recorded SHA digests stay as tamper-evidence, but the gate
-    is load-bearing only because of this structural derivation.
+    A recorded list compared against itself ratifies a false claim, so the recorded coverage is checked against the
+    controlled test's parsed structure: each claimed read and mutation must be reached by a pass that constructs a
+    client of every claimed mode. The recorded SHA digests stay as tamper-evidence, but the gate is load-bearing only
+    because of this structural derivation.
     """
     source = controlled_test_source(_ROOT)
     evidence_document = _read_json(_EVIDENCE_PATH)
@@ -806,9 +803,8 @@ def test_controlled_evidence_coverage_is_derived_from_executed_passes() -> None:
 def test_the_execution_gate_fails_when_the_async_mutation_pass_is_removed() -> None:
     """The regression: gut the async OAuth mutation pass and the gate must catch it.
 
-    This is the falsification the reviewer performed. Keeping the recorded lists and
-    rebinding the digests must not be enough to keep the suite green once the code
-    that executes the async mutation pass is gone.
+    This is the falsification the reviewer performed. Keeping the recorded lists and rebinding the digests must not be
+    enough to keep the suite green once the code that executes the async mutation pass is gone.
     """
     source = controlled_test_source(_ROOT)
     differential = _read_json(_EVIDENCE_PATH)["controlled_oauth_evidence"]["route_differential"]
@@ -885,10 +881,9 @@ def _without_nested_pass(source: str, test_name: str, pass_name: str) -> str:
 def test_the_gutting_helpers_remove_decorators_with_the_pass() -> None:
     """A decorated pass must leave parseable source, or the falsification gates crash.
 
-    ``AsyncFunctionDef.lineno`` and ``FunctionDef.lineno`` point at the ``def``
-    line, so slicing from there orphans any decorator and the gutted module no
-    longer parses. A ``SyntaxError`` inside ``unexecuted_operations`` would turn
-    the falsification gates into crashes instead of assertions.
+    ``AsyncFunctionDef.lineno`` and ``FunctionDef.lineno`` point at the ``def`` line, so slicing from there orphans any
+    decorator and the gutted module no longer parses. A ``SyntaxError`` inside ``unexecuted_operations`` would turn the
+    falsification gates into crashes instead of assertions.
     """
     decorated_async = """\
 def test_pass() -> None:
@@ -968,8 +963,8 @@ def test_controlled_jobs_evidence_covers_every_route_in_both_modes() -> None:
 def test_jobs_profile_rows_pin_admin_capability_and_mutations() -> None:
     """The seven jobs rows stay admin/privileged with verb-faithful mutations.
 
-    The public-origin dispatch refusal derives from these rows, so a drifted
-    mutation cell would silently reclassify an admin mutation as a safe read.
+    The public-origin dispatch refusal derives from these rows, so a drifted mutation cell would silently reclassify an
+    admin mutation as a safe read.
     """
     profile = _read_json(_PROFILE_PATH)
     rows = {operation["id"]: operation for operation in profile["operations"]}

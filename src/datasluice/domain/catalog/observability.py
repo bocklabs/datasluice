@@ -1,5 +1,3 @@
-"""Secure diagnostic, event, telemetry, TLS, and audit contracts."""
-
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping

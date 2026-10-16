@@ -1,10 +1,3 @@
-"""Unit tests for the plugin manager and plugin failure record.
-
-Covers entry-point discovery of namespaced canonical connector IDs, explicit
-activation of registered factories, per-entry error isolation, and the
-injected-PluginManager (never module-level singleton) contract.
-"""
-
 from __future__ import annotations
 
 import dataclasses
