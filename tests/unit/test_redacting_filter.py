@@ -6,15 +6,11 @@ and ``record.args`` dicts, the ``DATASLUICE_NO_REDACT=1`` escape hatch, and the
 automatic attachment to the datasluice handler in ``configure_logging``.
 
 The ``RedactingFilter`` is resolved via ``importlib.import_module`` + ``getattr``
-so the RED commit can land under this repo's full-suite pre-commit hook: ty
-cannot statically resolve the not-yet-existing attribute, and the whole module
-skips cleanly until the implementation lands (same pattern as plan 03-01 /
-03-04 RED commits).
+so the module can skip cleanly until the implementation lands (same pattern as
+plan 03-01 / 03-04 RED commits).
 
-Assertions read via ``record.__dict__[key]`` rather than ``record.<attr>``: the
-filter mutates ``record.__dict__`` directly, so dict access tests the exact
-contract, and it sidesteps the ty ``unresolved-attribute`` diagnostic for
-dynamic LogRecord attributes that ruff B009 would otherwise reintroduce.
+Assertions read via ``record.__dict__[key]`` because the filter mutates
+``record.__dict__`` directly, so dict access tests the exact contract.
 """
 
 from __future__ import annotations

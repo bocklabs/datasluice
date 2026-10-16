@@ -90,5 +90,5 @@ jobs:
             in-scope change, and do not treat a planned namespace as a runtime
             capability. Trace changed code through callers and relevant contracts,
             verify negative paths and error propagation, and report only actionable
-            correctness, security, or maintainability defects; omit style-only findings
-            covered by Ruff or ty.
+            correctness, security, or maintainability defects. Omit findings already
+            handled by Ruff or mypy.
