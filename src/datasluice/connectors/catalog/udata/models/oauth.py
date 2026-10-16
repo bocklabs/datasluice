@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from datasluice.domain.catalog.auth import SecretValue, _secret
+from datasluice.domain.catalog.auth import OAuthFlow, SecretValue, _secret
+from datasluice.runtime.oauth import AuthorizationCodeFlow
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.receipts import MutationReceipt
@@ -66,7 +67,7 @@ class OAuthTokenRequest:
         required = {
             "refresh_token": ("refresh_token",),
             "password": ("username", "password"),
-            "authorization_code": ("code",),
+            "authorization_code": ("code", "code_verifier"),
         }.get(self.grant_type, ())
         if any(not getattr(self, name) for name in required):
             raise ValueError(f"The uData {self.grant_type} grant requires {', '.join(required)}.")
@@ -88,6 +89,46 @@ class OAuthTokenRequest:
             if value is not None:
                 fields[name] = value.reveal() if isinstance(value, SecretValue) else value
         return fields
+
+
+@dataclass(frozen=True, slots=True)
+class OAuthAuthorizationBinding:
+    """One browser authorization-code round trip over the shared OAuth runtime.
+
+    The shared runtime flow owns the expected state and the S256 verifier: call
+    ``validate_callback_state`` with the state observed on the redirect before
+    building the exchange request, which carries the bound verifier and redirect URI.
+    """
+
+    _descriptor: OAuthFlow = field(repr=False)
+    _flow: AuthorizationCodeFlow = field(repr=False)
+
+    @property
+    def authorization_url(self) -> str:
+        return self._flow.authorization_url()
+
+    @property
+    def expected_state(self) -> str:
+        return self._flow.expected_state
+
+    def validate_callback_state(self, observed_state: object) -> None:
+        """Require the authorization redirect to echo the bound state exactly."""
+        self._flow.validate_state(observed_state)
+
+    def token_request(self, code: str) -> OAuthTokenRequest:
+        """Build the typed code exchange carrying the bound verifier and redirect URI."""
+        return OAuthTokenRequest(
+            grant_type="authorization_code",
+            client_id=self._descriptor.client_id,
+            code=code,
+            code_verifier=self._flow.verifier,
+            redirect_uri=self._descriptor.redirect_uri,
+        )
+
+
+def begin_authorization_code(descriptor: OAuthFlow, *, state: str | None = None) -> OAuthAuthorizationBinding:
+    """Bind one uData browser authorization-code round trip over the shared OAuth runtime."""
+    return OAuthAuthorizationBinding(_descriptor=descriptor, _flow=AuthorizationCodeFlow(descriptor, state=state))
 
 
 @dataclass(frozen=True, slots=True)

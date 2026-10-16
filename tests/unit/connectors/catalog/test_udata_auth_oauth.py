@@ -7,10 +7,12 @@ Expectations are derived from the independent upstream oracle
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import importlib
 import json
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import pytest
 
@@ -24,9 +26,10 @@ from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthRevokeRequest,
     OAuthTokenRequest,
     OAuthTokenResult,
+    begin_authorization_code,
 )
 from datasluice.connectors.catalog.udata.wire import oauth as wire
-from datasluice.domain.catalog.auth import EffectivePermissions, SecretValue, UDataCredential
+from datasluice.domain.catalog.auth import EffectivePermissions, OAuthFlow, SecretValue, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
@@ -362,6 +365,58 @@ def test_invalid_oauth_inputs_fail_before_any_dispatch() -> None:
             OAuthTokenRequest(grant_type="client_credentials", client_id="c", scope=""), PERMISSIONS
         )
     assert router.requests == [], router.requests
+
+
+def test_authorization_code_grant_requires_the_pkce_verifier_before_dispatch() -> None:
+    """Stock 17.6.0 registers the code grant with ``CodeChallenge(required=True)``."""
+    router = html_sync_route_table(
+        declared_routes(("POST", "/oauth/token", 200, {"access_token": "opaque"}), site=SITE)
+    )
+    client = sync_client(router, CREDENTIAL)
+    with client, pytest.raises(ValueError, match="code_verifier"):
+        client.auth_oauth.access_token(
+            OAuthTokenRequest(grant_type="authorization_code", client_id="client-id", code="code-1"), PERMISSIONS
+        )
+    assert router.requests == [], router.requests
+
+
+def test_authorization_code_binding_binds_the_state_and_pkce_verifier_end_to_end() -> None:
+    """The shared runtime flow binds the redirect state and the S256 verifier for one round trip."""
+    descriptor = OAuthFlow.authorization_code(
+        "https://portal.example.test/oauth/authorize",
+        "https://portal.example.test/oauth/token",
+        "client-id",
+        "https://app.example.test/callback",
+    )
+    binding = begin_authorization_code(descriptor)
+    query = parse_qs(urlsplit(binding.authorization_url).query)
+
+    assert query["state"] == [binding.expected_state]
+    assert query["code_challenge_method"] == ["S256"]
+    assert query["response_type"] == ["code"]
+    assert query["redirect_uri"] == ["https://app.example.test/callback"]
+    assert "plain" not in binding.authorization_url
+
+    binding.validate_callback_state(binding.expected_state)
+    for observed in ("attacker-state", ""):
+        with pytest.raises(CatalogValidationError):
+            binding.validate_callback_state(observed)
+
+    router = html_sync_route_table(
+        declared_routes(("POST", "/oauth/token", 200, {"token_type": "Bearer", "access_token": "opaque"}), site=SITE)
+    )
+    with sync_client(router, CREDENTIAL) as client:
+        result = client.auth_oauth.access_token(binding.token_request("code-1"), PERMISSIONS)
+
+    form = _form(router.requests[-1])
+    assert form["grant_type"] == "authorization_code"
+    assert form["code"] == "code-1"
+    assert form["redirect_uri"] == "https://app.example.test/callback"
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(form["code_verifier"].encode()).digest()).rstrip(b"=").decode()
+    assert challenge == query["code_challenge"][0]
+    assert isinstance(result.receipt, MutationReceipt)
+    assert result.receipt.operation == wire.OPERATIONS["access_token"]
+    assert result.receipt.outcome == "succeeded"
 
 
 def test_async_oauth_service_matches_sync_wire_exactly() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import inspect
 import json
 import secrets
@@ -45,6 +46,7 @@ _OAUTH_ENDPOINT_RETRY_ACTION = "Confirm the OAuth endpoint response and retry."
 
 PKCE_CHALLENGE_METHOD = "S256"
 PKCE_VERIFIER_BYTES = 48
+OAUTH_STATE_BYTES = 32
 DEFAULT_REFRESH_SKEW_SECONDS = 30
 _RFC6749_ERROR_CODES = frozenset(
     {
@@ -209,37 +211,69 @@ class ClientCredentialsFlow:
 
 
 class AuthorizationCodeFlow:
-    """Authorization-code OAuth flow with an RFC 7636 S256 proof key."""
+    """Authorization-code OAuth flow with an RFC 7636 S256 proof key and an exactly bound authorization state."""
 
-    def __init__(self, flow: OAuthFlow, transport: CatalogTransport | AsyncTokenTransport) -> None:
+    def __init__(
+        self,
+        flow: OAuthFlow,
+        transport: CatalogTransport | AsyncTokenTransport | None = None,
+        *,
+        state: str | None = None,
+    ) -> None:
         if not isinstance(flow, OAuthFlow):
             raise TypeError("Authorization-code flows require an OAuthFlow.")
+        if state is not None and (not isinstance(state, str) or not state):
+            raise ValueError("OAuth authorization state must be a non-empty string.")
         self._flow = flow
         self._transport = transport
         self._verifier = secrets.token_urlsafe(PKCE_VERIFIER_BYTES)
+        self._state = secrets.token_urlsafe(OAUTH_STATE_BYTES) if state is None else state
 
     @property
     def verifier(self) -> str:
         """Return the generated PKCE verifier for this one flow instance."""
         return self._verifier
 
-    def authorization_url(self, *, state: str) -> str:
-        """Build the authorization URL with the mandatory S256 challenge."""
-        if not isinstance(state, str) or not state:
-            raise ValueError("OAuth authorization state must be a non-empty string.")
+    @property
+    def expected_state(self) -> str:
+        """Return the bound authorization state the redirect must echo."""
+        return self._state
+
+    def authorization_url(self) -> str:
+        """Build the authorization URL with the bound state and the mandatory S256 challenge.
+
+        The state is bound to this flow instance and is required verbatim when the code is exchanged.
+        """
         challenge = base64.urlsafe_b64encode(hashlib.sha256(self._verifier.encode()).digest()).rstrip(b"=").decode()
         query = urlencode(
             {
                 "response_type": "code",
                 "client_id": self._flow.client_id,
                 **({"redirect_uri": self._flow.redirect_uri} if self._flow.redirect_uri is not None else {}),
-                "state": state,
+                "state": self._state,
                 "code_challenge": challenge,
                 "code_challenge_method": PKCE_CHALLENGE_METHOD,
                 **({"scope": " ".join(sorted(self._flow.scopes))} if self._flow.scopes else {}),
             }
         )
         return f"{self._flow.authorization_url}?{query}"
+
+    def validate_state(self, observed_state: object) -> None:
+        """Reject an authorization response whose state does not match the bound state exactly."""
+        if not isinstance(observed_state, str) or not observed_state:
+            raise CatalogValidationError(
+                "The OAuth authorization response did not carry a usable state value.",
+                operation=_OAUTH_TOKEN_OPERATION,
+                platform="runtime",
+                safe_action="Reject the authorization response and restart the flow.",
+            )
+        if not hmac.compare_digest(observed_state.encode(), self._state.encode()):
+            raise CatalogValidationError(
+                "The OAuth authorization response state does not match the bound authorization state.",
+                operation=_OAUTH_TOKEN_OPERATION,
+                platform="runtime",
+                safe_action="Discard the redirect and restart the authorization flow.",
+            )
 
     def _request(self, code: str) -> RuntimeRequest:
         if not isinstance(code, str) or not code:
@@ -254,15 +288,19 @@ class AuthorizationCodeFlow:
             values["redirect_uri"] = self._flow.redirect_uri
         return _token_request(self._flow, values)
 
-    def exchange(self, code: str) -> OAuthCredential:
+    def exchange(self, code: str, *, state: str) -> OAuthCredential:
         """Synchronously exchange an authorization code through the runtime transport."""
+        if self._transport is None:
+            raise TypeError("Authorization-code flows without a transport cannot exchange codes.")
+        self.validate_state(state)
         if _is_async_transport(self._transport):
             raise TypeError("The synchronous OAuth flow requires a synchronous runtime transport.")
         transport = cast("CatalogTransport", self._transport)
         return _credential(transport.send(self._request(code)))
 
-    async def exchange_async(self, code: str) -> OAuthCredential:
+    async def exchange_async(self, code: str, *, state: str) -> OAuthCredential:
         """Asynchronously exchange an authorization code through the async runtime transport."""
+        self.validate_state(state)
         if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")
         transport = cast("AsyncTokenTransport", self._transport)
