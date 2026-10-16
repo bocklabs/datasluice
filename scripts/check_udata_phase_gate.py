@@ -14,6 +14,10 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 PHASE_DIR = ROOT / ".planning" / "phases" / "04-udata-connector"
@@ -120,13 +124,19 @@ def surface_completeness() -> tuple[int, int]:
 _RECORDLESS_FAMILIES = frozenset({"tracer", "datasets", "root_profile"})
 
 
-def _first_verifying_receipt(family: str) -> tuple[str | None, list[str]]:
-    """Return the first review-receipt sha that verifies and every receipt error."""
+def _review_gate() -> Any:
+    """Import the review gate module from ``scripts/`` regardless of install layout."""
     scripts_dir = str(ROOT / "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
     import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
 
+    return review_gate
+
+
+def _first_verifying_receipt(family: str) -> tuple[str | None, list[str]]:
+    """Return the first review-receipt sha that verifies and every receipt error."""
+    review_gate = _review_gate()
     dir_name = REVIEWS_DIR_NAMES.get(family, family)
     receipts = sorted((REVIEWS_ROOT / dir_name).glob("*/review-receipt.json"))
     verified_sha: str | None = None
@@ -195,19 +205,20 @@ def require_validation_authoritative(path: Path = VALIDATION_PATH) -> None:
         raise GateError("GATE FAIL: 04-VALIDATION.md still contains unchecked validation cells")
 
 
-def require_review_current() -> None:
-    """Require every family's latest review receipt to verify.
+def require_review_current(reviews_root: Path = REVIEWS_ROOT, repo_root: Path = ROOT) -> None:
+    """Require every family's review receipt to verify at the current merge head.
 
-    Receipts bind to the head each review ran at; the ledger records those
-    shas. Currency at one single merge head is printed as informational
-    notes, never as a failure.
+    The reviewed SHA must equal the merge head exactly: a family whose newest
+    receipt is bound to any other sha, or that has no receipt at all, fails
+    the gate closed.
     """
+    review_gate = _review_gate()
     for family in FAMILIES:
-        verified_sha, errors = _first_verifying_receipt(family)
-        if verified_sha is None and not errors:
-            raise GateError(f"GATE FAIL: {family} has no captured review receipt")
-        if verified_sha is None:
-            raise GateError(f"GATE FAIL: {family} receipts do not verify — {'; '.join(errors)}")
+        dir_name = REVIEWS_DIR_NAMES.get(family, family)
+        try:
+            review_gate.verify_current_review(reviews_root, dir_name, repo_root)
+        except review_gate.ReviewGateError as err:
+            raise GateError(f"GATE FAIL: {family} is not reviewed at the merge head — {err}") from err
 
 
 def require_cleanup() -> None:
@@ -275,7 +286,7 @@ def main() -> int:
     semantic_covered, semantic_total = semantic_conformance()
     print(f"semantic_conformance: {semantic_covered}/{semantic_total} = {semantic_covered / semantic_total:.0%}")
 
-    checks = [
+    checks: list[tuple[str, Callable[[], None], bool]] = [
         ("validation-authoritative", require_validation_authoritative, args.require_validation_authoritative),
         ("review-current", require_review_current, args.require_review_current),
         ("cleanup", require_cleanup, args.require_cleanup),

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -34,6 +36,85 @@ def _local_receipts_present() -> bool:
         any((gate.REVIEWS_ROOT / gate.REVIEWS_DIR_NAMES.get(family, family)).glob("*/review-receipt.json"))
         for family in gate.FAMILIES
     )
+
+
+def _review_gate() -> Any:
+    import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
+
+    return review_gate
+
+
+def _git_head() -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    )
+    return completed.stdout.strip()
+
+
+def _review_artifacts(scratch: Path, reviewed_sha: str) -> tuple[Path, Path]:
+    scratch.mkdir(parents=True, exist_ok=True)
+    source = scratch / "source-review.md"
+    source.write_text("# Independent review\n\nEvery finding is classified and resolved.\n", encoding="utf-8")
+    threads = scratch / "current-thread.json"
+    threads.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "reviewed_sha": reviewed_sha,
+                "threads": [{"classification": "fixed", "summary": "review currency regression"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return source, threads
+
+
+def _capture_family_receipt(
+    review_gate: Any, reviews_root: Path, family: str, reviewed_sha: str, source: Path, threads: Path
+) -> None:
+    review_gate.capture_review(
+        reviews_root=reviews_root,
+        family=gate.REVIEWS_DIR_NAMES.get(family, family),
+        reviewed_sha=reviewed_sha,
+        base_sha=reviewed_sha,
+        reviewer_id="phase-gate-reviewer",
+        author_ids=("phase-gate-author",),
+        source_review=source,
+        current_threads=threads,
+        parent_receipt=None,
+        post_fix=False,
+    )
+
+
+def test_review_current_fails_closed_without_receipts(tmp_path: Path) -> None:
+    with pytest.raises(gate.GateError, match="tracer is not reviewed at the merge head"):
+        gate.require_review_current(reviews_root=tmp_path)
+
+
+def test_review_current_requires_every_family_at_the_current_head(tmp_path: Path) -> None:
+    review_gate = _review_gate()
+    head = _git_head()
+    source, threads = _review_artifacts(tmp_path / "artifacts-head", head)
+    for family in gate.FAMILIES:
+        _capture_family_receipt(review_gate, tmp_path, family, head, source, threads)
+    gate.require_review_current(reviews_root=tmp_path)
+
+
+def test_review_current_rejects_a_family_pinned_to_another_head(tmp_path: Path) -> None:
+    review_gate = _review_gate()
+    head = _git_head()
+    stale = "0" * 40
+    source, threads = _review_artifacts(tmp_path / "artifacts-head", head)
+    stale_source, stale_threads = _review_artifacts(tmp_path / "artifacts-stale", stale)
+    for family in gate.FAMILIES:
+        if family == "tracer":
+            _capture_family_receipt(review_gate, tmp_path, family, stale, stale_source, stale_threads)
+        else:
+            _capture_family_receipt(review_gate, tmp_path, family, head, source, threads)
+    with pytest.raises(gate.GateError, match="tracer is not reviewed at the merge head"):
+        gate.require_review_current(reviews_root=tmp_path)
+    _capture_family_receipt(review_gate, tmp_path, "tracer", head, source, threads)
+    gate.require_review_current(reviews_root=tmp_path)
 
 
 def test_coverage_inventory_is_the_locked_denominator() -> None:
