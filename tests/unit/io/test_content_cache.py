@@ -26,7 +26,7 @@ from unittest.mock import patch
 import pytest
 
 from datasluice.exceptions import DownloadError
-from datasluice.io.content_cache import STALE_WRITING_THRESHOLD_SECONDS, ContentCache
+from datasluice.io.content_cache import STALE_WRITING_THRESHOLD_SECONDS, SWEEP_INTERVAL_SECONDS, ContentCache
 from datasluice.ports.cache import CachePort
 
 if TYPE_CHECKING:
@@ -203,6 +203,22 @@ def test_lazy_sweep_removes_orphaned_content_files(tmp_path: Path) -> None:
     assert cache._fs.exists(orphan_path)
     cache.get("any-key")
     assert not cache._fs.exists(orphan_path)
+
+
+def test_orphan_sweep_waits_for_the_interval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now)
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.get("missing")
+    orphan = tmp_path / "cache" / ("b" * 64)
+    orphan.write_bytes(b"orphan")
+
+    cache.get("missing")
+    assert orphan.exists()
+
+    now += SWEEP_INTERVAL_SECONDS
+    cache.get("missing")
+    assert not orphan.exists()
 
 
 def test_concurrent_puts_distinct_keys_no_corruption(tmp_path: Path) -> None:

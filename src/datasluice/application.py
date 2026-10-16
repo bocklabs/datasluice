@@ -285,7 +285,7 @@ class _ApplicationServices:
         """Raw bulk-copy multiple resources into a destination directory."""
         from datasluice.io.downloader import Downloader
 
-        downloader = Downloader(self._session._transport)
+        downloader = Downloader(self._session._transport, cache=self._session._cache, storage=self._session.storage)
         paths = downloader.download_many(resources, destination)
         if len(paths) != len(resources):
             from datasluice.exceptions import DownloadError

@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 
 _PARQUET_MEDIA_TYPE = "application/x-parquet"
 
-LegacyArtifactRecord = tuple[str, str, int, str]
-
 
 logger = get_logger("sync.materialize")
 
@@ -90,11 +88,11 @@ def materialize(
                 content_digest = _write_parquet(fs, tmp_uri, stream.schema, stream.iter_batches())
         else:
             content_digest = _write_raw(fs, tmp_uri, resource, reader)
-        existing = _existing_record(fs, final_uri, media_type, content_digest, stored_checksum)
-        uri = final_uri if existing is not None else tmp_uri
+        existing = _existing_record(fs, final_uri, tmp_uri, media_type, content_digest, stored_checksum)
+        uri = final_uri if existing else tmp_uri
         size = int(fs.info(uri)["size"])
         blob_digest = _blob_digest_from_fs(fs, uri)
-        if existing is not None and _is_current_artifact(
+        if existing and _is_current_artifact(
             stored_artifact,
             uri=final_uri,
             media_type=media_type,
@@ -105,7 +103,7 @@ def materialize(
         ):
             assert stored_artifact is not None
             return stored_artifact
-        if existing is None:
+        if not existing:
             fs.mv(tmp_uri, final_uri)
         return _artifact(
             resource,
@@ -302,37 +300,23 @@ def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
         )
 
 
-def destination_health(resource: Any, record: Artifact | LegacyArtifactRecord, *, destination_uri: str) -> bool:
+def destination_health(resource: Any, record: Artifact, *, destination_uri: str) -> bool:
     """Verify that a completed artifact exists at the current destination with matching bytes."""
     from datasluice.io.filesystem import open_filesystem
 
     base_uri = destination_uri.rstrip("/")
-    from datasluice.domain import Artifact
-
-    if isinstance(record, Artifact):
-        suffix = "bin" if record.provenance.materialization_mode == "raw" else "parquet"
-        expected_uri = f"{base_uri}/{canonical_identity(resource)}.{suffix}"
-        final_uri = record.uri
-        media_type = record.media_type
-        expected_size = record.size
-        content_digest = record.content_digest.value
-        blob_digest = record.blob_digest.value
-    else:
-        expected_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
-        final_uri, media_type, expected_size, content_digest = record
-        blob_digest = None
-    if final_uri != expected_uri:
+    suffix = "bin" if record.provenance.materialization_mode == "raw" else "parquet"
+    expected_uri = f"{base_uri}/{canonical_identity(resource)}.{suffix}"
+    if record.uri != expected_uri:
         return False
     try:
         fs = open_filesystem(base_uri)
-        if not fs.exists(final_uri) or int(fs.info(final_uri)["size"]) != expected_size:
+        if not fs.exists(record.uri) or int(fs.info(record.uri)["size"]) != record.size:
             return False
-        return _destination_checksum(fs, final_uri, media_type) == content_digest and (
-            blob_digest is None or _blob_digest_from_fs(fs, final_uri) == blob_digest
-        )
+        return _blob_digest_from_fs(fs, record.uri) == record.blob_digest.value
     except Exception:
         logger.debug(
-            "Destination health check failed for %r (treating as unhealthy)", sanitize_uri(final_uri), exc_info=True
+            "Destination health check failed for %r (treating as unhealthy)", sanitize_uri(record.uri), exc_info=True
         )
         return False
 
@@ -365,22 +349,25 @@ def _atomic_pipe(fs: Any, final_uri: str, payload: bytes) -> None:
 def _existing_record(
     fs: Any,
     final_uri: str,
+    tmp_uri: str,
     media_type: str,
     checksum: str,
     stored_checksum: str | None,
-) -> tuple[str, str, int, str] | None:
+) -> bool:
+    """Return whether the published file already matches what was just staged."""
     if stored_checksum != checksum or not fs.exists(final_uri):
-        return None
+        return False
     try:
-        size = int(fs.info(final_uri)["size"])
-        if _destination_checksum(fs, final_uri, media_type) != checksum:
-            return None
+        if int(fs.info(final_uri)["size"]) == int(fs.info(tmp_uri)["size"]) and _blob_digest_from_fs(
+            fs, final_uri
+        ) == _blob_digest_from_fs(fs, tmp_uri):
+            return True
+        return _destination_checksum(fs, final_uri, media_type) == checksum
     except Exception:
         logger.debug(
             "Existing-materialization probe failed for %r (treating as stale)", sanitize_uri(final_uri), exc_info=True
         )
-        return None
-    return final_uri, media_type, size, checksum
+        return False
 
 
 def _destination_checksum(fs: Any, final_uri: str, media_type: str) -> str:

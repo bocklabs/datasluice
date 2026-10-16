@@ -194,3 +194,65 @@ def test_full_pipeline_csv_with_gzip_local_file(tmp_path) -> None:
         batches = list(bs.iter_batches())
     table = pa.Table.from_batches(batches, schema=bs.schema)
     assert table.num_rows == 12
+
+
+def test_undeclared_container_formats_raise_unless_declared(tmp_path) -> None:
+    """Reject ZIP and Parquet payloads without a declared format. Read declared CSV from a ZIP archive."""
+
+    import zipfile
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from datasluice.domain import LocalFile, Resource
+    from datasluice.exceptions import UnsupportedAccessError
+
+    csv_bytes = _csv_text(rows=4)
+    zip_path = tmp_path / "data.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("data.csv", csv_bytes)
+
+    parquet_path = tmp_path / "data.parquet"
+    pq.write_table(pa.table({"id": [1, 2]}), parquet_path)
+
+    reader = DataPlaneResourceReader(transport=None)
+    for path, hint in ((zip_path, "XLSX"), (parquet_path, "PARQUET")):
+        undeclared = Resource(id="r1", url=f"file://{path}", format=None, access=LocalFile(path=str(path)))
+        with pytest.raises(UnsupportedAccessError) as exc_info:
+            reader.open(undeclared)
+        assert "Pass format=" in str(exc_info.value)
+        assert hint in str(exc_info.value)
+
+    declared = Resource(id="r1", url=f"file://{zip_path}", format="CSV", access=LocalFile(path=str(zip_path)))
+    with reader.open(declared) as bs:
+        table = pa.Table.from_batches(list(bs.iter_batches()), schema=bs.schema)
+    assert table.num_rows == 4
+
+
+@pytest.mark.parametrize("format_name", ["CSV", "JSONL"])
+def test_streaming_formats_exceed_the_document_limit(format_name, monkeypatch) -> None:
+    import datasluice.data.readers.base as readers_base
+    from datasluice.domain import Resource
+    from tests.helpers.httpx_probe import SyncProbe, fixed
+
+    monkeypatch.setattr(readers_base, "MAX_DOCUMENT_BYTES", 4)
+    payload = b"id\n1\n2\n" if format_name == "CSV" else b'{"id":1}\n{"id":2}\n'
+    resource = Resource(id="large", url="https://catalog.example.test/data", format=format_name)
+    with (
+        SyncProbe(fixed(200, content=payload)) as transport,
+        DataPlaneResourceReader(transport).open(resource) as stream,
+    ):
+        assert sum(batch.num_rows for batch in stream.iter_batches()) == 2
+
+
+@pytest.mark.parametrize("format_name", ["JSON", "GEOJSON"])
+def test_document_formats_keep_the_http_limit(format_name, monkeypatch) -> None:
+    import datasluice.data.readers.base as readers_base
+    from datasluice.domain import Resource
+    from datasluice.runtime.transport.base import TransportError
+    from tests.helpers.httpx_probe import SyncProbe, fixed
+
+    monkeypatch.setattr(readers_base, "MAX_DOCUMENT_BYTES", 4)
+    resource = Resource(id="large", url="https://catalog.example.test/data", format=format_name)
+    with SyncProbe(fixed(200, content=b'[{"id":1}]')) as transport, pytest.raises(TransportError, match="limit"):
+        DataPlaneResourceReader(transport).open(resource)

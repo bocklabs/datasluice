@@ -22,18 +22,9 @@ if TYPE_CHECKING:
 
 
 class CSVReader(BaseFormatReader):
-    """Stream a CSV ``BinaryIO`` source into Arrow ``RecordBatch`` objects.
-
-    Args:
-        encoding: Text encoding (default ``"utf-8"``).
-        delimiter: Column delimiter (default ``","``).
-    """
+    """Stream a CSV ``BinaryIO`` source into Arrow ``RecordBatch`` objects."""
 
     format_name = "CSV"
-
-    def __init__(self, *, encoding: str = "utf-8", delimiter: str = ",") -> None:
-        self.encoding = encoding
-        self.delimiter = delimiter
 
     def read_batches(self, source: Any, *, batch_size: int = 65536) -> Iterator[Any]:
         """Yield ``RecordBatch`` objects by delegating to ``pyarrow.csv.open_csv``.
@@ -53,10 +44,9 @@ class CSVReader(BaseFormatReader):
                 "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
-        read_options = pacsv.ReadOptions(block_size=65536, encoding=self.encoding, use_threads=False)
-        parse_options = pacsv.ParseOptions(delimiter=self.delimiter)
+        read_options = pacsv.ReadOptions(block_size=65536, use_threads=False)
         try:
-            reader = pacsv.open_csv(source, read_options=read_options, parse_options=parse_options)
+            reader = pacsv.open_csv(source, read_options=read_options)
         except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid CSV: {exc}") from exc
 

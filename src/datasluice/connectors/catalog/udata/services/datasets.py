@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
@@ -23,12 +22,15 @@ from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetUpdateInput,
 )
 from datasluice.connectors.catalog.udata.services._receipts import (
+    FailureReceipt,
+    ResultShaper,
     _error_status,
     _mutation_outcome,
     _operation_id,
     _policy_metadata,
-    _raise_with_receipt,
     _receipt_policy,
+    _run_mutation,
+    _run_mutation_async,
 )
 from datasluice.connectors.catalog.udata.wire import datasets as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
@@ -520,6 +522,40 @@ async def _async_extras_delete_dispatch(
     )
 
 
+def _mutation_shapers(
+    operation: str,
+    target_id: object,
+    policy: MutationPolicy | None,
+    decode: Callable[[object], object],
+    mutation: str,
+    *,
+    opaque_target: bool,
+    success_target: Callable[[object], object] | None,
+) -> tuple[FailureReceipt, ResultShaper[DatasetMutationResult]]:
+    def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
+        return _build_receipt(
+            operation,
+            target_id,
+            policy,
+            _mutation_outcome(error, response),
+            status_code=_error_status(error, response),
+            mutation=mutation,
+            opaque_target=opaque_target,
+        )
+
+    def completed(status: int, payload: object, response: object | None) -> DatasetMutationResult:
+        value = decode(payload)
+        receipt_target = success_target(value) if success_target is not None else target_id
+        receipt = _build_receipt(operation, receipt_target, policy, "succeeded", status_code=status, mutation=mutation)
+        return DatasetMutationResult(
+            receipt=receipt,
+            record=value if isinstance(value, NativeRecord) else None,
+            extras=value if isinstance(value, Mapping) else None,
+        )
+
+    return failure_receipt, completed
+
+
 def _mutating(
     operation: str,
     target_id: object,
@@ -532,35 +568,17 @@ def _mutating(
     success_target: Callable[[object], object] | None = None,
 ) -> DatasetMutationResult:
     """Run one mutation with a receipt for every rejected, failed, and successful path."""
-    response: object | None = None
-    try:
-        status, payload, response = dispatch()
-        value = decode(payload)
-    except Exception as error:
-        receipt = _build_receipt(
-            operation,
-            target_id,
-            policy,
-            _mutation_outcome(error, response),
-            status_code=_error_status(error, response),
-            mutation=mutation,
-            opaque_target=opaque_target,
-        )
-        _raise_with_receipt(error, receipt)
-    receipt_target = success_target(value) if success_target is not None else target_id
-    receipt = _build_receipt(operation, receipt_target, policy, "succeeded", status_code=status, mutation=mutation)
-    return DatasetMutationResult(
-        receipt=receipt,
-        record=value if isinstance(value, NativeRecord) else None,
-        extras=value if isinstance(value, Mapping) else None,
+    failure_receipt, completed = _mutation_shapers(
+        operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
+    return _run_mutation(dispatch, failure_receipt, completed)
 
 
 async def _amutating(
     operation: str,
     target_id: object,
     policy: MutationPolicy | None,
-    dispatch: Callable[[], object],
+    dispatch: Callable[[], Awaitable[tuple[int, object, object]]],
     decode: Callable[[object], object],
     mutation: str,
     *,
@@ -568,28 +586,10 @@ async def _amutating(
     success_target: Callable[[object], object] | None = None,
 ) -> DatasetMutationResult:
     """Run one async mutation with the same receipt seam as the sync path."""
-    response: object | None = None
-    try:
-        status, payload, response = await cast("Awaitable[tuple[int, object, object]]", dispatch())
-        value = decode(payload)
-    except (Exception, asyncio.CancelledError) as error:
-        receipt = _build_receipt(
-            operation,
-            target_id,
-            policy,
-            _mutation_outcome(error, response),
-            status_code=_error_status(error, response),
-            mutation=mutation,
-            opaque_target=opaque_target,
-        )
-        _raise_with_receipt(error, receipt)
-    receipt_target = success_target(value) if success_target is not None else target_id
-    receipt = _build_receipt(operation, receipt_target, policy, "succeeded", status_code=status, mutation=mutation)
-    return DatasetMutationResult(
-        receipt=receipt,
-        record=value if isinstance(value, NativeRecord) else None,
-        extras=value if isinstance(value, Mapping) else None,
+    failure_receipt, completed = _mutation_shapers(
+        operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
+    return await _run_mutation_async(dispatch, failure_receipt, completed)
 
 
 class SyncDatasetsService:

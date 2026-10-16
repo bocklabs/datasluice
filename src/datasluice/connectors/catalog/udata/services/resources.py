@@ -21,15 +21,21 @@ from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import (
     CatalogValidationError,
     NativeCatalogError,
-    attach_catalog_metadata,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
 
 from ._receipts import (
+    FailureReceipt,
+    ResultShaper,
     _error_status,
     _mutation_outcome,
     _operation_id,
     _receipt_policy,
+    _run_mutation,
+    _run_mutation_async,
+)
+from ._receipts import (
+    _attach_receipt as _attach,
 )
 from .datasets import (
     _enforce_mutation_policy,
@@ -65,12 +71,6 @@ def _receipt(
         outcome,
         {"mutation": mutation, "status_code": status, "target_valid": bool(target)},
     )
-
-
-def _attach(error: BaseException, receipt: MutationReceipt) -> None:
-    attach_catalog_metadata(error, {"receipt": receipt.to_dict()})
-    if isinstance(getattr(error, "__dict__", None), dict):
-        error.__dict__["mutation_receipt"] = receipt
 
 
 def _close_upload(
@@ -161,6 +161,40 @@ def _dispatch_operation(policy: Policy) -> str:
     )
 
 
+def _resource_mutation_shapers(
+    target: str,
+    policy: Policy,
+    mutation: str,
+    operation: str,
+    *,
+    resource_kind: ResourceKind,
+) -> tuple[FailureReceipt, ResultShaper[Result]]:
+    def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
+        outcome = (
+            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
+        )
+        if mutation == "uploaded" and isinstance(error, OSError):
+            outcome = "ambiguous"
+        return _receipt(
+            policy,
+            target,
+            outcome,
+            _error_status(error, response),
+            mutation,
+            resource_kind=resource_kind,
+            operation=operation,
+        )
+
+    def completed(status: int, payload: object, response: object | None) -> Result:
+        return _mutation_result(
+            _receipt(policy, target, "succeeded", status, mutation, resource_kind=resource_kind, operation=operation),
+            payload,
+            mutation,
+        )
+
+    return failure_receipt, completed
+
+
 def _resource_mutation(
     target: str,
     policy: Policy,
@@ -171,33 +205,17 @@ def _resource_mutation(
     resource_kind: ResourceKind = ResourceKind.RESOURCE,
     operation: str = wire.RESOURCE_OPERATION,
 ) -> Result:
-    operation = _route_operation(mutation, resource_kind, operation)
-    response: object | None = None
-    try:
-        _enforce_mutation_policy(operation, target, policy, destructive=destructive)
-        status, payload, response = dispatch()
-        return _mutation_result(
-            _receipt(policy, target, "succeeded", status, mutation, resource_kind=resource_kind, operation=operation),
-            payload,
-            mutation,
-        )
-    except SETTLEMENT_ERRORS as error:
-        outcome = (
-            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
-        )
-        if mutation == "uploaded" and isinstance(error, OSError):
-            outcome = "ambiguous"
-        receipt = _receipt(
-            policy,
-            target,
-            outcome,
-            _error_status(error, response),
-            mutation,
-            resource_kind=resource_kind,
-            operation=operation,
-        )
-        _attach(error, receipt)
-        raise
+    routed = _route_operation(mutation, resource_kind, operation)
+    failure_receipt, completed = _resource_mutation_shapers(
+        target, policy, mutation, routed, resource_kind=resource_kind
+    )
+    return _run_mutation(
+        dispatch,
+        failure_receipt,
+        completed,
+        precondition=lambda: _enforce_mutation_policy(routed, target, policy, destructive=destructive),
+        errors=SETTLEMENT_ERRORS,
+    )
 
 
 async def _async_resource_mutation(
@@ -210,33 +228,17 @@ async def _async_resource_mutation(
     resource_kind: ResourceKind = ResourceKind.RESOURCE,
     operation: str = wire.RESOURCE_OPERATION,
 ) -> Result:
-    operation = _route_operation(mutation, resource_kind, operation)
-    response: object | None = None
-    try:
-        _enforce_mutation_policy(operation, target, policy, destructive=destructive)
-        status, payload, response = await dispatch()
-        return _mutation_result(
-            _receipt(policy, target, "succeeded", status, mutation, resource_kind=resource_kind, operation=operation),
-            payload,
-            mutation,
-        )
-    except ASYNC_SETTLEMENT_ERRORS as error:
-        outcome = (
-            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
-        )
-        if mutation == "uploaded" and isinstance(error, OSError):
-            outcome = "ambiguous"
-        receipt = _receipt(
-            policy,
-            target,
-            outcome,
-            _error_status(error, response),
-            mutation,
-            resource_kind=resource_kind,
-            operation=operation,
-        )
-        _attach(error, receipt)
-        raise
+    routed = _route_operation(mutation, resource_kind, operation)
+    failure_receipt, completed = _resource_mutation_shapers(
+        target, policy, mutation, routed, resource_kind=resource_kind
+    )
+    return await _run_mutation_async(
+        dispatch,
+        failure_receipt,
+        completed,
+        precondition=lambda: _enforce_mutation_policy(routed, target, policy, destructive=destructive),
+        errors=ASYNC_SETTLEMENT_ERRORS,
+    )
 
 
 class SyncResourcesService:

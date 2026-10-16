@@ -31,13 +31,16 @@ from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteReuseCsvQuery,
 )
 from datasluice.connectors.catalog.udata.services._receipts import (
+    FailureReceipt,
+    ResultShaper,
     _error_status,
     _failure_event,
     _mutation_outcome,
     _operation_id,
     _policy_metadata,
-    _raise_with_receipt,
     _receipt_policy,
+    _run_mutation,
+    _run_mutation_async,
 )
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import root_profile as wire
@@ -186,6 +189,42 @@ def _enforce_patch_policy(policy: MutationPolicy | None, *, target: str) -> None
         )
 
 
+def _site_mutation_shapers(
+    policy: MutationPolicy | None,
+    decode: Callable[[object, object], SiteProfile | None],
+    target: Callable[[], str],
+    evidence_digest: Callable[[], str | None],
+    emit: Callable[[str], None],
+    *,
+    dispatched: Callable[[], bool] | None,
+) -> tuple[FailureReceipt, ResultShaper[SiteMutationResult]]:
+    def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
+        emit(_failure_event(error))
+        return _build_receipt(
+            policy,
+            _mutation_outcome(error, response, dispatched=dispatched() if dispatched is not None else True),
+            status_code=_error_status(error, response),
+            mutation="set_site",
+            target=target(),
+            evidence_digest=evidence_digest(),
+        )
+
+    def completed(status: int, payload: object, response: object | None) -> SiteMutationResult:
+        profile = decode(payload, response)
+        receipt = _build_receipt(
+            policy,
+            "succeeded",
+            status_code=status,
+            mutation="set_site",
+            target=target(),
+            evidence_digest=evidence_digest(),
+        )
+        emit("succeeded")
+        return SiteMutationResult(receipt=receipt, profile=profile)
+
+    return failure_receipt, completed
+
+
 def _mutating(
     policy: MutationPolicy | None,
     dispatch: Callable[[], tuple[int, object, object]],
@@ -196,26 +235,10 @@ def _mutating(
     *,
     dispatched: Callable[[], bool] | None = None,
 ) -> SiteMutationResult:
-    response: object | None = None
-    try:
-        status, payload, response = dispatch()
-        profile = decode(payload, response)
-    except Exception as error:
-        emit(_failure_event(error))
-        receipt = _build_receipt(
-            policy,
-            _mutation_outcome(error, response, dispatched=dispatched() if dispatched is not None else True),
-            status_code=_error_status(error, response),
-            mutation="set_site",
-            target=target(),
-            evidence_digest=evidence_digest(),
-        )
-        _raise_with_receipt(error, receipt)
-    receipt = _build_receipt(
-        policy, "succeeded", status_code=status, mutation="set_site", target=target(), evidence_digest=evidence_digest()
+    failure_receipt, completed = _site_mutation_shapers(
+        policy, decode, target, evidence_digest, emit, dispatched=dispatched
     )
-    emit("succeeded")
-    return SiteMutationResult(receipt=receipt, profile=profile)
+    return _run_mutation(dispatch, failure_receipt, completed)
 
 
 async def _amutating(
@@ -228,26 +251,10 @@ async def _amutating(
     *,
     dispatched: Callable[[], bool] | None = None,
 ) -> SiteMutationResult:
-    response: object | None = None
-    try:
-        status, payload, response = await dispatch()
-        profile = decode(payload, response)
-    except (Exception, asyncio.CancelledError) as error:
-        emit(_failure_event(error))
-        receipt = _build_receipt(
-            policy,
-            _mutation_outcome(error, response, dispatched=dispatched() if dispatched is not None else True),
-            status_code=_error_status(error, response),
-            mutation="set_site",
-            target=target(),
-            evidence_digest=evidence_digest(),
-        )
-        _raise_with_receipt(error, receipt)
-    receipt = _build_receipt(
-        policy, "succeeded", status_code=status, mutation="set_site", target=target(), evidence_digest=evidence_digest()
+    failure_receipt, completed = _site_mutation_shapers(
+        policy, decode, target, evidence_digest, emit, dispatched=dispatched
     )
-    emit("succeeded")
-    return SiteMutationResult(receipt=receipt, profile=profile)
+    return await _run_mutation_async(dispatch, failure_receipt, completed)
 
 
 def _decode_profile(payload: object) -> SiteProfile:

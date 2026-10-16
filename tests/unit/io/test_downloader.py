@@ -2,19 +2,34 @@
 
 from __future__ import annotations
 
+import socket
 from typing import TYPE_CHECKING
 
 import pytest
 
 from datasluice.domain import Resource
 from datasluice.exceptions import DownloadError
-from datasluice.io.cache import FileCache
+from datasluice.io.content_cache import ContentCache
 from datasluice.io.downloader import Downloader
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 from datasluice.runtime.transport.user_agent import build_user_agent
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_downloader_rejects_dns_answers_with_private_addresses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+        (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::ffff:127.0.0.1", 0, 0, 0)),
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: answers)
+    transport = _Transport(RuntimeResponse(200, {}, b"private"))
+
+    with pytest.raises(DownloadError, match="locality"):
+        Downloader(transport).download(_resource(), tmp_path)
+
+    assert transport.requests == []
 
 
 class _Transport:
@@ -70,7 +85,7 @@ def test_downloader_wraps_transport_failure_with_preserved_cause(tmp_path: Path)
 
 def test_downloader_cache_hit_skips_transport(tmp_path: Path) -> None:
     resource = _resource()
-    cache = FileCache(tmp_path / "cache")
+    cache = ContentCache(str(tmp_path / "cache"))
     cache.put(resource.url or "", b"cached")
     transport = _Transport(RuntimeResponse(500, {}, b"unused"))
 
@@ -101,7 +116,7 @@ def test_downloader_private_target_requires_explicit_allowance(tmp_path: Path) -
 def test_bad_checksum_does_not_populate_cache(tmp_path: Path) -> None:
     from datasluice.exceptions import ChecksumMismatchError
 
-    cache = FileCache(tmp_path / "cache")
+    cache = ContentCache(str(tmp_path / "cache"))
     transport = _Transport(RuntimeResponse(200, {}, b"corrupt"))
     resource = _resource()
     with pytest.raises(ChecksumMismatchError):

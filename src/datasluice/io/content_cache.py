@@ -6,8 +6,9 @@ for that transaction; failed staging rolls back the metadata without replacing
 the previous content. Only complete content files are visible to readers.
 
 The index stores URL, ETag, Last-Modified, fetch time, and content length.
-Legacy in-flight rows and orphaned content files are swept lazily. Connections
-are short-lived and explicitly closed after each operation.
+Stale in-flight rows and orphaned content files are swept lazily, at most once
+per :data:`SWEEP_INTERVAL_SECONDS`. Connections are short-lived and explicitly
+closed after each operation.
 """
 
 from __future__ import annotations
@@ -32,15 +33,15 @@ _SQL_BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
 logger = get_logger("io.content_cache")
 
 STALE_WRITING_THRESHOLD_SECONDS: float = 300.0
+SWEEP_INTERVAL_SECONDS: float = 60.0
 
 
 class ContentCache:
     """Content-addressed cache with a SQLite WAL metadata index.
 
     Satisfies :class:`datasluice.ports.cache.CachePort` (get/put/delete) plus
-    the sidecar :meth:`put_with_metadata` / :meth:`get_metadata` pair that the
-    download-to-cache path uses to capture ETag/Last-Modified for
-    conditional GETs.
+    the sidecar :meth:`put_with_metadata` / :meth:`get_metadata` pair for
+    callers that capture ETag/Last-Modified for conditional GETs.
 
     Args:
         cache_dir: Directory holding ``cache.db`` and the SHA-256-named content
@@ -64,6 +65,7 @@ class ContentCache:
             self._fs = open_filesystem(f"file://{self.cache_dir}")
         self._fs.makedirs(self.cache_dir, exist_ok=True)
         self._db_path = f"{self.cache_dir}/cache.db"
+        self._last_sweep = 0.0
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -143,11 +145,10 @@ class ContentCache:
         etag: str | None = None,
         last_modified: str | None = None,
     ) -> None:
-        """Store *data* under *key* with ETag/Last-Modified sidecar.
+        """Store *data* under *key* with ETag/Last-Modified sidecar metadata.
 
-        download-to-cache path calls this after capturing headers via
-        :meth:`StreamingTransport.stream`. reads the sidecar
-        for conditional GETs.
+        Callers capture the headers after a fetch and store them alongside the
+        bytes so later conditional GETs can revalidate against the origin.
         """
         self._put_internal(key, data, etag=etag, last_modified=last_modified)
 
@@ -201,10 +202,7 @@ class ContentCache:
             self._fs.rm(content_path)
 
     def get_metadata(self, key: str) -> dict[str, Any] | None:
-        """Return the sidecar metadata for *key*, or ``None`` if missing/writing.
-
-        reads this for conditional GETs.
-        """
+        """Return the sidecar metadata for *key*, or ``None`` if missing/writing."""
         sha = self._sha(key)
         conn = self._connect()
         try:
@@ -227,11 +225,15 @@ class ContentCache:
             conn.close()
 
     def _maybe_sweep(self) -> None:
-        """Lazily sweep stale ``writing`` rows and orphaned content files.
+        """Sweep stale ``writing`` rows and orphaned content files, at most once per interval.
 
         Sweep failures are logged at DEBUG and never propagate — a sweep bug
         must never break ``get``/``put``.
         """
+        now = time.time()
+        if now - self._last_sweep < SWEEP_INTERVAL_SECONDS:
+            return
+        self._last_sweep = now
         try:
             conn = self._connect()
             try:

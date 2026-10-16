@@ -53,6 +53,22 @@ def open_filesystem(uri: str, credentials: dict[str, Any] | None = None) -> fssp
     return fs
 
 
+def strip_scheme(uri: str, fs: Any) -> str:
+    """Strip *fs*'s storage scheme from *uri* to produce the path component."""
+
+    protocol = getattr(fs, "protocol", None)
+    if isinstance(protocol, str):
+        prefix = f"{protocol}://"
+        if uri.startswith(prefix):
+            return uri[len(prefix) :]
+        prefix = f"{protocol}:"
+        if uri.startswith(prefix):
+            return uri[len(prefix) :].lstrip("/")
+    if "://" in uri:
+        return uri.split("://", 1)[1].lstrip("/")
+    return uri
+
+
 def safe_remove(fs: Any, path: str) -> None:
     """Best-effort removal of *path* on *fs*; ignore absence and secondary OSError.
 

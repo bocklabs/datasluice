@@ -28,8 +28,6 @@ import pytest
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
     SyncUDataClient,
-    _create_controlled_async_client,
-    _create_controlled_sync_client,
     create_async_client,
     create_sync_client,
     declared_udata_profile,
@@ -123,6 +121,7 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import CatalogError
+from tests.helpers.udata_controlled import _create_controlled_async_client, _create_controlled_sync_client
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
 
 type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -1414,7 +1413,8 @@ def test_controlled_stack_proves_dataset_family_reads() -> None:
     assert page.page.total_items is not None
     assert page.items, "expected seeded datasets on the controlled stack"
     assert suggestions, "expected seeded suggestions for q='evidence'"
-    assert v2_page.page is not None and v2_page.page.total_items is not None
+    assert v2_page.page is not None
+    assert v2_page.page.total_items is not None
     assert v2_page.items, "expected seeded datasets on the controlled v2 list"
 
 
@@ -6136,7 +6136,8 @@ def _seed_controlled_resource(token: str, suffix: str, dataset_ids: list[str]) -
         token, "POST", "/api/1/datasets/", body={"title": f"Evidence dataset {suffix}", "description": "d"}
     )
     assert status == 201, "the raw evidence dataset create failed"
-    assert isinstance(payload, Mapping) and isinstance(payload.get("id"), str)
+    assert isinstance(payload, Mapping)
+    assert isinstance(payload.get("id"), str)
     dataset_ids.append(payload["id"])
     status, payload, _ = _direct_request(
         token,
@@ -6150,7 +6151,8 @@ def _seed_controlled_resource(token: str, suffix: str, dataset_ids: list[str]) -
         },
     )
     assert status == 201, "the raw evidence resource create failed"
-    assert isinstance(payload, Mapping) and isinstance(payload.get("id"), str)
+    assert isinstance(payload, Mapping)
+    assert isinstance(payload.get("id"), str)
     return str(payload["id"])
 
 
@@ -6590,8 +6592,9 @@ def _cleanup_controlled_jobs(token: str, job_ids: list[str], primary: BaseExcept
     for identifier in job_ids:
         try:
             status, _, _ = _direct_request(token, "DELETE", f"{_JOBS_PATH}{identifier}/")
-            assert status in {204, 404}
-        except (AssertionError, OSError, ValueError) as error:
+            if status not in {204, 404}:
+                raise ValueError(f"unexpected cleanup status for job {identifier!r}: {status}")
+        except (OSError, ValueError) as error:
             errors.append(error)
     assert not errors, f"cleanup failures: {errors!r}; original: {primary!r}"
 
@@ -6775,7 +6778,9 @@ def test_controlled_jobs_lifecycle_matches_raw_routes_and_cleans_up() -> None:
     if not token:
         pytest.skip("controlled family mutations require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
     status, payload, _ = _direct_request(token, "GET", f"{_JOBS_PATH}schedulables/", include_body=True)
-    assert status == 200 and isinstance(payload, list) and payload
+    assert status == 200
+    assert isinstance(payload, list)
+    assert payload
     task_name = sorted(str(name) for name in payload)[0]
     permissions = EffectivePermissions.for_credential(
         UDataCredential(api_key=token), platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
@@ -6960,7 +6965,8 @@ def _seed_transfer_dataset(token: str, suffix: str, dataset_ids: list[str]) -> s
     status, payload, _ = _direct_request(
         token, "POST", "/api/1/datasets/", body={"title": f"Transfer evidence {suffix}", "description": "d"}
     )
-    assert status == 201 and isinstance(payload, Mapping)
+    assert status == 201
+    assert isinstance(payload, Mapping)
     dataset_id = payload["id"]
     assert isinstance(dataset_id, str)
     dataset_ids.append(dataset_id)
@@ -6970,9 +6976,11 @@ def _seed_transfer_dataset(token: str, suffix: str, dataset_ids: list[str]) -> s
 def _seed_member_id(token: str) -> str:
     """Resolve the seeded regular user's identifier for the recipient role."""
     status, payload, _ = _direct_request(token, "GET", "/api/1/users/?q=user@evidence.invalid", include_body=True)
-    assert status == 200 and isinstance(payload, Mapping)
+    assert status == 200
+    assert isinstance(payload, Mapping)
     users = payload["data"]
-    assert isinstance(users, list) and users
+    assert isinstance(users, list)
+    assert users
     member_id = users[0]["id"]
     assert isinstance(member_id, str)
     return member_id
@@ -7025,7 +7033,8 @@ def _exercise_sync_transfer_lifecycle(
                 "recipient": {"id": member_id, "class": "User"},
             },
         )
-        assert raw_created[0] == 201 and isinstance(raw_created[1], Mapping)
+        assert raw_created[0] == 201
+        assert isinstance(raw_created[1], Mapping)
         raw_transfer_id = raw_created[1]["id"]
 
         read = client.transfers.get_transfer(transfer_id, admin_permissions)
@@ -7151,8 +7160,10 @@ def test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up() -
         errors: list[Exception] = []
         for dataset_id in dataset_ids:
             try:
-                assert _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/")[0] in {204, 404}
-            except (AssertionError, OSError, ValueError) as error:
+                status, _, _ = _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/")
+                if status not in {204, 404}:
+                    raise ValueError(f"unexpected cleanup status for dataset {dataset_id!r}: {status}")
+            except (OSError, ValueError) as error:
                 errors.append(error)
         assert not errors, f"cleanup failures: {errors!r}; original: {primary!r}"
 
@@ -7170,7 +7181,8 @@ def test_controlled_extensions_and_probes_match_raw_routes_in_both_modes() -> No
         pytest.skip("controlled extension reads require UDATA_EVIDENCE_ADMIN_TOKEN from the seeded admin")
     credential = UDataCredential(api_key=token)
     status, me, _ = _direct_request(token, "GET", "/api/1/me/", include_body=True)
-    assert status == 200 and isinstance(me, Mapping)
+    assert status == 200
+    assert isinstance(me, Mapping)
     avatar_identifier = me["id"]
     assert isinstance(avatar_identifier, str)
 

@@ -122,6 +122,41 @@ def test_two_passes_zero_writes_checkpointed_local_parquet(tmp_path) -> None:
     assert second[0].record == first[0].record
 
 
+def test_unchanged_checkpointed_source_skips_the_materializer(tmp_path) -> None:
+    """Pass 2 on an unchanged checkpointed source never enters the materializer."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    source_path = tmp_path / "source.parquet"
+    pq.write_table(pa.table({"id": [1, 2]}), source_path)
+    resource = Resource(
+        id="unchanged-local",
+        name="unchanged-local",
+        format="PARQUET",
+        access=LocalFile(path=str(source_path)),
+    )
+    destination = f"file://{tmp_path}/dest"
+    store = InMemoryStateStore()
+
+    with (
+        patch.object(materialize_module, "materialize", wraps=materialize_module.materialize) as plain_spy,
+        patch.object(
+            materialize_module, "materialize_checkpointed", wraps=materialize_module.materialize_checkpointed
+        ) as checkpointed_spy,
+    ):
+        first = list(
+            sync_resources([resource], state_store=store, reader=DataPlaneResourceReader(), destination_uri=destination)
+        )
+        second = list(
+            sync_resources([resource], state_store=store, reader=DataPlaneResourceReader(), destination_uri=destination)
+        )
+
+    assert first[0].action == "materialized"
+    assert second[0].action == "skipped-unchanged"
+    assert checkpointed_spy.call_count == 1
+    plain_spy.assert_not_called()
+
+
 class _RawReader:
     def __init__(self, data: bytes) -> None:
         self.data = data

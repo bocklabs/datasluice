@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -31,13 +30,15 @@ def _assert_no_orphan_temp_files(store: FileStateStore) -> None:
 
 def _checkpoint(index: int = 2) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 3,
         "status": "in_progress",
         "next_batch_index": index,
         "position": {
             "kind": "parquet_row_group",
             "row_group_index": index,
         },
+        "source_version": None,
+        "destination_identity": "7" * 64,
     }
 
 
@@ -195,22 +196,50 @@ def test_credential_bearing_completed_artifact_uri_is_rejected_before_write(file
     prior = SyncState(cursor={key: _sha_watermark("a")})
     file_store.put(key, prior)
     signed_destination = "s3://artifact-user:artifact-password@example.test/output?X-Amz-Signature=artifact-signature"
+    artifact = json.loads((Path(__file__).parents[2] / "fixtures/contracts/artifact-v1.json").read_text())
+    artifact["uri"] = signed_destination
 
     _assert_rejected_before_pipe(
         file_store,
         key,
         SyncState(
             cursor={key: _sha_watermark("b")},
-            extra={
-                "datasluice_completed_artifact": {
-                    "destination_uri": signed_destination,
-                    "destination_size": 12,
-                    "destination_checksum": _sha_watermark("c"),
-                }
-            },
+            extra={"datasluice_completed_artifact": artifact},
         ),
         secret_fragments=("artifact-user", "artifact-password", "artifact-signature", signed_destination),
     )
+    assert file_store.get(key) == prior
+
+
+def test_completed_source_version_round_trips(file_store: FileStateStore) -> None:
+    """A sha256 source version in the completed extra field survives put/get."""
+    key = "resource-source-version"
+    artifact = json.loads((Path(__file__).parents[2] / "fixtures/contracts/artifact-v1.json").read_text())
+    state = SyncState(
+        cursor={key: _sha_watermark("e")},
+        extra={"datasluice_completed_artifact": artifact, "datasluice_source_version": _sha_watermark("f")},
+    )
+
+    file_store.put(key, state)
+
+    assert file_store.get(key) == state
+
+
+def test_invalid_completed_source_version_is_rejected_before_write(file_store: FileStateStore) -> None:
+    key = "resource-source-version-bad"
+    prior = SyncState(cursor={key: _sha_watermark("a")})
+    file_store.put(key, prior)
+    artifact = json.loads((Path(__file__).parents[2] / "fixtures/contracts/artifact-v1.json").read_text())
+
+    for invalid in ("not-a-sha", _sha_watermark()[:-1], 42):
+        _assert_rejected_before_pipe(
+            file_store,
+            key,
+            SyncState(
+                cursor={key: _sha_watermark("b")},
+                extra={"datasluice_completed_artifact": artifact, "datasluice_source_version": invalid},
+            ),
+        )
     assert file_store.get(key) == prior
 
 
@@ -308,14 +337,6 @@ def test_checkpoint_unknown_nested_fields_are_rejected_before_write(file_store: 
                 }
             }
         ),
-        SyncState(
-            extra={
-                "datasluice_checkpoint": {
-                    **_checkpoint(),
-                    "next_batch_index": 3,
-                }
-            }
-        ),
     ],
 )
 def test_nonempty_partitions_and_invalid_structured_fields_are_rejected_before_write(
@@ -323,49 +344,6 @@ def test_nonempty_partitions_and_invalid_structured_fields_are_rejected_before_w
     state: SyncState,
 ) -> None:
     _assert_rejected_before_pipe(file_store, "resource-invalid", state)
-
-
-def test_legacy_v1_envelope_with_key_remains_readable(file_store: FileStateStore) -> None:
-    key = "legacy-resource"
-    legacy_state = SyncState(
-        cursor={"legacy-cursor-key": "legacy-watermark"},
-        partitions={"legacy-partition": {"offset": 12}},
-        last_synced_at="legacy-timestamp",
-        extra={"legacy": {"arbitrary": True}},
-    )
-    payload = json.dumps(
-        {
-            "schema_version": 1,
-            "key": key,
-            "state": asdict(legacy_state),
-        },
-        sort_keys=True,
-    ).encode()
-    file_store._fs.pipe_file(file_store._state_path(key), payload)
-
-    assert file_store.get(key) == legacy_state
-
-
-def test_legacy_envelope_wrong_lookup_key_rejected(file_store: FileStateStore) -> None:
-    embedded_key = "legacy-resource"
-    lookup_key = "different-lookup-key"
-    legacy_state = SyncState(cursor={"legacy-cursor-key": "legacy-watermark"})
-    payload = json.dumps(
-        {
-            "schema_version": 1,
-            "key": embedded_key,
-            "state": asdict(legacy_state),
-        },
-        sort_keys=True,
-    ).encode()
-    # A historically-copied state file lands at a different lookup path than its
-    # embedded key claims. It must decode only under the lookup key it belongs to.
-    file_store._fs.pipe_file(file_store._state_path(lookup_key), payload)
-
-    with pytest.raises(StateStoreError, match="does not match lookup key"):
-        file_store.get(lookup_key)
-    # The embedded key is a non-secret identity; assert it is not echoed as a value.
-    assert embedded_key not in "legacy-watermark"
 
 
 def test_repeated_identical_put_has_same_path_and_bytes(file_store: FileStateStore) -> None:

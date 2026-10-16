@@ -401,3 +401,16 @@ def test_partial_bulk_download_does_not_misattribute_resources(tmp_path) -> None
         facade.download_many(resources, str(tmp_path))
     assert (tmp_path / "a.csv").read_bytes() == b"https://catalog.test/a.csv"
     assert (tmp_path / "c.csv").read_bytes() == b"https://catalog.test/c.csv"
+
+
+def test_bulk_download_uses_the_session_cache(tmp_path) -> None:
+    from datasluice.io.content_cache import ContentCache
+
+    resource = Resource(id="cached", name="cached.csv", url="https://catalog.example.test/data.csv")
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put(resource.url or "", b"cached bytes")
+    with DataSluice(session=DataSluiceSession(transport=_Transport(), cache=cache)) as facade:
+        manifest = facade.download_many([resource], str(tmp_path / "downloads"))
+
+    assert (tmp_path / "downloads" / "cached.csv").read_bytes() == b"cached bytes"
+    assert manifest[0]["size"] == 12

@@ -81,6 +81,7 @@ _GZIP_MAGIC = b"\x1f\x8b"
 _BZIP2_MAGIC = b"BZh"
 _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 _ZIP_MAGIC = b"PK\x03\x04"
+_PARQUET_MAGIC = b"PAR1"
 
 _PEEK_SIZE = 6
 
@@ -209,6 +210,15 @@ def _detect_format(magic: bytes, content_encoding: str | None) -> str:
     if magic.startswith(_ZIP_MAGIC) or ce in {"zip", "x-zip"}:
         return "zip"
     return "none"
+
+
+def container_format(magic: bytes) -> str | None:
+    """Return ``"zip"`` or ``"parquet"`` for recognized magic bytes. Otherwise, return ``None``."""
+    if magic.startswith(_ZIP_MAGIC):
+        return "zip"
+    if magic.startswith(_PARQUET_MAGIC):
+        return "parquet"
+    return None
 
 
 def _wrap_gzip(source: Any) -> Any:

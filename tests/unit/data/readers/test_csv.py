@@ -42,15 +42,6 @@ def test_read_batches_yields_record_batch_with_inferred_types() -> None:
     assert table.column("name").to_pylist()[0] == "alice"
 
 
-def test_read_batches_respects_custom_delimiter() -> None:
-    src = io.BytesIO(b"a;b\n1;2\n")
-    reader = CSVReader(delimiter=";")
-    batches = list(reader.read_batches(src))
-    table = pa.Table.from_batches(batches)
-    assert table.num_rows == 1
-    assert "a" in table.schema.names
-
-
 def test_read_batches_accepts_batch_size_kwarg() -> None:
     payload = b"id\n" + b"".join(b"%d\n" % i for i in range(50))
     src = io.BytesIO(payload)

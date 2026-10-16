@@ -22,8 +22,6 @@ if TYPE_CHECKING:
 
     from datasluice.domain import Artifact, SyncState
 
-LegacyArtifactRecord = tuple[str, str, int, str]
-
 logger = get_logger("sync.sync")
 
 
@@ -53,7 +51,7 @@ class _SyncContext:
     prior_version: bytes | None
     checkpoint: Any | None
     stable_source_version: str | None
-    prior_artifact: Artifact | LegacyArtifactRecord | None
+    prior_artifact: Artifact | None
     destination_was_healthy: bool
     watermark: str | None
     checkpointed_kind: bool
@@ -62,18 +60,22 @@ class _SyncContext:
 
 def _resume_outcome(
     resource: Any, prior: Any, key: str, destination_uri: str, *, resume: bool
-) -> tuple[Artifact | LegacyArtifactRecord | None, SyncOutcome | None]:
-    from datasluice.domain import Artifact
+) -> tuple[Artifact | None, SyncOutcome | None]:
     from datasluice.sync.materialize import destination_health
 
-    completed = _completed_artifact_record(prior, resource, destination_uri) if prior is not None else None
-    if (
-        resume
-        and isinstance(completed, Artifact)
-        and destination_health(resource, completed, destination_uri=destination_uri)
-    ):
+    completed = _completed_artifact_record(prior) if prior is not None else None
+    if resume and completed is not None and destination_health(resource, completed, destination_uri=destination_uri):
         return completed, SyncOutcome(resource, action="resumed", record=completed, state_key=key)
     return completed, None
+
+
+def _source_version_unchanged(
+    prior: Any, prior_artifact: Artifact | None, stable_source_version: str | None, *, healthy: bool
+) -> bool:
+    """Return whether the completed record already matches the current source version."""
+    if prior is None or prior_artifact is None or not healthy or stable_source_version is None:
+        return False
+    return prior.extra.get("datasluice_source_version") == stable_source_version
 
 
 def _load_sync_context(
@@ -98,10 +100,26 @@ def _load_sync_context(
         checkpoint = None
         prior = None
     watermark = prior.cursor.get(key) if prior is not None else None
-    prior_artifact = _completed_artifact_record(prior, resource, destination_uri)
+    prior_artifact = _completed_artifact_record(prior)
     healthy = prior_artifact is not None and destination_health(
         resource, prior_artifact, destination_uri=destination_uri
     )
+    if (
+        checkpoint is None
+        and checkpointed_kind
+        and _source_version_unchanged(prior, prior_artifact, stable_source_version, healthy=healthy)
+    ):
+        return _SyncContext(
+            prior,
+            prior_version,
+            None,
+            stable_source_version,
+            prior_artifact,
+            True,
+            watermark,
+            True,
+            outcome=SyncOutcome(resource, action="skipped-unchanged", record=prior_artifact, state_key=key),
+        )
     return _SyncContext(
         prior, prior_version, checkpoint, stable_source_version, prior_artifact, healthy, watermark, checkpointed_kind
     )
@@ -113,10 +131,7 @@ def _checkpoint_is_stale(checkpoint: Any, source_version: str | None, destinatio
         and checkpoint.source_version is not None
         and source_version != checkpoint.source_version
     )
-    destination_changed = (
-        checkpoint.destination_identity is not None
-        and checkpoint.destination_identity != canonical_destination_identity(destination_uri)
-    )
+    destination_changed = checkpoint.destination_identity != canonical_destination_identity(destination_uri)
     return source_changed or destination_changed
 
 
@@ -128,7 +143,6 @@ def _conditional_reader(
     key: str,
     context: _SyncContext,
 ) -> tuple[Any, str | None, SyncOutcome | None]:
-    from datasluice.domain import Artifact
     from datasluice.sync.materialize import destination_health
 
     kind = resource.access.kind if resource.access is not None else "http_download"
@@ -144,7 +158,7 @@ def _conditional_reader(
         if value is not None
     }
     try:
-        validate_http_target(url, allow_private=getattr(reader, "allow_private_http", False))
+        validate_http_target(url, allow_private=getattr(reader, "allow_private_http", False), resolve=True)
     except ValueError as exc:
         raise DataSluiceError(f"Conditional fetch target is invalid ({exc})") from None
     response = transport.send(
@@ -153,8 +167,8 @@ def _conditional_reader(
     if response.status_code in {301, 302, 303, 307, 308}:
         return reader, None, None
     if response.status_code == 304:
-        completed = _completed_artifact_record(context.prior, resource, destination_uri)
-        if isinstance(completed, Artifact) and destination_health(resource, completed, destination_uri=destination_uri):
+        completed = _completed_artifact_record(context.prior)
+        if completed is not None and destination_health(resource, completed, destination_uri=destination_uri):
             return reader, None, SyncOutcome(resource, action="skipped-unchanged", record=completed, state_key=key)
         return reader, None, None
     if not 200 <= response.status_code < 300:
@@ -270,7 +284,6 @@ def _finish_resource_sync(
     *,
     is_atomic: bool,
 ) -> SyncOutcome:
-    from datasluice.domain import Artifact
     from datasluice.sync.materialize import cleanup_checkpointed
 
     checksum = record.content_digest.value
@@ -280,10 +293,12 @@ def _finish_resource_sync(
         and checksum == context.watermark
         and context.destination_was_healthy
         and not use_checkpointed
-        and isinstance(context.prior_artifact, Artifact)
+        and context.prior_artifact is not None
     ):
         return SyncOutcome(resource, action="skipped-unchanged", record=context.prior_artifact, state_key=key)
-    completed_state = _completed_sync_state(key, fresh_watermark or checksum, record)
+    completed_state = _completed_sync_state(
+        key, fresh_watermark or checksum, record, source_version=context.stable_source_version
+    )
     if is_atomic:
         state_store.conditional_put(key, completed_state, prior_version_box[0])
     else:
@@ -322,8 +337,14 @@ def sync_resources(
     # (FileStateStore) get CAS-protected transitions; others (InMemoryStateStore,
     # external implementers) fall back to unconditional put.
     from datasluice.ports import AtomicStateStore
+    from datasluice.sync.state_store import InMemoryStateStore
 
     is_atomic = isinstance(state_store, AtomicStateStore)
+    if resume and isinstance(state_store, InMemoryStateStore):
+        logger.warning(
+            "resume=True with InMemoryStateStore resumes only state from this process. "
+            "Use FileStateStore to resume across runs.",
+        )
 
     for resource in resource_list:
         kind = resource.access.kind if resource.access is not None else "http_download"
@@ -373,21 +394,21 @@ def _completed_sync_state(
     state_key: str,
     watermark: str,
     record: Artifact,
+    source_version: str | None = None,
 ) -> SyncState:
     from datasluice.domain import SyncState
 
+    extra: dict[str, Any] = {"datasluice_completed_artifact": record.to_dict()}
+    if source_version is not None:
+        extra["datasluice_source_version"] = source_version
     return SyncState(
         cursor={state_key: watermark},
         last_synced_at=_utcnow_iso(),
-        extra={"datasluice_completed_artifact": record.to_dict()},
+        extra=extra,
     )
 
 
-def _completed_artifact_record(
-    state: SyncState | None,
-    resource: Any,
-    destination_uri: str,
-) -> Artifact | LegacyArtifactRecord | None:
+def _completed_artifact_record(state: SyncState | None) -> Artifact | None:
     if state is None:
         return None
     artifact = state.extra.get("datasluice_completed_artifact")
@@ -398,29 +419,7 @@ def _completed_artifact_record(
     try:
         return Artifact.from_dict(artifact)
     except DataSluiceError:
-        pass
-    expected_uri = f"{destination_uri.rstrip('/')}/{canonical_identity(resource)}.parquet"
-    if set(artifact) == {"destination_identity", "destination_size", "destination_checksum"}:
-        if artifact["destination_identity"] != canonical_destination_identity(destination_uri):
-            return None
-        uri = expected_uri
-    elif set(artifact) == {"destination_uri", "destination_size", "destination_checksum"}:
-        uri = artifact["destination_uri"]
-        if uri != expected_uri:
-            return None
-    else:
         return None
-    size = artifact["destination_size"]
-    checksum = artifact["destination_checksum"]
-    if (
-        not isinstance(uri, str)
-        or not isinstance(size, int)
-        or isinstance(size, bool)
-        or size < 0
-        or not isinstance(checksum, str)
-    ):
-        return None
-    return uri, "application/x-parquet", size, checksum
 
 
 def _in_progress_state(cursor: Any, source_version: str | None, destination_uri: str) -> SyncState:
@@ -449,41 +448,9 @@ def _decode_checkpoint(state: SyncState) -> Any | None:
     checkpoint = state.extra["datasluice_checkpoint"]
     if not isinstance(checkpoint, dict):
         raise DataSluiceError("Corrupt datasluice checkpoint: expected dict")
-    version = checkpoint.get("version")
-    if version == 2:
-        return _decode_checkpoint_v2(checkpoint)
-    if version == 3:
-        return _decode_checkpoint_v3(checkpoint)
-    if version == 1:
-        return _decode_checkpoint_v1(checkpoint)
-    raise DataSluiceError(f"Corrupt datasluice checkpoint: unsupported version {version!r}")
-
-
-def _decode_checkpoint_v2(checkpoint: dict[str, Any]) -> Any:
-    expected_keys = {"version", "status", "next_batch_index", "position", "source_version"}
-    if set(checkpoint) != expected_keys:
-        raise DataSluiceError("Corrupt datasluice checkpoint v2: unexpected keys")
-    position = checkpoint["position"]
-    position_keys = {"kind", "row_group_index"}
-    source_version = checkpoint["source_version"]
-    if (
-        checkpoint["status"] != "in_progress"
-        or type(checkpoint["next_batch_index"]) is not int
-        or checkpoint["next_batch_index"] < 0
-        or not isinstance(position, dict)
-        or set(position) != position_keys
-        or position["kind"] != "parquet_row_group"
-        or type(position["row_group_index"]) is not int
-        or position["row_group_index"] < 0
-        or not _is_source_version(source_version)
-    ):
-        raise DataSluiceError("Corrupt datasluice checkpoint v2: invalid field values")
-    return _Checkpoint(
-        checkpoint["next_batch_index"],
-        position["row_group_index"],
-        source_version,
-        None,
-    )
+    if checkpoint.get("version") != 3:
+        raise DataSluiceError(f"Corrupt datasluice checkpoint: unsupported version {checkpoint.get('version')!r}")
+    return _decode_checkpoint_v3(checkpoint)
 
 
 def _decode_checkpoint_v3(checkpoint: dict[str, Any]) -> Any:
@@ -514,31 +481,6 @@ def _decode_checkpoint_v3(checkpoint: dict[str, Any]) -> Any:
     )
 
 
-def _decode_checkpoint_v1(checkpoint: dict[str, Any]) -> Any:
-    expected_keys = {"version", "status", "next_batch_index", "position"}
-    if set(checkpoint) != expected_keys:
-        raise DataSluiceError("Corrupt datasluice checkpoint v1: unexpected keys")
-    position = checkpoint["position"]
-    position_keys = {"kind", "row_group_index"}
-    if (
-        checkpoint["status"] != "in_progress"
-        or type(checkpoint["next_batch_index"]) is not int
-        or checkpoint["next_batch_index"] < 0
-        or not isinstance(position, dict)
-        or set(position) != position_keys
-        or position["kind"] != "parquet_row_group"
-        or type(position["row_group_index"]) is not int
-        or position["row_group_index"] < 0
-    ):
-        raise DataSluiceError("Corrupt datasluice checkpoint v1: invalid field values")
-    return _Checkpoint(
-        checkpoint["next_batch_index"],
-        position["row_group_index"],
-        None,
-        None,
-    )
-
-
 @dataclass(frozen=True)
 class _Checkpoint:
     """Decoded in-progress checkpoint carrying batch index, physical position, and source version."""
@@ -546,7 +488,7 @@ class _Checkpoint:
     next_batch_index: int
     row_group_index: int
     source_version: str | None
-    destination_identity: str | None
+    destination_identity: str
 
 
 def _is_source_version(value: Any) -> bool:
@@ -654,12 +596,12 @@ def _compute_source_version(resource: Any) -> str | None:
         except OSError:
             return None
     if access.kind == "object_storage":
-        from datasluice.io.filesystem import open_filesystem
+        from datasluice.io.filesystem import open_filesystem, strip_scheme
 
         try:
             fs = open_filesystem(access.uri)
             digest = hashlib.sha256()
-            path = _strip_uri_scheme(access.uri, fs)
+            path = strip_scheme(access.uri, fs)
             with fs.open(path, "rb") as source:
                 for chunk in iter(lambda: source.read(65536), b""):
                     digest.update(chunk)
@@ -667,15 +609,3 @@ def _compute_source_version(resource: Any) -> str | None:
         except OSError:
             return None
     return None
-
-
-def _strip_uri_scheme(uri: str, fs: Any) -> str:
-    """Strip the fsspec storage scheme from *uri* to produce the path component."""
-    protocol = getattr(fs, "protocol", None)
-    if isinstance(protocol, str):
-        for prefix in (f"{protocol}://", f"{protocol}:"):
-            if uri.startswith(prefix):
-                return uri[len(prefix) :].lstrip("/")
-    if "://" in uri:
-        return uri.split("://", 1)[1].lstrip("/")
-    return uri

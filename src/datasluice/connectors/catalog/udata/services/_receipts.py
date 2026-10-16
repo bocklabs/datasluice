@@ -18,6 +18,8 @@ from datasluice.errors.catalog import (
 from datasluice.runtime.transport.base import TransportError
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from datasluice.domain.catalog.receipts import MutationReceipt
 
 
@@ -109,6 +111,48 @@ def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseExcep
     return error
 
 
-def _raise_with_receipt(error: Exception | asyncio.CancelledError, receipt: MutationReceipt) -> Never:
+def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> Never:
     _attach_receipt(error, receipt)
     raise error
+
+
+type FailureReceipt = Callable[[BaseException, object | None], MutationReceipt]
+type ResultShaper[T] = Callable[[int, object, object], T]
+
+
+def _run_mutation[T](
+    dispatch: Callable[[], tuple[int, object, object]],
+    failure_receipt: FailureReceipt,
+    completed: ResultShaper[T],
+    *,
+    precondition: Callable[[], None] | None = None,
+    errors: tuple[type[BaseException], ...] = (Exception,),
+) -> T:
+    """Run one mutation. On a covered error, attach a receipt and raise the original error."""
+    response: object | None = None
+    try:
+        if precondition is not None:
+            precondition()
+        status, payload, response = dispatch()
+        return completed(status, payload, response)
+    except errors as error:
+        _raise_with_receipt(error, failure_receipt(error, response))
+
+
+async def _run_mutation_async[T](
+    dispatch: Callable[[], Awaitable[tuple[int, object, object]]],
+    failure_receipt: FailureReceipt,
+    completed: ResultShaper[T],
+    *,
+    precondition: Callable[[], None] | None = None,
+    errors: tuple[type[BaseException], ...] = (Exception, asyncio.CancelledError),
+) -> T:
+    """Run one mutation on the async path. The receipt seam matches the sync path."""
+    response: object | None = None
+    try:
+        if precondition is not None:
+            precondition()
+        status, payload, response = await dispatch()
+        return completed(status, payload, response)
+    except errors as error:
+        _raise_with_receipt(error, failure_receipt(error, response))

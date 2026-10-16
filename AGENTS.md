@@ -69,7 +69,7 @@ GitHub Actions (`.github/workflows/ci.yaml`):
 - Tests run on Python 3.13 and 3.14 matrix.
 - **build** job builds the dist, runs `twine check`, and uploads the artifact.
 - **smoke-test** job installs the built wheel in a fresh venv and imports `datasluice`.
-- Coverage threshold: 50% (`fail_under` in pyproject.toml).
+- Coverage threshold: 80% (`fail_under` in pyproject.toml).
 
 ## Release
 

@@ -95,14 +95,22 @@ def sanitize_uri(uri: str) -> str:
     )
 
 
-def validate_http_target(value: object, *, allow_private: bool = False) -> str:
-    """Validate HTTP syntax and static target locality without resolving DNS."""
+def validate_http_target(value: object, *, allow_private: bool = False, resolve: bool = False) -> str:
+    """Validate HTTP syntax and target locality. Set ``resolve=True`` to check DNS answers."""
     if not isinstance(value, str) or not value:
         raise ValueError("missing")
     if len(value) > 2048:
         raise ValueError("length")
     if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
         raise ValueError("format")
+    host = _http_target_host(value)
+    if not allow_private and (_private_http_host(host) or (resolve and _resolves_to_private_address(host))):
+        raise ValueError("locality")
+    return value
+
+
+def _http_target_host(value: str) -> str:
+    """Return the validated host. Reject an invalid scheme, userinfo, port, or host."""
     try:
         parsed = urlsplit(value)
         host = parsed.hostname
@@ -120,9 +128,26 @@ def validate_http_target(value: object, *, allow_private: bool = False) -> str:
         raise ValueError("port")
     if not host or "\\" in host or "%" in host:
         raise ValueError("host")
-    if not allow_private and _private_http_host(host):
-        raise ValueError("locality")
-    return value
+    return host
+
+
+def _resolves_to_private_address(host: str) -> bool:
+    """Return whether DNS resolves *host* to a non-public address.
+
+    Return ``False`` if DNS cannot resolve the host. This check does not prevent later DNS rebinding.
+    """
+    try:
+        answers = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except (OSError, UnicodeError):
+        return False
+    for answer in answers:
+        try:
+            address = ipaddress.ip_address(answer[4][0])
+        except ValueError:
+            return True
+        if not address.is_global or address.is_multicast:
+            return True
+    return False
 
 
 def _private_http_host(host: str) -> bool:

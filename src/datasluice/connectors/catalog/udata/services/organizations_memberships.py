@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Never, cast
+from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.udata.models.organizations import (
     MembershipRequestInput,
@@ -31,13 +31,17 @@ from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import RuntimeResponse
 
-from ._receipts import _attach_receipt as _attach
 from ._receipts import (
+    FailureReceipt,
+    ResultShaper,
     _error_status,
     _mutation_outcome,
     _operation_id,
     _receipt_policy,
+    _run_mutation,
+    _run_mutation_async,
 )
+from ._receipts import _attach_receipt as _attach
 from .datasets import (
     _enforce_mutation_policy,
     _require_mutation_permission,
@@ -96,11 +100,6 @@ def _close_logo(
         raise
 
 
-def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> Never:
-    _attach(error, receipt)
-    raise error
-
-
 def _mutation_result(receipt: MutationReceipt, payload: object) -> OrganizationMutationResult:
     if isinstance(payload, Mapping) and isinstance(payload.get("id"), str) and isinstance(payload.get("name"), str):
         return OrganizationMutationResult(
@@ -116,6 +115,35 @@ def _mutation_result(receipt: MutationReceipt, payload: object) -> OrganizationM
     return OrganizationMutationResult(receipt=receipt)
 
 
+def _organization_mutation_shapers(
+    operation: str,
+    target: object,
+    policy: Policy,
+    mutation: str,
+    kind: ResourceKind,
+) -> tuple[FailureReceipt, ResultShaper[OrganizationMutationResult]]:
+    def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
+        return _org_receipt(
+            operation,
+            target,
+            policy,
+            _mutation_outcome(error, response),
+            _error_status(error, response),
+            mutation,
+            kind=kind,
+        )
+
+    def completed(status: int, payload: object, response: object | None) -> OrganizationMutationResult:
+        receipt = _org_receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
+        return _mutation_result(receipt, payload)
+
+    return failure_receipt, completed
+
+
+def _policy_target(target: object) -> str:
+    return target if isinstance(target, str) else _safe_target_value(target)
+
+
 def _mutation(
     operation: str,
     target: object,
@@ -126,19 +154,16 @@ def _mutation(
     destructive: bool = False,
     kind: ResourceKind = ResourceKind.ORGANIZATION,
 ) -> OrganizationMutationResult:
-    response: RuntimeResponse | None = None
-    try:
-        policy_target = target if isinstance(target, str) else _safe_target_value(target)
-        _enforce_mutation_policy(operation, policy_target, policy, destructive=destructive)
-        status, payload, response = dispatch()
-        receipt = _org_receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
-        return _mutation_result(receipt, payload)
-    except SETTLEMENT_ERRORS as error:
-        outcome = _mutation_outcome(error, response)
-        _raise_with_receipt(
-            error,
-            _org_receipt(operation, target, policy, outcome, _error_status(error, response), mutation, kind=kind),
-        )
+    failure_receipt, completed = _organization_mutation_shapers(operation, target, policy, mutation, kind)
+    return _run_mutation(
+        dispatch,
+        failure_receipt,
+        completed,
+        precondition=lambda: _enforce_mutation_policy(
+            operation, _policy_target(target), policy, destructive=destructive
+        ),
+        errors=SETTLEMENT_ERRORS,
+    )
 
 
 async def _async_mutation(
@@ -151,19 +176,16 @@ async def _async_mutation(
     destructive: bool = False,
     kind: ResourceKind = ResourceKind.ORGANIZATION,
 ) -> OrganizationMutationResult:
-    response: RuntimeResponse | None = None
-    try:
-        policy_target = target if isinstance(target, str) else _safe_target_value(target)
-        _enforce_mutation_policy(operation, policy_target, policy, destructive=destructive)
-        status, payload, response = await dispatch()
-        receipt = _org_receipt(operation, target, policy, "succeeded", status, mutation, kind=kind)
-        return _mutation_result(receipt, payload)
-    except ASYNC_SETTLEMENT_ERRORS as error:
-        outcome = _mutation_outcome(error, response)
-        _raise_with_receipt(
-            error,
-            _org_receipt(operation, target, policy, outcome, _error_status(error, response), mutation, kind=kind),
-        )
+    failure_receipt, completed = _organization_mutation_shapers(operation, target, policy, mutation, kind)
+    return await _run_mutation_async(
+        dispatch,
+        failure_receipt,
+        completed,
+        precondition=lambda: _enforce_mutation_policy(
+            operation, _policy_target(target), policy, destructive=destructive
+        ),
+        errors=ASYNC_SETTLEMENT_ERRORS,
+    )
 
 
 def _json_dispatch(

@@ -21,7 +21,6 @@ from datasluice.connectors.catalog.udata import clients as udata_clients
 from datasluice.connectors.catalog.udata.clients import (
     AsyncUDataClient,
     SyncUDataClient,
-    _create_controlled_sync_client,
     create_async_client,
     create_sync_client,
     declared_udata_profile,
@@ -60,6 +59,8 @@ from datasluice.runtime.transport.base import (
     RuntimeStreamResponse,
     TransportError,
 )
+from tests.helpers import udata_controlled as udata_evidence
+from tests.helpers.udata_controlled import _create_controlled_sync_client
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Generator, Mapping
@@ -137,8 +138,8 @@ def _controlled_compose_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     env_file = tmp_path / ".env"
     compose_file.write_text("compose", encoding="utf-8")
     env_file.write_text("env", encoding="utf-8")
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMPOSE_FILE", compose_file)
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_ENV_FILE", env_file)
+    monkeypatch.setattr(udata_evidence, "_CONTROLLED_COMPOSE_FILE", compose_file)
+    monkeypatch.setattr(udata_evidence, "_CONTROLLED_ENV_FILE", env_file)
 
 
 def test_controlled_command_reaps_a_process_after_pipe_eof(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -146,31 +147,35 @@ def test_controlled_command_reaps_a_process_after_pipe_eof(monkeypatch: pytest.M
     reads = iter((b"ok", b""))
     waits = iter(((0, 0), (7, 0)))
 
-    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
-    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
-    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
-    monkeypatch.setattr(udata_clients.os, "read", lambda *_: next(reads))
-    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: next(waits))
-    monkeypatch.setattr(udata_clients.os, "waitstatus_to_exitcode", lambda _: 0)
-    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], []))
+    monkeypatch.setattr(udata_evidence.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_evidence.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_evidence.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_evidence.os, "read", lambda *_: next(reads))
+    monkeypatch.setattr(udata_evidence.os, "waitpid", lambda *_: next(waits))
+    monkeypatch.setattr(udata_evidence.os, "waitstatus_to_exitcode", lambda _: 0)
+    monkeypatch.setattr(
+        udata_evidence.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], [])
+    )
 
-    assert udata_clients._compose_read("ps") == "ok"
+    assert udata_evidence._compose_read("ps") == "ok"
 
 
 def test_controlled_command_decode_failure_is_redacted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _controlled_compose_files(monkeypatch, tmp_path)
     reads = iter((b"\xff", b""))
 
-    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
-    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
-    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
-    monkeypatch.setattr(udata_clients.os, "read", lambda *_: next(reads))
-    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
-    monkeypatch.setattr(udata_clients.os, "waitstatus_to_exitcode", lambda _: 0)
-    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], []))
+    monkeypatch.setattr(udata_evidence.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_evidence.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_evidence.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_evidence.os, "read", lambda *_: next(reads))
+    monkeypatch.setattr(udata_evidence.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_evidence.os, "waitstatus_to_exitcode", lambda _: 0)
+    monkeypatch.setattr(
+        udata_evidence.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], [])
+    )
 
     with pytest.raises(CatalogValidationError) as excinfo:
-        udata_clients._compose_read("ps")
+        udata_evidence._compose_read("ps")
 
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__context__ is None
@@ -181,15 +186,15 @@ def test_controlled_command_timeout_terminates_the_child(monkeypatch: pytest.Mon
     times = iter((0.0, 16.0, 16.0))
     killed: list[int] = []
 
-    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
-    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
-    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
-    monkeypatch.setattr(udata_clients.os, "kill", lambda pid, _: killed.append(pid))
-    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
-    monkeypatch.setattr(udata_clients, "monotonic", lambda: next(times))
+    monkeypatch.setattr(udata_evidence.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_evidence.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_evidence.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_evidence.os, "kill", lambda pid, _: killed.append(pid))
+    monkeypatch.setattr(udata_evidence.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_evidence, "monotonic", lambda: next(times))
 
     with pytest.raises(CatalogValidationError):
-        udata_clients._compose_read("ps")
+        udata_evidence._compose_read("ps")
 
     assert killed == [7]
 
@@ -198,14 +203,14 @@ def test_controlled_sync_reap_uses_a_separate_bounded_cleanup_window() -> None:
     waits = iter(((0, 0), (7, 0)))
     killed: list[int] = []
     runtime = replace(
-        udata_clients._current_controlled_sync_runtime(),
+        udata_evidence._current_controlled_sync_runtime(),
         kill=lambda pid, _: killed.append(pid),
         waitpid=lambda *_: next(waits),
         monotonic=lambda: 0.0,
         select=lambda *_: ([], [], []),
     )
 
-    udata_clients._terminate_controlled_process_sync(7, runtime)
+    udata_evidence._terminate_controlled_process_sync(7, runtime)
 
     assert killed == [7]
 
@@ -231,7 +236,7 @@ def test_controlled_async_reap_uses_a_bounded_cleanup_timeout() -> None:
         raise TimeoutError
 
     async def run() -> None:
-        await udata_clients._terminate_controlled_process(
+        await udata_evidence._terminate_controlled_process(
             cast("Any", process), wait_for=bounded_wait, clock=lambda: 0.0
         )
 
@@ -245,17 +250,17 @@ def test_controlled_command_output_limit_terminates_the_child(monkeypatch: pytes
     _controlled_compose_files(monkeypatch, tmp_path)
     killed: list[int] = []
 
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES", 1)
-    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
-    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
-    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
-    monkeypatch.setattr(udata_clients.os, "read", lambda *_: b"too much")
-    monkeypatch.setattr(udata_clients.os, "kill", lambda pid, _: killed.append(pid))
-    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
-    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []))
+    monkeypatch.setattr(udata_evidence, "_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES", 1)
+    monkeypatch.setattr(udata_evidence.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_evidence.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_evidence.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_evidence.os, "read", lambda *_: b"too much")
+    monkeypatch.setattr(udata_evidence.os, "kill", lambda pid, _: killed.append(pid))
+    monkeypatch.setattr(udata_evidence.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_evidence.select, "select", lambda readers, *_: ([10], [], []))
 
     with pytest.raises(CatalogValidationError):
-        udata_clients._compose_read("ps")
+        udata_evidence._compose_read("ps")
 
     assert killed == [7]
 
@@ -264,16 +269,18 @@ def test_controlled_command_nonzero_exit_is_sanitized(monkeypatch: pytest.Monkey
     _controlled_compose_files(monkeypatch, tmp_path)
     reads = iter((b"ok", b""))
 
-    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
-    monkeypatch.setattr(udata_clients.os, "posix_spawnp", lambda *args, **kwargs: 7)
-    monkeypatch.setattr(udata_clients.os, "close", lambda _: None)
-    monkeypatch.setattr(udata_clients.os, "read", lambda *_: next(reads))
-    monkeypatch.setattr(udata_clients.os, "waitpid", lambda *_: (7, 0))
-    monkeypatch.setattr(udata_clients.os, "waitstatus_to_exitcode", lambda _: 1)
-    monkeypatch.setattr(udata_clients.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], []))
+    monkeypatch.setattr(udata_evidence.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_evidence.os, "posix_spawnp", lambda *args, **kwargs: 7)
+    monkeypatch.setattr(udata_evidence.os, "close", lambda _: None)
+    monkeypatch.setattr(udata_evidence.os, "read", lambda *_: next(reads))
+    monkeypatch.setattr(udata_evidence.os, "waitpid", lambda *_: (7, 0))
+    monkeypatch.setattr(udata_evidence.os, "waitstatus_to_exitcode", lambda _: 1)
+    monkeypatch.setattr(
+        udata_evidence.select, "select", lambda readers, *_: ([10], [], []) if readers else ([], [], [])
+    )
 
     with pytest.raises(CatalogValidationError) as excinfo:
-        udata_clients._compose_read("ps")
+        udata_evidence._compose_read("ps")
 
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__context__ is None
@@ -293,11 +300,11 @@ def test_controlled_command_closes_output_pipe_when_input_setup_fails(
             return 10, 11
         raise OSError("input pipe")
 
-    monkeypatch.setattr(udata_clients.os, "pipe", pipe)
-    monkeypatch.setattr(udata_clients.os, "close", closed.append)
+    monkeypatch.setattr(udata_evidence.os, "pipe", pipe)
+    monkeypatch.setattr(udata_evidence.os, "close", closed.append)
 
     with pytest.raises(CatalogValidationError):
-        udata_clients._controlled_command(
+        udata_evidence._controlled_command(
             ("ps",),
             input_data=b"input",
             timeout_message="timeout",
@@ -312,21 +319,21 @@ def test_controlled_command_cleanup_failure_does_not_replace_primary_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _controlled_compose_files(monkeypatch, tmp_path)
-    monkeypatch.setattr(udata_clients.os, "pipe", lambda: (10, 11))
+    monkeypatch.setattr(udata_evidence.os, "pipe", lambda: (10, 11))
 
     def spawn_failure(*_: object, **__: object) -> int:
         raise OSError("spawn")
 
-    monkeypatch.setattr(udata_clients.os, "posix_spawnp", spawn_failure)
+    monkeypatch.setattr(udata_evidence.os, "posix_spawnp", spawn_failure)
 
     def close(fd: int) -> None:
         if fd == 10:
             raise RuntimeError("cleanup")
 
-    monkeypatch.setattr(udata_clients.os, "close", close)
+    monkeypatch.setattr(udata_evidence.os, "close", close)
 
     with pytest.raises(CatalogValidationError, match="failure") as excinfo:
-        udata_clients._controlled_command(
+        udata_evidence._controlled_command(
             ("ps",),
             timeout_message="timeout",
             output_message="output",
@@ -373,7 +380,7 @@ def test_controlled_dependency_image_identity_rejects_unapproved_identity(mismat
         raise AssertionError(f"unexpected image identity command {args}")
 
     with pytest.raises(CatalogValidationError, match=message):
-        udata_clients._controlled_service_image_identity(
+        udata_evidence._controlled_service_image_identity(
             read,
             "mongo",
             "unix:///tmp/docker.sock",
@@ -416,7 +423,7 @@ def test_controlled_service_image_identity_rejects_unapproved_service_identity(m
         raise AssertionError(f"unexpected image identity command {args}")
 
     with pytest.raises(CatalogValidationError, match=message):
-        udata_clients._controlled_service_image_identity(
+        udata_evidence._controlled_service_image_identity(
             read,
             "udata",
             "unix:///tmp/docker.sock",
@@ -441,7 +448,7 @@ def test_controlled_service_image_identity_accepts_any_build_id_for_the_pinned_r
             return json.dumps(image_id) + " " + json.dumps(None)
         raise AssertionError(f"unexpected image identity command {args}")
 
-    _container_id, identity = udata_clients._controlled_service_image_identity(
+    _container_id, identity = udata_evidence._controlled_service_image_identity(
         read,
         "udata",
         "unix:///tmp/docker.sock",
@@ -470,7 +477,7 @@ def test_controlled_verification_survives_an_empty_repo_digest_list() -> None:
             return json.dumps(image_id) + " " + json.dumps(None)
         raise AssertionError(f"unexpected image identity command {args}")
 
-    _container_id, identity = udata_clients._controlled_service_image_identity(
+    _container_id, identity = udata_evidence._controlled_service_image_identity(
         read,
         "udata",
         "unix:///tmp/docker.sock",
@@ -486,7 +493,7 @@ def test_controlled_verification_survives_an_empty_repo_digest_list() -> None:
 @pytest.mark.parametrize("observed", ("17.7.0", "17.6.1", "", "17.6.0.dev0"))
 def test_controlled_stack_rejects_a_service_that_is_not_the_pinned_version(observed: str) -> None:
     with pytest.raises(CatalogValidationError, match="not the approved build"):
-        udata_clients._require_controlled_version(observed, "17.6.0", udata_clients._controlled_error)
+        udata_evidence._require_controlled_version(observed, "17.6.0", udata_clients._controlled_error)
 
 
 @pytest.mark.parametrize("udata_version", ("17.7.0", "17.6.1", ""))
@@ -497,7 +504,7 @@ def test_controlled_client_rejects_a_stack_running_an_unapproved_udata_version(u
     with ExitStack() as stack:
         _controlled_stack_fixture(stack, transport, udata_version=udata_version)
         with pytest.raises(CatalogValidationError, match="not the approved build"):
-            udata_clients._ControlledSyncTransport()
+            udata_evidence._ControlledSyncTransport()
 
 
 def test_controlled_client_accepts_a_stack_running_the_pinned_udata_version() -> None:
@@ -506,7 +513,7 @@ def test_controlled_client_accepts_a_stack_running_the_pinned_udata_version() ->
     )
     with ExitStack() as stack:
         _controlled_stack_fixture(stack, transport)
-        controlled_transport = udata_clients._ControlledSyncTransport()
+        controlled_transport = udata_evidence._ControlledSyncTransport()
         response = controlled_transport.send(RuntimeRequest(method="GET", url=_SITE_URL, headers={}))
 
     assert response.status_code == 200
@@ -534,7 +541,7 @@ def test_controlled_service_image_identity_skips_the_repo_digest_for_a_locally_b
             return json.dumps(image_id) + " " + json.dumps(None)
         raise AssertionError(f"unexpected image identity command {args}")
 
-    _container_id, identity = udata_clients._controlled_service_image_identity(
+    _container_id, identity = udata_evidence._controlled_service_image_identity(
         read,
         "udata",
         "unix:///tmp/docker.sock",
@@ -554,7 +561,7 @@ def test_controlled_command_rejects_docker_environment_overrides(
     monkeypatch.setenv("DOCKER_CONTEXT", "remote")
 
     with pytest.raises(CatalogValidationError, match="environment overrides"):
-        udata_clients._compose_read("ps")
+        udata_evidence._compose_read("ps")
 
 
 def test_bound_controlled_command_spec_ignores_mutable_module_configuration(
@@ -566,13 +573,13 @@ def test_bound_controlled_command_spec_ignores_mutable_module_configuration(
     docker_stub = tmp_path / "docker"
     docker_stub.write_text("", encoding="utf-8")
     docker_stub.chmod(0o755)
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_DOCKER_EXECUTABLES", (docker_stub,))
-    bound_spec = udata_clients._make_bound_controlled_command_spec()
+    monkeypatch.setattr(udata_evidence, "_CONTROLLED_DOCKER_EXECUTABLES", (docker_stub,))
+    bound_spec = udata_evidence._make_bound_controlled_command_spec()
     original = bound_spec(("ps",))
 
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_COMPOSE_FILE", tmp_path / "other-compose.yaml")
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_ENV_FILE", tmp_path / "other.env")
-    monkeypatch.setattr(udata_clients, "_CONTROLLED_DOCKER_EXECUTABLES", ())
+    monkeypatch.setattr(udata_evidence, "_CONTROLLED_COMPOSE_FILE", tmp_path / "other-compose.yaml")
+    monkeypatch.setattr(udata_evidence, "_CONTROLLED_ENV_FILE", tmp_path / "other.env")
+    monkeypatch.setattr(udata_evidence, "_CONTROLLED_DOCKER_EXECUTABLES", ())
 
     assert bound_spec(("ps",)) == original
 
@@ -581,7 +588,7 @@ def test_controlled_peer_decode_failure_is_redacted() -> None:
     response = RuntimeResponse(status_code=200, headers={"Content-Type": "application/json"}, body=b"not-json")
 
     with pytest.raises(CatalogValidationError) as excinfo:
-        udata_clients._controlled_peer_evidence(response)
+        udata_evidence._controlled_peer_evidence(response)
 
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__context__ is None
@@ -1209,10 +1216,10 @@ def _controlled_process_setup(
     ) -> str:
         return sync_command(args, input_data=input_data, docker_endpoint=docker_endpoint, direct=direct)
 
-    sync_type = udata_clients._ControlledSyncTransport
-    async_type = udata_clients._ControlledAsyncTransport
-    sync_operations = udata_clients._make_controlled_sync_operations(sync_command)
-    async_operations = udata_clients._make_controlled_async_operations(async_command)
+    sync_type = udata_evidence._ControlledSyncTransport
+    async_type = udata_evidence._ControlledAsyncTransport
+    sync_operations = udata_evidence._make_controlled_sync_operations(sync_command)
+    async_operations = udata_evidence._make_controlled_async_operations(async_command)
 
     _replace_closure_cell(
         cast("Callable[..., object]", sync_type.__init__), "trusted_sync_operations", sync_operations, stack
@@ -1310,7 +1317,7 @@ def _sync_client(
     original_site_response = transport.routes.get(("GET", _SITE_URL))
     transport.routes[("GET", _SITE_URL)] = verification_response
     try:
-        controlled_transport = udata_clients._ControlledSyncTransport()
+        controlled_transport = udata_evidence._ControlledSyncTransport()
     except BaseException:
         stack.close()
         raise
@@ -1390,7 +1397,7 @@ def _async_client(
     original_site_response = transport.routes.get(("GET", _SITE_URL))
     transport.routes[("GET", _SITE_URL)] = verification_response
     try:
-        controlled_transport = udata_clients._ControlledAsyncTransport()
+        controlled_transport = udata_evidence._ControlledAsyncTransport()
         asyncio.run(controlled_transport.verify())
     except BaseException:
         stack.close()
@@ -1516,8 +1523,8 @@ def test_controlled_sync_dispatch_keeps_factory_bound_operations_after_helper_ov
 
     with (
         client,
-        patch.object(udata_clients, "_controlled_command", replacement),
-        patch.object(udata_clients, "_controlled_patch_response", replacement),
+        patch.object(udata_evidence, "_controlled_command", replacement),
+        patch.object(udata_evidence, "_controlled_patch_response", replacement),
     ):
         result = client.root_profile.set_site(
             SitePatchInput(title="Changed"),
@@ -1585,8 +1592,8 @@ def test_controlled_async_dispatch_keeps_factory_bound_operations_after_helper_o
     async def run() -> SiteMutationResult:
         async with client:
             with (
-                patch.object(udata_clients, "_controlled_command_async", replacement),
-                patch.object(udata_clients, "_controlled_patch_response_async", replacement),
+                patch.object(udata_evidence, "_controlled_command_async", replacement),
+                patch.object(udata_evidence, "_controlled_patch_response_async", replacement),
             ):
                 return await client.root_profile.set_site(
                     SitePatchInput(title="Changed"),
@@ -1646,7 +1653,7 @@ def test_controlled_sync_construction_ignores_preconstruction_helper_override() 
         called = True
         raise AssertionError("mutable controlled helper was invoked")
 
-    with patch.object(udata_clients, "_controlled_command", replacement):
+    with patch.object(udata_evidence, "_controlled_command", replacement):
         _, client = _sync_client(
             _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"}))),
             credential=_CREDENTIAL,
@@ -1671,7 +1678,7 @@ def test_controlled_async_construction_ignores_preconstruction_helper_override()
         called = True
         raise AssertionError("mutable controlled helper was invoked")
 
-    with patch.object(udata_clients, "_controlled_command_async", replacement):
+    with patch.object(udata_evidence, "_controlled_command_async", replacement):
         _, client = _async_client(
             _routes(("PATCH", _SITE_URL, _json_response(200, _site_body(), {"Content-Type": "application/json"}))),
             credential=_CREDENTIAL,
@@ -2094,7 +2101,7 @@ def test_set_site_requires_controlled_factory_before_any_dispatch() -> None:
 
 def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport() -> None:
     transport = RouterTransport(_routes())
-    typed_value = cast("Any", udata_clients._ControlledSyncTransport)
+    typed_value = cast("Any", udata_evidence._ControlledSyncTransport)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         typed_value(transport=transport)
     typed_value_2 = cast("Any", UDataClientSettings)
@@ -2107,7 +2114,7 @@ def test_fabricated_controlled_evidence_cannot_authorize_an_injected_transport()
             controlled_stack_attestation=object_2,
         )
 
-    fabricated = object.__new__(udata_clients._ControlledSyncTransport)
+    fabricated = object.__new__(udata_evidence._ControlledSyncTransport)
     with pytest.raises(AttributeError):
         object.__setattr__(fabricated, "_transport", transport)
     client = SyncUDataClient(

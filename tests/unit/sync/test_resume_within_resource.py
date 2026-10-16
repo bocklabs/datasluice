@@ -23,29 +23,18 @@ parquet_module = importlib.import_module("datasluice.data.readers.parquet")
 sync_module = importlib.import_module("datasluice.sync.sync")
 
 
-def _checkpoint(next_batch_index: int) -> dict[str, Any]:
-    return {
-        "version": 1,
-        "status": "in_progress",
-        "next_batch_index": next_batch_index,
-        "position": {
-            "kind": "parquet_row_group",
-            "row_group_index": next_batch_index,
-        },
-    }
-
-
-def _checkpoint_v2(next_batch_index: int, row_group_index: int, source_version: str | None = None) -> dict[str, Any]:
-    return {
-        "version": 2,
-        "status": "in_progress",
-        "next_batch_index": next_batch_index,
-        "position": {
-            "kind": "parquet_row_group",
-            "row_group_index": row_group_index,
-        },
-        "source_version": source_version,
-    }
+def test_memory_store_warns_when_resume_is_requested(tmp_path, caplog) -> None:
+    list(
+        sync_resources(
+            [],
+            state_store=InMemoryStateStore(),
+            reader=DataPlaneResourceReader(),
+            destination_uri=f"file://{tmp_path}/dest",
+            resume=True,
+        )
+    )
+    assert "InMemoryStateStore" in caplog.text
+    assert "FileStateStore" in caplog.text
 
 
 def _checkpoint_v3(
@@ -247,10 +236,11 @@ def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_p
             raise AssertionError("batch zero must not be accessed")
 
     resource = Resource(id="incapable", name="incapable", format="PARQUET", access=LocalFile(path="/dev/null"))
+    destination = f"file://{tmp_path}/dest"
     store = InMemoryStateStore()
     store.put(
         canonical_identity(resource),
-        SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}),
+        SyncState(extra={"datasluice_checkpoint": _checkpoint_v3(2, 2, _EMPTY_SHA, destination)}),
     )
     reader = IncapableReader()
 
@@ -260,7 +250,7 @@ def test_resume_reader_without_continuation_fails_before_batch_zero_access(tmp_p
                 [resource],
                 state_store=store,
                 reader=reader,
-                destination_uri=f"file://{tmp_path}/dest",
+                destination_uri=destination,
                 resume=True,
             )
         )
@@ -403,9 +393,12 @@ def test_missing_checkpoint_referenced_shard_fails_as_corrupt_state(tmp_path) ->
 
     resource = Resource(id="missing-shard", name="missing-shard", format="PARQUET", access=LocalFile(path="/dev/null"))
     reader = _CursorAwareReader(fail_at=None)
-    store = InMemoryStateStore()
-    store.put(canonical_identity(resource), SyncState(extra={"datasluice_checkpoint": _checkpoint(2)}))
     destination = f"file://{tmp_path}/missing-shard"
+    store = InMemoryStateStore()
+    store.put(
+        canonical_identity(resource),
+        SyncState(extra={"datasluice_checkpoint": _checkpoint_v3(2, 2, _EMPTY_SHA, destination)}),
+    )
     fs = open_filesystem(destination)
     partial = _partial_uri(destination, canonical_identity(resource))
     fs.makedirs(partial, exist_ok=True)
