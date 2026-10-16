@@ -28,7 +28,17 @@ def test_profile_operations_returns_the_declared_ids() -> None:
     assert len(operations) == len(set(operations))
 
 
+def _local_receipts_present() -> bool:
+    """True when every family's review receipts are on disk, as in a full local checkout."""
+    return all(
+        any((gate.REVIEWS_ROOT / gate.REVIEWS_DIR_NAMES.get(family, family)).glob("*/review-receipt.json"))
+        for family in gate.FAMILIES
+    )
+
+
 def test_coverage_inventory_is_the_locked_denominator() -> None:
+    if not gate.COVERAGE_PATH.exists():
+        pytest.skip("the coverage matrix requires the local-only .planning tree")
     inventory = gate.coverage_inventory()
     assert len(inventory) == 268
     assert all("." in name for name in inventory)
@@ -58,6 +68,8 @@ KNOWN_HISTORICAL_GAPS: set[str] = set()
 
 
 def test_semantic_conformance_reports_the_true_family_state() -> None:
+    if not _local_receipts_present():
+        pytest.skip("the review receipts require the local-only dev/udata-evidence tree")
     covered, total = gate.semantic_conformance()
     assert total == len(gate.FAMILIES)
     # The gate fails closed: families whose historical review artifacts predate
@@ -69,6 +81,8 @@ def test_semantic_conformance_reports_the_true_family_state() -> None:
 
 def test_every_current_era_receipt_verifies_at_its_own_sha(monkeypatch: pytest.MonkeyPatch) -> None:
     """Known-good: every receipt of the reviewed families is valid at its recorded sha."""
+    if not _local_receipts_present():
+        pytest.skip("the review receipts require the local-only dev/udata-evidence tree")
     monkeypatch.syspath_prepend(str(ROOT / "scripts"))
     import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
 
