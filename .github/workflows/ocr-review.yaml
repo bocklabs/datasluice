@@ -20,7 +20,7 @@ jobs:
   code-review:
     name: AI code review
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
     steps:
       - name: Check OCR configuration
