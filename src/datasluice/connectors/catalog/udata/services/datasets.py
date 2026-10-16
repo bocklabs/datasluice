@@ -35,7 +35,7 @@ from datasluice.connectors.catalog.udata.services._receipts import (
 from datasluice.connectors.catalog.udata.wire import datasets as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, PlatformMetadata
+from datasluice.domain.catalog.models import NativeRecord, PlatformMetadata, redact_record_payload
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import (
@@ -932,8 +932,10 @@ def _shape_page(payload: object, *, operation: str) -> UDataPageEnvelope:
     extensions.update({"udata.nextpage": page.next_page, "udata.previouspage": page.previous_page})
     if isinstance(payload, Mapping) and "facets" in payload:
         facets = payload["facets"]
+        if not isinstance(facets, Mapping):
+            raise wire._invalid_field("facets", operation, "a JSON object")
         wire._validate_json_value(facets, operation=operation, path="facets")
-        extensions["udata.facets"] = facets
+        extensions["udata.facets"] = redact_record_payload(facets)
     metadata = PlatformMetadata(platform=CatalogPlatform.UDATA, extensions=extensions)
     return UDataPageEnvelope(
         items=envelope.items,

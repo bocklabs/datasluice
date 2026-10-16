@@ -1016,6 +1016,55 @@ def test_wr05_v2_search_retains_facets_and_native_links() -> None:
     assert "page=2" in str(extensions["udata.nextpage"])
 
 
+def test_v2_search_redacts_facet_credentials_in_sync_results() -> None:
+    payload = json.loads(_page_body())
+    payload["facets"] = {"api_key": "facet-secret", "tag": {"label": "Bearer abcdefgh", "open": 1}}
+    routes = _site_first(
+        {("GET", "http://127.0.0.1:5640/api/2/datasets/search/?page=1&page_size=20"): json.dumps(payload).encode()}
+    )
+
+    with _sync_client(routes) as client:
+        envelope = client.datasets.search_v2(DatasetSearchQuery())
+
+    assert envelope.platform is not None
+    assert envelope.platform.extensions["udata.facets"] == {
+        "api_key": REDACTED,
+        "tag": {"label": "Bearer ***", "open": 1},
+    }
+
+
+def test_v2_search_redacts_facet_credentials_in_async_results() -> None:
+    payload = json.loads(_page_body())
+    payload["facets"] = {"api_key": "facet-secret", "tag": {"label": "Bearer abcdefgh", "open": 1}}
+    routes = _site_first(
+        {("GET", "http://127.0.0.1:5640/api/2/datasets/search/?page=1&page_size=20"): json.dumps(payload).encode()}
+    )
+    client = _async_client(routes)
+
+    async def run() -> mapping.UDataPageEnvelope:
+        async with client as active:
+            return await active.datasets.search_v2(DatasetSearchQuery())
+
+    envelope = asyncio.run(run())
+
+    assert envelope.platform is not None
+    assert envelope.platform.extensions["udata.facets"] == {
+        "api_key": REDACTED,
+        "tag": {"label": "Bearer ***", "open": 1},
+    }
+
+
+def test_v2_search_rejects_non_object_facets() -> None:
+    payload = json.loads(_page_body())
+    payload["facets"] = ["unexpected"]
+    routes = _site_first(
+        {("GET", "http://127.0.0.1:5640/api/2/datasets/search/?page=1&page_size=20"): json.dumps(payload).encode()}
+    )
+
+    with _sync_client(routes) as client, pytest.raises(CatalogValidationError, match="facets.*JSON object"):
+        client.datasets.search_v2(DatasetSearchQuery())
+
+
 def test_wr08_v2_search_rejects_undocumented_filters_and_ranges() -> None:
     with pytest.raises(ValueError, match="Unknown dataset search filters"):
         DatasetSearchQuery(filters={"private": True})
