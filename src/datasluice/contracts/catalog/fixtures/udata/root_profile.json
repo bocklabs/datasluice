@@ -231,7 +231,7 @@
   ],
   "controlled_evidence": {
     "required": true,
-    "mutation_origin": "http://127.0.0.1:5640",
+    "mutation_scope": "loopback-only",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f"
   }
 }

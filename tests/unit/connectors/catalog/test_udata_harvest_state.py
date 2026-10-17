@@ -115,9 +115,12 @@ def test_handle_observation_advances_polls_and_terminal_state() -> None:
     handle = _handle()
     assert handle.terminal is False
     started = handle.observed("processing")
-    assert started.polls == 1 and started.status == "processing" and started.terminal is False
+    assert started.polls == 1
+    assert started.status == "processing"
+    assert started.terminal is False
     done = started.observed("done")
-    assert done.polls == 2 and done.terminal is True
+    assert done.polls == 2
+    assert done.terminal is True
 
 
 def test_handle_refuses_unknown_states_and_bad_lease_values() -> None:
@@ -137,9 +140,11 @@ def test_handle_refuses_unknown_states_and_bad_lease_values() -> None:
 def test_abandoned_lease_records_why_the_wait_stopped() -> None:
     """Abandonment keeps the remote job visible and never marks terminal success."""
     abandoned = _handle().abandoned_lease()
-    assert abandoned.abandoned is True and abandoned.exhausted is False
+    assert abandoned.abandoned is True
+    assert abandoned.exhausted is False
     exhausted = _handle().abandoned_lease(exhausted=True)
-    assert exhausted.abandoned is True and exhausted.exhausted is True
+    assert exhausted.abandoned is True
+    assert exhausted.exhausted is True
     assert abandoned.terminal is False
 
 
@@ -169,7 +174,8 @@ def test_sync_wait_stops_at_the_terminal_status_without_extra_polls() -> None:
     assert result.handle.status == "done"
     assert result.handle.terminal is True
     assert result.handle.abandoned is False
-    assert result.record is not None and result.record.payload["id"] == "job-9"
+    assert result.record is not None
+    assert result.record.payload["id"] == "job-9"
     assert router.polls == 2
 
 

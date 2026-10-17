@@ -688,6 +688,8 @@ def _skipped_record(target: DriftTarget, operation_id: str, reason: str) -> Drif
 
 
 def _resolved_targets(targets: Sequence[DriftTarget] | None) -> tuple[DriftTarget, ...]:
+    if not APPROVED_TARGETS:
+        raise UDataDriftUnavailableError(approved_targets=0)
     resolved = APPROVED_TARGETS if targets is None else tuple(targets)
     if not resolved:
         raise UDataDriftUnavailableError(approved_targets=len(APPROVED_TARGETS))
@@ -704,6 +706,20 @@ def _resolved_targets(targets: Sequence[DriftTarget] | None) -> tuple[DriftTarge
             operation=DRIFT_OPERATION,
             platform=PLATFORM.value,
             safe_action="Keep each reviewed target to the small approved read set.",
+        )
+    if any(target not in APPROVED_TARGETS for target in resolved):
+        raise CatalogValidationError(
+            "Drift targets must exactly match entries in the reviewed approved allowlist.",
+            operation=DRIFT_OPERATION,
+            platform=PLATFORM.value,
+            safe_action="Select only entries from APPROVED_TARGETS without changing their origins or reads.",
+        )
+    if len({target.origin for target in resolved}) != len(resolved):
+        raise CatalogValidationError(
+            "A drift run cannot repeat a deployment origin.",
+            operation=DRIFT_OPERATION,
+            platform=PLATFORM.value,
+            safe_action="Select each reviewed deployment at most once per run.",
         )
     return resolved
 
@@ -828,7 +844,7 @@ def run_udata_drift(
     """Run the reviewed bounded public drift reads synchronously.
 
     Args:
-        targets: The reviewed targets to exercise; defaults to ``APPROVED_TARGETS``.
+        targets: Exact entries selected from ``APPROVED_TARGETS``. The default selects all entries.
         transport: An injected borrowed transport; when omitted the runner owns one.
         tls_policy: The TLS policy applied to a runner-owned transport.
         now: The injected wall clock used for the report timestamp.
@@ -861,7 +877,7 @@ async def run_udata_drift_async(
     """Run the reviewed bounded public drift reads asynchronously.
 
     Args:
-        targets: The reviewed targets to exercise; defaults to ``APPROVED_TARGETS``.
+        targets: Exact entries selected from ``APPROVED_TARGETS``. The default selects all entries.
         transport: An injected borrowed transport; when omitted the runner owns one.
         tls_policy: The TLS policy applied to a runner-owned transport.
         now: The injected wall clock used for the report timestamp.

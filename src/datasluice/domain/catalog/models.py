@@ -3,12 +3,15 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from itertools import islice
 from types import MappingProxyType
 from typing import ClassVar, cast
 
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.redaction import (
     MAX_METADATA_DEPTH,
+    MAX_METADATA_ENTRIES,
+    MAX_TEXT_LENGTH,
     REDACTED,
     SENSITIVE_PARTS,
     TRUNCATED,
@@ -19,6 +22,8 @@ from datasluice.exceptions import DataSluiceError
 _VALUE_RECORD_VALUE_PATH = "value_record.value"
 _MAPPING_RECORD_PAYLOAD_PATH = "mapping_record.payload"
 _NATIVE_RECORD_PAYLOAD_PATH = "native_record.payload"
+_MAX_RECORD_NODES = 256
+_PRIVATE_RECORD_PARTS = ("private", "internal", "email", "e_mail", "phone", "address", "contact", "origin")
 
 
 def _envelope_item(item: object) -> dict[str, object]:
@@ -100,22 +105,10 @@ def _redacted_record_value(value: object, *, _depth: int) -> object:
 
 
 def redact_record_payload(value: Mapping[str, object], *, _depth: int = 0) -> dict[str, object]:
-    """Return a recursively credential-redacted, depth- and length-bounded copy.
+    """Copy runtime fields with credential redaction, not a bounded evidence projection.
 
-    Record payloads preserve every server-sent non-credential field
-    (CON-04/D-05/D-07), so unlike the shared event-metadata gate this copy
-    applies no positional entry cap: every key is inspected so a credential can
-    never hide past a cut. Credential-shaped keys keep their presence with the
-    shared ``REDACTED`` marker, credential-shaped string content is scrubbed with
-    the shared matcher, and nesting plus text length stay bounded by the shared
-    limits. Applying the function twice is a no-op.
-
-    Args:
-        value: The JSON-safe payload mapping to redact.
-        _depth: The internal recursion depth counter.
-
-    Returns:
-        A fresh redacted mapping safe to serialize into a retained artifact.
+    Every non-credential field remains present. Text length and nesting limits still apply. Use the record's
+    ``to_evidence_dict`` method for retained evidence without field names or values.
     """
     if _depth >= MAX_METADATA_DEPTH:
         return {TRUNCATED: TRUNCATED}
@@ -130,8 +123,87 @@ def redact_record_payload(value: Mapping[str, object], *, _depth: int = 0) -> di
     return redacted
 
 
-def _redacted_thawed(value: Mapping[str, object]) -> dict[str, object]:
-    return redact_record_payload(cast("Mapping[str, object]", _thaw_json(value)))
+def _record_projection(value: object, *, budget: list[int], depth: int = 0, structural: bool = False) -> object:
+    if budget[0] <= 0 or depth >= MAX_METADATA_DEPTH:
+        return TRUNCATED
+    budget[0] -= 1
+    if isinstance(value, Mapping | tuple | list):
+        return _container_projection(value, budget=budget, depth=depth, structural=structural)
+    if structural:
+        return _structural_scalar(value)
+    if isinstance(value, str):
+        return redact_string(value)
+    if type(value) is int and value.bit_length() > MAX_TEXT_LENGTH * 3:
+        return TRUNCATED
+    return value
+
+
+def _container_projection(
+    value: Mapping[object, object] | tuple[object, ...] | list[object],
+    *,
+    budget: list[int],
+    depth: int,
+    structural: bool,
+) -> object:
+    entries: list[object] = []
+    fields: dict[str, object] = {}
+    source = value.items() if isinstance(value, Mapping) else enumerate(value)
+    for key, nested in islice(source, MAX_METADATA_ENTRIES):
+        if budget[0] <= 0:
+            break
+        if structural:
+            entries.append(_record_projection(nested, budget=budget, depth=depth + 1, structural=True))
+        elif isinstance(value, Mapping):
+            name = cast("str", key)
+            fields[redact_string(name)] = _record_projection(
+                _private_masked(name, nested), budget=budget, depth=depth + 1
+            )
+        else:
+            entries.append(_record_projection(nested, budget=budget, depth=depth + 1))
+    if structural:
+        _mark_truncation(entries, source_size=len(value))
+        return {"type": "object" if isinstance(value, Mapping) else "array", "size": len(value), "entries": entries}
+    output: dict[str, object] | list[object] = fields if isinstance(value, Mapping) else entries
+    _mark_truncation(output, source_size=len(value))
+    return output
+
+
+def _private_masked(name: str, nested: object) -> object:
+    """Return the redaction marker for sensitive or private field names, else the value."""
+    normalized = name.lower().replace("-", "_")
+    if is_sensitive_record_key(name) or any(part in normalized for part in _PRIVATE_RECORD_PARTS):
+        return REDACTED
+    return nested
+
+
+def _mark_truncation(output: dict[str, object] | list[object], *, source_size: int) -> None:
+    """Append the shared truncation marker when entries were dropped."""
+    if len(output) >= source_size:
+        return
+    if len(output) == MAX_METADATA_ENTRIES:
+        output.popitem() if isinstance(output, dict) else output.pop()
+    if isinstance(output, dict):
+        output[TRUNCATED] = TRUNCATED
+    else:
+        output.append(TRUNCATED)
+
+
+def _structural_scalar(value: object) -> str:
+    if value is None:
+        return "null"
+    return {str: "string", bool: "boolean", int: "integer", float: "number"}.get(type(value), "unknown")
+
+
+def _serialized_record_payload(value: Mapping[str, object]) -> dict[str, object]:
+    return cast("dict[str, object]", _record_projection(value, budget=[_MAX_RECORD_NODES]))
+
+
+def _record_evidence(kind: str, value: object) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "kind": f"{kind}_evidence",
+        "value": _record_projection(value, budget=[_MAX_RECORD_NODES], structural=True),
+    }
 
 
 def _freeze_extensions(value: object) -> Mapping[str, object]:
@@ -197,6 +269,10 @@ class DatasetRecord:
             "extensions": _thaw_json(self.extensions),
         }
 
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return bounded structure without identifiers, field names, or scalar values."""
+        return _record_evidence("dataset", (self.name, self.description, self.extensions))
+
     @classmethod
     def from_dict(cls, value: object) -> DatasetRecord:
         """Decode one strict schema-v1 dataset envelope."""
@@ -251,6 +327,10 @@ class ResourceRecord:
             "extensions": _thaw_json(self.extensions),
         }
 
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return bounded structure without identifiers, field names, or scalar values."""
+        return _record_evidence("resource", (self.name, self.url, self.extensions))
+
     @classmethod
     def from_dict(cls, value: object) -> ResourceRecord:
         """Decode one strict schema-v1 resource envelope."""
@@ -300,6 +380,10 @@ class OrganizationRecord:
             "extensions": _thaw_json(self.extensions),
         }
 
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return bounded structure without identifiers, field names, or scalar values."""
+        return _record_evidence("organization", (self.name, self.description, self.extensions))
+
     @classmethod
     def from_dict(cls, value: object) -> OrganizationRecord:
         """Decode one strict schema-v1 organization envelope."""
@@ -348,6 +432,10 @@ class UserRecord:
             "extensions": _thaw_json(self.extensions),
         }
 
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return bounded structure without identifiers, field names, or scalar values."""
+        return _record_evidence("user", (self.username, self.display_name, self.extensions))
+
     @classmethod
     def from_dict(cls, value: object) -> UserRecord:
         """Decode one strict schema-v1 user envelope."""
@@ -377,8 +465,8 @@ class NativeRecord:
     platform: CatalogPlatform
     resource_kind: ResourceKind
     id: CatalogId
-    payload: Mapping[str, object]
-    extensions: Mapping[str, object] = field(default_factory=dict)
+    payload: Mapping[str, object] = field(repr=False)
+    extensions: Mapping[str, object] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.platform, CatalogPlatform) or not isinstance(self.resource_kind, ResourceKind):
@@ -395,20 +483,20 @@ class NativeRecord:
         object.__setattr__(self, "extensions", _freeze_extensions(self.extensions))
 
     def to_dict(self) -> dict[str, object]:
-        """Return a fresh JSON-safe redacted native record envelope.
-
-        The retained payload and extensions keep every non-credential field (CON-04/D-07) while credential-shaped keys
-        and credential-shaped string content are redacted and nesting stays bounded.
-        """
+        """Return a bounded, redacted copy, not a lossless or value-free evidence export."""
         return {
             "schema_version": 1,
             "kind": "native_record",
-            "platform": self.platform.value,
-            "resource_kind": self.resource_kind.value,
-            "id": self.id.to_dict(),
-            "payload": _redacted_thawed(self.payload),
-            "extensions": _redacted_thawed(self.extensions),
+            "platform": redact_string(self.platform.value),
+            "resource_kind": redact_string(self.resource_kind.value),
+            "id": _serialized_record_payload(self.id.to_dict()),
+            "payload": _serialized_record_payload(self.payload),
+            "extensions": _serialized_record_payload(self.extensions),
         }
+
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return bounded structure without identifiers, field names, or scalar values."""
+        return _record_evidence("native_record", (self.payload, self.extensions))
 
     @classmethod
     def from_dict(cls, value: object) -> NativeRecord:
@@ -438,7 +526,7 @@ class ValueRecord:
 
     kind: ClassVar[str] = "value_record"
 
-    value: None | bool | int | float | str
+    value: None | bool | int | float | str = field(repr=False)
 
     def __post_init__(self) -> None:
         if self.value is None or isinstance(self.value, (str, bool)) or type(self.value) is int:
@@ -452,6 +540,10 @@ class ValueRecord:
     def to_dict(self) -> dict[str, object]:
         """Return a fresh JSON-safe value record envelope."""
         return {"schema_version": 1, "kind": "value_record", "value": self.value}
+
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return only the scalar type for retained evidence."""
+        return _record_evidence("value_record", self.value)
 
     @classmethod
     def from_dict(cls, value: object) -> ValueRecord:
@@ -469,7 +561,7 @@ class MappingRecord:
 
     kind: ClassVar[str] = "mapping_record"
 
-    payload: Mapping[str, object]
+    payload: Mapping[str, object] = field(repr=False)
 
     def __post_init__(self) -> None:
         frozen = _freeze_json(self.payload, _MAPPING_RECORD_PAYLOAD_PATH)
@@ -478,12 +570,12 @@ class MappingRecord:
         object.__setattr__(self, "payload", frozen)
 
     def to_dict(self) -> dict[str, object]:
-        """Return a fresh JSON-safe redacted mapping record envelope.
+        """Return a bounded, redacted copy, not a lossless or value-free evidence export."""
+        return {"schema_version": 1, "kind": "mapping_record", "payload": _serialized_record_payload(self.payload)}
 
-        The retained payload keeps every non-credential field (CON-04/D-07) while credential-shaped keys and credential-
-        shaped string content are redacted and nesting stays bounded.
-        """
-        return {"schema_version": 1, "kind": "mapping_record", "payload": _redacted_thawed(self.payload)}
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return bounded structure without field names or scalar values."""
+        return _record_evidence("mapping_record", self.payload)
 
     @classmethod
     def from_dict(cls, value: object) -> MappingRecord:
@@ -642,6 +734,22 @@ class ResultEnvelope[T]:
             "page": self.page.to_dict() if self.page is not None else None,
             "warnings": [warning.to_dict() for warning in self.warnings],
             "platform": self.platform.to_dict() if self.platform is not None else None,
+        }
+
+    def to_evidence_dict(self) -> dict[str, object]:
+        """Return bounded item evidence without pagination, warnings, or deployment values."""
+        items: list[object] = []
+        for item in self.items[:MAX_METADATA_ENTRIES]:
+            project = getattr(item, "to_evidence_dict", None)
+            if not callable(project):
+                raise _contract_error("result_envelope.evidence")
+            items.append(project())
+        return {
+            "schema_version": 1,
+            "kind": "result_envelope_evidence",
+            "items": items,
+            "item_count": len(self.items),
+            "truncated": len(self.items) > MAX_METADATA_ENTRIES,
         }
 
     @classmethod

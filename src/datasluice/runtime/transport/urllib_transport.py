@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ssl
-from http.client import HTTPException, HTTPMessage
+from http.client import HTTPException, HTTPMessage, HTTPResponse
 from typing import IO, TYPE_CHECKING
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
@@ -120,16 +120,20 @@ class UrllibCatalogTransport(CatalogTransport):
         raise TransportError("Catalog redirect limit exceeded.")
 
     def _read_current(self, request: RuntimeRequest) -> tuple[int, dict[str, str], bytes]:
+        timeout = min(self._budget.read, self._budget.total)
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+            timeout = min(timeout, request.deadline.remaining())
         try:
             response = self._opener.open(
                 Request(request.url, data=request.body, headers=dict(request.headers), method=request.method),
-                timeout=min(self._budget.read, self._budget.total),
+                timeout=timeout,
             )
             try:
                 return (
                     response.status,
                     _header_map(response.headers),
-                    _read_response_body(response, request.max_response_bytes),
+                    _read_response_body(response, request),
                 )
             finally:
                 close = getattr(response, "close", None)
@@ -137,7 +141,7 @@ class UrllibCatalogTransport(CatalogTransport):
                     close()
         except HTTPError as exc:
             try:
-                return exc.code, _header_map(exc.headers), _read_response_body(exc, request.max_response_bytes)
+                return exc.code, _header_map(exc.headers), _read_response_body(exc, request)
             finally:
                 exc.close()
         except HTTPException as exc:
@@ -165,8 +169,8 @@ class UrllibCatalogTransport(CatalogTransport):
         """Mark the transport closed; urllib has no persistent pool."""
         self._closed = True
 
-    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
-        """Open one no-follow response without pre-buffering its body."""
+    def _open_stream(self, request: RuntimeRequest) -> tuple[int, dict[str, str], HTTPResponse | HTTPError]:
+        """Open the streaming response and return its status, headers, and body reader."""
         if self._closed:
             raise TransportError("The urllib catalog transport is closed.")
         if request.files:
@@ -175,37 +179,46 @@ class UrllibCatalogTransport(CatalogTransport):
             )
         if request.redirect_policy is not RedirectPolicy.NO_FOLLOW:
             raise ValueError("Streaming catalog requests must explicitly disable redirect following.")
+        timeout = min(self._budget.read, self._budget.total)
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+            timeout = min(timeout, request.deadline.remaining())
         try:
             response = self._opener.open(
                 Request(request.url, data=request.body, headers=dict(request.headers), method=request.method),
-                timeout=min(self._budget.read, self._budget.total),
+                timeout=timeout,
             )
-            status = response.status
-            headers = _header_map(response.headers)
+            return response.status, _header_map(response.headers), response
         except HTTPError as exc:
-            response = exc
-            status = exc.code
-            headers = _header_map(exc.headers)
+            return exc.code, _header_map(exc.headers), exc
         except HTTPException as exc:
             raise TransportError("urllib lost the catalog connection before streaming its response.") from exc
         except OSError as exc:
             raise TransportError("urllib could not open the catalog response stream.") from exc
 
-        def chunks() -> Iterator[bytes]:
-            size = 0
-            try:
-                while chunk := response.read(64 * 1024):
-                    size += len(chunk)
-                    if request.max_response_bytes is not None:
-                        _enforce_body_limit(size, request.max_response_bytes)
-                    yield chunk
-            except (HTTPException, OSError) as exc:
-                raise TransportError("urllib lost the catalog connection mid-response.") from exc
+    @staticmethod
+    def _stream_chunks(response: HTTPResponse | HTTPError, request: RuntimeRequest) -> Iterator[bytes]:
+        """Yield bounded chunks while the request deadline still permits work."""
+        size = 0
+        try:
+            while True:
+                chunk = _checked_read(response, request)
+                if not chunk:
+                    return
+                size += len(chunk)
+                if request.max_response_bytes is not None:
+                    _enforce_body_limit(size, request.max_response_bytes)
+                yield chunk
+        except (HTTPException, OSError) as exc:
+            raise TransportError("urllib lost the catalog connection mid-response.") from exc
 
+    def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
+        """Open one no-follow response without pre-buffering its body."""
+        status, headers, response = self._open_stream(request)
         return RuntimeStreamResponse(
             status_code=status,
             headers=headers,
-            chunks=chunks(),
+            chunks=self._stream_chunks(response, request),
             close_callback=response.close,
             retry_after=_retry_after(_header(headers, "retry-after")),
         )
@@ -223,12 +236,12 @@ def _header_map(headers: Mapping[str, str] | Message[str, str]) -> dict[str, str
     return result
 
 
-def _read_response_body(response: object, max_bytes: int | None) -> bytes:
+def _read_response_body(response: HTTPResponse | HTTPError, request: RuntimeRequest) -> bytes:
     """Read a response body with an optional incremental byte ceiling."""
     read = getattr(response, "read", None)
     if not callable(read):
         raise TransportError("urllib returned a response without a readable body.")
-    if max_bytes is None:
+    if request.max_response_bytes is None and request.deadline is None:
         body = read()
         if not isinstance(body, bytes):
             raise TransportError("urllib returned a non-byte catalog response body.")
@@ -236,14 +249,25 @@ def _read_response_body(response: object, max_bytes: int | None) -> bytes:
     parts: list[bytes] = []
     size = 0
     while True:
-        chunk = read(64 * 1024)
+        chunk = _checked_read(response, request)
         if not isinstance(chunk, bytes):
             raise TransportError("urllib yielded a non-byte catalog response chunk.")
         if not chunk:
             return b"".join(parts)
         size += len(chunk)
-        _enforce_body_limit(size, max_bytes)
+        if request.max_response_bytes is not None:
+            _enforce_body_limit(size, request.max_response_bytes)
         parts.append(chunk)
+
+
+def _checked_read(response: HTTPResponse | HTTPError, request: RuntimeRequest) -> bytes:
+    """Read one chunk between deadline checks so a stalled read can never pass unnoticed."""
+    if request.deadline is not None:
+        request.deadline.assert_dispatchable()
+    chunk = response.read(64 * 1024)
+    if request.deadline is not None:
+        request.deadline.assert_dispatchable()
+    return chunk
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:

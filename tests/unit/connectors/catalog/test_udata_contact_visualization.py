@@ -598,22 +598,23 @@ def test_contact_point_serialization_exposes_no_field_beyond_the_allowlist() -> 
     assert "api_key" not in retained
     assert "internal_notes" not in retained
     assert retained["email"] == "support@example.test?api_key=***"
-    assert serialized["email"] == "support@example.test?api_key=***"
+    assert serialized["email"] == "***"
     rendered = json.dumps(record.to_dict())
     assert "secret-key" not in rendered
     assert "hunter2" not in rendered
     assert "unreleased" not in rendered
 
 
-def test_contact_point_read_never_screens_out_the_allowlisted_personal_fields() -> None:
-    """The allowlist is a ceiling, not a floor: documented contact fields survive redaction."""
+def test_contact_point_runtime_fields_survive_but_serialization_masks_personal_fields() -> None:
     record = wire.parse_contact_point({**_contact_point(), **_UNBOUND_FIELDS})
     serialized = cast("Mapping[str, object]", record.to_dict()["payload"])
 
     assert set(serialized) == _CONTACT_ALLOWED_FIELDS
     assert serialized["name"] == "Support"
-    assert serialized["email"] == "support@example.test"
-    assert serialized["contact_form"] is None
+    assert record.payload["email"] == "support@example.test"
+    assert serialized["email"] == "***"
+    assert record.payload["contact_form"] is None
+    assert serialized["contact_form"] == "***"
     assert serialized["organization"] is None
     assert serialized["resource_kind"] == "contact-point"
     assert serialized["operation"] == wire.GET_CONTACT_POINT_OPERATION
@@ -1317,3 +1318,60 @@ def test_every_assigned_service_call_drives_only_declared_routes() -> None:
         ("DELETE", f"{ORIGIN}{CONTACTS}cp-1/"),
         ("GET", f"{ORIGIN}{CONTACTS}roles/"),
     ]
+
+
+@pytest.mark.parametrize("owns_transport", [False, True])
+def test_image_upload_cancellation_finishes_transport_and_keeps_cancelled_receipt(owns_transport: bool) -> None:
+    async def run() -> None:
+        started = asyncio.Event()
+        finished = asyncio.Event()
+
+        class UploadTransport:
+            def __init__(self) -> None:
+                self.closed = 0
+                self.uploads = 0
+
+            async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+                if request.url.endswith("/api/1/site/"):
+                    return RuntimeResponse(200, {}, json.dumps(UDATA_SITE).encode())
+                self.uploads += 1
+                assert request.files[0].data == b"png-bytes"
+                started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    finished.set()
+                raise AssertionError("Cancelled upload must not return.")
+
+            async def aclose(self) -> None:
+                self.closed += 1
+
+        transport = UploadTransport()
+        client = AsyncUDataClient(
+            transport,
+            declared_udata_profile(),
+            origin=ORIGIN,
+            credentials=UDATA_CREDENTIAL,
+            owns_transport=owns_transport,
+        )
+        async with client:
+            task = asyncio.create_task(
+                client.contact_visualization.visualization_image(
+                    "viz-1",
+                    VisualizationImageInput(b"png-bytes", "image/png"),
+                    _VISUALIZATION_IMAGE_ONLY,
+                    mutation_policy(wire.VISUALIZATION_IMAGE_OPERATION, "viz-1"),
+                )
+            )
+            await asyncio.wait_for(started.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError) as raised:
+                await task
+            assert raised.value.__dict__["mutation_receipt"].outcome == "cancelled"
+            assert b"png-bytes" not in repr(raised.value.__dict__).encode()
+            assert finished.is_set()
+        await client.aclose()
+        assert transport.closed == int(owns_transport)
+        assert transport.uploads == 1
+
+    asyncio.run(run())

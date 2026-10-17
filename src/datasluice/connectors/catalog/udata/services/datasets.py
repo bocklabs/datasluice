@@ -15,6 +15,7 @@ from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetDeleteOptions,
     DatasetExtrasDelete,
     DatasetExtrasUpdate,
+    DatasetFollowersQuery,
     DatasetListQuery,
     DatasetMutationResult,
     DatasetSearchQuery,
@@ -32,10 +33,11 @@ from datasluice.connectors.catalog.udata.services._receipts import (
     _run_mutation,
     _run_mutation_async,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import datasets as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, PlatformMetadata, redact_record_payload
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PlatformMetadata, redact_record_payload
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import (
@@ -332,6 +334,30 @@ def _sync_feature_dispatch(
     )
 
 
+def _sync_follower_dispatch(
+    client: SyncUDataClient,
+    dataset_id: str,
+    operation: str,
+    permissions: EffectivePermissions,
+    mutation_policy: MutationPolicy | None,
+    *,
+    following: bool,
+) -> tuple[int, object, object]:
+    method, path, _, _ = (
+        wire.follow_dataset_request(dataset_id) if following else wire.unfollow_dataset_request(dataset_id)
+    )
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
+    _enforce_mutation_policy(operation, dataset_id, mutation_policy, destructive=not following)
+    return client._dataset_call(
+        method=method,
+        path=path,
+        owning_operation=operation,
+        permissions=permissions,
+        credential=resolved,
+        idempotency_policy=mutation_policy.idempotency if mutation_policy is not None else None,
+    )
+
+
 def _sync_extras_update_dispatch(
     client: SyncUDataClient,
     dataset_id: str,
@@ -473,6 +499,31 @@ async def _async_feature_dispatch(
     )
 
 
+async def _async_follower_dispatch(
+    client: AsyncUDataClient,
+    dataset_id: str,
+    operation: str,
+    permissions: EffectivePermissions,
+    mutation_policy: MutationPolicy | None,
+    *,
+    following: bool,
+) -> tuple[int, object, object]:
+    method, path, _, _ = (
+        wire.follow_dataset_request(dataset_id) if following else wire.unfollow_dataset_request(dataset_id)
+    )
+    resolved = await client._resolved_credential_async()
+    _require_mutation_permission(resolved, operation, permissions)
+    _enforce_mutation_policy(operation, dataset_id, mutation_policy, destructive=not following)
+    return await client._dataset_call_async(
+        method=method,
+        path=path,
+        owning_operation=operation,
+        permissions=permissions,
+        credential=resolved,
+        idempotency_policy=mutation_policy.idempotency if mutation_policy is not None else None,
+    )
+
+
 async def _async_extras_update_dispatch(
     client: AsyncUDataClient,
     dataset_id: str,
@@ -536,7 +587,9 @@ def _mutation_shapers(
             operation,
             target_id,
             policy,
-            _mutation_outcome(error, response),
+            "cancelled"
+            if isinstance(error, (KeyboardInterrupt, GeneratorExit))
+            else _mutation_outcome(error, response),
             status_code=_error_status(error, response),
             mutation=mutation,
             opaque_target=opaque_target,
@@ -570,7 +623,7 @@ def _mutating(
     failure_receipt, completed = _mutation_shapers(
         operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
-    return _run_mutation(dispatch, failure_receipt, completed)
+    return _run_mutation(dispatch, failure_receipt, completed, errors=SETTLEMENT_ERRORS)
 
 
 async def _amutating(
@@ -588,7 +641,7 @@ async def _amutating(
     failure_receipt, completed = _mutation_shapers(
         operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
-    return await _run_mutation_async(dispatch, failure_receipt, completed)
+    return await _run_mutation_async(dispatch, failure_receipt, completed, errors=ASYNC_SETTLEMENT_ERRORS)
 
 
 class SyncDatasetsService:
@@ -597,6 +650,48 @@ class SyncDatasetsService:
     def __init__(self, client: SyncUDataClient) -> None:
         """Bind the service to one strict sync client."""
         self._client = client
+
+    def list_dataset_followers(self, dataset_id: str, query: DatasetFollowersQuery | None = None) -> MappingRecord:
+        operation = wire.DATASET_OPERATIONS["list_followers"]
+        method, path, _, _ = wire.list_dataset_followers_request(dataset_id, query or DatasetFollowersQuery())
+        _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
+        return wire.parse_dataset_followers(payload)
+
+    def follow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["follow"]
+        return _mutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _sync_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=True
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "followed",
+        )
+
+    def unfollow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["unfollow"]
+        return _mutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _sync_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=False
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "unfollowed",
+        )
 
     def list(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope:
         """GET /api/1/datasets/ (row 39)."""
@@ -948,6 +1043,50 @@ class AsyncDatasetsService:
     def __init__(self, client: AsyncUDataClient) -> None:
         """Bind the service to one strict async client."""
         self._client = client
+
+    async def list_dataset_followers(
+        self, dataset_id: str, query: DatasetFollowersQuery | None = None
+    ) -> MappingRecord:
+        operation = wire.DATASET_OPERATIONS["list_followers"]
+        method, path, _, _ = wire.list_dataset_followers_request(dataset_id, query or DatasetFollowersQuery())
+        _, payload, _ = await self._client._dataset_call_async(method=method, path=path, owning_operation=operation)
+        return wire.parse_dataset_followers(payload)
+
+    async def follow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["follow"]
+        return await _amutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _async_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=True
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "followed",
+        )
+
+    async def unfollow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["unfollow"]
+        return await _amutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _async_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=False
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "unfollowed",
+        )
 
     async def list(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope:
         """GET /api/1/datasets/ (row 39)."""

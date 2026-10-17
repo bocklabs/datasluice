@@ -7,6 +7,7 @@ from functools import partial
 from typing import TYPE_CHECKING, cast
 from urllib.parse import unquote, urlsplit
 
+from datasluice.connectors.catalog.udata.models._segment import composite_target
 from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceCreateInput,
     DataserviceDatasetLinkInput,
@@ -62,7 +63,7 @@ _DATASERVICE_RDF_PATTERN = r"/api/1/dataservices/([^/]+)/rdf(?:\.([A-Za-z0-9_-]+
 
 
 def _dataset_target(dataservice_id: str, dataset_id: str) -> str:
-    return f"{dataservice_id}:{dataset_id}"
+    return composite_target(dataservice_id, dataset_id)
 
 
 _ADMIN = frozenset({wire.FEATURE_DATASERVICE_OPERATION, wire.UNFEATURE_DATASERVICE_OPERATION})

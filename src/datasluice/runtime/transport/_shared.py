@@ -111,6 +111,7 @@ def _next_redirect_request(
         files=files,
         redirect_policy=request.redirect_policy,
         max_response_bytes=request.max_response_bytes,
+        deadline=request.deadline,
     )
 
 

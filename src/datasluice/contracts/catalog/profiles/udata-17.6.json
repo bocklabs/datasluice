@@ -8,6 +8,27 @@
   "fixture_fingerprint": "5a939bc987b0e95d025ed073a1909abca7af3323805c8cfc1f465d559f5d8a7e",
   "operations": [
     {
+      "id": "udata/api-v1.list-dataset-followers",
+      "capability": "core",
+      "authentication": "public",
+      "mutation": "read",
+      "evidence_requirement": "anonymous-read"
+    },
+    {
+      "id": "udata/api-v1.follow-dataset",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "update",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
+      "id": "udata/api-v1.unfollow-dataset",
+      "capability": "authenticated",
+      "authentication": "authenticated",
+      "mutation": "delete",
+      "evidence_requirement": "controlled-environment-only"
+    },
+    {
       "id": "udata/api-v1.access-type-reason-categories",
       "capability": "core",
       "authentication": "public",

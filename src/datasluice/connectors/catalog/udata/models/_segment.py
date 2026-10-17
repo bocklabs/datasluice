@@ -9,6 +9,11 @@ from datasluice.errors.catalog import CatalogValidationError
 _FORBIDDEN_CHARACTERS = "/?#\"'"
 
 
+def composite_target(*identifiers: str) -> str:
+    """Encode each identifier before joining the confirmation target with colons."""
+    return ":".join(quote(str(identifier), safe="") for identifier in identifiers)
+
+
 def path_segment(value: str, operation: str, label: str) -> str:
     """Return *value* quoted as one URL-safe path segment.
 

@@ -5,6 +5,43 @@ from __future__ import annotations
 from threading import Lock
 from typing import SupportsIndex
 
+from datasluice.domain.catalog.auth import SecretValue
+
+
+class UDataOAuthSecret(SecretValue):
+    """Mask OAuth secrets and prevent implicit copying or serialization."""
+
+    __slots__ = ("_source",)
+
+    def __init__(self, value: SecretValue | str) -> None:
+        self._source: SecretValue | None = None
+        if isinstance(value, SecretValue):
+            self._source = value
+            self._value = ""
+        else:
+            super().__init__(value)
+
+    def reveal(self) -> str:
+        if self._source is not None:
+            return self._source.reveal()
+        if not self._value:
+            raise RuntimeError("The uData OAuth secret was discarded.")
+        return self._value
+
+    def discard(self) -> None:
+        self._source = None
+        self._value = ""
+
+    def __reduce__(self) -> tuple[object, ...]:
+        raise TypeError("uData OAuth secrets cannot be serialized or copied.")
+
+    def __reduce_ex__(self, protocol: SupportsIndex, /) -> tuple[object, ...]:
+        raise TypeError("uData OAuth secrets cannot be serialized or copied.")
+
+
+def oauth_secret(value: SecretValue | str) -> UDataOAuthSecret:
+    return value if isinstance(value, UDataOAuthSecret) else UDataOAuthSecret(value)
+
 
 class OneTimeUDataToken:
     """Hold plaintext only until the caller explicitly reveals it once.

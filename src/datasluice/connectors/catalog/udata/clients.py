@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import dataclass, field, replace
@@ -226,13 +227,21 @@ def _reject_nonfinite_json(_: str) -> None:
     raise ValueError("Non-finite JSON constant.")
 
 
+def _finite_json_float(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        _reject_nonfinite_json(value)
+    return result
+
+
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
 _DATASET_PAGE_MAX_BYTES = 8 * 1024 * 1024
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
-_CONTROLLED_DOCKERFILE_SHA256 = "e4a6d5ff80285223694eefa6884f3df5d5e2f3f555776508dcb572a279ac68b8"
+_CONTROLLED_DOCKERFILE_SHA256 = "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e"
+_CONTROLLED_UDATA_LAYERS_SHA256 = "sha256:a91b7779e1225837c720078fff0fe151cfc2ca5da3c5a84d7c7563e819002bc6"
 _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
     (
         "mongo",
@@ -324,14 +333,15 @@ def _build_stream_request(
     """Build the no-follow stream request and prove the transport can stream it."""
     request_headers = dict(headers or {})
     request_headers.update(_auth_headers(resolved_credential))
+    deadline = DeadlineMonitor(budget, clock=clock)
+    deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
     request = RuntimeRequest(
         method="GET",
         url=origin + path,
         headers=request_headers,
         redirect_policy=RedirectPolicy.NO_FOLLOW,
+        deadline=deadline,
     )
-    deadline = DeadlineMonitor(budget, clock=clock)
-    deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
     send_stream = getattr(transport, "send_stream", None)
     if not callable(send_stream):
         raise CatalogValidationError(
@@ -1280,6 +1290,7 @@ class _DatasetCallOverrides(TypedDict, total=False):
     emit_success: bool
     accept_status: Callable[[int], bool] | None
     omit_credential: bool
+    deadline: DeadlineMonitor | None
 
 
 class _SyncUDataClientOptions(_UDataClientOptions, total=False):
@@ -1436,7 +1447,11 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         return scope
 
     def _dataset_body(
-        self, json_body: object, form_body: bytes | None, files: tuple[UploadPart, ...], owning_id: OperationId
+        self,
+        json_body: object,
+        form_body: bytes | Callable[[], bytes] | None,
+        files: tuple[UploadPart, ...],
+        owning_id: OperationId,
     ) -> bytes | None:
         if form_body is not None and (json_body is not None or files):
             raise NativeCatalogError(
@@ -1451,6 +1466,8 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                 platform=PLATFORM.value,
             )
         if files:
+            return None
+        if callable(form_body):
             return None
         return form_body if form_body is not None else self._json_body(json_body, owning_id)
 
@@ -1536,7 +1553,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             return response.status_code, None, response
         invalid_payload = False
         try:
-            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json)
+            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json, parse_float=_finite_json_float)
         except (TypeError, ValueError):
             invalid_payload = True
             payload = None
@@ -1645,7 +1662,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             )
         invalid_payload = False
         try:
-            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json)
+            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json, parse_float=_finite_json_float)
         except (TypeError, ValueError):
             invalid_payload = True
             payload = None
@@ -1841,15 +1858,20 @@ class SyncUDataClient(_UDataClientCore):
         json_body: object,
         controlled: bool,
         recorded: list[bool],
+        form_body: Callable[[], bytes] | None = None,
         _dispatch_sync: Callable[..., RuntimeResponse] = _controlled_dispatch_gate.dispatch_sync,
     ) -> RuntimeResponse:
         recorded[0] = False
         before = self._breakers.inspect(key)
         try:
+            if form_body is not None:
+                request = replace(request, body=form_body())
             if controlled:
                 response = _dispatch_sync(self, self._transport, request, credential, json_body, origin=self._origin)
             else:
                 response = cast("CatalogTransport", self._transport).send(request)
+            if request.deadline is not None:
+                request.deadline.assert_dispatchable()
         except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
@@ -1873,7 +1895,7 @@ class SyncUDataClient(_UDataClientCore):
         idempotency_policy: IdempotencyPolicy | None = None,
         max_response_bytes: int | None = 1_048_576,
         files: tuple[UploadPart, ...] = (),
-        form_body: bytes | None = None,
+        form_body: bytes | Callable[[], bytes] | None = None,
         **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
@@ -1882,6 +1904,8 @@ class SyncUDataClient(_UDataClientCore):
         emit_success = overrides.get("emit_success", True)
         accept_status = overrides.get("accept_status")
         omit_credential = overrides.get("omit_credential", False)
+        if max_response_bytes is None:
+            max_response_bytes = 1_048_576
         if self._closed:
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
@@ -1895,6 +1919,8 @@ class SyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective, permissions)
+        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(
             method=method,
@@ -1910,9 +1936,8 @@ class SyncUDataClient(_UDataClientCore):
             files=files,
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
+            deadline=deadline,
         )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         key = self._admit_request(owning_id, request)
         recorded = [False]
         send = partial(
@@ -1924,11 +1949,14 @@ class SyncUDataClient(_UDataClientCore):
             json_body,
             owning_operation == SET_SITE_OPERATION,
             recorded,
+            form_body if callable(form_body) else None,
         )
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=_dataset_idempotency(idempotency_policy, method, files),
+                idempotency=IdempotencyPolicy(safe=False)
+                if callable(form_body)
+                else _dataset_idempotency(idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -2446,17 +2474,22 @@ class AsyncUDataClient(_UDataClientCore):
         json_body: object,
         controlled: bool,
         recorded: list[bool],
+        form_body: Callable[[], bytes] | None = None,
         _dispatch_async: Callable[..., Awaitable[RuntimeResponse]] = _controlled_dispatch_gate.dispatch_async,
     ) -> RuntimeResponse:
         recorded[0] = False
         before = self._breakers.inspect(key)
         try:
+            if form_body is not None:
+                request = replace(request, body=form_body())
             if controlled:
                 response = await _dispatch_async(
                     self, self._transport, request, credential, json_body, origin=self._origin
                 )
             else:
                 response = await cast("AsyncCatalogTransport", self._transport).send(request)
+            if request.deadline is not None:
+                request.deadline.assert_dispatchable()
         except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
@@ -2480,7 +2513,7 @@ class AsyncUDataClient(_UDataClientCore):
         idempotency_policy: IdempotencyPolicy | None = None,
         max_response_bytes: int | None = 1_048_576,
         files: tuple[UploadPart, ...] = (),
-        form_body: bytes | None = None,
+        form_body: bytes | Callable[[], bytes] | None = None,
         **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
@@ -2489,6 +2522,8 @@ class AsyncUDataClient(_UDataClientCore):
         emit_success = overrides.get("emit_success", True)
         accept_status = overrides.get("accept_status")
         omit_credential = overrides.get("omit_credential", False)
+        if max_response_bytes is None:
+            max_response_bytes = 1_048_576
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
@@ -2502,6 +2537,8 @@ class AsyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective, permissions)
+        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(
             method=method,
@@ -2517,9 +2554,8 @@ class AsyncUDataClient(_UDataClientCore):
             files=files,
             redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
             max_response_bytes=max_response_bytes,
+            deadline=deadline,
         )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         key = self._admit_request(owning_id, request)
         recorded = [False]
         send = partial(
@@ -2531,11 +2567,14 @@ class AsyncUDataClient(_UDataClientCore):
             json_body,
             owning_operation == SET_SITE_OPERATION,
             recorded,
+            form_body if callable(form_body) else None,
         )
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=_dataset_idempotency(idempotency_policy, method, files),
+                idempotency=IdempotencyPolicy(safe=False)
+                if callable(form_body)
+                else _dataset_idempotency(idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,

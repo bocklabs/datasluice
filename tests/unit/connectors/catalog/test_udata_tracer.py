@@ -235,3 +235,56 @@ def test_live_clients_expose_every_declared_native_protocol_member() -> None:
     assert isinstance(async_client, AsyncUDataServices)
     assert isinstance(sync_client.extensions, SyncExtensionsService)
     assert isinstance(async_client.extensions, AsyncExtensionsService)
+
+
+@pytest.mark.parametrize("owns_transport", [False, True])
+@pytest.mark.parametrize("interrupt_probe", [False, True])
+def test_sync_tracer_interruption_respects_transport_ownership(owns_transport: bool, interrupt_probe: bool) -> None:
+    class InterruptingTransport(RecordingTransport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/api/1/site/") == interrupt_probe:
+                raise KeyboardInterrupt
+            return super().send(request)
+
+    transport = InterruptingTransport()
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin="http://127.0.0.1:5640", owns_transport=owns_transport
+    )
+    with pytest.raises(KeyboardInterrupt), client:
+        client.datasets_list(*_datasets_operation())
+    client.close()
+    assert transport.close_count == int(owns_transport)
+
+
+@pytest.mark.parametrize("owns_transport", [False, True])
+@pytest.mark.parametrize("cancel_probe", [False, True])
+def test_async_tracer_cancellation_drains_transport_work(owns_transport: bool, cancel_probe: bool) -> None:
+    async def run() -> None:
+        started = asyncio.Event()
+        finished = asyncio.Event()
+
+        class CancellingTransport(RecordingAsyncTransport):
+            async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+                if request.url.endswith("/api/1/site/") == cancel_probe:
+                    started.set()
+                    try:
+                        await asyncio.Future()
+                    finally:
+                        finished.set()
+                return await super().send(request)
+
+        transport = CancellingTransport()
+        client = AsyncUDataClient(
+            transport, declared_udata_profile(), origin="http://127.0.0.1:5640", owns_transport=owns_transport
+        )
+        with pytest.raises(asyncio.CancelledError):
+            async with client:
+                task = asyncio.create_task(client.datasets_list(*_datasets_operation()))
+                await asyncio.wait_for(started.wait(), timeout=1)
+                task.cancel()
+                await task
+        await client.aclose()
+        assert finished.is_set()
+        assert transport.aclose_count == int(owns_transport)
+
+    asyncio.run(run())

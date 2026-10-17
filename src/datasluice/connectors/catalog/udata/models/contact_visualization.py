@@ -472,13 +472,16 @@ class VisualizationImageInput:
             raise ValueError("uData visualization image data must be bytes.")
         if self.content_type not in IMAGE_MEDIA_TYPES:
             raise ValueError(f"uData visualization image content type must be one of {list(IMAGE_MEDIA_TYPES)}.")
+        if len(self.data) > 1_048_576:
+            raise ValueError("uData visualization image data exceeds its 1048576-byte limit.")
+        object.__setattr__(self, "data", bytes(self.data))
 
     def part(self) -> UploadPart:
         """Return the stock multipart file part for the image upload route."""
         from datasluice.runtime.transport.base import UploadPart
 
         suffix = _IMAGE_MEDIA_TYPES[self.content_type]
-        return UploadPart("file", bytes(self.data), f"visualization-image{suffix}", self.content_type)
+        return UploadPart("file", self.data, f"visualization-image{suffix}", self.content_type)
 
 
 @dataclass(frozen=True, slots=True)

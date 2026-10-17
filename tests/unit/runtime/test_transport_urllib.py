@@ -11,6 +11,8 @@ import pytest
 from datasluice.domain import CredentialScope
 from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.resilience import TimeBudget
+from datasluice.errors.catalog import BudgetExhaustedError
+from datasluice.runtime.resilience import DeadlineMonitor
 from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest, TransportError
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport, _tls_context
 from tests.helpers.catalog_transport import AsyncLoopbackTransport, SyncLoopbackTransport
@@ -93,6 +95,25 @@ def test_urllib_send_enforces_max_response_bytes() -> None:
         transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=5))
 
     assert transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=6)).body == b"abcdef"
+
+
+def test_urllib_checks_the_deadline_during_reads_and_closes_the_response() -> None:
+    now = [0.0]
+
+    class SlowResponse(_FakeResponse):
+        def read(self, size: int | None = None) -> bytes:
+            now[0] = 2.0
+            return super().read(size)
+
+    response = SlowResponse(200, {}, b"late")
+    opener = _RecordingOpener([response])
+    transport = UrllibCatalogTransport()
+    cast("Any", transport)._opener = opener
+    deadline = DeadlineMonitor(TimeBudget(connect=1, read=1, write=1, total=1), clock=lambda: now[0])
+    with pytest.raises(BudgetExhaustedError):
+        transport.send(RuntimeRequest("GET", "https://example.test/", deadline=deadline))
+    assert opener.timeouts == [1.0]
+    assert response.closed
 
 
 def test_urllib_send_stream_enforces_max_response_bytes_and_allows_the_boundary() -> None:

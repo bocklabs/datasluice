@@ -8,11 +8,13 @@ import ipaddress
 import json
 import re
 import shutil
+import socket
 import subprocess
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SENSITIVE = tuple(
@@ -22,6 +24,8 @@ SENSITIVE = tuple(
         r"bearer\s+[A-Za-z0-9._~+/=-]{16,}",
         r"(?:\"api[_-]?key\"|api[_-]?key)\s*[:=]\s*[\"']?\s*\S{8,}",
         r"https?://[^\s/:]+:[^\s/@]+@",
+        r"[\"'](?:password|client[_-]?secret|access[_-]?token|refresh[_-]?token|secret)[\"']\s*:\s*[\"'][^\"'\s]+[\"']",
+        r"[\"'](?:api[_-]?key|token|credentials?)[\"']\s*:\s*[\"'][^\"'\s]+[\"']",
     )
 )
 REDACTION_VIOLATION = re.compile(
@@ -59,33 +63,61 @@ def _validate_sha(value: str, name: str) -> None:
 def _private_origin(content: str) -> bool:
     """Report whether any URL in the content names a private or reserved origin."""
     for match in URL.finditer(content):
-        parsed = match.group().rstrip(".,;:)]}")
+        parsed = match.group().rstrip(".,;:)]}\"'`")
         try:
             host = urlsplit(parsed).hostname
         except ValueError:
             return True
         if host is None:
             continue
-        host = host.lower().rstrip(".")
-        if host in PRIVATE_HOSTS or host.endswith(PRIVATE_HOST_SUFFIXES):
+        host = unquote(host).lower().rstrip(".")
+        if host in PRIVATE_HOSTS or host.endswith(PRIVATE_HOST_SUFFIXES) or "." not in host and ":" not in host:
             return True
         try:
             address = ipaddress.ip_address(host)
         except ValueError:
-            continue
-        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            try:
+                address = ipaddress.ip_address(socket.inet_aton(host))
+            except OSError:
+                continue
+        if not address.is_global or address.is_multicast:
             return True
     return False
 
 
 def _safe_artifact(path: Path) -> None:
-    if not path.is_file():
+    if path.is_symlink() or not path.is_file():
         raise ReviewGateError(f"review artifact is missing: {path.name}")
-    content = path.read_text(encoding="utf-8")
-    if _contains_sensitive(content) or REDACTION_VIOLATION.search(content):
-        raise ReviewGateError(f"review artifact contains sensitive content: {path.name}")
-    if _private_origin(content):
-        raise ReviewGateError(f"review artifact contains a private origin: {path.name}")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ReviewGateError(f"review artifact cannot be read: {path.name}") from error
+    validate_artifact_content(content, path.name)
+
+
+def validate_artifact_content(content: str, name: str, *, reject_payload_keys: bool = True) -> None:
+    """Reject secrets, raw payloads, and private origins in retained text."""
+    values = [content]
+    try:
+        document = json.loads(content)
+    except ValueError:
+        pass
+    else:
+        values.append(json.dumps(document, ensure_ascii=False))
+        pending = [document]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, dict):
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+            elif isinstance(value, str):
+                values.append(value)
+    for value in values:
+        if _contains_sensitive(value) or reject_payload_keys and REDACTION_VIOLATION.search(value):
+            raise ReviewGateError(f"review artifact contains sensitive content: {name}")
+        if _private_origin(value):
+            raise ReviewGateError(f"review artifact contains a private origin: {name}")
 
 
 def _git_head(repo_root: Path) -> str:
@@ -161,10 +193,7 @@ def _validate_capture_metadata(
         raise ReviewGateError("initial review cannot claim post-fix parent receipt provenance")
     if parent_receipt is not None and not re.fullmatch(r"[0-9a-f]{64}", parent_receipt):
         raise ReviewGateError("parent receipt must be a SHA-256 digest")
-    if parent_receipt is not None and not any(
-        parent_receipt == digest_file(path) for path in reviews_root.glob(f"*/*/{_REVIEW_RECEIPT}")
-    ):
-        raise ReviewGateError("post-fix parent receipt does not match any recorded receipt")
+    _validate_parent(reviews_root, family, {"post_fix": post_fix, "parent_receipt": parent_receipt}, reviewed_sha)
 
 
 def capture_review(
@@ -202,20 +231,33 @@ def capture_review(
         "post_fix": post_fix,
     }
     receipt_text = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
-    if _contains_sensitive(receipt_text) or REDACTION_VIOLATION.search(receipt_text):
-        raise ReviewGateError("review receipt contains sensitive metadata")
+    validate_artifact_content(receipt_text, _REVIEW_RECEIPT)
     directory = reviews_root / family / reviewed_sha
+    if directory.parent.is_symlink():
+        raise ReviewGateError("review family directory must not be a symbolic link")
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    if directory.exists():
+        raise ReviewGateError(f"review directory already exists for SHA {reviewed_sha}")
+    staging = Path(tempfile.mkdtemp(prefix=".review-recovery-", dir=directory.parent))
     try:
-        directory.mkdir(parents=True)
-    except FileExistsError as error:
-        raise ReviewGateError(f"review directory already exists for SHA {reviewed_sha}") from error
-    try:
-        shutil.copyfile(source_review, directory / _SOURCE_REVIEW)
-        shutil.copyfile(current_threads, directory / _CURRENT_THREAD)
-        (directory / _REVIEW_RECEIPT).write_text(receipt_text, encoding="utf-8")
-    except BaseException:
-        shutil.rmtree(directory, ignore_errors=True)
-        raise
+        source = staging / _SOURCE_REVIEW
+        threads = staging / _CURRENT_THREAD
+        shutil.copyfile(source_review, source)
+        shutil.copyfile(current_threads, threads)
+        _safe_artifact(source)
+        _validate_threads(threads, reviewed_sha)
+        if (
+            digest_file(source) != receipt["source_review_sha256"]
+            or digest_file(threads) != receipt["current_thread_sha256"]
+        ):
+            raise ReviewGateError("review inputs changed during capture")
+        (staging / _REVIEW_RECEIPT).write_text(receipt_text, encoding="utf-8")
+        if directory.exists():
+            raise ReviewGateError(f"review directory already exists for SHA {reviewed_sha}")
+        staging.rename(directory)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
     return directory
 
 
@@ -228,7 +270,7 @@ def _validate_review_identity(receipt: dict[str, Any]) -> None:
         raise ReviewGateError(_REVIEWER_ERROR)
 
 
-def _validate_parent(reviews_root: Path, receipt: dict[str, Any]) -> None:
+def _validate_parent(reviews_root: Path, family: str, receipt: dict[str, Any], reviewed_sha: str) -> None:
     post_fix = receipt.get("post_fix")
     parent = receipt.get("parent_receipt")
     if not isinstance(post_fix, bool):
@@ -237,14 +279,24 @@ def _validate_parent(reviews_root: Path, receipt: dict[str, Any]) -> None:
         raise ReviewGateError("post-fix review requires a parent receipt")
     if not post_fix and parent is not None:
         raise ReviewGateError("initial review cannot claim post-fix parent receipt provenance")
-    if post_fix and not any(parent == digest_file(path) for path in reviews_root.glob(f"*/*/{_REVIEW_RECEIPT}")):
-        raise ReviewGateError("post-fix parent receipt does not match any recorded receipt")
+    if post_fix and not any(
+        path.parent.name != reviewed_sha
+        and not path.is_symlink()
+        and not path.parent.is_symlink()
+        and parent == digest_file(path)
+        for path in (reviews_root / family).glob(f"*/{_REVIEW_RECEIPT}")
+    ):
+        raise ReviewGateError("post-fix parent receipt does not match any recorded receipt in the same family")
 
 
 def verify_review(reviews_root: Path, family: str, reviewed_sha: str) -> dict[str, str]:
     """Verify a complete immutable review receipt for the current reviewed SHA."""
     _validate_sha(reviewed_sha, "reviewed_sha")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", family):
+        raise ReviewGateError("review family must be a single directory name")
     directory = reviews_root / family / reviewed_sha
+    if directory.parent.is_symlink() or directory.is_symlink():
+        raise ReviewGateError("review directory must not be a symbolic link")
     for name in (_SOURCE_REVIEW, _CURRENT_THREAD, _REVIEW_RECEIPT):
         if not (directory / name).is_file():
             raise ReviewGateError(f"review artifact is missing: {name}")
@@ -267,10 +319,9 @@ def verify_review(reviews_root: Path, family: str, reviewed_sha: str) -> dict[st
     ) != digest_file(threads):
         raise ReviewGateError("review artifact digest does not match receipt")
     _validate_timestamp(receipt.get("created_at"))
-    _validate_parent(reviews_root, receipt)
+    _validate_parent(reviews_root, family, receipt, reviewed_sha)
     receipt_text = json.dumps(receipt, indent=2, sort_keys=True) + "\n"
-    if _contains_sensitive(receipt_text) or REDACTION_VIOLATION.search(receipt_text):
-        raise ReviewGateError("review receipt contains sensitive metadata")
+    validate_artifact_content(receipt_text, _REVIEW_RECEIPT)
     return {"status": "passed", "reviewed_sha": reviewed_sha}
 
 

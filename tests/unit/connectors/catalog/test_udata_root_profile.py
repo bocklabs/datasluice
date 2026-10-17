@@ -70,11 +70,12 @@ _CREDENTIAL = UDataCredential(api_key="site-key")
 _PERMISSIONS = EffectivePermissions.for_credential(
     _CREDENTIAL, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
 )
+_CONTROLLED_UDATA_TEST_LAYERS = ["sha256:" + "1" * 64, "sha256:" + "2" * 64]
 _TEST_CONTROLLED_IMAGE_SPECS = (
     (
         "udata",
         "udata-evidence-udata",
-        "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+        "sha256:" + hashlib.sha256("".join(_CONTROLLED_UDATA_TEST_LAYERS).encode()).hexdigest(),
         None,
     ),
     (
@@ -394,30 +395,32 @@ def test_controlled_dependency_image_identity_rejects_unapproved_identity(mismat
     (
         ("config", "not the approved build"),
         ("spec", "not the approved build"),
+        ("layers", "not the approved build"),
     ),
 )
 def test_controlled_service_image_identity_rejects_unapproved_service_identity(mismatch: str, message: str) -> None:
     container_id = "a" * 64
     repository = "udata-evidence-udata"
-    approved_image_id = "sha256:" + "c" * 64
+    image_id = "sha256:" + "c" * 64
     observed_config_image = repository
-    observed_image_id = approved_image_id
-    observed_repository_digest = repository
-    approved_spec = (repository, "", repository)
+    layers = ["sha256:" + "1" * 64, "sha256:" + "2" * 64]
+    layers_digest = "sha256:" + hashlib.sha256("".join(layers).encode()).hexdigest()
+    observed_layers = layers
+    approved_spec = (repository, layers_digest, repository)
     if mismatch == "config":
         observed_config_image = "udata-evidence-other"
+    elif mismatch == "spec":
+        approved_spec = (repository, "sha256:" + "d" * 64, repository)
     else:
-        approved_spec = (repository, approved_image_id, repository)
+        observed_layers = ["sha256:" + "3" * 64]
 
     def read(*args: str, **_: object) -> str:
         if args[:2] == ("ps", "-q"):
             return container_id
         if args[:2] == ("inspect", "--format"):
-            return (
-                json.dumps(container_id) + " " + json.dumps(observed_image_id) + " " + json.dumps(observed_config_image)
-            )
+            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(observed_config_image)
         if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(observed_image_id) + " " + json.dumps([observed_repository_digest])
+            return json.dumps(image_id) + " " + json.dumps(observed_layers)
         raise AssertionError(f"unexpected image identity command {args}")
 
     with pytest.raises(CatalogValidationError, match=message):
@@ -427,15 +430,18 @@ def test_controlled_service_image_identity_rejects_unapproved_service_identity(m
             "unix:///tmp/docker.sock",
             approved_spec,
             repository,
-            (repository, "", repository),
+            approved_spec,
             udata_clients._controlled_error,
         )
 
 
-def test_controlled_service_image_identity_accepts_any_build_id_for_the_pinned_repository() -> None:
+def test_controlled_service_image_identity_accepts_a_rebuilt_manifest_with_the_pinned_layers() -> None:
     container_id = "a" * 64
     repository = "udata-evidence-udata"
     image_id = "sha256:" + "e" * 64
+    layers = ["sha256:" + "1" * 64, "sha256:" + "2" * 64]
+    layers_digest = "sha256:" + hashlib.sha256("".join(layers).encode()).hexdigest()
+    spec = (repository, layers_digest, repository)
 
     def read(*args: str, **_: object) -> str:
         if args[:2] == ("ps", "-q"):
@@ -443,36 +449,7 @@ def test_controlled_service_image_identity_accepts_any_build_id_for_the_pinned_r
         if args[:2] == ("inspect", "--format"):
             return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
         if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(image_id) + " " + json.dumps(None)
-        raise AssertionError(f"unexpected image identity command {args}")
-
-    _container_id, identity = udata_evidence._controlled_service_image_identity(
-        read,
-        "udata",
-        "unix:///tmp/docker.sock",
-        (repository, "", repository),
-        repository,
-        (repository, "", repository),
-        udata_clients._controlled_error,
-    )
-
-    assert identity == f"udata|{repository}|{image_id}|None"
-
-
-def test_controlled_verification_survives_an_empty_repo_digest_list() -> None:
-    """Docker reports an empty RepoDigests for a locally built image, so verification must pass."""
-    container_id = "a" * 64
-    repository = "udata-evidence-udata"
-    image_id = "sha256:" + "c" * 64
-    spec = (repository, "", repository)
-
-    def read(*args: str, **_: object) -> str:
-        if args[:2] == ("ps", "-q"):
-            return container_id
-        if args[:2] == ("inspect", "--format"):
-            return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
-        if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(image_id) + " " + json.dumps(None)
+            return json.dumps(image_id) + " " + json.dumps(layers)
         raise AssertionError(f"unexpected image identity command {args}")
 
     _container_id, identity = udata_evidence._controlled_service_image_identity(
@@ -485,7 +462,7 @@ def test_controlled_verification_survives_an_empty_repo_digest_list() -> None:
         udata_clients._controlled_error,
     )
 
-    assert identity.startswith(f"udata|{repository}|{image_id}|")
+    assert identity == f"udata|{repository}|{layers_digest}|None"
 
 
 @pytest.mark.parametrize("observed", ("17.7.0", "17.6.1", "", "17.6.0.dev0"))
@@ -518,16 +495,13 @@ def test_controlled_client_accepts_a_stack_running_the_pinned_udata_version() ->
 
 
 def test_controlled_service_image_identity_skips_the_repo_digest_for_a_locally_built_image() -> None:
-    """A locally built image has no RepoDigests, so no repository digest may be required.
-
-    The image ID changes on every `docker compose up --build`, so pinning it made the controlled stack reject its own
-    builds, and the pinned local image never appears in docker's RepoDigests list at all. The Dockerfile/compose digests
-    plus the running version and the in-container source commit carry the source identity instead.
-    """
+    """An approved layer list does not require publication to a registry."""
     container_id = "a" * 64
     repository = "udata-evidence-udata"
     image_id = "sha256:" + "f" * 64
-    spec = (repository, "", repository)
+    layers = ["sha256:" + "1" * 64, "sha256:" + "2" * 64]
+    layers_digest = "sha256:" + hashlib.sha256("".join(layers).encode()).hexdigest()
+    spec = (repository, layers_digest, repository)
 
     def read(*args: str, **_: object) -> str:
         if args[:2] == ("ps", "-q"):
@@ -535,7 +509,7 @@ def test_controlled_service_image_identity_skips_the_repo_digest_for_a_locally_b
         if args[:2] == ("inspect", "--format"):
             return json.dumps(container_id) + " " + json.dumps(image_id) + " " + json.dumps(repository)
         if args[:3] == ("image", "inspect", "--format"):
-            return json.dumps(image_id) + " " + json.dumps(None)
+            return json.dumps(image_id) + " " + json.dumps(layers)
         raise AssertionError(f"unexpected image identity command {args}")
 
     _container_id, identity = udata_evidence._controlled_service_image_identity(
@@ -548,7 +522,7 @@ def test_controlled_service_image_identity_skips_the_repo_digest_for_a_locally_b
         udata_clients._controlled_error,
     )
 
-    assert identity == f"udata|{repository}|{image_id}|None"
+    assert identity == f"udata|{repository}|{layers_digest}|None"
 
 
 def test_controlled_command_rejects_docker_environment_overrides(
@@ -1072,7 +1046,9 @@ def _controlled_container_reply(
     if args[:3] == ("image", "inspect", "--format"):
         image_id = args[-1]
         service = _controlled_service_for(image_ids, image_id)
-        _config_image, _image_id, repository_digest = image_specs[service]
+        config_image, _image_id, repository_digest = image_specs[service]
+        if service == "udata":
+            return f"{json.dumps(image_id)} {json.dumps(_CONTROLLED_UDATA_TEST_LAYERS)}"
         return f"{json.dumps(image_id)} {json.dumps([repository_digest])}"
     if args[:3] == ("exec", container_ids["udata"], "git"):
         return "0546582058d84706812a1c37387576efc4e5ad1f"
@@ -1179,6 +1155,13 @@ def _controlled_process_setup(
 ) -> None:
     """Bind the canned controlled-stack docker and program replies onto the real transport types."""
     container_ids, image_specs, image_ids = _controlled_service_indexes()
+    stack.enter_context(
+        patch.object(
+            udata_evidence,
+            "_CONTROLLED_UDATA_IMAGE_SPEC",
+            ("udata-evidence-udata", image_specs["udata"][1], "udata-evidence-udata"),
+        )
+    )
     controlled_patch_bodies: list[dict[str, object]] = []
     cast("Any", transport)._controlled_patch_bodies = controlled_patch_bodies
 

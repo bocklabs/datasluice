@@ -187,11 +187,9 @@ def parse_native_page(payload: object, *, operation: str = _DATASETS_OPERATION_I
 
 
 def parse_dataset_summary(item: Mapping[str, object], *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
-    """Bound one dataset list item into a redacted native record envelope.
+    """Redact credential-bearing fields before the dataset item enters a runtime record.
 
-    Credential-shaped keys and credential-shaped string content are redacted
-    before the item enters the typed record, so they cannot reach a serialized
-    artifact, fixture, or sync destination. Every non-credential field is kept.
+    Preserve all other fields. Use ``to_evidence_dict`` for bounded evidence without field values.
 
     Raises:
         CatalogValidationError: When the item omits its identity.

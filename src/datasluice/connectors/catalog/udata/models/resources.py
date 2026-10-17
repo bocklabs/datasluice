@@ -92,9 +92,9 @@ class _BoundedSource:
             raise ValueError("uData upload source is closed.")
         remaining = self._limit - self._read
         request_size = remaining + 1 if size < 0 else min(size, remaining + 1)
-        if request_size > 0:
-            self._assert_within_deadline()
+        self._assert_within_deadline()
         chunk = self._source.read(request_size)
+        self._assert_within_deadline()
         if not isinstance(chunk, bytes):
             raise MidStreamUploadError("uData upload sources must return bytes.")
         self._read += len(chunk)
@@ -171,8 +171,8 @@ class ResourceUpdateInput:
 class ResourceUploadInput:
     """One bounded, single-use upload source.
 
-    ``max_upload_bytes`` bounds how many bytes the source may ever serve and ``budget`` bounds how long serving them may
-    take, so a source that drips fewer bytes than its ceiling still cannot hold a request open forever.
+    Check the streaming deadline before and after each read. The source must make each read finite. Deadline checks
+    cannot interrupt an active source read. ``max_upload_bytes`` limits the total bytes served.
     """
 
     source: BinaryIO = field(repr=False)

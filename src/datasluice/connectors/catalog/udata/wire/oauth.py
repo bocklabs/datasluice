@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from threading import Lock
 from typing import TYPE_CHECKING, cast
 from urllib.parse import urlencode
 
@@ -14,6 +15,8 @@ from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthTokenRequest,
     OAuthTokenResult,
 )
+from datasluice.connectors.catalog.udata.secrets import UDataOAuthSecret, oauth_secret
+from datasluice.domain.catalog.auth import SecretValue
 from datasluice.domain.catalog.ids import CatalogPlatform
 from datasluice.errors.catalog import CatalogValidationError
 
@@ -24,9 +27,6 @@ PLATFORM = CatalogPlatform.UDATA
 FORM_MEDIA_TYPE = "application/x-www-form-urlencoded"
 _SCHEMA_ACTION = "Verify the response against the pinned OAuth schema."
 
-# Operation identities map the pinned COVERAGE inventory rows 263-268. The two
-# authorize verbs are separate dispatchable identities, matching how every other
-# multi-verb stock route in this connector is named.
 OPERATIONS = {
     "access_token": "udata/oauth.access-token",
     "revoke_token": "udata/oauth.revoke-token",
@@ -36,7 +36,49 @@ OPERATIONS = {
     "oauth_error": "udata/oauth.oauth-error",
 }
 
-type Request = tuple[str, str, dict[str, str], bytes | None]
+
+class OAuthForm:
+    """Encode one form at transport send and reject a second send."""
+
+    __slots__ = ("_body", "_lock", "_send_started")
+
+    def __init__(self, body: OAuthTokenRequest | OAuthRevokeRequest | OAuthAuthorizeDecision) -> None:
+        self._body: OAuthTokenRequest | OAuthRevokeRequest | OAuthAuthorizeDecision | None = body
+        self._lock = Lock()
+        self._send_started = False
+
+    @property
+    def send_started(self) -> bool:
+        return self._send_started
+
+    def __call__(self) -> bytes:
+        with self._lock:
+            body, self._body = self._body, None
+            if body is not None:
+                self._send_started = True
+        if body is None:
+            raise RuntimeError("The uData OAuth form was already sent or discarded.")
+        fields = body.form_fields()
+        revealed: dict[str, str] = {}
+        value: str | SecretValue | None = None
+        try:
+            for name, value in fields.items():
+                revealed[name] = value.reveal() if isinstance(value, SecretValue) else value
+            return urlencode(revealed).encode()
+        finally:
+            revealed.clear()
+            fields.clear()
+            value = None
+
+    def discard(self) -> None:
+        with self._lock:
+            self._body = None
+
+    def __reduce__(self) -> tuple[object, ...]:
+        raise TypeError("uData OAuth forms cannot be serialized or copied.")
+
+
+type Request = tuple[str, str, dict[str, str], OAuthForm | None]
 
 _PATHS = {
     "access_token": "/oauth/token",
@@ -119,8 +161,7 @@ def build_request(name: str, body: object = None) -> Request:
     expected = _FORM_BODY_TYPES[name]
     if not isinstance(body, expected):
         raise ValueError(f"uData OAuth {name} requires its typed {expected.__name__} body.")
-    encoded = urlencode(body.form_fields()).encode()
-    return method, path, {"Content-Type": FORM_MEDIA_TYPE, "Accept": "application/json"}, encoded
+    return method, path, {"Content-Type": FORM_MEDIA_TYPE, "Accept": "application/json"}, OAuthForm(body)
 
 
 def sends_credential(name: str) -> bool:
@@ -134,24 +175,47 @@ def sends_credential(name: str) -> bool:
 
 def parse_token(name: str, payload: object, receipt: MutationReceipt) -> OAuthTokenResult:
     """Decode one stock token response without retaining its secrets."""
-    document = _document(name, payload)
-    token_type = document.get("token_type")
-    access_token = document.get("access_token")
-    if not isinstance(token_type, str) or token_type not in TOKEN_TYPES:
-        raise _invalid(name, "has an invalid token type", _SCHEMA_ACTION)
-    if not isinstance(access_token, str) or not access_token:
-        raise _invalid(name, "omitted its access token", _SCHEMA_ACTION)
-    expires_in = document.get("expires_in")
-    if expires_in is not None and (type(expires_in) is not int or expires_in < 0):
-        raise _invalid(name, "has an invalid expiry", _SCHEMA_ACTION)
-    return OAuthTokenResult(
-        receipt=receipt,
-        token_type=token_type,
-        expires_in=expires_in,
-        scope=_optional_text(name, document, "scope"),
-        access_token=access_token,
-        refresh_token=_optional_text(name, document, "refresh_token"),
-    )
+    document = payload if isinstance(payload, dict) else dict(_document(name, payload))
+    access_token: UDataOAuthSecret | None = None
+    refresh_token: UDataOAuthSecret | None = None
+    try:
+        access_token = _take_secret(name, document, "access_token", required=True)
+        refresh_token = _take_secret(name, document, "refresh_token")
+        token_type = document.get("token_type")
+        if not isinstance(token_type, str) or token_type not in TOKEN_TYPES:
+            raise _invalid(name, "has an invalid token type", _SCHEMA_ACTION)
+        expires_in = document.get("expires_in")
+        if expires_in is not None and (type(expires_in) is not int or expires_in < 0):
+            raise _invalid(name, "has an invalid expiry", _SCHEMA_ACTION)
+        return OAuthTokenResult(
+            receipt=receipt,
+            token_type=token_type,
+            expires_in=expires_in,
+            scope=_optional_text(name, document, "scope"),
+            access_token=access_token,
+            refresh_token=refresh_token,
+        )
+    except BaseException:
+        for secret in (access_token, refresh_token):
+            if secret is not None:
+                secret.discard()
+        raise
+    finally:
+        document.clear()
+
+
+def _take_secret(
+    name: str, document: dict[str, object], key: str, *, required: bool = False
+) -> UDataOAuthSecret | None:
+    value = document.pop(key, None)
+    try:
+        if value is None and not required:
+            return None
+        if not isinstance(value, str) or not value:
+            raise _invalid(name, f"has an invalid {key}", _SCHEMA_ACTION)
+        return oauth_secret(value)
+    finally:
+        value = None
 
 
 def parse_consent_summary(name: str, payload: object, status_code: int, media_type: str) -> OAuthConsentSummary:
@@ -162,7 +226,7 @@ def parse_consent_summary(name: str, payload: object, status_code: int, media_ty
     """
     if not isinstance(media_type, str) or not media_type:
         raise _invalid(name, "omitted its media type", _SCHEMA_ACTION)
-    if payload is None:
+    if payload is None or status_code in {301, 302, 303, 307, 308}:
         return OAuthConsentSummary(
             session_gated=True,
             status_code=status_code,

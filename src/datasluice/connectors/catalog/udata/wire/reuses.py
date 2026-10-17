@@ -12,6 +12,7 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseSearchQuery,
     ReuseSuggestQuery,
     ReuseUpdateInput,
+    linked_identifier,
     segment,
 )
 from datasluice.connectors.catalog.udata.wire._text_document import bound_text_document
@@ -89,7 +90,7 @@ def reuse_add_dataset_request(reuse_id: str, dataset_id: str) -> Request:
     return _request(
         "POST",
         f"{_REUSE_PATH}{segment(reuse_id, REUSE_ADD_DATASET_OPERATION)}/datasets/",
-        {"id": dataset_id},
+        {"id": linked_identifier(dataset_id, REUSE_ADD_DATASET_OPERATION, "uData reuse dataset")},
     )
 
 
@@ -97,7 +98,7 @@ def reuse_add_dataservice_request(reuse_id: str, dataservice_id: str) -> Request
     return _request(
         "POST",
         f"{_REUSE_PATH}{segment(reuse_id, REUSE_ADD_DATASERVICE_OPERATION)}/dataservices/",
-        {"id": dataservice_id},
+        {"id": linked_identifier(dataservice_id, REUSE_ADD_DATASERVICE_OPERATION, "uData reuse dataservice")},
     )
 
 

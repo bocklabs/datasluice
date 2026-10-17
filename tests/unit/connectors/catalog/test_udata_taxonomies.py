@@ -335,6 +335,41 @@ def test_non_finite_taxonomy_responses_fail_typed_without_a_raw_body(
     assert "secret-key" not in rendered
 
 
+@pytest.mark.parametrize(("read", "arguments", "path", "shape"), _TAXONOMY_READ_PATHS)
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_taxonomy_malformed_and_nonfinite_property_corpus(
+    read: str, arguments: tuple[object, ...], path: str, shape: bytes, asynchronous: bool
+) -> None:
+    valid = shape.replace(b"@@", b'"corpus-private-value"')
+    bodies = [valid[:index] for index in range(len(valid))]
+    for literal in (*_NON_FINITE_LITERALS, b"1e309", b"-1e309"):
+        for depth in range(4):
+            nested = literal
+            for _ in range(depth):
+                nested = b'{"nested":[' + nested + b"]}"
+            bodies.append(shape.replace(b"@@", nested))
+
+    async def run() -> None:
+        for body in bodies:
+            router = async_route_table(with_site_route({("GET", f"{ORIGIN}{path}"): (200, body)}))
+            async with async_client(router, None) as client:
+                with pytest.raises((NativeCatalogError, CatalogValidationError)) as raised:
+                    await getattr(client.taxonomies, read)(*arguments)
+            assert "corpus-private-value" not in repr(raised.value.__dict__)
+
+    if asynchronous:
+        asyncio.run(run())
+    else:
+        for body in bodies:
+            router = sync_route_table(with_site_route({("GET", f"{ORIGIN}{path}"): (200, body)}))
+            with (
+                sync_client(router, None) as client,
+                pytest.raises((NativeCatalogError, CatalogValidationError)) as raised,
+            ):
+                getattr(client.taxonomies, read)(*arguments)
+            assert "corpus-private-value" not in repr(raised.value.__dict__)
+
+
 def test_invalid_taxonomy_values_fail_before_or_at_decode_without_raw_body() -> None:
     with pytest.raises(ValueError, match="kind"):
         BadgeCreateInput(kind="")

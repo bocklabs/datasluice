@@ -15,7 +15,9 @@
     "local_only": true,
     "test_id": "test_controlled_resource_family_mutation_and_read_chain",
     "response_shape": "record-id-only",
-    "sanitized": true
+    "sanitized": true,
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_organization_evidence": {
     "captured_at": "2026-09-23",
@@ -90,9 +92,11 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "reviewed_sha": "1cdb7a33c0c9a88578a3b3c6d8438d647b3a896f",
-    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
-    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
-    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe"
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_taxonomy_evidence": {
     "captured_at": "2026-09-26",
@@ -140,14 +144,16 @@
     "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
-    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
     "origin_capture_sha256": "eac6abfa3b7cec65b4806d52820579b0e5fc8904af15a86dc67735575d46f714",
     "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e",
-    "cleanup_status": "disposable-stack-stopped-and-removed"
+    "cleanup_status": "disposable-stack-stopped-and-removed",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_user_evidence": {
     "captured_at": "2026-09-24",
@@ -218,12 +224,14 @@
     "sanitized": true,
     "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
-    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
     "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
-    "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e"
+    "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_oauth_evidence": {
     "captured_at": "2026-09-25",
@@ -263,18 +271,20 @@
       "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
       "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
     },
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header."
+    "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_activity_discussion_evidence": {
     "captured_at": "2026-09-26",
     "stack_version": "17.6.0",
     "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
-    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
     "test_ids": [
       "test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes",
       "test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up",
@@ -283,16 +293,18 @@
     ],
     "response_shape": "native-envelope-and-status-skeleton",
     "recaptured": false,
-    "recapture_note": "No stack nonce or admin secret was created for 04-08, so this block records the sanitized shape contract and the current test digests rather than a fresh capture. The prior capture was inspected read-only and the controlled tests run in their normal environment-skipped state without the admin token variable set."
+    "recapture_note": "No stack nonce or admin secret was created for 04-08, so this block records the sanitized shape contract and the current test digests rather than a fresh capture. The prior capture was inspected read-only and the controlled tests run in their normal environment-skipped state without the admin token variable set.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_reuse_evidence": {
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
-    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
     "test_ids": [
       "test_controlled_reuse_reads_match_raw_routes_in_both_modes",
       "test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up",
@@ -301,16 +313,18 @@
     ],
     "response_shape": "native-envelope-and-status-skeleton",
     "recaptured": true,
-    "recapture_note": "Post-fix reuse reads and lifecycle were recaptured against a fresh loopback 17.6.0 stack. The v2 search returns 500 stack-wide (datasets and discussions too), so the differential asserts the typed error mapping. The reuse badge set is empty in the stock profile, so add_reuse_badge asserts the 400 invalid-kind mapping and delete_reuse_badge asserts the 404 absent-badge mapping. Follow cleanup is tolerant of the absent-follow state. All raw responses are sanitized to status and envelope skeletons."
+    "recapture_note": "Post-fix reuse reads and lifecycle were recaptured against a fresh loopback 17.6.0 stack. The v2 search returns 500 stack-wide (datasets and discussions too), so the differential asserts the typed error mapping. The reuse badge set is empty in the stock profile, so add_reuse_badge asserts the 400 invalid-kind mapping and delete_reuse_badge asserts the 404 absent-badge mapping. Follow cleanup is tolerant of the absent-follow state. All raw responses are sanitized to status and envelope skeletons.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_spatial_evidence": {
     "captured_at": "2026-10-01",
     "stack_version": "17.6.0",
     "implementation_sha": "496f628b7b164fe7c168e8765d09a477566c985a",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "5a4889bbfe52c934c7bc6d85b83e947eef2ee5ab29d600241dec962ce2f27407",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
     "test_ids": [
       "test_controlled_spatial_reads_match_raw_routes_in_both_modes",
       "test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error",
@@ -334,16 +348,18 @@
     },
     "response_shape": "native-envelope-and-status-skeleton",
     "sanitized": true,
-    "recapture_note": "Captured against a fresh loopback 17.6.0 stack seeded with deterministic local roles. Every assigned row is a public read, so no mutation, upload, or token differential runs for this family. GeoLevel and GeoZone are empty on a fresh stack because the evidence seed creates no spatial rows, so the three routes that resolve a target through GeoZone.objects.get_or_404 or GeoLevel.objects.get_or_404 -- zone, zone_datasets, and spatial_coverage -- each answer 404. The fourth absent-target route is different: zones runs GeoZone.objects.in_bulk and then an unguarded list comprehension over the requested ids, so an absent id raises KeyError and that route answers 500 instead; the differential asserts the typed error mapping for it rather than a body. Granularities is never empty, because spatial_granularities appends the hardcoded BASE_GRANULARITIES literal to the GeoLevel rows, so it answers the two base entries (poi, other). Zone and level identifiers are percent-encoded exactly once by the connector's own wire tests, which emit fr%3A1100001 for fr:1100001."
+    "recapture_note": "Captured against a fresh loopback 17.6.0 stack seeded with deterministic local roles. Every assigned row is a public read, so no mutation, upload, or token differential runs for this family. GeoLevel and GeoZone are empty on a fresh stack because the evidence seed creates no spatial rows, so the three routes that resolve a target through GeoZone.objects.get_or_404 or GeoLevel.objects.get_or_404 -- zone, zone_datasets, and spatial_coverage -- each answer 404. The fourth absent-target route is different: zones runs GeoZone.objects.in_bulk and then an unguarded list comprehension over the requested ids, so an absent id raises KeyError and that route answers 500 instead; the differential asserts the typed error mapping for it rather than a body. Granularities is never empty, because spatial_granularities appends the hardcoded BASE_GRANULARITIES literal to the GeoLevel rows, so it answers the two base entries (poi, other). Zone and level identifiers are percent-encoded exactly once by the connector's own wire tests, which emit fr%3A1100001 for fr:1100001.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_posts_report_evidence": {
     "captured_at": "2026-09-27",
     "stack_version": "17.6.0",
     "implementation_sha": "2373233cee7da7fa4465a1747fd41954b3b31ec2",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "compose_sha256": "8b9ac03113e955c82cad73c49b3269b68449f3c275c0d31e1116d1e28056fdfc",
-    "dockerfile_sha256": "4cb0f78fee1b61daf5a96a1b41b98e5b1636d88bfc5aec9376d3676209784941",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
     "test_ids": [
       "test_controlled_posts_reports_reads_match_raw_routes_in_both_modes",
       "test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up",
@@ -352,7 +368,9 @@
     ],
     "response_shape": "native-envelope-and-status-skeleton",
     "recaptured": true,
-    "recapture_note": "Executed on the controlled loopback stack (uData 17.6.0, AIStor storage) at 2373233cee7da7fa4465a1747fd41954b3b31ec2: both-mode reads differential (post list, atom feed, v2 search, report list, report reasons) and the full sync and async lifecycles (create, publish, image, resize, update, report create/get/update, member invitation, notification list/read, cleanup, deletion proof) passed with raw-versus-typed payload equality or matching error status. An async-only resolver regression test covers the async report-create dispatch seam."
+    "recapture_note": "Executed on the controlled loopback stack (uData 17.6.0, AIStor storage) at 2373233cee7da7fa4465a1747fd41954b3b31ec2: both-mode reads differential (post list, atom feed, v2 search, report list, report reasons) and the full sync and async lifecycles (create, publish, image, resize, update, report create/get/update, member invitation, notification list/read, cleanup, deletion proof) passed with raw-versus-typed payload equality or matching error status. An async-only resolver regression test covers the async report-create dispatch seam.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_dataservices_evidence": {
     "captured_at": "2026-10-11",
@@ -360,10 +378,10 @@
     "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "13d638063ae43c7617dd7d0a1252c854e400b9093bae6daa01eeb7a996746e80",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "wheel_tracer_sha256": "ecadc5382e6bfac7d5f0cb1b47aace900676b5c5174b8253acff19efb9866027",
+    "wheel_tracer_sha256": "4def149bd6133c81a5e01b56b71961e1b1717dbe22a58488f7da28d84e78f136",
     "test_ids": [
       "test_controlled_dataservice_reads_match_raw_routes_in_both_modes",
       "test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up"
@@ -425,7 +443,9 @@
         "udata/api-v1.unfollow-dataservice",
         "udata/api-v1.delete-dataservice"
       ]
-    }
+    },
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_topic_evidence": {
     "captured_at": "2026-10-11",
@@ -433,10 +453,10 @@
     "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "13d638063ae43c7617dd7d0a1252c854e400b9093bae6daa01eeb7a996746e80",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "wheel_tracer_sha256": "ecadc5382e6bfac7d5f0cb1b47aace900676b5c5174b8253acff19efb9866027",
+    "wheel_tracer_sha256": "4def149bd6133c81a5e01b56b71961e1b1717dbe22a58488f7da28d84e78f136",
     "unit_test_sha256": "9fed991a72b2c85aac0f9d4b5fffb125bfdfb79b47631b731beac455701b0f3c",
     "test_ids": [
       "test_controlled_topic_reads_match_raw_routes_in_both_modes",
@@ -477,7 +497,9 @@
     "branch_discrimination": [
       "receipt-resource-kind-dataset-instead-of-topic-detected",
       "flat-element-reference-body-detected"
-    ]
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_contact_visualization_evidence": {
     "captured_at": "2026-10-13",
@@ -485,11 +507,11 @@
     "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "13d638063ae43c7617dd7d0a1252c854e400b9093bae6daa01eeb7a996746e80",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "wheel_tracer_sha256": "ecadc5382e6bfac7d5f0cb1b47aace900676b5c5174b8253acff19efb9866027",
-    "unit_test_sha256": "f15179583cb85cffcc01f07c14c8476df46e245b6d208b7557f7d25a5af8d56d",
+    "wheel_tracer_sha256": "4def149bd6133c81a5e01b56b71961e1b1717dbe22a58488f7da28d84e78f136",
+    "unit_test_sha256": "a691d9449cbdd9644784075ebac053fe870a57cfff223803fe2fbdca5ebb7310",
     "test_ids": [
       "test_controlled_contact_visualization_reads_match_raw_routes_in_both_modes",
       "test_controlled_contact_visualization_lifecycle_matches_raw_routes_and_cleans_up"
@@ -529,7 +551,9 @@
       "undocumented-role-acceptance-detected",
       "allowlist-passthrough-detected",
       "receipt-resource-kind-dataset-instead-of-visualization-detected"
-    ]
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_jobs_evidence": {
     "captured_at": "2026-10-14",
@@ -537,11 +561,11 @@
     "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
     "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "e4a6d5ff80285223694eefa6884f3df5d5e2f3f555776508dcb572a279ac68b8",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "wheel_tracer_sha256": "ecadc5382e6bfac7d5f0cb1b47aace900676b5c5174b8253acff19efb9866027",
-    "unit_test_sha256": "428fb620968928488c13a55944bc1b0b94d9b95b5d4508d3159c7e81dadeaaf4",
+    "wheel_tracer_sha256": "4def149bd6133c81a5e01b56b71961e1b1717dbe22a58488f7da28d84e78f136",
+    "unit_test_sha256": "70ac318040f7a0526562b3f8d9c37c912bb716a5f13a8a414c220356e5e3c4a4",
     "unit_state_test_sha256": "a33d4da54cbf45853b99b0cddb7a39c6eb62d93d02e75309b463031d27a6d538",
     "test_ids": [
       "test_controlled_jobs_reads_match_raw_routes_in_both_modes",
@@ -581,7 +605,9 @@
       "anonymous-family-dispatch-blocked-detected",
       "schedule-exclusivity-violation-refused-detected"
     ],
-    "implementation_sha": "a3e27552b4c22688559c8c4e2f96fef5422796b0"
+    "implementation_sha": "a3e27552b4c22688559c8c4e2f96fef5422796b0",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_harvest_evidence": {
     "captured_at": "2026-10-14",
@@ -590,12 +616,12 @@
     "implementation_sha": "7b1ac5b",
     "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "e4a6d5ff80285223694eefa6884f3df5d5e2f3f555776508dcb572a279ac68b8",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "wheel_tracer_sha256": "ecadc5382e6bfac7d5f0cb1b47aace900676b5c5174b8253acff19efb9866027",
-    "unit_test_sha256": "56346452d3a26006d17f37f07684c05c5fd4fcaf90c7cc01309cf1bba5891a92",
-    "unit_state_test_sha256": "ef2e0de09afb8cc26e94da0e0b502489a982cb7a8b474e32f34de79f7420dde4",
+    "wheel_tracer_sha256": "4def149bd6133c81a5e01b56b71961e1b1717dbe22a58488f7da28d84e78f136",
+    "unit_test_sha256": "748b6c8e3b471270c5179e2831333b56c5dea12bd3442c0b529063771f36add5",
+    "unit_state_test_sha256": "3f0ed8ce7f17f91064b822670783cc2ae24603d8df72170e019aebc9d746c507",
     "test_ids": [
       "test_controlled_harvest_reads_match_raw_routes_in_both_modes",
       "test_controlled_harvest_create_refusal_matches_raw_in_both_modes"
@@ -628,7 +654,9 @@
       "unknown-backend-server-refusal-agrees-with-raw-detected",
       "absent-job-objectid-upstream-500-mapped-honestly-detected",
       "harvest-waiter-observation-timeout-inversion-detected"
-    ]
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_transfers_evidence": {
     "captured_at": "2026-10-14",
@@ -637,11 +665,11 @@
     "implementation_sha": "d1fde73f97ce767fb000957f8531bfdd149efaf6",
     "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "e4a6d5ff80285223694eefa6884f3df5d5e2f3f555776508dcb572a279ac68b8",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "wheel_tracer_sha256": "ecadc5382e6bfac7d5f0cb1b47aace900676b5c5174b8253acff19efb9866027",
-    "unit_test_sha256": "367c91af6e32c22e6856ec31ab9eabc14c79e767bcb7364bd799b2d0fec4b5d9",
+    "wheel_tracer_sha256": "4def149bd6133c81a5e01b56b71961e1b1717dbe22a58488f7da28d84e78f136",
+    "unit_test_sha256": "0a1f037bce6488a590200d658c2ba3cf1ffdefb1af3959280d1ae87a0c57017f",
     "test_ids": [
       "test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up"
     ],
@@ -673,7 +701,9 @@
       "accept-destructive-tier-refusal-detected",
       "response-choice-vocabulary-detected",
       "status-transition-pending-to-refused-detected"
-    ]
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   },
   "controlled_extensions_evidence": {
     "captured_at": "2026-10-14",
@@ -682,10 +712,10 @@
     "implementation_sha": "29ddd797f67fc4c0b73095ad451cb2613d01ce21",
     "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
     "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
-    "dockerfile_sha256": "e4a6d5ff80285223694eefa6884f3df5d5e2f3f555776508dcb572a279ac68b8",
-    "controlled_test_sha256": "870415760cf1f04a1b39edac9032eb03d3ab922209168fb06bb372a178f00c38",
+    "dockerfile_sha256": "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e",
+    "controlled_test_sha256": "dd0b16b5eff32239447f5969fc41a9a6156ae0a91722c9a62e708897f380dd08",
     "wheel_test_sha256": "fa282fc42fef9c42bbbc4a0a79ac220e00f22d2484b17050ae3223495cee8bcf",
-    "wheel_tracer_sha256": "ecadc5382e6bfac7d5f0cb1b47aace900676b5c5174b8253acff19efb9866027",
+    "wheel_tracer_sha256": "4def149bd6133c81a5e01b56b71961e1b1717dbe22a58488f7da28d84e78f136",
     "unit_test_sha256": "b38d7c9691e5bb35043fc38b8743d2cae53d51a14283fa15f539bab5a600a36a",
     "unit_probe_test_sha256": "62d54606aaa0ec248e2e7feeffe038d81f581aa4f2448a9d081d92fc6087fdce",
     "test_ids": [
@@ -717,6 +747,8 @@
       "avatar-unsafe-segment-refusal-detected",
       "version-gate-blocks-dispatch-on-mismatch-detected",
       "probe-cache-single-flight-detected"
-    ]
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
   }
 }

@@ -156,7 +156,8 @@ def test_every_worker_job_route_has_an_exact_wire_shape() -> None:
     with sync_client(router, UDATA_CREDENTIAL) as client:
         assert [record.payload["id"] for record in client.worker_jobs.list_jobs(ADMIN)] == ["wheel-job"]
         created = client.worker_jobs.create_job(cron, ADMIN, mutation_policy(wire.CREATE_JOB_OPERATION, "wheel-job"))
-        assert created.record is not None and created.record.payload["id"] == "wheel-job"
+        assert created.record is not None
+        assert created.record.payload["id"] == "wheel-job"
         assert client.worker_jobs.get_job("wheel-job", ADMIN).payload["task"] == "wheel-task"
         updated = client.worker_jobs.update_job(
             "wheel-job", cron, ADMIN, mutation_policy(wire.UPDATE_JOB_OPERATION, "wheel-job")

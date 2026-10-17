@@ -5,15 +5,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
-from datasluice.domain.catalog.auth import OAuthFlow, SecretValue, _secret
+from datasluice.connectors.catalog.udata.secrets import oauth_secret
+from datasluice.domain.catalog.auth import OAuthFlow, SecretValue
 from datasluice.runtime.oauth import AuthorizationCodeFlow
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.receipts import MutationReceipt
 
-# The four grants uData 17.6.0 registers on its AuthorizationServer.
 GRANT_TYPES = frozenset({"authorization_code", "client_credentials", "password", "refresh_token"})
 TOKEN_TYPE_HINTS = frozenset({"access_token", "refresh_token"})
 TOKEN_TYPES = frozenset({"Bearer"})
@@ -27,12 +27,34 @@ def _text(value: object, name: str) -> None:
 
 
 def _validate_url(value: str, name: str) -> None:
+    parts = urlsplit("")
     try:
-        parts = urlsplit(value)
-    except ValueError:
-        raise ValueError(f"uData OAuth {name} must be a valid absolute URI.") from None
-    if parts.scheme not in {"http", "https"} or not parts.netloc or parts.username or parts.password:
-        raise ValueError(f"uData OAuth {name} must be an absolute HTTP(S) URI without credentials.")
+        _text(value, name)
+        try:
+            parts = urlsplit(value)
+            _ = parts.port
+        except ValueError:
+            raise ValueError(f"uData OAuth {name} must be a valid absolute URI.") from None
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or "#" in value
+            or "\\" in value
+            or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise ValueError(f"uData OAuth {name} must be an absolute HTTPS URI without credentials or a fragment.")
+    finally:
+        parts = urlsplit("")
+        value = ""
+
+
+def _validate_scope_and_username(scope: str | None, username: str | None) -> None:
+    if scope is not None and (not isinstance(scope, str) or _SCOPE.fullmatch(scope) is None):
+        raise ValueError("uData OAuth scope must be a space-delimited list of RFC 6749 scope tokens.")
+    if username is not None and not isinstance(username, str):
+        raise ValueError("uData OAuth username must be a string or null.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,28 +64,35 @@ class OAuthTokenRequest:
     grant_type: str
     client_id: str
     client_secret: SecretValue | str | None = field(default=None, repr=False)
-    code: str | None = field(default=None, repr=False)
+    code: SecretValue | str | None = field(default=None, repr=False)
     refresh_token: SecretValue | str | None = field(default=None, repr=False)
     username: str | None = field(default=None, repr=False)
     password: SecretValue | str | None = field(default=None, repr=False)
     scope: str | None = None
-    code_verifier: str | None = field(default=None, repr=False)
+    code_verifier: SecretValue | str | None = field(default=None, repr=False)
     redirect_uri: str | None = None
+    authorization: OAuthAuthorizationBinding | None = field(default=None, repr=False, kw_only=True)
+    state: str | None = field(default=None, repr=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.grant_type not in GRANT_TYPES:
             raise ValueError(f"uData OAuth grant_type must be one of {sorted(GRANT_TYPES)}.")
         _text(self.client_id, "client_id")
-        if self.scope is not None and (not isinstance(self.scope, str) or _SCOPE.fullmatch(self.scope) is None):
-            raise ValueError("uData OAuth scope must be a space-delimited list of RFC 6749 scope tokens.")
-        for name in ("code", "username", "code_verifier"):
-            value = getattr(self, name)
-            if value is not None and not isinstance(value, str):
-                raise ValueError(f"uData OAuth {name} must be a string or null.")
-        for name in ("client_secret", "refresh_token", "password"):
+        _validate_scope_and_username(self.scope, self.username)
+        self._wrap_secrets()
+        self._require_grant_fields()
+        if self.redirect_uri is not None:
+            _validate_url(self.redirect_uri, "redirect_uri")
+        if self.grant_type == "authorization_code":
+            self._validate_code_exchange()
+
+    def _wrap_secrets(self) -> None:
+        for name in ("client_secret", "refresh_token", "password", "code", "code_verifier"):
             value = getattr(self, name)
             if value is not None:
-                object.__setattr__(self, name, _secret(value))
+                object.__setattr__(self, name, oauth_secret(value))
+
+    def _require_grant_fields(self) -> None:
         required = {
             "refresh_token": ("refresh_token",),
             "password": ("username", "password"),
@@ -72,9 +101,20 @@ class OAuthTokenRequest:
         if any(not getattr(self, name) for name in required):
             raise ValueError(f"The uData {self.grant_type} grant requires {', '.join(required)}.")
 
-    def form_fields(self) -> dict[str, str]:
-        """Return the exact form keys the stock token endpoint reads, in wire order."""
-        fields = {"grant_type": self.grant_type, "client_id": self.client_id}
+    def _validate_code_exchange(self) -> None:
+        if not isinstance(self.authorization, OAuthAuthorizationBinding):
+            raise ValueError("The uData authorization_code grant requires an authorization binding.")
+        self.authorization.validate_callback_state(self.state)
+        if (
+            self.client_id != self.authorization._descriptor.client_id
+            or self.redirect_uri != self.authorization._descriptor.redirect_uri
+            or self.code_verifier is not self.authorization._verifier
+        ):
+            raise ValueError("The uData code exchange must match its authorization binding.")
+
+    def form_fields(self) -> dict[str, str | SecretValue]:
+        """Return form fields without revealing secret values."""
+        fields: dict[str, str | SecretValue] = {"grant_type": self.grant_type, "client_id": self.client_id}
         for name in (
             "client_secret",
             "code",
@@ -87,7 +127,7 @@ class OAuthTokenRequest:
         ):
             value = getattr(self, name)
             if value is not None:
-                fields[name] = value.reveal() if isinstance(value, SecretValue) else value
+                fields[name] = value
         return fields
 
 
@@ -95,13 +135,12 @@ class OAuthTokenRequest:
 class OAuthAuthorizationBinding:
     """One browser authorization-code round trip over the shared OAuth runtime.
 
-    The shared runtime flow owns the expected state and the S256 verifier: call
-    ``validate_callback_state`` with the state observed on the redirect before
-    building the exchange request, which carries the bound verifier and redirect URI.
+    The exchange requires the observed callback state and the bound redirect URI.
     """
 
     _descriptor: OAuthFlow = field(repr=False)
     _flow: AuthorizationCodeFlow = field(repr=False)
+    _verifier: SecretValue = field(repr=False)
 
     @property
     def authorization_url(self) -> str:
@@ -115,20 +154,68 @@ class OAuthAuthorizationBinding:
         """Require the authorization redirect to echo the bound state exactly."""
         self._flow.validate_state(observed_state)
 
-    def token_request(self, code: str) -> OAuthTokenRequest:
+    def validate_callback_redirect(self, location: str) -> None:
+        """Require the registered callback endpoint and exactly one matching state."""
+        observed = urlsplit("")
+        parameters: list[tuple[str, str]] = []
+        retained: list[tuple[str, str]] = []
+        try:
+            _validate_url(location, "callback redirect")
+            expected = urlsplit(self._descriptor.redirect_uri or "")
+            observed = urlsplit(location)
+            if (observed.scheme, observed.netloc, observed.path) != (expected.scheme, expected.netloc, expected.path):
+                raise ValueError("The uData callback redirect must match its authorization binding.")
+            parameters = parse_qsl(observed.query, keep_blank_values=True)
+            states = [value for key, value in parameters if key == "state"]
+            if len(states) != 1:
+                raise ValueError("The uData callback redirect must contain exactly one state.")
+            self.validate_callback_state(states[0])
+            retained = [
+                (key, value) for key, value in parameters if key not in {"state", "code", "error", "error_description"}
+            ]
+            if retained != parse_qsl(expected.query, keep_blank_values=True):
+                raise ValueError("The uData callback redirect query must match its authorization binding.")
+        finally:
+            observed = urlsplit("")
+            parameters.clear()
+            retained.clear()
+            location = ""
+
+    def token_request(self, code: str, *, state: str) -> OAuthTokenRequest:
         """Build the typed code exchange carrying the bound verifier and redirect URI."""
-        return OAuthTokenRequest(
-            grant_type="authorization_code",
-            client_id=self._descriptor.client_id,
-            code=code,
-            code_verifier=self._flow.verifier,
-            redirect_uri=self._descriptor.redirect_uri,
-        )
+        try:
+            return OAuthTokenRequest(
+                grant_type="authorization_code",
+                client_id=self._descriptor.client_id,
+                code=oauth_secret(code),
+                code_verifier=self._verifier,
+                redirect_uri=self._descriptor.redirect_uri,
+                authorization=self,
+                state=state,
+            )
+        finally:
+            code = ""
 
 
 def begin_authorization_code(descriptor: OAuthFlow, *, state: str | None = None) -> OAuthAuthorizationBinding:
     """Bind one uData browser authorization-code round trip over the shared OAuth runtime."""
-    return OAuthAuthorizationBinding(_descriptor=descriptor, _flow=AuthorizationCodeFlow(descriptor, state=state))
+    if not isinstance(descriptor, OAuthFlow):
+        raise TypeError("uData authorization requires an OAuthFlow.")
+    for name in ("authorization_url", "token_url"):
+        value = getattr(descriptor, name)
+        _validate_url(value, name)
+        if urlsplit(value).query:
+            raise ValueError("uData OAuth endpoint URLs cannot contain a query.")
+    if descriptor.redirect_uri is None:
+        raise ValueError("uData authorization requires an explicit redirect URI.")
+    _validate_url(descriptor.redirect_uri, "redirect_uri")
+    if any(
+        key in {"state", "code", "error", "error_description"}
+        for key, _ in parse_qsl(urlsplit(descriptor.redirect_uri).query)
+    ):
+        raise ValueError("The uData redirect URI cannot contain OAuth response parameters.")
+    flow = AuthorizationCodeFlow(descriptor, state=state)
+    return OAuthAuthorizationBinding(_descriptor=descriptor, _flow=flow, _verifier=oauth_secret(flow.verifier))
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,21 +228,21 @@ class OAuthRevokeRequest:
     client_secret: SecretValue | str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "token", _secret(self.token))
+        object.__setattr__(self, "token", oauth_secret(self.token))
         if self.token_type_hint is not None and self.token_type_hint not in TOKEN_TYPE_HINTS:
             raise ValueError(f"uData OAuth token_type_hint must be one of {sorted(TOKEN_TYPE_HINTS)}.")
         if self.client_id is not None and not isinstance(self.client_id, str):
             raise ValueError("uData OAuth client_id must be a string or null.")
         if self.client_secret is not None:
-            object.__setattr__(self, "client_secret", _secret(self.client_secret))
+            object.__setattr__(self, "client_secret", oauth_secret(self.client_secret))
 
-    def form_fields(self) -> dict[str, str]:
-        """Return the exact revocation form keys, omitting the absent optional hint."""
-        fields = {"token": self.token.reveal() if isinstance(self.token, SecretValue) else self.token}
+    def form_fields(self) -> dict[str, str | SecretValue]:
+        """Return revocation fields without revealing secret values."""
+        fields: dict[str, str | SecretValue] = {"token": self.token}
         for name in ("token_type_hint", "client_id", "client_secret"):
             value = getattr(self, name)
             if value is not None:
-                fields[name] = value.reveal() if isinstance(value, SecretValue) else value
+                fields[name] = value
         return fields
 
 
@@ -204,6 +291,7 @@ class OAuthAuthorizeDecision:
     accept: bool = False
     state: str | None = None
     redirect_uri: str | None = None
+    authorization: OAuthAuthorizationBinding | None = field(default=None, repr=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if type(self.accept) is not bool:
@@ -214,6 +302,12 @@ class OAuthAuthorizeDecision:
                 raise ValueError(f"uData OAuth {name} must be a non-empty string or null.")
         if self.redirect_uri is not None:
             _validate_url(self.redirect_uri, "redirect_uri")
+        if self.state is not None or self.redirect_uri is not None or self.authorization is not None:
+            if not isinstance(self.authorization, OAuthAuthorizationBinding):
+                raise ValueError("The uData consent state and redirect require an authorization binding.")
+            self.authorization.validate_callback_state(self.state)
+            if self.redirect_uri != self.authorization._descriptor.redirect_uri:
+                raise ValueError("The uData consent redirect must match its authorization binding.")
 
     def form_fields(self) -> dict[str, str]:
         """Return the consent form the stock authorize POST reads."""
@@ -227,7 +321,7 @@ class OAuthAuthorizeDecision:
 
 @dataclass(frozen=True, slots=True)
 class OAuthTokenResult:
-    """Allowlisted token metadata; the access token never enters retained state."""
+    """Token metadata with secret holders that block implicit serialization."""
 
     receipt: MutationReceipt
     token_type: str
@@ -246,7 +340,8 @@ class OAuthTokenResult:
         for name in ("access_token", "refresh_token"):
             value = getattr(self, name)
             if value is not None:
-                object.__setattr__(self, name, _secret(value))
+                value = oauth_secret(value)
+                object.__setattr__(self, name, value)
 
     def to_dict(self) -> dict[str, object]:
         return {

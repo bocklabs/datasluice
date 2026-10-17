@@ -1,0 +1,4 @@
+flask-caching==2.3.1
+setuptools==80.9.0
+flask-security-too==5.6.1
+bcrypt==4.0.1

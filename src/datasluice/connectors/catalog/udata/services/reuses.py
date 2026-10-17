@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
+from datasluice.connectors.catalog.udata.models._segment import composite_target
 from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseCreateInput,
     ReuseFollowersQuery,
@@ -150,7 +151,7 @@ class SyncReusesService(SyncCatalogService):
     ) -> ReuseMutationResult:
         linked = linked_identifier(dataset_id, wire.REUSE_ADD_DATASET_OPERATION, "uData reuse dataset")
         return _mutation(
-            f"{reuse_id}:{linked}",
+            composite_target(reuse_id, linked),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
@@ -167,7 +168,7 @@ class SyncReusesService(SyncCatalogService):
     ) -> ReuseMutationResult:
         linked = linked_identifier(dataservice_id, wire.REUSE_ADD_DATASERVICE_OPERATION, "uData reuse dataservice")
         return _mutation(
-            f"{reuse_id}:{linked}",
+            composite_target(reuse_id, linked),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,
@@ -426,7 +427,7 @@ class AsyncReusesService(AsyncCatalogService):
     ) -> ReuseMutationResult:
         linked = linked_identifier(dataset_id, wire.REUSE_ADD_DATASET_OPERATION, "uData reuse dataset")
         return await _mutation_async(
-            f"{reuse_id}:{linked}",
+            composite_target(reuse_id, linked),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
@@ -443,7 +444,7 @@ class AsyncReusesService(AsyncCatalogService):
     ) -> ReuseMutationResult:
         linked = linked_identifier(dataservice_id, wire.REUSE_ADD_DATASERVICE_OPERATION, "uData reuse dataservice")
         return await _mutation_async(
-            f"{reuse_id}:{linked}",
+            composite_target(reuse_id, linked),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,

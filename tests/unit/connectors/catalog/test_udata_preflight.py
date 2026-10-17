@@ -329,7 +329,7 @@ def test_controlled_stack_is_loopback_digest_pinned_and_capture_is_response_free
     assert oracle.PINNED_COMMIT in dockerfile
     assert "ghcr.io/astral-sh/uv@sha256:" in dockerfile
     assert "python@sha256:" in dockerfile
-    assert "flask-caching==2.3.1" in dockerfile
+    assert "flask-caching==2.3.1" in compose.with_name("requirements.txt").read_text(encoding="utf-8")
 
     output = tmp_path / "capture.json"
     capture.write_capture("http://127.0.0.1:5640", "17.6.0", output)
@@ -346,7 +346,8 @@ def test_dockerfile_commit_default_cannot_drift_from_the_compose_override() -> N
         r"^ARG UDATA_COMMIT=(\S+)$", (stack_dir / "Dockerfile").read_text(encoding="utf-8"), re.MULTILINE
     )
     compose_arg = re.search(r"UDATA_COMMIT:\s*(\S+)", (stack_dir / "compose.yaml").read_text(encoding="utf-8"))
-    assert dockerfile_arg is not None and compose_arg is not None
+    assert dockerfile_arg is not None
+    assert compose_arg is not None
     assert dockerfile_arg.group(1) == compose_arg.group(1) == oracle.PINNED_COMMIT
 
 

@@ -61,7 +61,7 @@ SUBJECT = TransferRequestInput(
     recipient_id="organization-1",
     recipient_class="Organization",
 )
-COMPOSITE_TARGET = "dataset-1:organization-1"
+COMPOSITE_TARGET = "Dataset:dataset-1:Organization:organization-1"
 OTHER_CREDENTIAL = UDataCredential(api_key="other-key")
 ANONYMOUS_PERMISSIONS = EffectivePermissions.for_credential(
     UDATA_CREDENTIAL, platform=CatalogPlatform.UDATA, authenticated=False

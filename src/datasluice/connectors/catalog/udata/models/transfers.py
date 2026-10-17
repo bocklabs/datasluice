@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.models._segment import composite_target, path_segment
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.models import MappingRecord
@@ -141,8 +141,12 @@ class TransferRequestInput:
         return body
 
     def mutation_target(self) -> str:
-        """Return the composite target binding the subject and recipient identifiers."""
-        return f"{self.subject_id}:{self.recipient_id}"
+        """Bind both reference classes and encoded identifiers to the confirmation target.
+
+        The target is ``<subject class>:<encoded subject>:<recipient class>:<encoded recipient>``. Use this method to
+        construct the confirmation instead of joining raw identifiers.
+        """
+        return composite_target(self.subject_class, self.subject_id, self.recipient_class, self.recipient_id)
 
 
 @dataclass(frozen=True, slots=True)

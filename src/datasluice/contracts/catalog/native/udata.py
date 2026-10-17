@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         DataserviceSearchQuery,
         DataserviceUpdateInput,
     )
+    from datasluice.connectors.catalog.udata.models.datasets import DatasetFollowersQuery, DatasetMutationResult
     from datasluice.connectors.catalog.udata.models.harvest import (
         HarvestBulkPreview,
         HarvestBulkResult,
@@ -2494,6 +2495,46 @@ class AsyncUDataService(Protocol):
 
 
 @runtime_checkable
+class SyncUDataDatasetsService(SyncUDataService, Protocol):
+    def list_dataset_followers(self, dataset_id: str, query: DatasetFollowersQuery | None = None) -> MappingRecord: ...
+
+    def follow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    def unfollow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+
+@runtime_checkable
+class AsyncUDataDatasetsService(AsyncUDataService, Protocol):
+    async def list_dataset_followers(
+        self, dataset_id: str, query: DatasetFollowersQuery | None = None
+    ) -> MappingRecord: ...
+
+    async def follow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+    async def unfollow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult: ...
+
+
+@runtime_checkable
 class SyncUDataServices(Protocol):
     """Complete synchronous uData service projection."""
 
@@ -2501,7 +2542,7 @@ class SyncUDataServices(Protocol):
     def root_profile(self) -> SyncUDataRootProfileService: ...
 
     @property
-    def datasets(self) -> SyncUDataService: ...
+    def datasets(self) -> SyncUDataDatasetsService: ...
 
     @property
     def resources(self) -> SyncUDataResourcesService: ...
@@ -2560,7 +2601,7 @@ class AsyncUDataServices(Protocol):
     def root_profile(self) -> AsyncUDataRootProfileService: ...
 
     @property
-    def datasets(self) -> AsyncUDataService: ...
+    def datasets(self) -> AsyncUDataDatasetsService: ...
 
     @property
     def resources(self) -> AsyncUDataResourcesService: ...

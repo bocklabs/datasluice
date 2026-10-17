@@ -28,9 +28,11 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogError, CatalogValidationError
 from datasluice.runtime.events import EventEmitter, ListSink
+from datasluice.runtime.transport.base import RedirectPolicy, RuntimeResponse
 from tests.helpers.udata_oauth_checks import assert_oauth_mutation_async, assert_oauth_mutation_sync
 from tests.helpers.udata_test_support import (
     UDATA_ORIGIN,
+    RouteRecorder,
     assert_ambiguous_mutation_receipt,
     async_client,
     declared_routes,
@@ -189,6 +191,65 @@ def test_oauth_consent_summary_keeps_only_status_for_a_session_gated_reply() -> 
     summary = wire.parse_consent_summary("authorize", None, 302, "text/html; charset=utf-8")
     assert summary.session_gated is True
     assert summary.to_dict() == {"session_gated": True, "status_code": 302, "media_type": "text/html"}
+
+
+@pytest.mark.parametrize("name", ["client_info", "authorize"])
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_oauth_login_redirect_is_status_metadata_not_a_consent_document(
+    monkeypatch: pytest.MonkeyPatch, name: str, async_mode: bool, status: int
+) -> None:
+    response_for = RouteRecorder.response_for
+
+    def response_with_location(router: RouteRecorder, request: RuntimeRequest) -> RuntimeResponse:
+        response = response_for(router, request)
+        if response.status_code == status:
+            return RuntimeResponse(status, {**response.headers, "Location": "/login"}, response.body)
+        return response
+
+    monkeypatch.setattr(RouteRecorder, "response_for", response_with_location)
+    query = OAuthClientRequest(client_id="client-id")
+    path = wire.build_request(name, query)[1]
+    routes = declared_routes(("GET", path, status, {"message": "login-required"}), site=SITE)
+    if async_mode:
+        router = html_async_route_table(routes)
+
+        async def run() -> OAuthConsentSummary:
+            async with async_client(router, CREDENTIAL) as client:
+                return await getattr(client.auth_oauth, name)(query, PERMISSIONS)
+
+        result = asyncio.run(run())
+        assert len([request for request in router.requests if "/oauth/" in request.url]) == 1
+        assert "X-API-KEY" not in router.requests[-1].headers
+        assert router.requests[-1].redirect_policy is RedirectPolicy.NO_FOLLOW
+    else:
+        sync_router = html_sync_route_table(routes)
+        with sync_client(sync_router, CREDENTIAL) as client:
+            result = getattr(client.auth_oauth, name)(query, PERMISSIONS)
+        assert len([request for request in sync_router.requests if "/oauth/" in request.url]) == 1
+        assert "X-API-KEY" not in sync_router.requests[-1].headers
+        assert sync_router.requests[-1].redirect_policy is RedirectPolicy.NO_FOLLOW
+    assert result.to_dict() == {"session_gated": True, "status_code": status, "media_type": "application/json"}
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_oauth_read_error_keeps_http_status_instead_of_becoming_session_metadata(status: int, async_mode: bool) -> None:
+    routes = declared_routes(
+        ("GET", "/oauth/authorize?client_id=client-id&response_type=code", status, {"message": "rejected"}), site=SITE
+    )
+    with pytest.raises(CatalogError) as raised:
+        if async_mode:
+
+            async def run() -> None:
+                async with async_client(html_async_route_table(routes), CREDENTIAL) as client:
+                    await client.auth_oauth.authorize(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+
+            asyncio.run(run())
+        else:
+            with sync_client(html_sync_route_table(routes), CREDENTIAL) as client:
+                client.auth_oauth.authorize(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+    assert raised.value.metadata["status_code"] == status
 
 
 def test_oauth_authorize_get_sends_the_query_and_no_form_body() -> None:
@@ -395,21 +456,14 @@ def test_authorization_code_binding_binds_the_state_and_pkce_verifier_end_to_end
         with pytest.raises(CatalogValidationError):
             binding.validate_callback_state(observed)
 
-    router = html_sync_route_table(
-        declared_routes(("POST", "/oauth/token", 200, {"token_type": "Bearer", "access_token": "opaque"}), site=SITE)
-    )
-    with sync_client(router, CREDENTIAL) as client:
-        result = client.auth_oauth.access_token(binding.token_request("code-1"), PERMISSIONS)
-
-    form = _form(router.requests[-1])
+    encoded = wire.build_request("access_token", binding.token_request("code-1", state=binding.expected_state))[3]
+    assert encoded is not None
+    form = dict(parse_qsl(encoded().decode()))
     assert form["grant_type"] == "authorization_code"
     assert form["code"] == "code-1"
     assert form["redirect_uri"] == "https://app.example.test/callback"
     challenge = base64.urlsafe_b64encode(hashlib.sha256(form["code_verifier"].encode()).digest()).rstrip(b"=").decode()
     assert challenge == query["code_challenge"][0]
-    assert isinstance(result.receipt, MutationReceipt)
-    assert result.receipt.operation == wire.OPERATIONS["access_token"]
-    assert result.receipt.outcome == "succeeded"
 
 
 def test_async_oauth_service_matches_sync_wire_exactly() -> None:

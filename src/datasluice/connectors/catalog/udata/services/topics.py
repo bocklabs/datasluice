@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING
 
+from datasluice.connectors.catalog.udata.models._segment import composite_target
 from datasluice.connectors.catalog.udata.models.topics import (
     TopicCreateInput,
     TopicElementInput,
@@ -55,7 +56,7 @@ _mutation_async = partial(
 
 
 def _element_target(topic_id: str, element_id: str) -> str:
-    return f"{topic_id}:{element_id}"
+    return composite_target(topic_id, element_id)
 
 
 class SyncTopicsService(SyncCatalogService):

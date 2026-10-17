@@ -171,6 +171,18 @@ def _outcomes(report: DriftReport) -> list[str]:
     return [record.outcome for record in report.records]
 
 
+@pytest.fixture(autouse=True)
+def approved_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Approve the two recorded test deployments only within this test module."""
+    monkeypatch.setattr(drift, "APPROVED_TARGETS", (_target(), _target(origin=_ALT_ORIGIN, alias="secondary")))
+
+
+@pytest.fixture
+def empty_allowlist(monkeypatch: pytest.MonkeyPatch, approved_targets: None) -> None:
+    monkeypatch.setattr(drift, "APPROVED_TARGETS", ())
+
+
+@pytest.mark.usefixtures("empty_allowlist")
 def test_t01_reviewed_allowlist_is_empty_so_both_runners_fail_closed_before_dispatch() -> None:
     assert APPROVED_TARGETS == ()
     transport = RecordingTransport(_compatible_routes())
@@ -184,6 +196,7 @@ def test_t01_reviewed_allowlist_is_empty_so_both_runners_fail_closed_before_disp
     assert transport.requests == []
 
 
+@pytest.mark.usefixtures("empty_allowlist")
 def test_t01_async_runner_also_fails_closed_on_the_empty_allowlist() -> None:
     transport = RecordingAsyncTransport(_compatible_routes())
 
@@ -630,6 +643,7 @@ def test_t04_inserting_a_mutation_into_the_allowlist_is_refused_before_any_dispa
         origin=ORIGIN,
         reads=("udata/api-v1.root-and-effective-profile-probe", mutation_operation),
     )
+    monkeypatch.setattr(drift, "APPROVED_TARGETS", (target,))
 
     with pytest.raises(CatalogValidationError) as raised:
         run_udata_drift([target], transport=transport, now=lambda: _FIXED_NOW)
@@ -656,6 +670,7 @@ def test_t04_a_forged_non_get_allowlist_row_is_refused_before_any_dispatch(
         origin=ORIGIN,
         reads=("udata/api-v1.root-and-effective-profile-probe", "udata/api-v2.delete-topic"),
     )
+    monkeypatch.setattr(drift, "APPROVED_TARGETS", (target,))
 
     with pytest.raises(CatalogValidationError) as raised:
         run_udata_drift([target], transport=transport, now=lambda: _FIXED_NOW)

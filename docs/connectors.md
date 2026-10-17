@@ -67,6 +67,49 @@ deployment-disabled states. Safety-sensitive behavior — retries,
 destructive operations, insecure TLS, raw diagnostics — stays locked
 behind explicit safe-policy choices rather than defaults.
 
+### Record serialization and retained evidence
+
+Runtime record payloads and extension mappings are not evidence artifacts.
+They can contain personal data, private content, and credentials from the deployment.
+The dataset summary mapper redacts credential-bearing fields before it returns the record.
+Other family decoders can apply their existing field allowlists or credential redaction.
+
+`NativeRecord.to_dict()` and `MappingRecord.to_dict()` return bounded copies.
+Each payload or extension projection permits at most 256 visited values, eight nesting levels, and 32 entries per container.
+Keys and strings permit at most 256 characters.
+Large integers and omitted entries use `[TRUNCATED]`.
+These methods mask credential fields, contact fields, private fields, internal fields, and origin fields.
+They also remove credential-shaped URL and authorization values from strings and keys.
+They do not identify every form of personal data in free text.
+Serialization does not change the runtime payload.
+Serialized copies are not lossless backups.
+
+Use `record.to_evidence_dict()` for retained fixtures, reports, and review evidence.
+This method records container sizes and JSON types only.
+It excludes identifiers, field names, scalar values, and extension values, including public taxonomy metadata.
+The same structural limits apply to each record.
+`ResultEnvelope.to_evidence_dict()` includes at most 32 item projections and reports the original item count.
+It excludes pagination URLs, warning text, and deployment metadata.
+It rejects items without an evidence projection instead of using their ordinary serializer.
+Ordinary `ResultEnvelope.to_dict()` remains a runtime envelope serializer, not a bounded evidence export.
+Do not retain runtime payloads, dataclass conversions, or arbitrary result wrappers as evidence.
+
+## uData security contracts
+
+Authorization-code exchange requires an `OAuthAuthorizationBinding` and the received callback state.
+Call `binding.token_request(code, state=received_state)`.
+The binding checks the expected state, client, redirect URI, token endpoint, and PKCE verifier.
+OAuth forms reveal secrets only at dispatch and cannot be replayed automatically.
+
+Composite confirmation targets percent-encode each identifier before joining the components with colons.
+For transfers, use `TransferRequestInput.mutation_target()` instead of constructing the target string.
+Transfer targets also include the subject and recipient classes.
+Unescaped colon-delimited targets no longer authorize distinct identifier pairs.
+
+Native buffered responses always have a finite byte limit, including calls that pass `None` internally.
+Upload sources must make each read finite because deadline checks cannot interrupt an arbitrary blocked source read.
+Synchronous job waits run observations inline and do not leave observation threads after they return.
+
 ## Third-party connectors
 
 Third-party connectors are opt-in plugins:

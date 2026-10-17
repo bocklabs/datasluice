@@ -217,13 +217,15 @@ class DataserviceDeleteOptions:
 
 @dataclass(frozen=True, slots=True)
 class DataserviceDatasetLinkInput:
-    """The documented list of ``{"id": ...}`` objects the dataset relationship route accepts."""
+    """A dataset relationship body with at most 100 ``{"id": ...}`` objects."""
 
     dataset_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.dataset_ids, tuple) or not self.dataset_ids:
             raise ValueError("uData dataservice dataset links must be a non-empty tuple of identifiers.")
+        if len(self.dataset_ids) > 100:
+            raise ValueError("uData dataservice dataset links cannot exceed 100 identifiers.")
         if not all(isinstance(dataset_id, str) and dataset_id for dataset_id in self.dataset_ids):
             raise ValueError("uData dataservice dataset links must be non-empty strings.")
 
@@ -323,6 +325,8 @@ def _validated_reference_fields(fields: Mapping[str, object]) -> None:
         if value is not None:
             _optional_text(value.get("id") if isinstance(value, Mapping) else value, key, required=True)
     datasets = fields.get("datasets")
+    if isinstance(datasets, tuple) and len(datasets) > 100:
+        raise ValueError("uData dataservice datasets cannot exceed 100 identifiers.")
     if "datasets" in fields and (
         not isinstance(datasets, tuple) or not all(isinstance(value, str) and value for value in datasets)
     ):

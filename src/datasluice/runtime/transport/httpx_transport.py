@@ -40,6 +40,18 @@ def _require_plain_http_target(url: str) -> None:
 
 
 def _build_request(client: Any, request: RuntimeRequest) -> Any:
+    options: dict[str, Any] = {}
+    if request.deadline is not None:
+        import httpx
+
+        request.deadline.assert_dispatchable()
+        remaining = request.deadline.remaining()
+        options["timeout"] = httpx.Timeout(
+            **{
+                key: min(value, remaining) if value is not None else remaining
+                for key, value in client.timeout.as_dict().items()
+            }
+        )
     if request.files:
         return client.build_request(
             request.method,
@@ -47,12 +59,14 @@ def _build_request(client: Any, request: RuntimeRequest) -> Any:
             headers=dict(drop_body_transfer_headers(request.headers)),
             data=None,
             files=[(part.field_name, (part.file_name, part.data, part.content_type)) for part in request.files],
+            **options,
         )
     return client.build_request(
         request.method,
         request.url,
         headers=dict(request.headers),
         content=request.body,
+        **options,
     )
 
 
@@ -76,7 +90,7 @@ def _runtime_response(response: Any, request: RuntimeRequest) -> RuntimeResponse
         return RuntimeResponse(
             response.status_code,
             dict(response.headers),
-            _read_body(response, request.max_response_bytes),
+            _read_body(response, request),
             _retry_after(response.headers.get("retry-after")),
         )
     except httpx.HTTPError:
@@ -88,7 +102,7 @@ def _runtime_response(response: Any, request: RuntimeRequest) -> RuntimeResponse
 async def _runtime_response_async(response: Any, request: RuntimeRequest, httpx: Any) -> RuntimeResponse:
     try:
         try:
-            body = await _read_body_async(response, request.max_response_bytes)
+            body = await _read_body_async(response, request)
         except httpx.HTTPError:
             raise TransportError("httpx could not read the catalog response.") from None
         return RuntimeResponse(
@@ -101,23 +115,33 @@ async def _runtime_response_async(response: Any, request: RuntimeRequest, httpx:
         await response.aclose()
 
 
-def _read_body(response: Any, max_bytes: int | None) -> bytes:
-    if max_bytes is None:
+def _read_body(response: Any, request: RuntimeRequest) -> bytes:
+    if request.max_response_bytes is None and request.deadline is None:
         return response.content
     body = bytearray()
     for chunk in response.iter_bytes():
-        _enforce_body_limit(len(body) + len(chunk), max_bytes)
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+        if request.max_response_bytes is not None:
+            _enforce_body_limit(len(body) + len(chunk), request.max_response_bytes)
         body.extend(chunk)
+    if request.deadline is not None:
+        request.deadline.assert_dispatchable()
     return bytes(body)
 
 
-async def _read_body_async(response: Any, max_bytes: int | None) -> bytes:
-    if max_bytes is None:
+async def _read_body_async(response: Any, request: RuntimeRequest) -> bytes:
+    if request.max_response_bytes is None and request.deadline is None:
         return await response.aread()
     body = bytearray()
     async for chunk in response.aiter_bytes():
-        _enforce_body_limit(len(body) + len(chunk), max_bytes)
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+        if request.max_response_bytes is not None:
+            _enforce_body_limit(len(body) + len(chunk), request.max_response_bytes)
         body.extend(chunk)
+    if request.deadline is not None:
+        request.deadline.assert_dispatchable()
     return bytes(body)
 
 
@@ -175,25 +199,33 @@ class _HttpxTransportBase:
             _retry_after(response.headers.get("retry-after")),
         )
 
-    def _stream_chunks(self, response: Any, max_bytes: int | None) -> Iterator[bytes]:
+    def _stream_chunks(self, response: Any, request: RuntimeRequest) -> Iterator[bytes]:
         seen = 0
         try:
             for chunk in response.iter_bytes():
+                if request.deadline is not None:
+                    request.deadline.assert_dispatchable()
                 seen += len(chunk)
-                if max_bytes is not None:
-                    _enforce_body_limit(seen, max_bytes)
+                if request.max_response_bytes is not None:
+                    _enforce_body_limit(seen, request.max_response_bytes)
                 yield chunk
+            if request.deadline is not None:
+                request.deadline.assert_dispatchable()
         except self._httpx.HTTPError:
             raise TransportError("httpx could not read the catalog response stream.") from None
 
-    async def _stream_chunks_async(self, response: Any, max_bytes: int | None) -> AsyncIterator[bytes]:
+    async def _stream_chunks_async(self, response: Any, request: RuntimeRequest) -> AsyncIterator[bytes]:
         seen = 0
         try:
             async for chunk in response.aiter_bytes():
+                if request.deadline is not None:
+                    request.deadline.assert_dispatchable()
                 seen += len(chunk)
-                if max_bytes is not None:
-                    _enforce_body_limit(seen, max_bytes)
+                if request.max_response_bytes is not None:
+                    _enforce_body_limit(seen, request.max_response_bytes)
                 yield chunk
+            if request.deadline is not None:
+                request.deadline.assert_dispatchable()
         except self._httpx.HTTPError:
             raise TransportError("httpx could not read the catalog response stream.") from None
 
@@ -230,7 +262,7 @@ class HttpxCatalogTransport(_HttpxTransportBase):
             try:
                 response = self._client.send(
                     _build_request(self._client, current),
-                    stream=current.max_response_bytes is not None,
+                    stream=current.max_response_bytes is not None or current.deadline is not None,
                     follow_redirects=False,
                 )
             except self._httpx.HTTPError:
@@ -261,7 +293,7 @@ class HttpxCatalogTransport(_HttpxTransportBase):
         return RuntimeStreamResponse(
             status_code=status_code,
             headers=headers,
-            chunks=self._stream_chunks(response, request.max_response_bytes),
+            chunks=self._stream_chunks(response, request),
             close_callback=response.close,
             retry_after=retry_after,
         )
@@ -299,7 +331,7 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
             try:
                 response = await self._client.send(
                     _build_request(self._client, current),
-                    stream=current.max_response_bytes is not None,
+                    stream=current.max_response_bytes is not None or current.deadline is not None,
                     follow_redirects=False,
                 )
             except self._httpx.HTTPError:
@@ -332,7 +364,7 @@ class AsyncHttpxCatalogTransport(_HttpxTransportBase):
         return AsyncRuntimeStreamResponse(
             status_code=status_code,
             headers=headers,
-            chunks=self._stream_chunks_async(response, request.max_response_bytes),
+            chunks=self._stream_chunks_async(response, request),
             close_callback=response.aclose,
             retry_after=retry_after,
         )

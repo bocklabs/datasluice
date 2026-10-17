@@ -7,11 +7,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import paging
+from datasluice.connectors.catalog.udata.models.reuses import ReuseFollowersQuery
 from datasluice.domain.catalog.models import _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.models import NativeRecord
+
+DatasetFollowersQuery = ReuseFollowersQuery
 
 _V1_LIST_SORTS = frozenset({"title", "created", "last_update", "reuses", "followers", "views"})
 _V1_LIST_FILTERS = frozenset(

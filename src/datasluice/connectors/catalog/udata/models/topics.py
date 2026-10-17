@@ -317,13 +317,15 @@ class TopicElementLink:
 
 @dataclass(frozen=True, slots=True)
 class TopicElementsCreateInput:
-    """The documented list of element references POST /elements/ accepts."""
+    """A POST /elements/ body with at most 100 element references."""
 
     elements: tuple[TopicElementLink, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.elements, tuple) or not self.elements:
             raise ValueError("uData topic elements must be a non-empty tuple of element links.")
+        if len(self.elements) > 100:
+            raise ValueError("uData topic elements cannot exceed 100 entries.")
         if not all(isinstance(link, TopicElementLink) for link in self.elements):
             raise ValueError("uData topic elements must be documented element links.")
 
@@ -359,6 +361,8 @@ class TopicCreateInput:
             value = getattr(self, label)
             if value is not None:
                 object.__setattr__(self, label, _frozen_mapping(value, f"topic {label}"))
+        if isinstance(self.elements, tuple) and len(self.elements) > 100:
+            raise ValueError("uData topic elements cannot exceed 100 entries.")
         if not isinstance(self.elements, tuple) or not all(
             isinstance(element, TopicElementInput) for element in self.elements
         ):
@@ -418,6 +422,8 @@ class TopicUpdateInput:
                 object.__setattr__(self, label, _frozen_mapping(value, f"topic {label}"))
         if self.elements is not None and not isinstance(self.elements, tuple):
             raise ValueError("uData topic elements must be a tuple of topic element inputs when supplied.")
+        if self.elements is not None and len(self.elements) > 100:
+            raise ValueError("uData topic elements cannot exceed 100 entries.")
         _elements_carry_a_title_or_link(self.elements)
 
     def payload(self) -> dict[str, object]:

@@ -21,6 +21,7 @@ from datasluice.connectors.catalog.udata.clients import (
     _CONTROLLED_DOCKERFILE_SHA256,
     _CONTROLLED_ORIGIN,
     _CONTROLLED_SOURCE_COMMIT,
+    _CONTROLLED_UDATA_LAYERS_SHA256,
     _JSON_MEDIA_TYPE,
     AsyncUDataClient,
     SyncUDataClient,
@@ -66,7 +67,7 @@ _CONTROLLED_SERVICE_IMAGE_NOT_APPROVED = "The controlled uData service image is 
 _CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
 _CONTROLLED_UDATA_VERSION = "17.6.0"
 
-_CONTROLLED_UDATA_IMAGE_SPEC = ("udata-evidence-udata", "", "udata-evidence-udata")
+_CONTROLLED_UDATA_IMAGE_SPEC = ("udata-evidence-udata", _CONTROLLED_UDATA_LAYERS_SHA256, "udata-evidence-udata")
 _CONTROLLED_SERVICE_NAMES = ("udata", "mongo", "redis", "search", "storage", "mailpit")
 
 _CONTROLLED_EVIDENCE_ROOT = Path(__file__).resolve().parents[2] / "dev" / "udata-evidence"
@@ -1021,7 +1022,7 @@ def _validate_controlled_container_image(
         or not all(isinstance(value, str) for value in expected_image)
     ):
         raise error_factory("The controlled uData image allowlist is invalid.")
-    expected_config_image, expected_image_id, expected_repository_digest = expected_image
+    expected_config_image, expected_identity_digest, expected_repository_digest = expected_image
     if service == "udata":
         if (
             expected_image != udata_image_spec
@@ -1033,9 +1034,15 @@ def _validate_controlled_container_image(
         return config_image, image_id, None
     if config_image != expected_config_image:
         raise error_factory("A controlled uData dependency image is not approved.")
-    if image_id != expected_image_id:
+    if image_id != expected_identity_digest:
         raise error_factory("The controlled uData dependency image ID is not approved.")
     return config_image, image_id, expected_repository_digest
+
+
+def _controlled_layers_digest(layers: object, error_factory: Callable[[str], CatalogValidationError]) -> str:
+    if not isinstance(layers, list) or not layers or not all(isinstance(value, str) and value for value in layers):
+        raise error_factory("The controlled uData image layer output is invalid.")
+    return "sha256:" + hashlib.sha256("".join(cast("list[str]", layers)).encode()).hexdigest()
 
 
 def _validate_controlled_image_digest(
@@ -1051,6 +1058,21 @@ def _validate_controlled_image_digest(
         raise error_factory("The controlled uData image ID does not match its container.")
     if expected_repository_digest not in repository_digests:
         raise error_factory("The controlled uData image repository digest is not approved.")
+
+
+def _validate_controlled_layers(
+    fields: tuple[object, ...],
+    image_id: str,
+    expected_layers_digest: str,
+    error_factory: Callable[[str], CatalogValidationError],
+) -> str:
+    inspected_image_id, layers = fields
+    if inspected_image_id != image_id:
+        raise error_factory("The controlled uData image ID does not match its container.")
+    digest = _controlled_layers_digest(layers, error_factory)
+    if digest != expected_layers_digest:
+        raise error_factory(_CONTROLLED_SERVICE_IMAGE_NOT_APPROVED)
+    return digest
 
 
 def _controlled_service_image_identity(
@@ -1084,21 +1106,25 @@ def _controlled_service_image_identity(
         udata_image_spec,
         error_factory,
     )
-    image_fields = _parse_controlled_json_fields(
-        read(
-            "image",
-            "inspect",
-            "--format",
-            "{{json .Id}} {{json .RepoDigests}}",
-            image_id,
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        ),
-        2,
-        error_factory,
-    )
-    if expected_repository_digest is not None:
-        _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
+    if expected_image is not None:
+        image_fields = _parse_controlled_json_fields(
+            read(
+                "image",
+                "inspect",
+                "--format",
+                "{{json .Id}} {{json .RootFS.Layers}}" if service == "udata" else "{{json .Id}} {{json .RepoDigests}}",
+                image_id,
+                docker_endpoint=docker_endpoint,
+                direct=True,
+            ),
+            2,
+            error_factory,
+        )
+        if service == "udata":
+            layers_digest = _validate_controlled_layers(image_fields, image_id, expected_image[1], error_factory)
+            return container_id, f"{service}|{config_image}|{layers_digest}|None"
+        if expected_repository_digest is not None:
+            _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
 
 
@@ -1135,21 +1161,25 @@ async def _controlled_service_image_identity_async(
         udata_image_spec,
         error_factory,
     )
-    image_fields = _parse_controlled_json_fields(
-        await read(
-            "image",
-            "inspect",
-            "--format",
-            "{{json .Id}} {{json .RepoDigests}}",
-            image_id,
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        ),
-        2,
-        error_factory,
-    )
-    if expected_repository_digest is not None:
-        _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
+    if expected_image is not None:
+        image_fields = _parse_controlled_json_fields(
+            await read(
+                "image",
+                "inspect",
+                "--format",
+                "{{json .Id}} {{json .RootFS.Layers}}" if service == "udata" else "{{json .Id}} {{json .RepoDigests}}",
+                image_id,
+                docker_endpoint=docker_endpoint,
+                direct=True,
+            ),
+            2,
+            error_factory,
+        )
+        if service == "udata":
+            layers_digest = _validate_controlled_layers(image_fields, image_id, expected_image[1], error_factory)
+            return container_id, f"{service}|{config_image}|{layers_digest}|None"
+        if expected_repository_digest is not None:
+            _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
     return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
 
 
@@ -1243,7 +1273,7 @@ def _verify_controlled_source_and_nonce(
     expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
     dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
-    udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
+    udata_image_spec: tuple[str, str, str] | None = None,
     udata_version: str = _CONTROLLED_UDATA_VERSION,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
@@ -1252,6 +1282,8 @@ def _verify_controlled_source_and_nonce(
     read = _compose_read if compose_read is None else compose_read
     nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
     validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
+    if udata_image_spec is None:
+        udata_image_spec = _CONTROLLED_UDATA_IMAGE_SPEC
     nonce = nonce_reader()
     if docker_endpoint is None:
         context_endpoint = read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
@@ -1321,7 +1353,7 @@ async def _verify_controlled_source_and_nonce_async(
     expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
     dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
     udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
-    udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
+    udata_image_spec: tuple[str, str, str] | None = None,
     udata_version: str = _CONTROLLED_UDATA_VERSION,
     expected_port: str = "127.0.0.1:5640",
     error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
@@ -1330,6 +1362,8 @@ async def _verify_controlled_source_and_nonce_async(
     read = _compose_read_async if compose_read is None else compose_read
     nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
     validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
+    if udata_image_spec is None:
+        udata_image_spec = _CONTROLLED_UDATA_IMAGE_SPEC
     nonce = nonce_reader()
     if docker_endpoint is None:
         context_endpoint = await read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")

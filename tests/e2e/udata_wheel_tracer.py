@@ -962,7 +962,7 @@ wheel_transfer_requested = client.transfers.request_transfer(
     MutationPolicy(
         destructive=False,
         confirmation=ConfirmationPolicy(
-            confirmed=True, operation="udata/api-v1.request-transfer", target="wheel-dataset:wheel-user"
+            confirmed=True, operation="udata/api-v1.request-transfer", target="Dataset:wheel-dataset:User:wheel-user"
         ),
         concurrency=ConcurrencyPolicy(overwrite=True),
     ),

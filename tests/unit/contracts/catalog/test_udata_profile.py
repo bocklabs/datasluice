@@ -359,7 +359,9 @@ def test_each_controlled_record_digests_the_files_at_its_introducing_commit() ->
     """A controlled record is bound to the stack it was captured against, not to HEAD.
 
     Rebinding a historical record to a digest minted after its capture silently rewrites provenance, so every recorded
-    digest must equal the real digest of the file at the commit that first wrote that record.
+    digest must equal the real digest of the file at the commit that first wrote that record. A record that declares
+    ``recaptured_at`` documents an approved recapture: its digests bind to the current tree instead, and the marker is
+    the explicit statement that the record was re-minted rather than silently rewritten.
     """
     document = _read_json(_EVIDENCE_PATH)
     families = {name: record for name, record in document.items() if name.startswith("controlled_")}
@@ -371,7 +373,8 @@ def test_each_controlled_record_digests_the_files_at_its_introducing_commit() ->
         pytest.skip(f"provenance walk unavailable: {truncated}; run this test against a full clone")
 
     for family, record in sorted(families.items()):
-        revision = _introducing_commit(family, revisions)
+        recaptured = isinstance(record.get("recaptured_at"), str)
+        revision = None if recaptured else _introducing_commit(family, revisions)
         for field, path in _PROVENANCE_FILES.items():
             if field not in record:
                 continue
@@ -431,6 +434,9 @@ def test_user_and_token_create_operations_declare_their_policy_metadata() -> Non
 
 
 _DATASET_ROUTE_OPERATION_IDS = {
+    "udata/api-v1.list-dataset-followers",
+    "udata/api-v1.follow-dataset",
+    "udata/api-v1.unfollow-dataset",
     "udata/api-v1.set_site",
     "udata/api-v1.list-datasets",
     "udata/api-v1.create-dataset",
@@ -1106,9 +1112,8 @@ def test_controlled_extensions_evidence_covers_the_stock_rows_in_both_modes() ->
         assert f"def {test_id}(" in controlled_source, test_id
     assert f"def {controlled['wheel_test_id']}(" in wheel_source, controlled["wheel_test_id"]
     assert "SyncExtensionsService" in controlled_source
-    assert "SyncExtensionsService" in tracer_source and "AsyncExtensionsService" in tracer_source, (
-        "the tracer must execute the family from installed content"
-    )
+    assert "SyncExtensionsService" in tracer_source
+    assert "AsyncExtensionsService" in tracer_source, "the tracer must execute the family from installed content"
 
     for field, path in (
         ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),

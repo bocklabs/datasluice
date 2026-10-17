@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import partial
 from time import monotonic, sleep
 from typing import TYPE_CHECKING
@@ -104,25 +102,19 @@ def _wait_for_task(
     """Poll one queued task under the caller's finite lease and poll ceiling."""
     current = handle
     record: MappingRecord | None = None
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="udata-worker-wait")
-    try:
-        while True:
-            proceed, stopped, record = _wait_step(current, monitor, record, current.poll_interval)
-            if not proceed:
-                return WorkerTaskWaitResult(handle=stopped, record=record)
-            if current.poll_interval > 0:
-                sleeper(current.poll_interval)
-            future = executor.submit(observe, current)
-            try:
-                current, record = future.result(timeout=max(0.0, monitor.remaining()))
-            except FutureTimeoutError:
-                if future.done():
-                    raise
-                return WorkerTaskWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
-    finally:
-        executor.shutdown(
-            wait=False, cancel_futures=True
-        )  # shortcut: an in-flight observation is not cancelled; one worker thread lingers until its transport timeout
+    while True:
+        proceed, stopped, record = _wait_step(current, monitor, record, current.poll_interval)
+        if not proceed:
+            return WorkerTaskWaitResult(handle=stopped, record=record)
+        if current.poll_interval > 0:
+            sleeper(current.poll_interval)
+        try:
+            monitor.assert_dispatchable(wire.GET_TASK_OPERATION, PLATFORM)
+            observed, observed_record = observe(current)
+            monitor.assert_dispatchable(wire.GET_TASK_OPERATION, PLATFORM)
+        except BudgetExhaustedError:
+            return WorkerTaskWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
+        current, record = observed, observed_record
 
 
 async def _wait_for_task_async(
@@ -142,11 +134,15 @@ async def _wait_for_task_async(
             await sleeper(current.poll_interval)
         try:
             async with asyncio.timeout(max(0.0, monitor.remaining())) as deadline:
-                current, record = await observe(current)
+                observed, observed_record = await observe(current)
+                monitor.assert_dispatchable(wire.GET_TASK_OPERATION, PLATFORM)
+        except BudgetExhaustedError:
+            return WorkerTaskWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
         except TimeoutError:
             if not deadline.expired():
                 raise
             return WorkerTaskWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
+        current, record = observed, observed_record
 
 
 class SyncWorkerJobsService(SyncCatalogService):
@@ -159,7 +155,9 @@ class SyncWorkerJobsService(SyncCatalogService):
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    def _read_admin(self, request: Request, permissions: Permissions, operation: str) -> Response:
+    def _read_admin(
+        self, request: Request, permissions: Permissions, operation: str, *, deadline: DeadlineMonitor | None = None
+    ) -> Response:
         """Run one bounded workers read behind explicit admin permission evidence."""
         method, path, headers, body = request
         return self._client._dataset_call(
@@ -169,6 +167,7 @@ class SyncWorkerJobsService(SyncCatalogService):
             headers=headers,
             json_body=body,
             permissions=permissions,
+            deadline=deadline,
             credential=_require_mutation_permission(
                 self._client._resolved_credential(), operation, permissions, admin=True
             ),
@@ -282,7 +281,9 @@ class SyncWorkerJobsService(SyncCatalogService):
         monitor = DeadlineMonitor(budget or handle.budget, clock=clock)
 
         def observe(lease: UDataJobHandle) -> tuple[UDataJobHandle, MappingRecord]:
-            response = self._read_admin(wire.get_task_request(lease.task_id), permissions, wire.GET_TASK_OPERATION)
+            response = self._read_admin(
+                wire.get_task_request(lease.task_id), permissions, wire.GET_TASK_OPERATION, deadline=monitor
+            )
             record = wire.parse_record(response[1], wire.GET_TASK_OPERATION)
             return lease.observed(wire.parse_task_status(record.payload, wire.GET_TASK_OPERATION)), record
 
@@ -302,7 +303,9 @@ class AsyncWorkerJobsService(AsyncCatalogService):
     def error_type(self) -> type[NativeCatalogError]:
         return NativeCatalogError
 
-    async def _read_admin(self, request: Request, permissions: Permissions, operation: str) -> Response:
+    async def _read_admin(
+        self, request: Request, permissions: Permissions, operation: str, *, deadline: DeadlineMonitor | None = None
+    ) -> Response:
         """Run one bounded workers read behind explicit async admin permission evidence."""
         method, path, headers, body = request
         return await self._client._dataset_call_async(
@@ -312,6 +315,7 @@ class AsyncWorkerJobsService(AsyncCatalogService):
             headers=headers,
             json_body=body,
             permissions=permissions,
+            deadline=deadline,
             credential=_require_mutation_permission(
                 await self._client._resolved_credential_async(), operation, permissions, admin=True
             ),
@@ -428,7 +432,7 @@ class AsyncWorkerJobsService(AsyncCatalogService):
 
         async def observe(lease: UDataJobHandle) -> tuple[UDataJobHandle, MappingRecord]:
             response = await self._read_admin(
-                wire.get_task_request(lease.task_id), permissions, wire.GET_TASK_OPERATION
+                wire.get_task_request(lease.task_id), permissions, wire.GET_TASK_OPERATION, deadline=monitor
             )
             record = wire.parse_record(response[1], wire.GET_TASK_OPERATION)
             return lease.observed(wire.parse_task_status(record.payload, wire.GET_TASK_OPERATION)), record

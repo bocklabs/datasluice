@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from itertools import islice
 from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.models.spatial import (
@@ -37,7 +38,14 @@ def _query(pairs: list[tuple[str, str]]) -> str:
 
 def _zone_list(ids: Iterable[str]) -> str:
     """Encode the stock comma-separated zone identifier list as one path segment list."""
-    encoded = [segment(zone_id, SPATIAL_ZONES_OPERATION) for zone_id in ids]
+    encoded = [segment(zone_id, SPATIAL_ZONES_OPERATION) for zone_id in islice(ids, 101)]
+    if len(encoded) > 100:
+        raise CatalogValidationError(
+            "A uData spatial zone list cannot exceed 100 identifiers.",
+            operation=SPATIAL_ZONES_OPERATION,
+            platform=PLATFORM,
+            safe_action="Request at most 100 zone identifiers per call.",
+        )
     if not encoded:
         raise CatalogValidationError(
             "A uData spatial zone list must carry one or more zone identifiers.",

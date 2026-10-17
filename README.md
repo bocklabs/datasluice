@@ -150,7 +150,7 @@ datasluice materialize ./source.csv --destination ./out.parquet --output json
 Documentation is built with [Zensical](https://zensical.org/) and deployed to GitHub Pages.
 
 * **Live site:** https://bocklabs.github.io/datasluice/
-* **Preview locally:** `just docs-serve` (serves at http://localhost:8000)
+* **Preview locally:** `just docs-serve` (serves on `localhost`, port `8000`)
 * **Build:** `just docs-build`
 
 API documentation is auto-generated from docstrings using [mkdocstrings](https://mkdocstrings.github.io/).

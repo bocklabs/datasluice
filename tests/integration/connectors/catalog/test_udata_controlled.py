@@ -114,7 +114,7 @@ from datasluice.connectors.catalog.udata.settings import UDataClientSettings
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, redact_record_payload
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
@@ -429,7 +429,8 @@ def _assert_page_matches_raw(method: str, payload: object, page: UDataPageEnvelo
     raw_items = payload.get("data")
     assert isinstance(raw_items, list)
     typed_items = [_record_payload(item) for item in page.items]
-    assert [_plain_json(item) for item in typed_items] == raw_items, method
+    redacted_items = [redact_record_payload(item) for item in raw_items if isinstance(item, Mapping)]
+    assert [_plain_json(item) for item in typed_items] == _plain_json(redacted_items), method
 
     page_fields = ("data", "page", "page_size", "previous_page", "next_page", "total")
     assert page.native_page.present_fields == frozenset(name for name in page_fields if name in payload)
@@ -460,7 +461,8 @@ def _assert_records_match_raw(method: str, payload: object, records: tuple[objec
         raw_items = payload
     assert isinstance(raw_items, list)
     assert all(isinstance(item, Mapping) for item in raw_items)
-    assert [_plain_json(_record_payload(item)) for item in records] == raw_items, method
+    redacted_items = [redact_record_payload(item) for item in raw_items]
+    assert [_plain_json(_record_payload(item)) for item in records] == _plain_json(redacted_items), method
 
 
 def _assert_typed_read_matches_raw(
@@ -482,7 +484,7 @@ def _assert_typed_read_matches_raw(
         _assert_page_matches_raw(method, payload, typed)
     elif isinstance(typed, NativeRecord):
         assert isinstance(payload, Mapping)
-        assert _plain_json(typed.payload) == payload, method
+        assert _plain_json(typed.payload) == _plain_json(redact_record_payload(payload)), method
     elif isinstance(typed, tuple):
         _assert_records_match_raw(method, payload, typed)
     elif isinstance(typed, Mapping):
@@ -506,7 +508,8 @@ def _assert_page_read_matches_raw(method: str, raw: object, page: UDataPageEnvel
     raw_items = raw.get("data")
     assert isinstance(raw_items, list)
     typed_items = [_record_payload(item) for item in page.items]
-    assert _canonical_digest(typed_items) == _canonical_digest(raw_items), method
+    redacted_items = [redact_record_payload(item) for item in raw_items if isinstance(item, Mapping)]
+    assert _canonical_digest(typed_items) == _canonical_digest(redacted_items), method
     for key in _PAGE_FIELDS:
         if key in raw:
             assert getattr(page.native_page, key) == raw[key]
@@ -546,7 +549,7 @@ def _assert_sequence_read_matches_raw(method: str, raw: object, typed: tuple[obj
             cast("Sequence[ApiTokenMetadata]", typed), cast("Sequence[Mapping[str, object]]", raw_items)
         )
     else:
-        safe_items = raw_items
+        safe_items = [redact_record_payload(item) for item in raw_items if isinstance(item, Mapping)]
         typed_items = [_record_payload(item) for item in typed]
     assert _canonical_digest(typed_items) == _canonical_digest(safe_items), method
 
@@ -3496,22 +3499,6 @@ def test_controlled_async_stack_proves_exact_version_then_one_dataset_read() -> 
 _OAUTH_FORM = "application/x-www-form-urlencoded"
 
 
-def _direct_following_request(
-    token: str, method: str, path: str, *, max_bytes: int = 8192
-) -> tuple[int, object, dict[str, str]]:
-    """Raw probe that follows redirects, matching the typed client's default."""
-    request = Request(f"{ORIGIN}{path}", headers={"Accept": "*/*", "X-API-KEY": token}, method=method)
-    with build_opener(ProxyHandler({})).open(request, timeout=10) as response:
-        body = response.read(max_bytes + 1)
-        assert len(body) <= max_bytes
-        media_type = response.headers.get_content_type()
-        return (
-            response.status,
-            json.loads(body) if body and media_type == "application/json" else None,
-            {key.lower(): value for key, value in response.headers.items()},
-        )
-
-
 def _oauth_form(fields: Mapping[str, str]) -> bytes:
     from urllib.parse import urlencode
 
@@ -3569,9 +3556,7 @@ def _probe_controlled_oauth_raw(token: str) -> _ControlledOAuthRaw:
     # Raw first, so each expected status comes from the deployment, not from us.
     raw_error = _direct_request(token, "GET", "/oauth/error", max_bytes=1024)
     raw_client_info = _direct_request(token, "GET", "/oauth/client_info?client_id=absent", max_bytes=8192)
-    # The typed client follows redirects, so the raw probe must too, otherwise the
-    # two legitimately differ by exactly that hop.
-    raw_authorize = _direct_following_request(
+    raw_authorize = _direct_request(
         token, "GET", "/oauth/authorize?client_id=absent&response_type=code", max_bytes=8192
     )
     raw_revoke = _direct_request(

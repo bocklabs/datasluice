@@ -15,16 +15,18 @@ from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthTokenRequest,
     OAuthTokenResult,
 )
+from datasluice.connectors.catalog.udata.secrets import UDataOAuthSecret
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions
 from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
 
 from ._receipts import (
     _error_status,
+    _failure_event,
     _mutation_outcome,
 )
 from .datasets import (
@@ -42,9 +44,6 @@ if TYPE_CHECKING:
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None
 
-# wire.sends_credential is the single credential-transmission contract for this
-# family, so the uData X-API-KEY never reaches a route that does not authenticate
-# with it. That keeps OAuth and API-token credentials strictly distinct.
 _DESTRUCTIVE = frozenset({"revoke_token"})
 _KIND = ResourceKind("oauth-token")
 
@@ -57,6 +56,42 @@ def _target(name: str) -> str:
 def _scrub(response: RuntimeResponse | None) -> RuntimeResponse | None:
     """Drop the retained response body so no form secret survives a failure."""
     return None if response is None else RuntimeResponse(status_code=response.status_code, headers={}, body=b"")
+
+
+def _discard_payload(payload: object) -> None:
+    if isinstance(payload, dict):
+        payload.clear()
+
+
+def _discard_result(result: object) -> None:
+    if isinstance(result, OAuthTokenResult):
+        for secret in (result.access_token, result.refresh_token):
+            if isinstance(secret, UDataOAuthSecret):
+                secret.discard()
+
+
+def _validate_exchange_endpoint(body: object, origin: str) -> None:
+    if (
+        isinstance(body, OAuthTokenRequest)
+        and body.authorization is not None
+        and body.authorization._descriptor.token_url != origin + "/oauth/token"
+    ):
+        raise ValueError("The uData token endpoint must match its authorization binding.")
+
+
+def _validate_consent_redirect(body: object, response: RuntimeResponse) -> None:
+    if (
+        isinstance(body, OAuthAuthorizeDecision)
+        and body.authorization is not None
+        and 300 <= response.status_code < 400
+    ):
+        locations = [value for key, value in response.headers.items() if key.lower() == "location"]
+        try:
+            if len(locations) != 1:
+                raise ValueError("The uData consent response must contain exactly one redirect location.")
+            body.authorization.validate_callback_redirect(locations[0])
+        finally:
+            locations.clear()
 
 
 def _json_or_none(payload: object, name: str, media_type: str) -> object:
@@ -109,10 +144,20 @@ def _consent_outcome(accepted: bool, status: int, media_type: str) -> OAuthConse
 
 
 def _error_receipt(
-    error: BaseException, name: str, policy: Policy, response: RuntimeResponse | None, *, interrupted: bool
+    error: BaseException,
+    name: str,
+    policy: Policy,
+    response: RuntimeResponse | None,
+    *,
+    interrupted: bool,
+    dispatched: bool,
 ) -> None:
     operation = wire.OPERATIONS[name]
-    outcome = "ambiguous" if interrupted else _mutation_outcome(error, response)
+    outcome = (
+        "ambiguous"
+        if dispatched and (interrupted or isinstance(error, BudgetExhaustedError))
+        else _mutation_outcome(error, response, dispatched=dispatched)
+    )
     _attach(
         error, _org_receipt(operation, _target(name), policy, outcome, _error_status(error, response), name, kind=_KIND)
     )
@@ -151,6 +196,7 @@ class SyncAuthOAuthService:
                 emit_success=False,
                 form_body=body,
                 omit_credential=not wire.sends_credential(name),
+                redirect_mode=True,
             )
             result = decode(status, payload, _media_type(response.headers))
         except SETTLEMENT_ERRORS as error:
@@ -170,7 +216,10 @@ class SyncAuthOAuthService:
         operation = wire.OPERATIONS[name]
         response: RuntimeResponse | None = None
         payload: object = None
+        encoded: wire.OAuthForm | None = None
+        result: object = None
         try:
+            _validate_exchange_endpoint(body, self._client._origin)
             if name != "access_token":
                 _enforce_mutation_policy(operation, _target(name), mutation_policy, destructive=name in _DESTRUCTIVE)
             credential = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
@@ -187,17 +236,33 @@ class SyncAuthOAuthService:
                 form_body=encoded,
                 omit_credential=not wire.sends_credential(name),
                 raw_text=name == "authorize_post",
-                redirect_mode=name == "authorize_post",
+                redirect_mode=True,
             )
-            result = decode(status, payload, _media_type(response.headers if response is not None else {}))
+            _validate_consent_redirect(body, response)
+            media_type = _media_type(response.headers)
+            response = _scrub(response)
+            decoded = decode(status, payload, media_type)
+            result = decoded
+            self._client._emit(operation, "succeeded")
+            return decoded
         except SETTLEMENT_ERRORS as error:
-            self._client._emit(operation, "failed")
+            _discard_payload(payload)
+            _discard_result(result)
+            response = _scrub(response)
+            self._client._emit(operation, _failure_event(error))
             _error_receipt(
-                error, name, mutation_policy, _scrub(response), interrupted=isinstance(error, KeyboardInterrupt)
+                error,
+                name,
+                mutation_policy,
+                response,
+                interrupted=isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)),
+                dispatched=encoded is not None and encoded.send_started,
             )
             raise
-        self._client._emit(operation, "succeeded")
-        return result
+        finally:
+            _discard_payload(payload)
+            if encoded is not None:
+                encoded.discard()
 
     def access_token(self, body: OAuthTokenRequest, permissions: Permissions) -> OAuthTokenResult:
         """Exchange one typed grant for a token without retaining its secrets."""
@@ -323,6 +388,7 @@ class AsyncAuthOAuthService:
                 emit_success=False,
                 form_body=body,
                 omit_credential=not wire.sends_credential(name),
+                redirect_mode=True,
             )
             result = decode(status, payload, _media_type(response.headers))
         except ASYNC_SETTLEMENT_ERRORS as error:
@@ -342,7 +408,10 @@ class AsyncAuthOAuthService:
         operation = wire.OPERATIONS[name]
         response: RuntimeResponse | None = None
         payload: object = None
+        encoded: wire.OAuthForm | None = None
+        result: object = None
         try:
+            _validate_exchange_endpoint(body, self._client._origin)
             if name != "access_token":
                 _enforce_mutation_policy(operation, _target(name), mutation_policy, destructive=name in _DESTRUCTIVE)
             credential = _require_mutation_permission(
@@ -361,17 +430,33 @@ class AsyncAuthOAuthService:
                 form_body=encoded,
                 omit_credential=not wire.sends_credential(name),
                 raw_text=name == "authorize_post",
-                redirect_mode=name == "authorize_post",
+                redirect_mode=True,
             )
-            result = decode(status, payload, _media_type(response.headers if response is not None else {}))
+            _validate_consent_redirect(body, response)
+            media_type = _media_type(response.headers)
+            response = _scrub(response)
+            decoded = decode(status, payload, media_type)
+            result = decoded
+            self._client._emit(operation, "succeeded")
+            return decoded
         except ASYNC_SETTLEMENT_ERRORS as error:
-            self._client._emit(operation, "failed")
+            _discard_payload(payload)
+            _discard_result(result)
+            response = _scrub(response)
+            self._client._emit(operation, _failure_event(error))
             _error_receipt(
-                error, name, mutation_policy, _scrub(response), interrupted=isinstance(error, KeyboardInterrupt)
+                error,
+                name,
+                mutation_policy,
+                response,
+                interrupted=isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)),
+                dispatched=encoded is not None and encoded.send_started,
             )
             raise
-        self._client._emit(operation, "succeeded")
-        return result
+        finally:
+            _discard_payload(payload)
+            if encoded is not None:
+                encoded.discard()
 
     async def access_token(self, body: OAuthTokenRequest, permissions: Permissions) -> OAuthTokenResult:
         """Exchange one typed grant for a token without retaining its secrets."""

@@ -604,7 +604,7 @@ def test_streaming_deadline_stops_a_slow_drip_that_stays_under_the_byte_ceiling(
             resource_id="resource",
         )
 
-    assert transport.delivered == 2
+    assert transport.delivered == 1
     assert transport.delivered < 64
     assert source.close_calls == 1
     assert transport.close_count == 0
@@ -614,8 +614,7 @@ def test_streaming_deadline_stops_a_slow_drip_that_stays_under_the_byte_ceiling(
     assert "x" * 64 not in str(raised.value)
 
 
-def test_streaming_deadline_never_rejects_a_source_that_reaches_its_byte_ceiling() -> None:
-    """A completed-but-slow upload settles as succeeded instead of a false deadline failure."""
+def test_streaming_deadline_rejects_an_eof_read_that_finishes_after_the_budget() -> None:
     credential = UDataCredential(api_key="local-test-key")
     permissions = EffectivePermissions.for_credential(credential, platform=CatalogPlatform.UDATA)
     clock = _ManualClock()
@@ -629,8 +628,8 @@ def test_streaming_deadline_never_rejects_a_source_that_reaches_its_byte_ceiling
         owns_transport=False,
     )
 
-    with client:
-        result = client.resources.upload(
+    with client, pytest.raises(UploadDeadlineExceededError) as raised:
+        client.resources.upload(
             "dataset",
             ResourceUploadInput(source, "data.csv", 4, budget=_budget(4.5), clock=clock),
             permissions,
@@ -641,7 +640,7 @@ def test_streaming_deadline_never_rejects_a_source_that_reaches_its_byte_ceiling
     assert clock.now == 5.0
     assert transport.delivered == 4
     assert source.close_calls == 1
-    assert result.receipt.outcome == "succeeded"
+    assert raised.value.__dict__["mutation_receipt"].outcome == "ambiguous"
 
 
 def test_streaming_deadline_fails_the_end_of_stream_probe_once_the_budget_is_exhausted() -> None:

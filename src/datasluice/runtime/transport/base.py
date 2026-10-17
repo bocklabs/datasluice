@@ -7,9 +7,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mappin
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from datasluice.domain.catalog.redaction import redact_string
+
+if TYPE_CHECKING:
+    from datasluice.runtime.resilience import DeadlineMonitor
 
 SENSITIVE_REDIRECT_HEADERS = frozenset(
     {"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token", "x-app-token"}
@@ -132,7 +135,8 @@ class RuntimeRequest:
     Headers, bodies, and multipart parts are excluded from ``repr`` so accidental logging or debugging of requests
     cannot expose credentials or uploaded file contents, and the URL renders through the shared redaction helper.
     ``__hash__`` projects over the hashable ``method`` and ``url`` fields only; equality remains full-field via the
-    generated ``eq`` and still compares headers, body, and parts.
+    generated ``eq`` and still compares headers, body, and parts. Transports check a supplied deadline before dispatch
+    and during response consumption.
     """
 
     method: str
@@ -142,6 +146,7 @@ class RuntimeRequest:
     files: tuple[UploadPart, ...] = field(default=(), repr=False)
     redirect_policy: RedirectPolicy = RedirectPolicy.FOLLOW
     max_response_bytes: int | None = None
+    deadline: DeadlineMonitor | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.method, str) or not self.method:
@@ -156,6 +161,11 @@ class RuntimeRequest:
         ):
             raise ValueError("Multipart parts carrying one-shot streams require RedirectPolicy.NO_FOLLOW.")
         _validate_response_limit(self.max_response_bytes)
+        if self.deadline is not None:
+            from datasluice.runtime.resilience import DeadlineMonitor
+
+            if not isinstance(self.deadline, DeadlineMonitor):
+                raise TypeError("Runtime request deadlines must use DeadlineMonitor.")
         object.__setattr__(self, "headers", _freeze_request_headers(self.headers))
         object.__setattr__(self, "files", tuple(self.files))
 

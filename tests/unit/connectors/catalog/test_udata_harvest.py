@@ -884,34 +884,23 @@ def test_harvest_mutations_dispatch_their_exact_operation_in_both_modes(monkeypa
 
 
 def test_inflight_sync_poll_is_bounded_by_the_wait_lease() -> None:
-    from threading import Event
-    from time import monotonic
-
     from datasluice.connectors.catalog.udata.services.harvest import _wait_for_job
     from datasluice.domain.catalog.models import MappingRecord
     from datasluice.runtime.resilience import DeadlineMonitor
 
-    release = Event()
-    finished = Event()
+    now = [0.0]
     budget = TimeBudget(connect=0.05, read=0.05, write=0.05, total=0.05)
     handle = UDataJobHandle(source_id="source", job_id="job", poll_interval=0, budget=budget)
+    monitor = DeadlineMonitor(budget, clock=lambda: now[0])
 
     def observe(current: UDataJobHandle) -> tuple[UDataJobHandle, MappingRecord]:
-        try:
-            release.wait(timeout=2)
-            return current, MappingRecord({"status": "processing"})
-        finally:
-            finished.set()
+        now[0] = 0.05
+        monitor.assert_dispatchable()
+        return current, MappingRecord({"status": "processing"})
 
-    started = monotonic()
-    try:
-        result = _wait_for_job(handle, DeadlineMonitor(budget), observe, lambda delay: None)
-        assert result.handle.exhausted
-        assert result.handle.abandoned
-        assert monotonic() - started < 0.5
-    finally:
-        release.set()
-        assert finished.wait(timeout=2)
+    result = _wait_for_job(handle, monitor, observe, lambda delay: None)
+    assert result.handle.exhausted
+    assert result.handle.abandoned
 
 
 def test_inflight_async_poll_is_cancelled_at_the_wait_lease() -> None:

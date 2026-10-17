@@ -1439,6 +1439,7 @@ def test_dataset_summary_record_construction_redacts_credential_shaped_item_fiel
     for plaintext in ("live-token-plaintext", "live-api-key-plaintext", "live-password-plaintext"):
         assert plaintext not in str(record.payload), f"{plaintext} must not enter the typed record"
         assert plaintext not in json.dumps(record.to_dict())
+        assert plaintext not in json.dumps(record.to_evidence_dict())
 
 
 def test_dataset_summary_record_construction_keeps_every_non_credential_field() -> None:

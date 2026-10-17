@@ -7,13 +7,14 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlencode
 
-from datasluice.connectors.catalog.udata.mapping import _DATASETS_OPERATION_ID, PLATFORM
+from datasluice.connectors.catalog.udata.mapping import _DATASETS_OPERATION_ID, PLATFORM, parse_native_page
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.connectors.catalog.udata.wire._text_document import (
     APPROVED_TEXT_MEDIA_TYPES,
     bound_text_document,
 )
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, _freeze_json, redact_record_payload
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, redact_record_payload
 from datasluice.errors.catalog import CatalogValidationError
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
         DatasetDeleteOptions,
         DatasetExtrasDelete,
         DatasetExtrasUpdate,
+        DatasetFollowersQuery,
         DatasetListQuery,
         DatasetSearchQuery,
         DatasetSuggestQuery,
@@ -51,6 +53,9 @@ DATASET_OPERATIONS = {
     "v2_get_extras": "udata/api-v2.get-dataset-extras",
     "v2_update_extras": "udata/api-v2.update-dataset-extras",
     "v2_delete_extras": "udata/api-v2.delete-dataset-extras",
+    "list_followers": "udata/api-v1.list-dataset-followers",
+    "follow": "udata/api-v1.follow-dataset",
+    "unfollow": "udata/api-v1.unfollow-dataset",
 }
 
 _DATASET_PATH = "/api/1/datasets/"
@@ -557,6 +562,44 @@ def parse_text_document(
     )
 
 
+def list_dataset_followers_request(
+    dataset_id: str, query: DatasetFollowersQuery
+) -> tuple[str, str, dict[str, str], None]:
+    operation = DATASET_OPERATIONS["list_followers"]
+    identifier = path_segment(dataset_id, operation, "uData dataset")
+    return "GET", f"{_DATASET_PATH}{identifier}/followers/?{_query(query.query_params())}", {}, None
+
+
+def follow_dataset_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
+    identifier = path_segment(dataset_id, DATASET_OPERATIONS["follow"], "uData dataset")
+    return "POST", f"{_DATASET_PATH}{identifier}/followers/", {}, None
+
+
+def unfollow_dataset_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
+    identifier = path_segment(dataset_id, DATASET_OPERATIONS["unfollow"], "uData dataset")
+    return "DELETE", f"{_DATASET_PATH}{identifier}/followers/", {}, None
+
+
+def parse_dataset_followers(payload: object) -> MappingRecord:
+    operation = DATASET_OPERATIONS["list_followers"]
+    if not isinstance(payload, Mapping):
+        raise _invalid_field("followers page", operation, "a JSON object")
+    page = parse_native_page(payload, operation=operation)
+    for item in page.items:
+        for field in ("id", "since"):
+            if field in item and item[field] is not None and not isinstance(item[field], str):
+                raise _invalid_field(field, operation, "a string or null")
+        if "follower" in item and item["follower"] is not None and not isinstance(item["follower"], Mapping):
+            raise _invalid_field("follower", operation, "an object or null")
+    return MappingRecord(payload)
+
+
+def parse_dataset_follower_count(payload: object, *, operation: str) -> Mapping[str, object]:
+    if not isinstance(payload, Mapping) or type(payload.get("followers")) is not int or payload["followers"] < 0:
+        raise _invalid_field("followers", operation, "a non-negative integer")
+    return parse_extras(payload, operation=operation)
+
+
 def _required_id(value: object, *, operation: str = _DATASETS_OPERATION_ID) -> str:
     """Validate one raw dataset identifier without altering its spelling."""
     if not isinstance(value, str) or not value:
@@ -587,6 +630,11 @@ def _query(pairs: list[tuple[str, str]]) -> str:
 
 
 __all__ = [
+    "list_dataset_followers_request",
+    "follow_dataset_request",
+    "unfollow_dataset_request",
+    "parse_dataset_followers",
+    "parse_dataset_follower_count",
     "atom_request",
     "list_request",
     "create_request",

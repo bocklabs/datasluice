@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import partial
 from inspect import isawaitable
 from time import monotonic, sleep
@@ -250,24 +248,19 @@ def _wait_for_job(
     """Poll one queued job under the caller's finite lease and poll ceiling."""
     current = handle
     record: MappingRecord | None = None
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="udata-harvest-wait")
-    try:
-        while True:
-            proceed, stopped, record = _wait_step(current, monitor, record, current.poll_interval)
-            if not proceed:
-                return HarvestJobWaitResult(handle=stopped, record=record)
-            if current.poll_interval > 0:
-                sleeper(current.poll_interval)
-            future = executor.submit(observe, current)
-            try:
-                current, record = future.result(timeout=max(0.0, monitor.remaining()))
-            except FutureTimeoutError:
-                if future.done():
-                    raise
-                return HarvestJobWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
-    finally:
-        # shortcut: an in-flight observation is not cancelled; one worker lingers until its transport timeout
-        executor.shutdown(wait=False, cancel_futures=True)
+    while True:
+        proceed, stopped, record = _wait_step(current, monitor, record, current.poll_interval)
+        if not proceed:
+            return HarvestJobWaitResult(handle=stopped, record=record)
+        if current.poll_interval > 0:
+            sleeper(current.poll_interval)
+        try:
+            monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
+            observed, observed_record = observe(current)
+            monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
+        except BudgetExhaustedError:
+            return HarvestJobWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
+        current, record = observed, observed_record
 
 
 async def _wait_for_job_async(
@@ -287,11 +280,15 @@ async def _wait_for_job_async(
             await sleeper(current.poll_interval)
         try:
             async with asyncio.timeout(max(0.0, monitor.remaining())) as deadline:
-                current, record = await observe(current)
+                observed, observed_record = await observe(current)
+                monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
+        except BudgetExhaustedError:
+            return HarvestJobWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
         except TimeoutError:
             if not deadline.expired():
                 raise
             return HarvestJobWaitResult(handle=current.abandoned_lease(exhausted=True), record=record)
+        current, record = observed, observed_record
 
 
 class SyncHarvestService(SyncCatalogService):
@@ -585,11 +582,13 @@ class SyncHarvestService(SyncCatalogService):
             monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
         except BudgetExhaustedError:
             return handle.abandoned_lease(exhausted=True), MappingRecord({"status": handle.status})
-        _, payload, _ = self._read_admin(wire.get_job_request(job_id), permissions)
+        _, payload, _ = self._read_admin(wire.get_job_request(job_id), permissions, deadline=monitor)
         record = wire.parse_record(payload, HARVEST_OPERATION)
         return handle.observed(wire.parse_job_status(record.payload, HARVEST_OPERATION)), record
 
-    def _read_admin(self, request: Request, permissions: Permissions) -> Response:
+    def _read_admin(
+        self, request: Request, permissions: Permissions, *, deadline: DeadlineMonitor | None = None
+    ) -> Response:
         """Run one bounded harvest read behind explicit admin permission evidence."""
         method, path, headers, body = request
         return self._client._dataset_call(
@@ -603,6 +602,7 @@ class SyncHarvestService(SyncCatalogService):
                 self._client._resolved_credential(), HARVEST_OPERATION, permissions, admin=True
             ),
             max_response_bytes=_MAX_HARVEST_READ_BYTES,
+            deadline=deadline,
         )
 
     def _mutate_admin(self, request: Request, permissions: Permissions, policy: Policy) -> Response:
@@ -917,11 +917,13 @@ class AsyncHarvestService(AsyncCatalogService):
             monitor.assert_dispatchable(HARVEST_OPERATION, PLATFORM)
         except BudgetExhaustedError:
             return handle.abandoned_lease(exhausted=True), MappingRecord({"status": handle.status})
-        response = await self._read_admin(wire.get_job_request(job_id), permissions)
+        response = await self._read_admin(wire.get_job_request(job_id), permissions, deadline=monitor)
         record = _parsed(response, HARVEST_OPERATION, wire.parse_record)
         return handle.observed(wire.parse_job_status(record.payload, HARVEST_OPERATION)), record
 
-    async def _read_admin(self, request: Request, permissions: Permissions) -> Response:
+    async def _read_admin(
+        self, request: Request, permissions: Permissions, *, deadline: DeadlineMonitor | None = None
+    ) -> Response:
         """Run one bounded harvest read behind explicit admin permission evidence."""
         method, path, headers, body = request
         return await self._client._dataset_call_async(
@@ -935,6 +937,7 @@ class AsyncHarvestService(AsyncCatalogService):
                 await self._client._resolved_credential_async(), HARVEST_OPERATION, permissions, admin=True
             ),
             max_response_bytes=_MAX_HARVEST_READ_BYTES,
+            deadline=deadline,
         )
 
     async def _mutate_admin(self, request: Request, permissions: Permissions, policy: Policy) -> Response:

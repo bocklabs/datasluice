@@ -19,7 +19,7 @@ from datasluice.domain.catalog import (
     WarningRecord,
 )
 from datasluice.domain.catalog.models import MappingRecord
-from datasluice.domain.catalog.redaction import MAX_TEXT_LENGTH, REDACTED
+from datasluice.domain.catalog.redaction import MAX_METADATA_ENTRIES, MAX_TEXT_LENGTH, REDACTED, TRUNCATED
 from datasluice.exceptions import DataSluiceError
 
 if TYPE_CHECKING:
@@ -204,7 +204,7 @@ def test_native_record_serialization_scrubs_credential_shaped_content_at_every_d
         assert plaintext not in str(serialized), f"{plaintext} must never reach a retained artifact"
 
 
-def test_native_record_serialization_keeps_every_non_credential_field_without_an_entry_cap() -> None:
+def test_native_record_serialization_bounds_fields_without_changing_runtime_payload() -> None:
     payload = {f"field_{index}": index for index in range(64)}
     record = NativeRecord(
         platform=CatalogPlatform.CKAN,
@@ -214,8 +214,9 @@ def test_native_record_serialization_keeps_every_non_credential_field_without_an
     )
 
     serialized = cast("dict[str, object]", record.to_dict()["payload"])
-    assert serialized == payload
-    assert len(serialized) == 64
+    assert record.payload == payload
+    assert len(serialized) == MAX_METADATA_ENTRIES
+    assert serialized[TRUNCATED] == TRUNCATED
 
 
 def test_native_record_serialization_redacts_credential_content_smuggled_into_a_benign_value() -> None:
