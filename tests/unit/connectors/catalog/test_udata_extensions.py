@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -13,6 +14,8 @@ from datasluice.connectors.catalog.udata.services.extensions import (
     AsyncExtensionsService,
     ExtensionEvidenceCache,
     SyncExtensionsService,
+    _prove_async,
+    _prove_sync,
 )
 from datasluice.connectors.catalog.udata.wire import extensions as wire
 from datasluice.domain.catalog.auth import UDataCredential
@@ -371,6 +374,108 @@ def test_refresh_invalidates_prior_evidence() -> None:
 
     service.capability(operation)
     assert len(_counted(router, "/captchetat/")) == 2
+
+
+def test_sync_refresh_starts_a_new_probe_without_losing_old_waiters() -> None:
+    cache = ExtensionEvidenceCache(ttl_seconds=60.0)
+    key = ("anonymous", wire.CAPTCHETAT_OPERATION)
+    old_started = threading.Event()
+    old_release = threading.Event()
+    fresh_started = threading.Event()
+    fresh_release = threading.Event()
+
+    def old_read() -> None:
+        old_started.set()
+        assert old_release.wait(timeout=5)
+        raise ValueError("Old probe failed.")
+
+    def fresh_read() -> None:
+        fresh_started.set()
+        assert fresh_release.wait(timeout=5)
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        old = executor.submit(_prove_sync, cache, *key, old_read)
+        try:
+            assert old_started.wait(timeout=5)
+            old_flight, leader = cache.sync_flight(key)
+            assert not leader
+            old_waiter = executor.submit(cache.wait_sync_flight, old_flight)
+
+            cache.invalidate()
+            fresh = executor.submit(_prove_sync, cache, *key, fresh_read)
+            assert fresh_started.wait(timeout=5)
+            fresh_flight, leader = cache.sync_flight(key)
+            assert not leader
+            assert fresh_flight is not old_flight
+
+            old_release.set()
+            old_evidence = old.result(timeout=5)
+            assert old_evidence.state == "unavailable"
+            assert old_waiter.result(timeout=5) is old_evidence
+            assert cache.evidence(*key) is None
+            assert cache.sync_flight(key) == (fresh_flight, False)
+
+            fresh_waiter = executor.submit(cache.wait_sync_flight, fresh_flight)
+            fresh_release.set()
+            fresh_evidence = fresh.result(timeout=5)
+            assert fresh_evidence.available
+            assert fresh_waiter.result(timeout=5) is fresh_evidence
+            assert cache.evidence(*key) is fresh_evidence
+        finally:
+            old_release.set()
+            fresh_release.set()
+
+
+def test_async_refresh_starts_a_new_probe_without_losing_old_waiters() -> None:
+    async def run() -> None:
+        cache = ExtensionEvidenceCache(ttl_seconds=60.0)
+        key = ("anonymous", wire.CAPTCHETAT_OPERATION)
+        old_started = asyncio.Event()
+        old_release = asyncio.Event()
+        fresh_started = asyncio.Event()
+        fresh_release = asyncio.Event()
+
+        async def old_read() -> None:
+            old_started.set()
+            await old_release.wait()
+            raise ValueError("Old probe failed.")
+
+        async def fresh_read() -> None:
+            fresh_started.set()
+            await fresh_release.wait()
+
+        old = asyncio.create_task(_prove_async(cache, *key, old_read))
+        await old_started.wait()
+        old_flight, leader = cache.async_flight(key)
+        assert not leader
+        old_waiter = asyncio.shield(old_flight)
+
+        cache.invalidate()
+        fresh = asyncio.create_task(_prove_async(cache, *key, fresh_read))
+        await fresh_started.wait()
+        fresh_flight, leader = cache.async_flight(key)
+        assert not leader
+        assert fresh_flight is not old_flight
+
+        old_release.set()
+        old_evidence = await old
+        assert old_evidence.state == "unavailable"
+        assert await old_waiter is old_evidence
+        assert cache.evidence(*key) is None
+        assert cache.async_flight(key) == (fresh_flight, False)
+
+        fresh_waiter = asyncio.shield(fresh_flight)
+        fresh_release.set()
+        fresh_evidence = await fresh
+        assert fresh_evidence.available
+        assert await fresh_waiter is fresh_evidence
+        assert cache.evidence(*key) is fresh_evidence
+
+    async def bounded_run() -> None:
+        async with asyncio.timeout(5):
+            await run()
+
+    asyncio.run(bounded_run())
 
 
 def test_a_successful_read_never_proves_another_operation_available() -> None:

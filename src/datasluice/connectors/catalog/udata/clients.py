@@ -58,6 +58,7 @@ from datasluice.errors.catalog import (
     CatalogUnavailableError,
     CatalogValidationError,
     NativeCatalogError,
+    attach_catalog_metadata,
     map_catalog_error,
 )
 from datasluice.runtime.capability import (
@@ -302,6 +303,15 @@ def _auth_failure_reason(body: bytes) -> str | None:
     if not isinstance(payload, dict) or not isinstance(payload.get("message"), str):
         return None
     return _AUTH_FAILURES.get(payload["message"])
+
+
+def _settle_dataset_budget_error(
+    error: BudgetExhaustedError, request: RuntimeRequest, response: RuntimeResponse | None
+) -> None:
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        attach_catalog_metadata(
+            error, {"ambiguous": True, "status_code": response.status_code if response is not None else 0}
+        )
 
 
 def _dataset_idempotency(
@@ -1836,10 +1846,10 @@ class SyncUDataClient(_UDataClientCore):
         """Expose the typed stock extension and deployment-probe service."""
         return SyncExtensionsService(self)
 
-    def _require_site_version(self) -> SiteVersion:
+    def _require_site_version(self, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
-            return gate.require_current(self._credentials)
+            return gate.require_current(self._credentials, deadline=deadline)
         raise RuntimeError("The synchronous uData client requires a synchronous site gate.")
 
     def datasets_list(
@@ -1863,15 +1873,21 @@ class SyncUDataClient(_UDataClientCore):
     ) -> RuntimeResponse:
         recorded[0] = False
         before = self._breakers.inspect(key)
+        if form_body is not None:
+            request = replace(request, body=form_body())
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+        response = None
         try:
-            if form_body is not None:
-                request = replace(request, body=form_body())
             if controlled:
                 response = _dispatch_sync(self, self._transport, request, credential, json_body, origin=self._origin)
             else:
                 response = cast("CatalogTransport", self._transport).send(request)
             if request.deadline is not None:
                 request.deadline.assert_dispatchable()
+        except BudgetExhaustedError as error:
+            _settle_dataset_budget_error(error, request, response)
+            raise
         except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
@@ -1909,7 +1925,9 @@ class SyncUDataClient(_UDataClientCore):
         if self._closed:
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        self._require_site_version()
+        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        self._require_site_version(deadline=deadline)
         if omit_credential:
             resolved_credential = None
         elif credential is not None:
@@ -1919,7 +1937,6 @@ class SyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective, permissions)
-        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(
@@ -2263,13 +2280,13 @@ class AsyncUDataClient(_UDataClientCore):
             async_gate=True,
         )
 
-    async def site_version(self) -> SiteVersion:
+    async def site_version(self, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         """Run (or reuse) the anonymous exact-version site probe."""
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         gate = self._site_gate
         if isinstance(gate, AsyncSiteVersionGate):
-            return await gate.require_current_async(self._credentials)
+            return await gate.require_current_async(self._credentials, deadline=deadline)
         raise RuntimeError("The asynchronous uData client requires an asynchronous site gate.")
 
     @cached_property
@@ -2479,9 +2496,12 @@ class AsyncUDataClient(_UDataClientCore):
     ) -> RuntimeResponse:
         recorded[0] = False
         before = self._breakers.inspect(key)
+        if form_body is not None:
+            request = replace(request, body=form_body())
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+        response = None
         try:
-            if form_body is not None:
-                request = replace(request, body=form_body())
             if controlled:
                 response = await _dispatch_async(
                     self, self._transport, request, credential, json_body, origin=self._origin
@@ -2490,6 +2510,9 @@ class AsyncUDataClient(_UDataClientCore):
                 response = await cast("AsyncCatalogTransport", self._transport).send(request)
             if request.deadline is not None:
                 request.deadline.assert_dispatchable()
+        except BudgetExhaustedError as error:
+            _settle_dataset_budget_error(error, request, response)
+            raise
         except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
@@ -2527,7 +2550,9 @@ class AsyncUDataClient(_UDataClientCore):
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        await self.site_version()
+        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        await self.site_version(deadline=deadline)
         if omit_credential:
             resolved_credential = None
         elif credential is not None:
@@ -2537,7 +2562,6 @@ class AsyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective, permissions)
-        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(

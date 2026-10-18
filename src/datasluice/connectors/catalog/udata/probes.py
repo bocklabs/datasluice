@@ -10,13 +10,19 @@ from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.settings import normalize_origin
 from datasluice.domain.catalog.auth import credential_scope
-from datasluice.errors.catalog import CatalogUnavailableError, NativeCatalogError, map_catalog_error
+from datasluice.errors.catalog import (
+    BudgetExhaustedError,
+    CatalogUnavailableError,
+    NativeCatalogError,
+    map_catalog_error,
+)
 from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from datasluice.runtime.clients import AsyncCatalogTransport
+    from datasluice.runtime.resilience import DeadlineMonitor
 
 SITE_PATH = "/api/1/site/"
 SITE_OPERATION_ID = "udata/api-v1.root-and-effective-profile-probe"
@@ -156,7 +162,7 @@ class SiteVersionGate:
         self._lock = threading.Lock()
         self._cache: dict[str, tuple[SiteVersion, float]] = {}
 
-    def require_current(self, credentials: object | None) -> SiteVersion:
+    def require_current(self, credentials: object | None, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         """Return cached evidence or dispatch one anonymous site probe.
 
         The probe is dispatched outside the lock without single-flight: cold
@@ -172,7 +178,7 @@ class SiteVersionGate:
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:
                 return cached[0]
-        observed = self._probe()
+        observed = self._probe(deadline)
         with self._lock:
             self._cache[scope] = (observed, self._clock())
         return observed
@@ -182,18 +188,23 @@ class SiteVersionGate:
         with self._lock:
             self._cache.clear()
 
-    def _probe(self) -> SiteVersion:
+    def _probe(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         if self._transport is None:
             raise RuntimeError("The strict site gate requires a synchronous transport.")
+        if deadline is not None:
+            deadline.assert_dispatchable()
         request = RuntimeRequest(
             method="GET",
             url=f"{self._origin}{SITE_PATH}",
             headers={},
             body=None,
             max_response_bytes=_SITE_PROBE_MAX_BYTES,
+            deadline=deadline,
         )
         try:
             response = self._transport.send(request)
+        except BudgetExhaustedError:
+            raise
         except Exception as exc:
             raise map_catalog_error(
                 NativeCatalogError(
@@ -202,6 +213,8 @@ class SiteVersionGate:
                     platform="udata",
                 )
             ) from exc
+        if deadline is not None:
+            deadline.assert_dispatchable()
         if response.status_code in {401, 403, 423}:
             raise map_catalog_error(
                 NativeCatalogError(
@@ -239,7 +252,7 @@ class SiteVersionGate:
 class AsyncSiteVersionGate(SiteVersionGate):
     """Async transport variant of the strict site gate for the async client."""
 
-    def require_current(self, credentials: object | None) -> SiteVersion:
+    def require_current(self, credentials: object | None, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         """Reject the inherited synchronous entry point regardless of cache state."""
         raise CatalogUnavailableError(
             "The asynchronous site gate must be awaited through require_current_async.",
@@ -268,30 +281,37 @@ class AsyncSiteVersionGate(SiteVersionGate):
         )
         self._async_transport = transport
 
-    async def require_current_async(self, credentials: object | None) -> SiteVersion:
+    async def require_current_async(
+        self, credentials: object | None, *, deadline: DeadlineMonitor | None = None
+    ) -> SiteVersion:
         """Return cached evidence or dispatch one anonymous async site probe."""
         scope = credential_scope(credentials)
         with self._lock:
             cached = self._cache.get(scope)
             if cached is not None and self._clock() - cached[1] <= self._ttl_seconds:
                 return cached[0]
-        observed = await self._probe_async()
+        observed = await self._probe_async(deadline)
         with self._lock:
             self._cache[scope] = (observed, self._clock())
         return observed
 
-    async def _probe_async(self) -> SiteVersion:
+    async def _probe_async(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         import json
 
+        if deadline is not None:
+            deadline.assert_dispatchable()
         request = RuntimeRequest(
             method="GET",
             url=f"{self._origin}{SITE_PATH}",
             headers={},
             body=None,
             max_response_bytes=_SITE_PROBE_MAX_BYTES,
+            deadline=deadline,
         )
         try:
             response = await self._async_transport.send(request)
+        except BudgetExhaustedError:
+            raise
         except Exception as exc:
             raise map_catalog_error(
                 NativeCatalogError(
@@ -300,6 +320,8 @@ class AsyncSiteVersionGate(SiteVersionGate):
                     platform="udata",
                 )
             ) from exc
+        if deadline is not None:
+            deadline.assert_dispatchable()
         if response.status_code in {401, 403, 423}:
             raise map_catalog_error(
                 NativeCatalogError(

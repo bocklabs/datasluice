@@ -46,8 +46,8 @@ class ExtensionEvidenceCache:
     """Credential-scoped bounded extension evidence with an expiring single-flight TTL cache.
 
     Cache keys pair one credential scope with one operation, so evidence for one capability never satisfies another and
-    a rotated credential starts from an empty cache. Exactly one harmless probe runs per key and mode at a time, and an
-    explicit refresh discards every entry plus any result still in flight.
+    a rotated credential starts from an empty cache. Callers share one harmless probe per key, mode, and refresh
+    generation. A refresh discards cached entries and prevents new callers from joining earlier probes.
     """
 
     def __init__(self, *, ttl_seconds: float, clock: Callable[[], float] = monotonic) -> None:
@@ -99,6 +99,8 @@ class ExtensionEvidenceCache:
         """Discard every cached entry so the next proof dispatches a fresh harmless probe."""
         with self._lock:
             self._entries.clear()
+            self._sync_flights.clear()
+            self._async_flights.clear()
             self._generation += 1
 
     def sync_flight(self, key: EvidenceKey) -> tuple[_SyncFlight, bool]:

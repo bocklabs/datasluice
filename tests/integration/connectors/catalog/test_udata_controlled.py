@@ -7025,6 +7025,9 @@ def _exercise_sync_transfer_lifecycle(
 
         listed = client.transfers.list_transfers(TransferListQuery(subject=dataset_id), admin_permissions)
         assert any(dict(record.payload)["id"] == transfer_id for record in listed)
+        raw_listed = _direct_request(token, "GET", f"{_TRANSFERS_PATH}?subject={dataset_id}", include_body=True)
+        assert raw_listed[0] == 200
+        _assert_records_match_raw("list_transfers", raw_listed[1], listed)
 
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=member_credential)) as member_client:
         refused = member_client.transfers.respond_to_transfer(
@@ -7077,6 +7080,7 @@ async def _exercise_async_transfer_lifecycle(
         created_document = dict(requested.transfer.payload)
         transfer_id = created_document["id"]
         assert isinstance(transfer_id, str)
+        assert created_document["status"] == "pending"
         raw_created = _direct_request(
             token,
             "POST",
@@ -7092,6 +7096,18 @@ async def _exercise_async_transfer_lifecycle(
         raw_transfer_id = raw_payload["id"]
         assert isinstance(raw_transfer_id, str)
 
+        read = await client.transfers.get_transfer(transfer_id, admin_permissions)
+        own_read = _direct_request(token, "GET", f"{_TRANSFERS_PATH}{transfer_id}/", include_body=True)
+        _assert_transfer_read_matches_raw("get_transfer", own_read, read)
+        raw_read = _direct_request(token, "GET", f"{_TRANSFERS_PATH}{raw_transfer_id}/", include_body=True)
+        assert raw_read[0] == 200
+
+        listed = await client.transfers.list_transfers(TransferListQuery(subject=dataset_id), admin_permissions)
+        assert any(dict(record.payload)["id"] == transfer_id for record in listed)
+        raw_listed = _direct_request(token, "GET", f"{_TRANSFERS_PATH}?subject={dataset_id}", include_body=True)
+        assert raw_listed[0] == 200
+        _assert_records_match_raw("list_transfers", raw_listed[1], listed)
+
     async with create_async_client(UDataClientSettings(base_url=ORIGIN, credential=member_credential)) as member_client:
         refused = await member_client.transfers.respond_to_transfer(
             transfer_id,
@@ -7102,8 +7118,20 @@ async def _exercise_async_transfer_lifecycle(
         assert refused.transfer is not None
         assert dict(refused.transfer.payload)["status"] == "refused"
 
+        raw_refused = _direct_request(
+            token,
+            "POST",
+            f"{_TRANSFERS_PATH}{raw_transfer_id}/",
+            body={"response": "refuse"},
+        )
+        assert raw_refused[0] == 200
+
     assert (
         _raw_status(_direct_request(token, "GET", f"{_TRANSFERS_PATH}{transfer_id}/", include_body=True)) == "refused"
+    )
+    assert (
+        _raw_status(_direct_request(token, "GET", f"{_TRANSFERS_PATH}{raw_transfer_id}/", include_body=True))
+        == "refused"
     )
 
 
@@ -7134,7 +7162,6 @@ def test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up() -
                 token, admin_permissions, member_permissions, member_credential, dataset_id, member_id, suffix
             )
         )
-        dataset_ids.clear()
     finally:
         primary = sys.exception()
         errors: list[Exception] = []
@@ -7143,9 +7170,15 @@ def test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up() -
                 status, _, _ = _direct_request(token, "DELETE", f"/api/1/datasets/{dataset_id}/")
                 if status not in {204, 404}:
                     raise ValueError(f"unexpected cleanup status for dataset {dataset_id!r}: {status}")
-            except (OSError, ValueError) as error:
+            except (AssertionError, OSError, ValueError) as error:
                 errors.append(error)
-        assert not errors, f"cleanup failures: {errors!r}; original: {primary!r}"
+        if errors:
+            if primary is not None:
+                primary.add_note(
+                    "Controlled transfer cleanup failed: " + ", ".join(type(error).__name__ for error in errors)
+                )
+            else:
+                raise ExceptionGroup("Controlled transfer cleanup failed", errors)
 
 
 def test_controlled_extensions_and_probes_match_raw_routes_in_both_modes() -> None:
