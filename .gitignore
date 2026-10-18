@@ -39,6 +39,7 @@ coverage.xml
 # GSD Code reviews
 dev/*/reviews
 */data/*
+!scripts/data/**
 # uv
 #   Generally recommended to include uv.lock in version control for
 #   reproducibility. Uncomment for libraries where you want consumers
