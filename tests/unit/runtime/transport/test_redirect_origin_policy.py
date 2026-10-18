@@ -3,17 +3,18 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
 import pytest
 
 from datasluice.domain import CredentialScope
 from datasluice.runtime.transport.base import RuntimeRequest, TransportError
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport
+from tests.helpers.catalog_transport import _FakeResponse, _RecordingOpener
 from tests.helpers.httpx_probe import UPLOAD_PARTS, AsyncProbe, SyncProbe
 
+httpx = pytest.importorskip("httpx")
+
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-    from urllib.request import Request
+    from httpx import Request, Response
 
 _ALLOWED_SCOPE = CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True)
 _BODY = b'{"token": "redirect-body-secret"}'
@@ -22,7 +23,7 @@ _ORIGIN = "example.test"
 
 
 def _hop(status: int, *, allow_target: bool) -> Any:
-    def responder(request: httpx.Request) -> httpx.Response:
+    def responder(request: Request) -> Response:
         if request.url.host != _ORIGIN:
             if not allow_target:
                 raise AssertionError("The cross-origin follow-up must never be dispatched.")
@@ -30,38 +31,6 @@ def _hop(status: int, *, allow_target: bool) -> Any:
         return httpx.Response(status, headers={"Location": "https://other.test/next"})
 
     return responder
-
-
-class _FakeResponse:
-    def __init__(self, status: int, headers: Mapping[str, str], body: bytes = b"") -> None:
-        self.status = status
-        self.headers = headers
-        self._body = body
-        self._offset = 0
-        self.closed = False
-
-    def read(self, size: int | None = None) -> bytes:
-        if size is None:
-            chunk = self._body[self._offset :]
-            self._offset = len(self._body)
-            return chunk
-        chunk = self._body[self._offset : self._offset + size]
-        self._offset += len(chunk)
-        return chunk
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class _RecordingOpener:
-    def __init__(self, responses: list[_FakeResponse]) -> None:
-        self.requests: list[Request] = []
-        self._responses = responses
-
-    def open(self, request: Request, *, timeout: float) -> _FakeResponse:
-        del timeout
-        self.requests.append(request)
-        return self._responses[len(self.requests) - 1]
 
 
 @pytest.mark.parametrize("status", [307, 308])

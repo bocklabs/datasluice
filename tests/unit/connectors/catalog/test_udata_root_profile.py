@@ -110,7 +110,7 @@ _TEST_CONTROLLED_IMAGE_SPECS = (
     ),
 )
 _TEST_CONTROLLED_SERVICE_NAMES = tuple(spec[0] for spec in _TEST_CONTROLLED_IMAGE_SPECS)
-_CONTROLLED_DOCKER_ENDPOINT = "unix:///Users/nitish/.docker/run/docker.sock"
+_CONTROLLED_DOCKER_ENDPOINT = "unix:///run/docker.sock"
 _CONTROLLED_PROGRAM_SITE_URL = "http://127.0.0.1:7000/api/1/site/"
 _CONTROLLED_PROGRAM_TIMEOUT_SECONDS = 10
 
@@ -127,7 +127,7 @@ def _controlled_evidence(site_id: str = "site", *, nonce: str = "unit-test-stack
     return udata_clients._ControlledStackEvidence(
         nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
         site_id=site_id,
-        docker_endpoint_sha256=hashlib.sha256(b"unix:///Users/nitish/.docker/run/docker.sock").hexdigest(),
+        docker_endpoint_sha256=hashlib.sha256(_CONTROLLED_DOCKER_ENDPOINT.encode()).hexdigest(),
         image_digests=tuple(image_identities),
     )
 

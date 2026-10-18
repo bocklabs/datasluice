@@ -85,6 +85,24 @@ def test_all_jsonl_emits_each_row_without_collecting(monkeypatch: pytest.MonkeyP
     assert "Opening resource" in outcome.stderr
 
 
+def test_all_jsonl_renders_rows_lazily_without_collecting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The JSONL path hands render_jsonl_rows a lazy iterator, never a materialized list."""
+    opened = _Opened(_batches(25))
+    facade = _Facade(opened)
+    _patch_facade(monkeypatch, facade)
+    received: list[object] = []
+
+    def _capture(rows: object) -> None:
+        received.append(rows)
+
+    monkeypatch.setattr(open_command, "render_jsonl_rows", _capture)
+    outcome = runner.invoke(open_app, ["https://data.example.test/observations.csv", "--all", "--output", "jsonl"])
+
+    assert outcome.exit_code == 0, outcome.output
+    assert len(received) == 1
+    assert not isinstance(received[0], (list, tuple)), "JSONL path collected all rows before rendering"
+
+
 def test_all_jsonl_peak_memory_stays_bounded() -> None:
     """Large streamed JSONL output does not retain every emitted row in process memory."""
     environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")}

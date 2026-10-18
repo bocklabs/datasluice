@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from datasluice.domain.catalog.receipts import MutationReceipt
     from datasluice.runtime.transport.base import UploadPart
 
-MAX_PAGE_SIZE = 100
 DEFAULT_PAGE_SIZE = 20
 MAX_FIELD_LENGTH = 255
 CONTACT_ROLES = (
@@ -58,6 +57,7 @@ VISUALIZATION_PAGE_KIND = "udata_visualization_page"
 
 
 _CONTACT_POINT_NAME = "contact point name"
+_CONTACT_POINT_ROLE = "contact point role"
 
 
 def segment(value: str, operation: str) -> str:
@@ -111,6 +111,7 @@ def _email(value: object, label: str) -> None:
         valid = bool(
             separator
             and local
+            and "@" not in local
             and not any(character.isspace() for character in value)
             and len(labels) >= 2
             and all(labels)
@@ -155,8 +156,8 @@ def _validate_x_axis(axis: Mapping[str, object]) -> None:
     required = ("column_x", "type")
     for key in required:
         _text(axis.get(key), f"visualization x_axis {key}", required=True)
-    for key in ("sort_x_by", "sort_x_direction"):
-        _choice(axis.get(key), (X_AXIS_SORT_BY + X_AXIS_SORT_DIRECTIONS), f"visualization x_axis {key}")
+    _choice(axis.get("sort_x_by"), X_AXIS_SORT_BY, "visualization x_axis sort_x_by")
+    _choice(axis.get("sort_x_direction"), X_AXIS_SORT_DIRECTIONS, "visualization x_axis sort_x_direction")
     _choice(axis.get("type"), X_AXIS_TYPES, "visualization x_axis type")
     unknown = set(axis) - {"column_x", "type", "sort_x_by", "sort_x_direction"}
     if unknown:
@@ -290,7 +291,8 @@ class ContactPointCreateInput:
         _no_url(self.name, _CONTACT_POINT_NAME)
         _email(self.email, "contact point email")
         _url(self.contact_form, "contact point contact_form")
-        _choice(self.role, CONTACT_ROLES, "contact point role")
+        _text(self.role, _CONTACT_POINT_ROLE, required=True)
+        _choice(self.role, CONTACT_ROLES, _CONTACT_POINT_ROLE)
         if self.role == CONTACT_ROLE_CONTACT and self.email is None and self.contact_form is None:
             raise ValueError("uData contact point role 'contact' requires an email or a contact form.")
         if self.owner is not None and self.organization is not None:
@@ -332,7 +334,7 @@ class ContactPointUpdateInput:
         _no_url(self.name, _CONTACT_POINT_NAME)
         _email(self.email, "contact point email")
         _url(self.contact_form, "contact point contact_form")
-        _choice(self.role, CONTACT_ROLES, "contact point role")
+        _choice(self.role, CONTACT_ROLES, _CONTACT_POINT_ROLE)
 
     def payload(self) -> dict[str, object]:
         """Encode the exact update JSON body with omission semantics."""

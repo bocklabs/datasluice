@@ -24,13 +24,13 @@ from datasluice.connectors.catalog.udata.models.root_profile import (
     SiteReuseCsvQuery,
 )
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
 
 _RDF_XML_MEDIA_TYPE = "application/rdf+xml"
-_TURTLE_MEDIA_TYPE = "application/x-turtle"
 _JSON_LD_MEDIA_TYPE = "application/ld+json"
 _INVALID_UDATA_SITE_UTF8 = "The uData site document is not valid UTF-8."
 
@@ -62,23 +62,12 @@ ROOT_OPERATIONS = {
 }
 
 _SITE_PATH = "/api/1/site/"
-_FORMAT_MEDIA_TYPES = {
-    "xml": _RDF_XML_MEDIA_TYPE,
-    "rdf": _RDF_XML_MEDIA_TYPE,
-    "owl": _RDF_XML_MEDIA_TYPE,
-    "n3": "text/n3",
-    "ttl": _TURTLE_MEDIA_TYPE,
-    "turtle": _TURTLE_MEDIA_TYPE,
-    "nt": "application/n-triples",
-    "json": _JSON_LD_MEDIA_TYPE,
-    "jsonld": _JSON_LD_MEDIA_TYPE,
-    "trig": "application/trig",
-}
+_FORMAT_MEDIA_TYPES = {**RDF_FORMAT_MEDIA_TYPES, "owl": _RDF_XML_MEDIA_TYPE}
 _ACCEPTED_MEDIA_TYPES = {
     _RDF_XML_MEDIA_TYPE,
     "application/xml",
     "text/n3",
-    _TURTLE_MEDIA_TYPE,
+    "application/x-turtle",
     "text/turtle",
     "application/n-triples",
     _JSON_LD_MEDIA_TYPE,

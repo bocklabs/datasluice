@@ -279,6 +279,8 @@ def test_invalid_inputs_fail_before_dispatch_without_a_raw_body() -> None:
         DiscussionCreateInput(title="", comment="c", subject={"id": "d", "class": "Dataset"})
     with pytest.raises(ValueError, match="subject"):
         DiscussionCreateInput(title="t", comment="c", subject={})
+    with pytest.raises(ValueError, match="subject"):
+        DiscussionCreateInput(title="t", comment="c", subject={"id": 123, "class": "Dataset"})  # type: ignore[dict-item]
     with pytest.raises(ValueError, match="comment"):
         CommentInput(comment="")
     with pytest.raises(ValueError, match="title"):
@@ -366,14 +368,15 @@ def test_discussion_permissions_discriminate_create_from_delete_in_both_modes() 
             assert router.requests == []
 
     async def run_async() -> None:
-        async with async_client(async_route_table(routes), UDATA_CREDENTIAL) as client:
+        async_router = async_route_table(routes)
+        async with async_client(async_router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_create:
                 await client.activity_discussions.create_discussion(create_input, DELETE_ONLY_PERMISSIONS)
             with pytest.raises(ForbiddenError) as denied_delete:
                 await client.activity_discussions.delete_discussion("discussion-1", CREATE_ONLY_PERMISSIONS)
             assert denied_create.value.operation == wire.CREATE_DISCUSSION_OPERATION
             assert denied_delete.value.operation == wire.DELETE_DISCUSSION_OPERATION
-            assert router.requests == []
+            assert async_router.requests == []
 
     run_sync()
     asyncio.run(run_async())

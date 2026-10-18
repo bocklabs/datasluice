@@ -37,6 +37,9 @@ from ._receipts import (
 from ._receipts import (
     _attach_receipt as _attach,
 )
+from ._receipts import (
+    _close_input as _close_upload,
+)
 from .datasets import (
     _enforce_mutation_policy,
     _require_mutation_permission,
@@ -71,22 +74,6 @@ def _receipt(
         outcome,
         {"mutation": mutation, "status_code": status, "target_valid": bool(target)},
     )
-
-
-def _close_upload(
-    client_input: ResourceUploadInput,
-    result: Result | None,
-    primary_error: BaseException | None,
-) -> None:
-    try:
-        client_input.close()
-    except SETTLEMENT_ERRORS as close_error:
-        receipt = result.receipt if result is not None else getattr(primary_error, "mutation_receipt", None)
-        if isinstance(receipt, MutationReceipt):
-            _attach(close_error, receipt)
-        if primary_error is not None:
-            raise primary_error from close_error
-        raise
 
 
 def _reject_receipt(

@@ -24,8 +24,7 @@ from tests.helpers.httpx_probe import (
     fixed,
     redirect_to,
 )
-
-httpx = pytest.importorskip("httpx")
+from tests.helpers.immutability import assign_readonly
 
 _PARTS = UPLOAD_PARTS
 _STREAMED = BytesIO(b"a,b\n")
@@ -42,11 +41,6 @@ class _ReadCountingStream(BytesIO):
         chunk = super().read(size)
         self.bytes_read += len(chunk)
         return chunk
-
-
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
 
 
 def stream_part(source: BytesIO) -> UploadPart:
@@ -81,16 +75,17 @@ def test_runtime_request_rejects_stream_parts_with_followed_redirects() -> None:
 
 def test_runtime_request_freezes_parts_into_a_tuple() -> None:
     parts: list[UploadPart] = list(_PARTS)
-    request = RuntimeRequest("POST", "https://example.test/upload", files=tuple(parts))
+    request = RuntimeRequest("POST", "https://example.test/upload", files=cast("tuple[UploadPart, ...]", parts))
 
     parts.append(UploadPart(field_name="extra", data=b"x"))
     assert request.files == _PARTS
+    assert isinstance(request.files, tuple)
 
 
 def test_upload_part_is_frozen_and_validates_its_fields() -> None:
     part = _PARTS[0]
     with pytest.raises(FrozenInstanceError):
-        _assign(part, "data", b"mutated")
+        assign_readonly(part, "data", b"mutated")
     with pytest.raises(ValueError, match="non-empty"):
         UploadPart(field_name="", data=b"x")
     # Runtime validation is what each case asserts, so the invalid values are passed through untyped kwargs.
@@ -105,7 +100,8 @@ def test_upload_part_is_frozen_and_validates_its_fields() -> None:
 
 
 def test_upload_part_requires_a_stream_to_be_both_readable_and_closeable() -> None:
-    """The duck-typed stream contract needs read AND close, because the transport owns closing it."""
+    """The duck-typed stream contract needs read AND close, because the caller owns and must close the stream;
+    transports never close part data."""
 
     class _ReadableOnly:
         def read(self, size: int = -1) -> bytes:

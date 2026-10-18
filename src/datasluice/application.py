@@ -17,6 +17,7 @@ from datasluice.domain.artifact import _freeze_extensions
 from datasluice.domain.catalog.auth import CredentialResolver as CredentialResolver
 from datasluice.exceptions import (
     DataSluiceError,
+    DownloadError,
     OpenedResourceConsumedError,
     StreamClosedError,
 )
@@ -229,7 +230,8 @@ def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
     identity_source = str(locator.to_dict()["uri"])
     resource_id = hashlib.sha256(identity_source.encode()).hexdigest()
     access: LocalFile | ObjectStorage | HttpDownload
-    if PureWindowsPath(locator.uri).is_absolute():
+    is_windows_path = PureWindowsPath(locator.uri).is_absolute()
+    if is_windows_path:
         access = LocalFile(path=locator.uri)
     elif parts.scheme == "file":
         access = LocalFile(path=unquote(parts.path))
@@ -239,9 +241,13 @@ def _resolve_direct_resource(locator: DirectResourceLocator) -> Resource:
         access = HttpDownload(url=locator.uri)
     else:
         access = LocalFile(path=locator.uri)
+    if is_windows_path:
+        resource_name = PureWindowsPath(locator.uri).name or None
+    else:
+        resource_name = Path(unquote(parts.path or locator.uri)).name or None
     return Resource(
         id=resource_id,
-        name=Path(unquote(parts.path or locator.uri)).name or None,
+        name=resource_name,
         url=locator.uri,
         format=locator.format,
         media_type=locator.media_type,
@@ -288,8 +294,6 @@ class _ApplicationServices:
         downloader = Downloader(self._session._transport, cache=self._session._cache, storage=self._session.storage)
         paths = downloader.download_many(resources, destination)
         if len(paths) != len(resources):
-            from datasluice.exceptions import DownloadError
-
             raise DownloadError("Bulk download was incomplete; no resource manifest was produced")
         results: list[dict[str, object]] = []
         for resource, path in zip(resources, paths, strict=True):

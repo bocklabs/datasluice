@@ -26,12 +26,11 @@ from datasluice.connectors.catalog.udata.drift import (
 from scripts.check_udata_drift import (
     ADVISORY_OUTCOMES,
     EXIT_DISABLED,
+    EXIT_DRIFTED,
     EXIT_ERROR,
     EXIT_OK,
     main,
 )
-
-EXIT_DRIFTED = 2
 
 _DISABLED_REPORT_KEYS = {
     "schema_version",

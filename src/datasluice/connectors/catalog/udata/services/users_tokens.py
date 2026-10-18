@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -31,6 +30,7 @@ from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
 
+from ._receipts import _attach_receipt as _attach
 from ._receipts import (
     _error_status,
     _mutation_outcome,
@@ -40,7 +40,7 @@ from .datasets import (
     _require_mutation_permission,
     _safe_target_value,
 )
-from .organizations_memberships import _attach, _org_receipt
+from .organizations_memberships import _org_receipt
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -199,7 +199,9 @@ def _error_receipt(
     error: BaseException, name: str, target: str, policy: Policy, response: RuntimeResponse | None
 ) -> None:
     operation = wire.OPERATIONS[name]
-    outcome = "ambiguous" if isinstance(error, KeyboardInterrupt) else _mutation_outcome(error, response)
+    outcome = (
+        "ambiguous" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
+    )
     receipt = _org_receipt(
         operation,
         target,
@@ -266,7 +268,7 @@ def _read_settled[T](
         method, path, headers, _ = wire.build_request(route.name, identifier=route.identifier, query=route.query)
         _, payload, _ = _read_call(call, operation, (method, path, headers), route.permissions, credential)
         result = decoder(route.name, payload)
-    except (Exception, KeyboardInterrupt):
+    except SETTLEMENT_ERRORS:
         emit(operation, "failed")
         raise
     emit(operation, "succeeded")
@@ -288,7 +290,7 @@ async def _read_settled_async[T](
         method, path, headers, _ = wire.build_request(route.name, identifier=route.identifier, query=route.query)
         _, payload, _ = await _read_call(call, operation, (method, path, headers), route.permissions, credential)
         result = decoder(route.name, payload)
-    except (Exception, asyncio.CancelledError):
+    except ASYNC_SETTLEMENT_ERRORS:
         emit(operation, "failed")
         raise
     emit(operation, "succeeded")

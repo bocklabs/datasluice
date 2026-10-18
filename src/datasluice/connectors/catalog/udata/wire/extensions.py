@@ -127,28 +127,7 @@ def parse_captchetat(body: object, *, response_media_type: str | None, operation
     type (or aborts 500 when the backend is unconfigured), so only the approved media type, byte count, and SHA-256
     digest are retained.
     """
-    if not isinstance(body, (bytes, bytearray)):
-        raise NativeCatalogError(
-            "The uData captchetat response must be buffered image bytes.",
-            operation=operation,
-            platform=PLATFORM,
-        )
-    media_type = (response_media_type or "").split(";", 1)[0].strip().lower()
-    if media_type not in _AVATAR_MEDIA_TYPES:
-        raise NativeCatalogError(
-            f"The uData captchetat media type {media_type!r} is not an approved image contract.",
-            operation=operation,
-            platform=PLATFORM,
-            safe_action=f"Request one of the approved image media types: {', '.join(sorted(_AVATAR_MEDIA_TYPES))}.",
-        )
-    data = bytes(body)
-    return MappingRecord(
-        {
-            "media_type": media_type,
-            "size_bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
-        }
-    )
+    return _bound_image_document(body, response_media_type, subject="captchetat", operation=operation)
 
 
 def parse_avatar(body: object, *, response_media_type: str | None, operation: str) -> MappingRecord:
@@ -157,19 +136,26 @@ def parse_avatar(body: object, *, response_media_type: str | None, operation: st
     The no-raw-body contract holds for image rows too: only the approved
     media type, byte count, and SHA-256 digest are retained.
     """
+    return _bound_image_document(body, response_media_type, subject="avatar", operation=operation)
+
+
+def _bound_image_document(
+    body: object, response_media_type: str | None, *, subject: str, operation: str
+) -> MappingRecord:
+    """Bound one binary image response to its media type, size, and digest."""
     if not isinstance(body, (bytes, bytearray)):
         raise NativeCatalogError(
-            "The uData avatar response must be buffered bytes.",
+            f"The uData {subject} response must be buffered image bytes.",
             operation=operation,
             platform=PLATFORM,
         )
     media_type = (response_media_type or "").split(";", 1)[0].strip().lower()
     if media_type not in _AVATAR_MEDIA_TYPES:
         raise NativeCatalogError(
-            f"The uData avatar media type {media_type!r} is not an approved image contract.",
+            f"The uData {subject} media type {media_type!r} is not an approved image contract.",
             operation=operation,
             platform=PLATFORM,
-            safe_action=f"Request one of the approved avatar media types: {', '.join(sorted(_AVATAR_MEDIA_TYPES))}.",
+            safe_action=f"Request one of the approved {subject} media types: {', '.join(sorted(_AVATAR_MEDIA_TYPES))}.",
         )
     data = bytes(body)
     return MappingRecord(

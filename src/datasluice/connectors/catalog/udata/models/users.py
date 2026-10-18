@@ -6,17 +6,14 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.models._segment import paging
 from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
+from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, _freeze_json, _thaw_json
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
-
-if TYPE_CHECKING:
-    from datasluice.connectors.catalog.udata.secrets import OneTimeUDataToken
-    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
 _WEBSITE_REQUIRED = "uData user website must be an HTTP URL."
@@ -74,7 +71,7 @@ def _email_field(value: object) -> None:
 
 def _roles(value: object) -> None:
     if not isinstance(value, tuple) or not all(isinstance(role, str) and role for role in value):
-        raise ValueError("uData user roles must be a list of non-empty strings.")
+        raise ValueError("uData user roles must be a tuple of non-empty strings.")
 
 
 def _extras(value: object) -> None:
@@ -277,6 +274,14 @@ class UserMutationResult:
     record: NativeRecord | None = field(default=None, repr=False)
     value: MappingRecord | None = field(default=None, repr=False)
 
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.receipt, MutationReceipt)
+            or (self.record is not None and not isinstance(self.record, NativeRecord))
+            or (self.value is not None and not isinstance(self.value, MappingRecord))
+        ):
+            raise ValueError("uData user mutation results require a receipt and typed records.")
+
     def to_dict(self) -> dict[str, object]:
         return {
             "receipt": self.receipt.to_dict(),
@@ -292,6 +297,14 @@ class ApiTokenCreationResult:
     receipt: MutationReceipt
     metadata: ApiTokenMetadata
     secret: OneTimeUDataToken = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.receipt, MutationReceipt)
+            or not isinstance(self.metadata, ApiTokenMetadata)
+            or not isinstance(self.secret, OneTimeUDataToken)
+        ):
+            raise ValueError("uData token creation results require a receipt, token metadata, and a one-time secret.")
 
     def to_dict(self) -> dict[str, object]:
         return {"receipt": self.receipt.to_dict(), "metadata": self.metadata.to_dict()}

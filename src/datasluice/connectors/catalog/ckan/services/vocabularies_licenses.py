@@ -1,12 +1,3 @@
-"""Both-mode CKAN tag, vocabulary, and license projections across the split v2 ids.
-
-Every typed method declares its owning v2 OperationId from the checked-in manifest and passes documented CKAN 2.11
-parameters verbatim (D-04). The deprecated ``fields`` parameter of ``tag_search``/``tag_autocomplete`` is
-unrepresentable on typed signatures and refused pre-dispatch on umbrella payloads (D-01, identical discipline to the
-dataset group). Vocabulary CRUD decodes the connector-declared vocabulary kind; translation batches cross the wire
-untouched.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -21,7 +12,7 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM, TAG, VOCABULARY
-from datasluice.connectors.catalog.ckan.services._shared import drop_unset
+from datasluice.connectors.catalog.ckan.services._shared import WireParams, drop_unset, wire_params
 from datasluice.domain.catalog.ids import CatalogId
 
 if TYPE_CHECKING:
@@ -36,20 +27,19 @@ _VOCABULARY_GROUP = "vocabularies_licenses"
 type FieldSpecList = list[Mapping[str, object]]
 type TranslationBatch = list[Mapping[str, object]]
 type TermTranslationTerms = list[str]
-type WireParams = dict[str, object]
 
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "tag_create":
-        return CatalogId(PLATFORM, TAG, str(params.get("name", "")))
+        return CatalogId(PLATFORM, TAG, str(params["name"]))
     if action == "tag_delete":
-        return CatalogId(PLATFORM, TAG, str(params.get("id", "")))
+        return CatalogId(PLATFORM, TAG, str(params["id"]))
     if action == "vocabulary_create":
-        return CatalogId(PLATFORM, VOCABULARY, str(params.get("name", "")))
+        return CatalogId(PLATFORM, VOCABULARY, str(params["name"]))
     if action in {"vocabulary_update", "vocabulary_delete"}:
-        return CatalogId(PLATFORM, VOCABULARY, str(params.get("id", "")))
+        return CatalogId(PLATFORM, VOCABULARY, str(params["id"]))
     if action == "term_translation_update":
-        return CatalogId(PLATFORM, VOCABULARY, str(params.get("term", "")))
+        return CatalogId(PLATFORM, VOCABULARY, str(params["term"]))
     return CatalogId(PLATFORM, VOCABULARY, str(action))
 
 
@@ -111,8 +101,7 @@ class SyncVocabulariesLicensesService(_SyncGroupService):
         self, *, terms: TermTranslationTerms, lang_codes: list[str] | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Show translations for the listed terms."""
-        params: WireParams = {"terms": terms}
-        params.update(drop_unset({"lang_codes": lang_codes}))
+        params = wire_params({"terms": terms}, {"lang_codes": lang_codes})
         return self._invoke_read("term_translation_show", params)
 
     def tag_create(
@@ -142,8 +131,7 @@ class SyncVocabulariesLicensesService(_SyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one vocabulary's name or tag membership."""
-        params: WireParams = {"id": id}
-        params.update(drop_unset({"name": name, "tags": tags}))
+        params = wire_params({"id": id}, {"name": name, "tags": tags})
         return self._invoke_mutation("vocabulary_update", params, policy)
 
     def vocabulary_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -232,8 +220,7 @@ class AsyncVocabulariesLicensesService(_AsyncGroupService):
         self, *, terms: TermTranslationTerms, lang_codes: list[str] | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """Show translations for the listed terms."""
-        params: WireParams = {"terms": terms}
-        params.update(drop_unset({"lang_codes": lang_codes}))
+        params = wire_params({"terms": terms}, {"lang_codes": lang_codes})
         return await self._invoke_read("term_translation_show", params)
 
     async def tag_create(
@@ -266,8 +253,7 @@ class AsyncVocabulariesLicensesService(_AsyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one vocabulary's name or tag membership."""
-        params: WireParams = {"id": id}
-        params.update(drop_unset({"name": name, "tags": tags}))
+        params = wire_params({"id": id}, {"name": name, "tags": tags})
         return await self._invoke_mutation("vocabulary_update", params, policy)
 
     async def vocabulary_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:

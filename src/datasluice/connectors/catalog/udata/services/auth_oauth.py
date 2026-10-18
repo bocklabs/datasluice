@@ -24,6 +24,7 @@ from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
 
+from ._receipts import _attach_receipt as _attach
 from ._receipts import (
     _error_status,
     _failure_event,
@@ -33,7 +34,7 @@ from .datasets import (
     _enforce_mutation_policy,
     _require_mutation_permission,
 )
-from .organizations_memberships import _attach, _org_receipt
+from .organizations_memberships import _org_receipt
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -200,7 +201,7 @@ class SyncAuthOAuthService:
             )
             result = decode(status, payload, _media_type(response.headers))
         except SETTLEMENT_ERRORS as error:
-            self._client._emit(operation, "failed")
+            self._client._emit(operation, _failure_event(error))
             raise error
         self._client._emit(operation, "succeeded")
         return result
@@ -347,7 +348,7 @@ class SyncAuthOAuthService:
             )
             document = wire.parse_error_document("oauth_error", status, _media_type(response.headers))
         except SETTLEMENT_ERRORS as error:
-            self._client._emit(operation, "failed")
+            self._client._emit(operation, _failure_event(error))
             raise error
         self._client._emit(operation, "succeeded")
         return document
@@ -392,7 +393,7 @@ class AsyncAuthOAuthService:
             )
             result = decode(status, payload, _media_type(response.headers))
         except ASYNC_SETTLEMENT_ERRORS as error:
-            self._client._emit(operation, "failed")
+            self._client._emit(operation, _failure_event(error))
             raise error
         self._client._emit(operation, "succeeded")
         return result
@@ -541,7 +542,7 @@ class AsyncAuthOAuthService:
             )
             document = wire.parse_error_document("oauth_error", status, _media_type(response.headers))
         except ASYNC_SETTLEMENT_ERRORS as error:
-            self._client._emit(operation, "failed")
+            self._client._emit(operation, _failure_event(error))
             raise error
         self._client._emit(operation, "succeeded")
         return document

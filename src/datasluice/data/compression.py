@@ -289,9 +289,9 @@ def _zip_largest_member(source: Any) -> Any:
         if len(member_bytes) > _MAX_DECOMPRESSED_BYTES:
             raise DecompressionError("ZIP member exceeds the decompressed byte limit")
     except (zipfile.BadZipFile, RuntimeError, OSError, zlib.error) as exc:
-        zf.close()
         raise DecompressionError(f"ZIP member {largest.filename!r} could not be extracted: {exc}") from exc
-    zf.close()
+    finally:
+        zf.close()
     source.close()
     return io.BytesIO(member_bytes)
 

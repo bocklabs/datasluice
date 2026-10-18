@@ -17,6 +17,7 @@ from datasluice.runtime.capability import AsyncProbeRunner, ProbeRunner
 from datasluice.runtime.clients import AsyncCatalogTransport
 from datasluice.runtime.constants import (
     DEFAULT_CAPABILITY_CACHE_TTL_SECONDS,
+    DEFAULT_MAX_UPLOAD_BYTES,
 )
 from datasluice.runtime.resilience import BreakerRegistry
 from datasluice.runtime.transport.base import CatalogTransport
@@ -38,8 +39,9 @@ def normalize_origin(value: str) -> str:
         The normalized URL carrying scheme, netloc, and an optional mount path.
 
     Raises:
-        ValueError: If the URL is not a sanitized HTTP(S) origin, or an http
-            origin targets a non-loopback host.
+        ValueError: If the URL is not a sanitized HTTP(S) origin, a non-public
+            HTTP(S) host is targeted, or plain-text HTTP targets a host outside
+            ``LOOPBACK_HOSTS``.
     """
     if not isinstance(value, str) or not value:
         raise ValueError("CKAN client settings require a non-empty base URL string.")
@@ -52,9 +54,15 @@ def normalize_origin(value: str) -> str:
         raise ValueError("CKAN base URLs cannot carry query strings or fragments.")
     if parsed.scheme == "http" and parsed.hostname not in LOOPBACK_HOSTS:
         raise ValueError("Plain-text HTTP origins are restricted to loopback CKAN deployments.")
-    validate_http_target(value, allow_private=parsed.hostname in LOOPBACK_HOSTS)
-    if any(segment in {".", ".."} for segment in unquote(parsed.path).split("/")):
-        raise ValueError("CKAN base URLs cannot carry dot path segments.")
+    try:
+        validate_http_target(value, allow_private=parsed.hostname in LOOPBACK_HOSTS)
+    except ValueError as error:
+        raise ValueError(
+            "CKAN base URLs must target a public host; only plain-text loopback deployments may be private."
+        ) from error
+    decoded_path = unquote(parsed.path)
+    if "\\" in decoded_path or any(segment in {".", ".."} for segment in decoded_path.split("/")):
+        raise ValueError("CKAN base URLs cannot carry backslash or dot path segments.")
     return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
 
 
@@ -94,7 +102,7 @@ class CKANClientSettings:
     probe_policy: Literal["auto", "declared-baseline"] = "auto"
     capability_cache_ttl: float = DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
     rate_policy: PortalRatePolicy | None = None
-    max_upload_bytes: int | None = 64 * 1024 * 1024
+    max_upload_bytes: int | None = DEFAULT_MAX_UPLOAD_BYTES
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_url", normalize_origin(self.base_url))

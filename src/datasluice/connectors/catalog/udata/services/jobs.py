@@ -38,8 +38,23 @@ from .taxonomies import (
 )
 
 if TYPE_CHECKING:
+    from typing import Protocol, Self
+
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
     from datasluice.domain.catalog.resilience import TimeBudget
+
+    class _WaitableHandle(Protocol):
+        @property
+        def terminal(self) -> bool: ...
+        @property
+        def abandoned(self) -> bool: ...
+        @property
+        def polls(self) -> int: ...
+        @property
+        def max_polls(self) -> int: ...
+
+        def abandoned_lease(self, *, exhausted: bool = False) -> Self: ...
+
 
 _WAIT_ACTION = "Pass a handle whose task identifier names the queued execution to watch."
 
@@ -60,12 +75,12 @@ def _created_identifier(payload: object) -> str:
     return WORKER_JOBS_COLLECTION
 
 
-def _wait_step(
-    handle: UDataJobHandle,
+def _wait_step[H: _WaitableHandle](
+    handle: H,
     monitor: DeadlineMonitor,
     record: MappingRecord | None,
     delay: float,
-) -> tuple[bool, UDataJobHandle, MappingRecord | None]:
+) -> tuple[bool, H, MappingRecord | None]:
     """Decide whether the current lease may take one more bounded poll."""
     if handle.terminal or handle.abandoned:
         return False, handle, record

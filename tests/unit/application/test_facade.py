@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -377,7 +378,7 @@ def test_facade_materialize_delegates_once_and_closes_owned_dependencies(
     assert session.plugins.close_calls == 1
 
 
-def test_partial_bulk_download_does_not_misattribute_resources(tmp_path) -> None:
+def test_partial_bulk_download_does_not_misattribute_resources(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datasluice.exceptions import DownloadError
 
     class PartialTransport(_Transport):
@@ -386,6 +387,8 @@ def test_partial_bulk_download_does_not_misattribute_resources(tmp_path) -> None
                 return RuntimeResponse(404, {}, b"missing")
             return RuntimeResponse(200, {}, request.url.encode())
 
+    answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: answers)
     resources = [Resource(id=name, name=f"{name}.csv", url=f"https://catalog.test/{name}.csv") for name in "abc"]
     with (
         DataSluice(session=DataSluiceSession(transport=PartialTransport())) as facade,
@@ -394,6 +397,7 @@ def test_partial_bulk_download_does_not_misattribute_resources(tmp_path) -> None
         facade.download_many(resources, str(tmp_path))
     assert (tmp_path / "a.csv").read_bytes() == b"https://catalog.test/a.csv"
     assert (tmp_path / "c.csv").read_bytes() == b"https://catalog.test/c.csv"
+    assert not (tmp_path / "b.csv").exists()
 
 
 def test_bulk_download_uses_the_session_cache(tmp_path) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 
 from tests.helpers import import_probe, import_purity
 
@@ -39,11 +40,25 @@ def test_probe_rejects_empty_targets(capsys) -> None:
     assert "usage:" in capsys.readouterr().out
 
 
+def test_probe_rejects_empty_forbidden(capsys) -> None:
+    """An empty forbidden list is a usage error rather than a vacuous pass."""
+    assert import_probe.main(["import_probe.py", "json", ",", "module"]) == 2
+    assert "usage:" in capsys.readouterr().out
+
+
 def test_probe_accepts_a_trailing_comma_in_targets() -> None:
     """Targets are filtered symmetrically with forbidden entries."""
-    assert import_probe.main(["import_probe.py", "json,", "pyarrow", "module"]) == 0
+    result = subprocess.run(
+        [sys.executable, str(import_purity._PROBE), "json,", "pyarrow", "module"],
+        capture_output=True,
+        text=True,
+        timeout=import_purity._PROBE_TIMEOUT_SECONDS,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_probe_reports_a_forbidden_distribution() -> None:
     """A genuinely forbidden distribution still fails the probe."""
-    assert import_probe.main(["import_probe.py", "csv", "csv", "distribution"]) == 1
+    result = import_purity._run_probe(("typer",), ("typer",), "distribution")
+    assert result.returncode == 1
+    assert "pulled forbidden modules" in result.stdout

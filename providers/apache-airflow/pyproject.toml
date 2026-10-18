@@ -28,7 +28,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "mypy",
     "pytest>=8,<10",
 ]
 

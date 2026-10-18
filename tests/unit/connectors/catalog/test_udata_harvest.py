@@ -418,6 +418,9 @@ def test_bulk_preview_is_local_and_binds_confirmation_to_the_exact_ordered_set()
     assert "source-1" not in preview.confirmation_target
     assert service.preview_bulk("run-source", targets).destructive is False
     assert service.preview_bulk("unschedule-source", targets).destructive is True
+    bad_targets = cast("tuple[str, ...]", "abc")
+    with pytest.raises(ValueError):
+        HarvestBulkTargets(bad_targets)
 
 
 @pytest.mark.parametrize("mutation", ["source-1", "other"])
@@ -558,7 +561,7 @@ def test_bulk_run_budget_exhaustion_is_reported_not_hidden() -> None:
     )
     router = sync_route_table(routes)
     targets = HarvestBulkTargets(("source-1", "source-2"))
-    ticks: list[float] = [0.0, 100.0]
+    ticks = iter((0.0, 0.0, 0.0, 0.0, 100.0, 100.0))
     with sync_client(router, UDATA_CREDENTIAL) as client:
         service = client.harvest_moderation_admin
         preview = service.preview_bulk("delete-source", targets)
@@ -569,11 +572,13 @@ def test_bulk_run_budget_exhaustion_is_reported_not_hidden() -> None:
             _policy(preview.confirmation_target, destructive=True),
             checkpoint_sink=lambda checkpoint: None,
             whole_run_budget=_BUDGET,
-            clock=lambda: ticks.pop() if ticks else 100.0,
+            clock=lambda: next(ticks, 100.0),
         )
     assert result.summary.budget_exhausted is True
     assert result.summary.state == "budget_exhausted"
-    assert result.summary.dispatches <= 1
+    assert result.summary.dispatches == 1
+    assert result.summary.outstanding == 1
+    assert [r.url for r in router.requests if "/harvest/source/" in r.url] == [_url("/api/1/harvest/source/source-1/")]
 
 
 # --- T-04-ADM-03: bounded job waits and abandonment ---------------------------------------

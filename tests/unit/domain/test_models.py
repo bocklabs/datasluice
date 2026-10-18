@@ -30,11 +30,6 @@ from datasluice.domain.catalog.profiles import (
 from datasluice.exceptions import DataSluiceError
 
 
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
-
-
 def test_license_defaults() -> None:
     license_ = License(id="CC-BY-4.0")
     assert license_.id == "CC-BY-4.0"

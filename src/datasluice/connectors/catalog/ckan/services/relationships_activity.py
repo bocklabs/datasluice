@@ -1,14 +1,3 @@
-"""Both-mode CKAN relationship, follow, and activity projections across the v2 ids.
-
-Relationships and follows (31 actions) ride the core ``relationships-follows`` id while the ckanext.activity tier (13
-actions) owns its optional ``activity`` id, so the two families resolve capability evidence independently (the v2
-profile correction from 03-02). Every typed method declares its owning v2 OperationId from the checked-in manifest and
-passes documented CKAN 2.11 parameters verbatim (D-04). Follower counts and ``am_following_*`` booleans shape to scalar
-ValueRecord envelopes while follower/followee lists decode user-kind records — genuine scalar typing per the Plan 08
-review. Mutations return CKANMutationResult through the shared receipt seam; anonymous count reads stay public per
-platform documentation.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -22,7 +11,7 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import ACTIVITY, PLATFORM
-from datasluice.connectors.catalog.ckan.services._shared import drop_unset
+from datasluice.connectors.catalog.ckan.services._shared import WireParams, drop_unset
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 
 if TYPE_CHECKING:
@@ -33,8 +22,6 @@ if TYPE_CHECKING:
     from datasluice.contracts.catalog.native.ckan import CKANResultItem
     from datasluice.domain.catalog.models import ResultEnvelope
     from datasluice.domain.catalog.safety import MutationPolicy
-
-type WireParams = dict[str, object]
 
 _GROUP = "relationships_activity"
 

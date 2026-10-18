@@ -70,8 +70,7 @@ def _skip_if_pandas_index_broken() -> None:
 def _make_stream() -> BatchStream:
     """Build a FRESH BatchStream with typed columns + a deliberate null.
 
-    The null in ``name[1]`` surfaces the null-representation divergence that the equivalence    assertion must
-    normalize.
+    The null in ``name[1]`` surfaces the null-representation divergence that the equivalence assertion must normalize.
     """
     import pyarrow as pa
 
@@ -104,8 +103,8 @@ def _make_timestamp_stream() -> BatchStream:
 def test_all_terminals_equivalent() -> None:
     """All four terminals produce data-equivalent output from one stream definition.
 
-    Each output is normalized to a ``pa.Table`` (pandas NaN -> Arrow None via ``pa.Table.from_pandas``,; DuckDB via
-    ``rel.to_arrow_table`` NOT ``.fetchall``, ), then compared with ``pa.Table.equals`` (Arrow ``__eq__`` handles nulls
+    Each output is normalized to a ``pa.Table`` (pandas NaN -> Arrow None via ``pa.Table.from_pandas``, DuckDB via
+    ``rel.to_arrow_table`` NOT ``.fetchall``), then compared with ``pa.Table.equals`` (Arrow ``__eq__`` handles nulls
     correctly).
     """
     import pyarrow as pa

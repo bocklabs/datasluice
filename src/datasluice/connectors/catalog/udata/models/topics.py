@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from types import MappingProxyType
+from typing import cast
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.connectors.catalog.udata.models.reuses import linked_identifier
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
-
-if TYPE_CHECKING:
-    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _DEFAULT_PAGE_SIZE = 20
 _TOPIC_SORTS = ("name", "created", "last_modified")
@@ -44,6 +43,8 @@ _TOPIC_SEARCH_PRODUCER_TYPES = frozenset(
     }
 )
 _ELEMENT_REFERENCE_CLASSES = ("Dataset", "Dataservice", "Reuse")
+_TOPIC_ELEMENT_LABEL = "uData topic element"
+_ELEMENTS_LIMIT_MESSAGE = "uData topic elements cannot exceed 100 entries."
 
 
 def segment(value: str, operation: str) -> str:
@@ -142,8 +143,8 @@ def _element_reference(value: object, operation: str) -> Mapping[str, str]:
         raise ValueError("uData topic element reference class is not a stock element class.")
     if not isinstance(element_id, str):
         raise ValueError("uData topic element reference id must be a string.")
-    linked_identifier(element_id, operation, "uData topic element")
-    return {"class": element_class, "id": element_id}
+    linked_identifier(element_id, operation, _TOPIC_ELEMENT_LABEL)
+    return MappingProxyType({"class": element_class, "id": element_id})
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +162,7 @@ class TopicListQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        paging(self.page, self.page_size, "list")
+        paging(self.page, self.page_size, "uData topic list")
         _validated_sort(self.sort, "list")
         _optional_text(self.q, "list q")
         _validated_filters(
@@ -188,7 +189,7 @@ class TopicSearchQuery:
     filters: Mapping[str, str | bool | tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
-        paging(self.page, self.page_size, "search")
+        paging(self.page, self.page_size, "uData topic search")
         _validated_sort(self.sort, "search")
         _optional_text(self.q, "search q")
         _validated_filters(
@@ -225,7 +226,7 @@ class TopicElementsQuery:
     tag: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        paging(self.page, self.page_size, "element")
+        paging(self.page, self.page_size, _TOPIC_ELEMENT_LABEL)
         if self.element_class is not None and self.element_class not in _TOPIC_ELEMENT_CLASS_CHOICES:
             raise ValueError("uData topic element class filter is not a documented element class.")
         _optional_text(self.q, "element q")
@@ -252,6 +253,16 @@ def _elements_carry_a_title_or_link(elements: tuple[TopicElementInput, ...] | No
     for element in elements or ():
         if element.title is None and element.element is None:
             raise ValueError("uData topic element must carry a title or a linked element.")
+
+
+def _validated_update_elements(elements: tuple[TopicElementInput, ...] | None) -> None:
+    """Require supplied update elements to be documented inputs within the pinned limit."""
+    if elements is None:
+        return
+    if not isinstance(elements, tuple) or not all(isinstance(element, TopicElementInput) for element in elements):
+        raise ValueError("uData topic elements must be a tuple of topic element inputs when supplied.")
+    if len(elements) > 100:
+        raise ValueError(_ELEMENTS_LIMIT_MESSAGE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,7 +320,7 @@ class TopicElementLink:
             raise ValueError("uData topic element link class is not a stock element class.")
         if not isinstance(self.element_id, str) or not self.element_id:
             raise ValueError("uData topic element link id must be a non-empty string.")
-        linked_identifier(self.element_id, "udata/api-v2.topic-elements-create", "uData topic element")
+        linked_identifier(self.element_id, "udata/api-v2.topic-elements-create", _TOPIC_ELEMENT_LABEL)
 
     def payload(self) -> dict[str, dict[str, str]]:
         return {"element": {"class": self.element_class, "id": self.element_id}}
@@ -325,7 +336,7 @@ class TopicElementsCreateInput:
         if not isinstance(self.elements, tuple) or not self.elements:
             raise ValueError("uData topic elements must be a non-empty tuple of element links.")
         if len(self.elements) > 100:
-            raise ValueError("uData topic elements cannot exceed 100 entries.")
+            raise ValueError(_ELEMENTS_LIMIT_MESSAGE)
         if not all(isinstance(link, TopicElementLink) for link in self.elements):
             raise ValueError("uData topic elements must be documented element links.")
 
@@ -362,7 +373,7 @@ class TopicCreateInput:
             if value is not None:
                 object.__setattr__(self, label, _frozen_mapping(value, f"topic {label}"))
         if isinstance(self.elements, tuple) and len(self.elements) > 100:
-            raise ValueError("uData topic elements cannot exceed 100 entries.")
+            raise ValueError(_ELEMENTS_LIMIT_MESSAGE)
         if not isinstance(self.elements, tuple) or not all(
             isinstance(element, TopicElementInput) for element in self.elements
         ):
@@ -420,10 +431,7 @@ class TopicUpdateInput:
             value = getattr(self, label)
             if value is not None:
                 object.__setattr__(self, label, _frozen_mapping(value, f"topic {label}"))
-        if self.elements is not None and not isinstance(self.elements, tuple):
-            raise ValueError("uData topic elements must be a tuple of topic element inputs when supplied.")
-        if self.elements is not None and len(self.elements) > 100:
-            raise ValueError("uData topic elements cannot exceed 100 entries.")
+        _validated_update_elements(self.elements)
         _elements_carry_a_title_or_link(self.elements)
 
     def payload(self) -> dict[str, object]:
@@ -447,6 +455,12 @@ class TopicMutationResult:
 
     receipt: MutationReceipt
     record: MappingRecord | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt, MutationReceipt) or (
+            self.record is not None and not isinstance(self.record, MappingRecord)
+        ):
+            raise ValueError("uData topic mutation results require a receipt and a mapping record.")
 
     def to_dict(self) -> dict[str, object]:
         return {

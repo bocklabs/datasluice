@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import composite_target, path_segment
-
-if TYPE_CHECKING:
-    from datasluice.domain.catalog.models import MappingRecord
-    from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.receipts import MutationReceipt
 
 SUBJECT_CLASSES = frozenset({"Dataset", "Reuse", "Dataservice"})
 RECIPIENT_CLASSES = frozenset({"User", "Organization"})
@@ -183,6 +180,12 @@ class TransferMutationResult:
 
     receipt: MutationReceipt
     transfer: MappingRecord | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt, MutationReceipt) or (
+            self.transfer is not None and not isinstance(self.transfer, MappingRecord)
+        ):
+            raise ValueError("uData transfer mutation results require a receipt and a mapping record.")
 
     def to_dict(self) -> dict[str, object]:
         return {

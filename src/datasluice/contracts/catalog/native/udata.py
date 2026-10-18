@@ -6,7 +6,6 @@ from datasluice.domain.catalog.models import MappingRecord, NativeRecord, Result
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
-    from threading import Event
 
     from datasluice.connectors.catalog.udata.models.activity_discussions import (
         ActivityQuery,
@@ -168,6 +167,12 @@ if TYPE_CHECKING:
 
 type UDataResultItem = NativeRecord
 type UDataResult = ResultEnvelope[UDataResultItem]
+
+
+class CancellationEvent(Protocol):
+    """Minimal cancellation handle shared by sync and async bulk execution."""
+
+    def is_set(self) -> bool: ...
 
 
 @runtime_checkable
@@ -655,7 +660,7 @@ class SyncUDataOrganizationsMembershipsService(Protocol):
 
     def list_organization_datasets(
         self, organization_id: str, query: OrganizationDatasetQuery | None = None
-    ) -> NativeRecord: ...
+    ) -> UDataResult: ...
 
     def list_organization_reuses(self, organization_id: str) -> tuple[MappingRecord, ...]: ...
 
@@ -857,7 +862,7 @@ class AsyncUDataOrganizationsMembershipsService(Protocol):
 
     async def list_organization_datasets(
         self, organization_id: str, query: OrganizationDatasetQuery | None = None
-    ) -> NativeRecord: ...
+    ) -> UDataResult: ...
 
     async def list_organization_reuses(self, organization_id: str) -> tuple[MappingRecord, ...]: ...
 
@@ -1727,7 +1732,7 @@ class SyncUDataHarvestService(Protocol):
         checkpoint: BulkCheckpoint | None = None,
         whole_run_budget: TimeBudget | None = None,
         item_budget: TimeBudget | None = None,
-        cancel_event: Event | None = None,
+        cancel_event: CancellationEvent | None = None,
         clock: Callable[[], float] = ...,
     ) -> HarvestBulkResult: ...
 
@@ -1823,7 +1828,7 @@ class AsyncUDataHarvestService(Protocol):
         checkpoint: BulkCheckpoint | None = None,
         whole_run_budget: TimeBudget | None = None,
         item_budget: TimeBudget | None = None,
-        cancel_event: object | None = None,
+        cancel_event: CancellationEvent | None = None,
         clock: Callable[[], float] = ...,
     ) -> HarvestBulkResult: ...
 
@@ -2102,7 +2107,7 @@ class AsyncUDataJobsService(Protocol):
         *,
         budget: TimeBudget | None = None,
         clock: Callable[[], float] = ...,
-        sleeper: Callable[[float], None] = ...,
+        sleeper: Callable[[float], Awaitable[None]] = ...,
     ) -> Awaitable[WorkerTaskWaitResult]: ...
 
 

@@ -1,23 +1,9 @@
 from __future__ import annotations
 
-import importlib
-import importlib.util
-import os
-
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
 
-if importlib.util.find_spec("datasluice.sync._hashing") is None:
-    if os.environ.get("DATASLUICE_TDD_RED") != "1":
-        pytest.skip("logical hashing implementation pending GREEN phase", allow_module_level=True)
-
-    def logical_sha256(table: pa.Table) -> str:
-        return ""
-
-else:
-    hashing_module = importlib.import_module("datasluice.sync._hashing")
-    logical_sha256 = hashing_module.logical_sha256
+from datasluice.sync._hashing import logical_sha256
 
 GOLDEN_BASIC_SHA256 = "178504a34646005b155886ba5f39b3dfa6ec20af8e44db6b5f839a305cfcb932"
 

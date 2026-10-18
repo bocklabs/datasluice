@@ -103,6 +103,6 @@ def test_connector_exposes_injected_normalized_native_services_and_effective_pro
 
 def test_connector_has_no_soda_two_compatibility_or_raw_request_escape_hatch() -> None:
     """The façade cannot expose SODA 2 compatibility or untyped HTTP helpers."""
-    from datasluice.connectors.catalog.socrata import SocrataConnector
+    from datasluice.connectors.catalog.socrata import SocrataConnector, create_socrata_connector
 
-    assert_no_transport_escape_hatch(SocrataConnector, FORBIDDEN)
+    assert_no_transport_escape_hatch(SocrataConnector, FORBIDDEN, create_socrata_connector(_context()))

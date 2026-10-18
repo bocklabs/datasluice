@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,11 +17,9 @@ from datasluice.connectors.catalog.udata.models.harvest import (
     HarvestValidationInput,
 )
 from datasluice.connectors.catalog.udata.wire import harvest, resources, root_profile
+from scripts import check_udata_phase_gate as gate
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import check_udata_phase_gate as gate  # type: ignore[import-not-found] # noqa: E402
 
 
 def _bindings() -> dict[str, Any]:

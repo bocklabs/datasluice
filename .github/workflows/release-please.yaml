@@ -93,6 +93,7 @@ jobs:
     needs: [release-please, publish-core-build]
     if: needs.publish-core-build.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: test-pypi
       url: https://test.pypi.org/p/datasluice
@@ -114,6 +115,7 @@ jobs:
     needs: [release-please, publish-core-build, publish-core-testpypi]
     if: needs.publish-core-testpypi.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -140,6 +142,7 @@ jobs:
     needs: [release-please, publish-core-build, publish-core-testpypi, publish-core-smoke]
     if: needs.publish-core-smoke.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/p/datasluice
@@ -190,6 +193,7 @@ jobs:
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: ${{ matrix.provider.testpypi_env }}
       url: https://test.pypi.org/p/${{ matrix.provider.package_name }}
@@ -217,6 +221,7 @@ jobs:
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -250,6 +255,7 @@ jobs:
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: ${{ matrix.provider.pypi_env }}
       url: https://pypi.org/p/${{ matrix.provider.package_name }}

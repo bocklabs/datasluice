@@ -80,9 +80,8 @@ class DecompressionError(FormatError):
 class TransformError(FormatError):
     """Raised when a transform step cannot be applied.
 
-    Transform failures are data-shape/decoding failures (an unsafe cast, a     missing column, an unsupported nesting),
-    so they hang off     :class:`FormatError` — matching the :class:`DecompressionError` precedent . No new exception
-    root.
+    Transform failures are data-shape/decoding failures (an unsafe cast, a missing column, an unsupported nesting), so
+    they hang off :class:`FormatError` — matching the :class:`DecompressionError` precedent. No new exception root.
     """
 
 

@@ -90,11 +90,6 @@ def test_mid_stream_deadline_exceeded_is_ambiguous_like_any_other_os_error() -> 
     ``OSError`` to ``failed`` after dispatch, which claims the target is unchanged when bytes may already be on the
     wire.
     """
-    from datasluice.connectors.catalog.udata.models.resources import (
-        MidStreamUploadError,
-        UploadDeadlineExceededError,
-    )
-
     assert issubclass(MidStreamUploadError, OSError)
     assert issubclass(UploadDeadlineExceededError, MidStreamUploadError)
 

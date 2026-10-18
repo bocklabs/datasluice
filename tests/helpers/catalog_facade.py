@@ -151,6 +151,13 @@ def assert_retained_projections(context: CatalogConnectorContext, projections: S
     assert projections.effective_profile is context.effective_profile
 
 
-def assert_no_transport_escape_hatch(connector: type[object], forbidden: frozenset[str]) -> None:
-    assert forbidden.isdisjoint(connector.__dict__)
+def assert_no_transport_escape_hatch(
+    connector: type[object], forbidden: frozenset[str], instance: object | None = None
+) -> None:
+    for klass in inspect.getmro(connector):
+        assert forbidden.isdisjoint(klass.__dict__)
+    parameters = inspect.signature(connector).parameters.values()
     assert "transport" not in inspect.signature(connector).parameters
+    assert not any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters)
+    if instance is not None:
+        assert forbidden.isdisjoint(vars(instance))

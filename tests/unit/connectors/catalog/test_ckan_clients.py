@@ -85,6 +85,24 @@ class StubProbeRunner:
         )
 
 
+class AsyncStubProbeRunner:
+    """The async twin of the bounded probe runner."""
+
+    def __init__(self, origin: str = LOOPBACK_ORIGIN) -> None:
+        self.origin = origin
+        self.probed: list[OperationId] = []
+
+    async def probe(self, operation_id: OperationId) -> ProbeEvidence:
+        self.probed.append(operation_id)
+        return ProbeEvidence(
+            operation_id=operation_id,
+            deployment_url=f"{self.origin}/api/3/action/datastore_search",
+            credential_classification=CredentialClassification.ANONYMOUS,
+            role_classification=RoleClassification.ANONYMOUS,
+            observed_response_class=ProbeResponseClass.SUCCESS,
+        )
+
+
 def _settings(
     transport: SyncCaptureTransport,
     *,
@@ -264,6 +282,50 @@ def test_optional_capability_dispatches_under_declared_baseline_policy() -> None
     client.datastore.query_and_record_crud(operation, guard)
 
     assert len(transport.requests) == 1
+
+
+def test_credentialed_sync_dispatch_accepts_anonymous_probe_evidence() -> None:
+    """Regression: a token-bearing client resolves probes anonymously and still sends the operation."""
+    transport = SyncCaptureTransport(body=success_body({"records": [], "count": 0}))
+    settings = CKANClientSettings(
+        base_url=LOOPBACK_ORIGIN,
+        sync_transport=transport,
+        credential=CKANCredential(api_token="secret-token-123"),
+        probe_policy="auto",
+        probe_runner=StubProbeRunner(),
+    )
+    client = SyncCKANClient(
+        transport, declared_ckan_profile(), settings, owns_transport=False, inventory=_datastore_inventory()
+    )
+    operation, guard = _datastore_call()
+
+    client.datastore.query_and_record_crud(operation, guard)
+
+    assert len(transport.requests) == 1
+    assert transport.requests[0].url.endswith("/api/3/action/datastore_search")
+    assert transport.requests[0].headers["Authorization"] == "secret-token-123"
+
+
+def test_credentialed_async_dispatch_accepts_anonymous_probe_evidence() -> None:
+    """The async twin resolves probes anonymously for a credentialed client."""
+    transport = AsyncCaptureTransport(body=success_body({"records": [], "count": 0}))
+    settings = CKANClientSettings(
+        base_url=LOOPBACK_ORIGIN,
+        async_transport=transport,
+        credential=CKANCredential(api_token="secret-token-456"),
+        probe_policy="auto",
+        async_probe_runner=AsyncStubProbeRunner(),
+    )
+    client = AsyncCKANClient(
+        transport, declared_ckan_profile(), settings, owns_transport=False, inventory=_datastore_inventory()
+    )
+    operation, guard = _datastore_call()
+
+    asyncio.run(client.datastore.query_and_record_crud(operation, guard))
+
+    assert len(transport.requests) == 1
+    assert transport.requests[0].url.endswith("/api/3/action/datastore_search")
+    assert transport.requests[0].headers["Authorization"] == "secret-token-456"
 
 
 def test_borrowed_transport_is_never_closed_by_the_client() -> None:
@@ -652,6 +714,8 @@ def test_refreshed_credential_can_recover_after_unauthorized_response(asynchrono
         transport.status_code, transport.body = 200, success_body(PACKAGE_RESULT)
         assert asyncio.run(client.datasets.package_show(id="abc-123")).items
         assert len(transport.requests) == 2
+        assert transport.requests[0].headers["Authorization"] == "expired"
+        assert transport.requests[1].headers["Authorization"] == "fresh"
     else:
         sync_transport = SyncCaptureTransport(status_code=401)
         sync_client = SyncCKANClient(sync_transport, declared_ckan_profile(), settings)
@@ -661,15 +725,22 @@ def test_refreshed_credential_can_recover_after_unauthorized_response(asynchrono
         sync_transport.status_code, sync_transport.body = 200, success_body(PACKAGE_RESULT)
         assert sync_client.datasets.package_show(id="abc-123").items
         assert len(sync_transport.requests) == 2
+        assert sync_transport.requests[0].headers["Authorization"] == "expired"
+        assert sync_transport.requests[1].headers["Authorization"] == "fresh"
 
 
-@pytest.mark.parametrize("params", [{"value": float("nan")}, {"value": "oversized"}])
-def test_invalid_json_params_are_rejected_before_dispatch(params: dict[str, object]) -> None:
+@pytest.mark.parametrize(
+    ("params", "max_upload_bytes"),
+    [({"value": float("nan")}, 64 * 1024 * 1024), ({"value": "oversized"}, 8)],
+)
+def test_invalid_json_params_are_rejected_before_dispatch(params: dict[str, object], max_upload_bytes: int) -> None:
     transport = SyncCaptureTransport(body=success_body([]))
     client = SyncCKANClient(
         transport,
         declared_ckan_profile(),
-        CKANClientSettings(base_url=LOOPBACK_ORIGIN, max_upload_bytes=8, probe_policy="declared-baseline"),
+        CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN, max_upload_bytes=max_upload_bytes, probe_policy="declared-baseline"
+        ),
     )
     operation_id = OperationId("ckan", "action-api-v3", "dataset-list-show-search")
     operation = CatalogOperationRequest(
@@ -683,10 +754,18 @@ def test_invalid_json_params_are_rejected_before_dispatch(params: dict[str, obje
 
 
 @pytest.mark.parametrize(
-    "origin", ["https://169.254.169.254", "https://10.0.0.5/ckan", "https://host/a/../b", "https://host/a/%2e%2e/b"]
+    ("origin", "match"),
+    [
+        ("https://169.254.169.254", "public host"),
+        ("https://10.0.0.5/ckan", "public host"),
+        ("https://example.com/a/../b", "dot path segments"),
+        ("https://example.com/a/%2e%2e/b", "dot path segments"),
+        ("https://example.com/a\\..\\b", "backslash"),
+        ("https://example.com/a%5c..%5cb", "backslash"),
+    ],
 )
-def test_ckan_settings_reject_unsafe_hosts_and_mount_paths(origin: str) -> None:
-    with pytest.raises(ValueError):
+def test_ckan_settings_reject_unsafe_hosts_and_mount_paths(origin: str, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
         CKANClientSettings(base_url=origin)
 
 

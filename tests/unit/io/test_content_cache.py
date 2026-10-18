@@ -339,10 +339,11 @@ def test_mv_failure_cleans_orphan_temp_file(tmp_path: Path) -> None:
     with (
         patch.object(cache._fs, "pipe_file", wraps=original_pipe),
         patch.object(cache._fs, "mv", side_effect=OSError("injected move failure")),
-        pytest.raises(DownloadError),
+        pytest.raises(DownloadError) as raised,
     ):
         cache.put("k", b"data")
 
+    assert "'k'" in str(raised.value)
     entries = cache._fs.find(cache.cache_dir)
     orphans = [path for path in entries if ".tmp." in path.rsplit("/", 1)[-1]]
     assert orphans == [], f"orphan temp files left behind: {orphans}"
@@ -406,3 +407,28 @@ def test_expired_metadata_is_a_miss(tmp_path: Path) -> None:
     cache = ContentCache(str(tmp_path / "cache"), ttl=-1)
     cache.put_with_metadata("k", b"good", etag='"old"')
     assert cache.get_metadata("k") is None
+
+
+def test_lazy_sweep_removes_expired_rows_and_content(tmp_path: Path) -> None:
+    """Expired 'ready' rows and their SHA-named content files are reclaimed by the sweep."""
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("k", b"expired")
+    sha = cache._sha("k")
+    content_path = cache._content_path(sha)
+    conn = sqlite3.connect(cache._db_path)
+    try:
+        conn.execute("UPDATE cache SET fetched_at=? WHERE sha256=?", (time.time() - cache.ttl - 60, sha))
+        conn.commit()
+    finally:
+        conn.close()
+
+    cache._last_sweep = 0
+    assert cache.get("k") is None
+
+    conn = sqlite3.connect(cache._db_path)
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM cache WHERE sha256=?", (sha,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert count == 0
+    assert not cache._fs.exists(content_path)

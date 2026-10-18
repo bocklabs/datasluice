@@ -1,5 +1,3 @@
-"""Immutable uData activity and discussion inputs and mutation results."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -69,6 +67,8 @@ class DiscussionCreateInput:
                 raise ValueError(f"uData discussion {name} must be a non-empty string.")
         if not isinstance(self.subject, Mapping) or not self.subject.get("id") or not self.subject.get("class"):
             raise ValueError("uData discussion subject must name both an id and a class.")
+        if not all(isinstance(value, str) for value in self.subject.values()):
+            raise ValueError("uData discussion subject must only map string values.")
         for name in ("organization", "extras"):
             value = getattr(self, name)
             if value is not None and not _is_json_mapping(value):

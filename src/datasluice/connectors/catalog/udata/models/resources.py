@@ -11,7 +11,7 @@ from typing import BinaryIO
 
 from datasluice._uri import validate_http_target
 from datasluice.domain.catalog.ids import CatalogPlatform
-from datasluice.domain.catalog.models import NativeRecord
+from datasluice.domain.catalog.models import NativeRecord, redact_record_payload
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.errors.catalog import BudgetExhaustedError
@@ -236,7 +236,7 @@ class ResourceMutationResult:
         if self.extras is not None:
             if not isinstance(self.extras, Mapping):
                 raise ValueError("uData resource mutation extras must be a mapping.")
-            object.__setattr__(self, "extras", _freeze(self.extras))
+            object.__setattr__(self, "extras", _freeze(redact_record_payload(self.extras)))
 
     def to_dict(self) -> dict[str, object]:
         return {

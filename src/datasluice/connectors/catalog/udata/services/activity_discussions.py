@@ -31,17 +31,19 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
     from datasluice.domain.catalog.models import MappingRecord
 
+_DISCUSSION_KIND = ResourceKind("discussion")
+
 _mutation = partial(
     _run_mutation,
     SETTLEMENT_ERRORS,
     DiscussionMutationResult,
-    ResourceKind.RESOURCE,
+    _DISCUSSION_KIND,
 )
 _mutation_async = partial(
     _run_mutation_async,
     ASYNC_SETTLEMENT_ERRORS,
     DiscussionMutationResult,
-    ResourceKind.RESOURCE,
+    _DISCUSSION_KIND,
 )
 
 _DELETING_MUTATION = "deleted"

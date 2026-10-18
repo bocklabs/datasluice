@@ -545,7 +545,7 @@ _DECODE_FAILURE_CASES = (
     pytest.param(
         "access_token",
         OAuthTokenRequest(grant_type="client_credentials", client_id="c"),
-        {"token_type": "Bearer"},
+        {"token_type": "Bearer", "unexpected": "document"},
         id="access-token",
     ),
     pytest.param(

@@ -100,10 +100,11 @@ def test_jsonl_yields_before_reading_the_entire_source() -> None:
             assert size > 0
             return super().read(size)
 
-    source = BoundedReads(b'{"id": 1}\n' * 1000000)
+    payload = b'{"id": 1}\n' * 5000000
+    source = BoundedReads(payload)
     batches = JSONReader().read_batches(source)
     assert next(batches).num_rows > 0
-    assert source.tell() < 10000000
+    assert source.tell() < len(payload)
     batches.close()
 
 
@@ -112,3 +113,11 @@ def test_jsonl_empty_input_yields_no_batches() -> None:
     reader = JSONReader()
     batches = list(reader.read_batches(src))
     assert batches == []
+
+
+def test_jsonl_reads_a_record_larger_than_64_kib() -> None:
+    payload = b'{"id": 1, "desc": "' + b"x" * 200_000 + b'"}\n'
+    batches = list(JSONReader().read_batches(io.BytesIO(payload)))
+    assert len(batches) == 1
+    assert batches[0].num_rows == 1
+    assert set(batches[0].column("desc").to_pylist()) == {"x" * 200_000}

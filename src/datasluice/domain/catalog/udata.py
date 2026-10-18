@@ -157,8 +157,7 @@ def _validate_json_mapping(value: object, field_name: str, *, allow_none: bool =
         return None
     if not isinstance(value, Mapping):
         raise ValueError(f"uData site {field_name} must be a JSON object.")
-    _freeze_mapping(value, f"udata.site.{field_name}")
-    return value
+    return _freeze_mapping(value, f"udata.site.{field_name}")
 
 
 def _validate_blocks(value: object, field_name: str, *, allow_none: bool = False) -> None:
@@ -455,25 +454,29 @@ class SiteProfile:
         value = self.payload.get("feed_size")
         return cast("int | None", value)
 
+    def _mapping_values(self, field_name: str) -> Mapping[str, object] | None:
+        value = self.payload.get(field_name)
+        return cast("Mapping[str, object]", value) if value is not None else None
+
     @property
     def configs(self) -> Mapping[str, object] | None:
         """Return the native site configuration mapping when present."""
-        return _validate_json_mapping(self.payload.get("configs"), "configs", allow_none=True)
+        return self._mapping_values("configs")
 
     @property
     def themes(self) -> Mapping[str, object] | None:
         """Return the native site theme mapping when present."""
-        return _validate_json_mapping(self.payload.get("themes"), "themes", allow_none=True)
+        return self._mapping_values("themes")
 
     @property
     def settings(self) -> Mapping[str, object] | None:
         """Return the native site settings mapping when present."""
-        return _validate_json_mapping(self.payload.get("settings"), "settings", allow_none=True)
+        return self._mapping_values("settings")
 
     @property
     def metrics(self) -> Mapping[str, object] | None:
         """Return the native site metrics mapping when present."""
-        return _validate_json_mapping(self.payload.get("metrics"), "metrics", allow_none=True)
+        return self._mapping_values("metrics")
 
     def _block_values(self, field_name: str) -> tuple[Mapping[str, object], ...] | None:
         value = self.payload.get(field_name)
@@ -616,9 +619,9 @@ def _freeze_site_patch_mappings(patch: SitePatchInput) -> None:
     for field_name in _PATCH_MAPPING_FIELDS:
         value = getattr(patch, field_name)
         if value is not UNSET:
-            _validate_json_mapping(value, field_name, allow_none=True)
-        if isinstance(value, Mapping):
-            object.__setattr__(patch, field_name, _freeze_mapping(value, f"udata.site_patch.{field_name}"))
+            frozen = _validate_json_mapping(value, field_name, allow_none=True)
+            if frozen is not None:
+                object.__setattr__(patch, field_name, frozen)
 
 
 def _freeze_site_patch_blocks(patch: SitePatchInput) -> None:

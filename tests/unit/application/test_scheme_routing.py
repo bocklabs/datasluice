@@ -53,3 +53,4 @@ def test_windows_drive_path_routes_to_local_file() -> None:
     resource = _resolve_direct_resource(DirectResourceLocator(uri=path))
     assert isinstance(resource.access, LocalFile)
     assert resource.access.path == path
+    assert resource.name == "source.csv"

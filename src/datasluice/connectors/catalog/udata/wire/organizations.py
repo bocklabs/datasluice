@@ -26,6 +26,7 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
+from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import MappingRecord, NativeRecord, redact_record_payload
 from datasluice.errors.catalog import CatalogValidationError
@@ -171,7 +172,15 @@ def rdf_organization_format_request(organization_id: str, fmt: str) -> tuple[str
             safe_action="Pass a short documented RDF format extension.",
         )
     segment = _segment(organization_id, operation=RDF_ORGANIZATION_FORMAT_OPERATION)
-    return "GET", f"/api/1/organizations/{segment}/catalog.{fmt.lower()}", {}, None
+    extension = fmt.lower()
+    if extension not in RDF_FORMAT_MEDIA_TYPES:
+        raise CatalogValidationError(
+            "The uData organization catalog format is unsupported.",
+            operation=RDF_ORGANIZATION_FORMAT_OPERATION,
+            platform=PLATFORM.value,
+            safe_action="Use a stock uData RDF extension.",
+        )
+    return "GET", f"/api/1/organizations/{segment}/catalog.{extension}", {}, None
 
 
 def available_organization_badges_request() -> tuple[str, str, dict[str, str], None]:

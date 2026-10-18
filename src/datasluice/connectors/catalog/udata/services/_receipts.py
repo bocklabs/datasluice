@@ -6,7 +6,9 @@ import asyncio
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Never, cast
 
+from datasluice.connectors.catalog.udata.settlement import SETTLEMENT_ERRORS
 from datasluice.domain.catalog.operations import OperationId
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
@@ -19,8 +21,14 @@ from datasluice.runtime.transport.base import TransportError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from typing import Protocol
 
-    from datasluice.domain.catalog.receipts import MutationReceipt
+    class _ClosesInput(Protocol):
+        def close(self) -> None: ...
+
+    class _CarriesReceipt(Protocol):
+        @property
+        def receipt(self) -> MutationReceipt: ...
 
 
 def _operation_id(operation: str) -> OperationId:
@@ -114,6 +122,22 @@ def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseExcep
 def _raise_with_receipt(error: BaseException, receipt: MutationReceipt) -> Never:
     _attach_receipt(error, receipt)
     raise error
+
+
+def _close_input(
+    client_input: _ClosesInput,
+    result: _CarriesReceipt | None,
+    primary_error: BaseException | None,
+) -> None:
+    try:
+        client_input.close()
+    except SETTLEMENT_ERRORS as close_error:
+        receipt = result.receipt if result is not None else getattr(primary_error, "mutation_receipt", None)
+        if isinstance(receipt, MutationReceipt):
+            _attach_receipt(close_error, receipt)
+        if primary_error is not None:
+            raise primary_error from close_error
+        raise
 
 
 type FailureReceipt = Callable[[BaseException, object | None], MutationReceipt]

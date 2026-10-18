@@ -119,6 +119,33 @@ def test_oversized_source_refuses_before_any_transport_io() -> None:
     assert "max_upload_bytes" in excinfo.value.safe_action
 
 
+def test_multipart_field_parts_count_against_the_upload_ceiling() -> None:
+    """The multipart branch counts every buffered part, not only the upload bytes."""
+    transport = SyncCaptureTransport(body=success_body({}))
+    client = _client(transport, max_upload_bytes=8)
+
+    upload = io.BytesIO(b"x")
+    with pytest.raises(CatalogValidationError) as excinfo:
+        client.resources.resource_create(package_id="pkg-1", name="descriptive-name", upload=upload)
+
+    assert transport.requests == []
+    assert "max_upload_bytes" in excinfo.value.safe_action
+
+
+def test_non_json_serializable_upload_fields_refuse_as_typed_validation_errors() -> None:
+    """NaN and non-JSON upload fields raise the connector's typed boundary at zero I/O."""
+    transport = SyncCaptureTransport(body=success_body({}))
+    client = _client(transport)
+
+    for size in (float("nan"), object()):
+        upload = io.BytesIO(b"x")
+        with pytest.raises(CatalogValidationError) as excinfo:
+            client.resources.resource_create(package_id="pkg-1", size=size, upload=upload)
+        assert "finite JSON" in excinfo.value.safe_action
+
+    assert transport.requests == []
+
+
 def test_server_size_limit_envelope_maps_to_a_size_mentioning_safe_action() -> None:
     """Server-side media/size limits surface as typed validation errors."""
     transport = SyncCaptureTransport(

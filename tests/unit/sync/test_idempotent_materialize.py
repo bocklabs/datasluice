@@ -43,14 +43,14 @@ def test_two_passes_zero_writes_pass2(tmp_path, csv_server, make_resource, inmem
         uri = first_record.uri
         checksum = first_record.content_digest.value
         first_bytes = counting_fs.cat_file(uri)
-        writes_after_first = counting_fs.pipe_file_count
+        renames_after_first = counting_fs.mv_count
         second = _sync(tmp_path, resource, inmemory_state, transport)
 
     assert first[0].action == "materialized"
     assert second[0].action == "skipped-unchanged"
     second_record = second[0].record
     assert isinstance(second_record, Artifact)
-    assert counting_fs.pipe_file_count == writes_after_first
+    assert counting_fs.mv_count == renames_after_first
     assert counting_fs.cat_file(uri) == first_bytes
     assert second_record.content_digest.value == checksum
     assert server.captured_paths == ["/data.csv", "/data.csv"]
@@ -65,7 +65,7 @@ def test_changed_content_rewrites(tmp_path, csv_server, make_resource, inmemory_
 
     with patch("datasluice.io.filesystem.open_filesystem", return_value=counting_fs):
         first = _sync(tmp_path, resource, inmemory_state, transport)
-        writes_after_first = counting_fs.pipe_file_count
+        renames_after_first = counting_fs.mv_count
         server.responses["/data.csv"].body = b"id,name\n1,A\n2,changed\n"
         second = _sync(tmp_path, resource, inmemory_state, transport)
 
@@ -75,7 +75,7 @@ def test_changed_content_rewrites(tmp_path, csv_server, make_resource, inmemory_
     assert isinstance(second_record, Artifact)
     assert first_record.content_digest.value != second_record.content_digest.value
     assert second[0].action == "materialized"
-    assert counting_fs.pipe_file_count == writes_after_first + 1
+    assert counting_fs.mv_count == renames_after_first + 1
 
 
 def test_two_passes_zero_writes_checkpointed_local_parquet(tmp_path) -> None:
@@ -103,7 +103,7 @@ def test_two_passes_zero_writes_checkpointed_local_parquet(tmp_path) -> None:
                 destination_uri=destination,
             )
         )
-        writes_after_first = counting_fs.pipe_file_count
+        renames_after_first = counting_fs.mv_count
         second = list(
             sync_resources(
                 [resource],
@@ -116,7 +116,7 @@ def test_two_passes_zero_writes_checkpointed_local_parquet(tmp_path) -> None:
     assert first[0].action == "materialized"
     assert isinstance(first[0].record, Artifact)
     assert second[0].action == "skipped-unchanged"
-    assert counting_fs.pipe_file_count == writes_after_first
+    assert counting_fs.mv_count == renames_after_first
     assert second[0].record == first[0].record
 
 
@@ -176,7 +176,7 @@ def test_raw_passthrough() -> None:
 
     with patch("datasluice.io.filesystem.open_filesystem", return_value=counting_fs):
         first = materialize(resource, reader=reader, destination_uri=destination, mode="raw")
-        writes_after_first = counting_fs.pipe_file_count
+        renames_after_first = counting_fs.mv_count
         second = materialize(
             resource,
             reader=reader,
@@ -189,7 +189,7 @@ def test_raw_passthrough() -> None:
     assert counting_fs.cat_file(first.uri) == raw
     assert first.content_digest.value == hashlib.sha256(raw).hexdigest()
     assert second == first
-    assert counting_fs.pipe_file_count == writes_after_first
+    assert counting_fs.mv_count == renames_after_first
 
 
 def test_destination_uri_is_uri_not_path(tmp_path, csv_server, make_resource) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -35,7 +36,7 @@ def _retry_after(value: str | None) -> float | None:
     if value is None:
         return None
     try:
-        return max(0.0, float(value))
+        seconds = float(value)
     except ValueError:
         try:
             parsed = parsedate_to_datetime(value)
@@ -43,7 +44,10 @@ def _retry_after(value: str | None) -> float | None:
             return None
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
-        return max(0.0, (parsed - datetime.now(UTC)).total_seconds())
+        seconds = (parsed - datetime.now(UTC)).total_seconds()
+    if not math.isfinite(seconds):
+        return None
+    return max(0.0, seconds)
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:

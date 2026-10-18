@@ -1,12 +1,3 @@
-"""URI display sanitizer: redact userinfo and sensitive query values.
-
-Query-position API keys, bearer tokens, signed-URL signatures, and ``user:password@`` userinfo routinely end up embedded
-inside URI strings that flow into log records and exception messages. The package
-:class:`datasluice.logging.RedactingFilter` only inspects named dict keys, so it cannot redact a secret buried inside a
-positional URL string. This module provides :func:`sanitize_uri` for every call site that needs a URI for human-facing
-display. The unsanitized URI is still used for actual I/O.
-"""
-
 from __future__ import annotations
 
 import ipaddress
@@ -125,7 +116,7 @@ def _http_target_host(value: str) -> str:
         raise ValueError("scheme")
     if "@" in parsed.netloc:
         raise ValueError("userinfo")
-    if port is not None and not 1 <= port <= 65535:
+    if port is not None and port < 1:
         raise ValueError("port")
     if not host or "\\" in host or "%" in host:
         raise ValueError("host")

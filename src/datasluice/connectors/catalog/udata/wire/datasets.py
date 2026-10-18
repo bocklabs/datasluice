@@ -9,6 +9,7 @@ from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import _DATASETS_OPERATION_ID, PLATFORM, parse_native_page
 from datasluice.connectors.catalog.udata.models._segment import path_segment
+from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES
 from datasluice.connectors.catalog.udata.wire._text_document import (
     APPROVED_TEXT_MEDIA_TYPES,
     bound_text_document,
@@ -31,9 +32,6 @@ if TYPE_CHECKING:
     )
 
 _PINNED_SOURCE_ORACLE_ACTION = "Verify the response against the pinned source oracle."
-_RDF_XML_MEDIA_TYPE = "application/rdf+xml"
-_TURTLE_MEDIA_TYPE = "application/x-turtle"
-_JSON_LD_MEDIA_TYPE = "application/ld+json"
 
 DATASET_OPERATIONS = {
     "list": "udata/api-v1.list-datasets",
@@ -57,6 +55,8 @@ DATASET_OPERATIONS = {
     "follow": "udata/api-v1.follow-dataset",
     "unfollow": "udata/api-v1.unfollow-dataset",
 }
+
+_UDATA_DATASET_LABEL = "uData dataset"
 
 _DATASET_PATH = "/api/1/datasets/"
 _DATASET_V2_PATH = "/api/2/datasets/"
@@ -413,8 +413,9 @@ def v2_extras_delete_request(
 def parse_dataset_detail(payload: object, *, operation: str = _DATASETS_OPERATION_ID) -> NativeRecord:
     """Decode one full v1/v2 dataset document into a native record.
 
-    The documented core fields (``id``, ``title``, ``slug``) are type-checked; unknown portal fields pass through
-    losslessly into the native payload.
+    The documented core fields (``id``, ``title``, ``slug``) are type-checked; unknown portal fields are retained in the
+    ``udata.dataset`` native extension only after shared credential redaction, with nesting depth and text length
+    bounded.
     """
     if not isinstance(payload, Mapping):
         raise CatalogValidationError(
@@ -485,6 +486,8 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
             safe_action=_PINNED_SOURCE_ORACLE_ACTION,
         )
     for key, value in payload.items():
+        if not isinstance(key, str) or not key:
+            raise _invalid_field("extras", operation, "an object with string keys")
         _validate_json_value(value, operation=operation, path=key)
     frozen = _freeze_json(redact_record_payload(payload), "udata.dataset_extras")
     if not isinstance(frozen, Mapping):
@@ -495,19 +498,6 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
             safe_action=_PINNED_SOURCE_ORACLE_ACTION,
         )
     return frozen
-
-
-RDF_FORMAT_MEDIA_TYPES = {
-    "rdf": _RDF_XML_MEDIA_TYPE,
-    "xml": _RDF_XML_MEDIA_TYPE,
-    "ttl": _TURTLE_MEDIA_TYPE,
-    "turtle": _TURTLE_MEDIA_TYPE,
-    "nt": "application/n-triples",
-    "n3": "text/n3",
-    "json": _JSON_LD_MEDIA_TYPE,
-    "jsonld": _JSON_LD_MEDIA_TYPE,
-    "trig": "application/trig",
-}
 
 
 def media_type_for_format(fmt: str, *, operation: str = _DATASETS_OPERATION_ID) -> str:
@@ -566,17 +556,17 @@ def list_dataset_followers_request(
     dataset_id: str, query: DatasetFollowersQuery
 ) -> tuple[str, str, dict[str, str], None]:
     operation = DATASET_OPERATIONS["list_followers"]
-    identifier = path_segment(dataset_id, operation, "uData dataset")
+    identifier = path_segment(dataset_id, operation, _UDATA_DATASET_LABEL)
     return "GET", f"{_DATASET_PATH}{identifier}/followers/?{_query(query.query_params())}", {}, None
 
 
 def follow_dataset_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
-    identifier = path_segment(dataset_id, DATASET_OPERATIONS["follow"], "uData dataset")
+    identifier = path_segment(dataset_id, DATASET_OPERATIONS["follow"], _UDATA_DATASET_LABEL)
     return "POST", f"{_DATASET_PATH}{identifier}/followers/", {}, None
 
 
 def unfollow_dataset_request(dataset_id: str) -> tuple[str, str, dict[str, str], None]:
-    identifier = path_segment(dataset_id, DATASET_OPERATIONS["unfollow"], "uData dataset")
+    identifier = path_segment(dataset_id, DATASET_OPERATIONS["unfollow"], _UDATA_DATASET_LABEL)
     return "DELETE", f"{_DATASET_PATH}{identifier}/followers/", {}, None
 
 

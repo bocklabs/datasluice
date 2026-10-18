@@ -167,8 +167,8 @@ class OrganizationCreateInput:
         _text(self.acronym, "acronym", allow_none=True)
         _text(self.url, "url", allow_none=True)
         _text(self.business_number_id, "business number", allow_none=True)
-        _reserved_fields(self.fields, _ORGANIZATION_FIELDS)
         object.__setattr__(self, "fields", _fields(self.fields, "fields"))
+        _reserved_fields(self.fields, _ORGANIZATION_FIELDS)
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {"name": self.name, "description": self.description}
@@ -211,8 +211,8 @@ class OrganizationUpdateInput:
             and not self.fields
         ):
             raise ValueError("uData organization updates require at least one field.")
-        _reserved_fields(self.fields, _ORGANIZATION_FIELDS)
         object.__setattr__(self, "fields", _fields(self.fields, "fields"))
+        _reserved_fields(self.fields, _ORGANIZATION_FIELDS)
 
     def payload(self) -> dict[str, object]:
         body: dict[str, object] = {

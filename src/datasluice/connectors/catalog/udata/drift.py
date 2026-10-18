@@ -1,11 +1,3 @@
-"""Bounded, redacted, read-only public uData drift monitoring.
-
-The reviewed record at ``.planning/phases/04-udata-connector/04-DRIFT-TARGETS.md`` currently
-approves no public target, so ``APPROVED_TARGETS`` is empty and both runners fail closed
-before any transport dispatch. Public drift monitoring stays disabled until two distinct
-deployments report the exact pinned uData release.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -463,9 +455,9 @@ def _detail(detail: str) -> str:
     return redacted if isinstance(redacted, str) else str(redacted)
 
 
-def _metadata(metadata: Mapping[str, object]) -> dict[str, object]:
+def _metadata(metadata: Mapping[str, object]) -> Mapping[str, object]:
     redacted = redact_mapping(metadata)
-    return dict(redacted) if isinstance(redacted, Mapping) else {}
+    return MappingProxyType(dict(redacted)) if isinstance(redacted, Mapping) else MappingProxyType({})
 
 
 def _record(

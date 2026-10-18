@@ -28,8 +28,10 @@ from datasluice.connectors.catalog.udata.wire import users as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogUnavailableError, CatalogValidationError, ForbiddenError
+from datasluice.runtime.events import EventEmitter, ListSink
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 if TYPE_CHECKING:
@@ -209,9 +211,9 @@ def test_user_wire_preserves_query_omission_and_body_presence() -> None:
 def test_user_and_api_token_inputs_reject_invalid_documented_values() -> None:
     with pytest.raises(ValueError, match="active must be a boolean"):
         UserCreateInput("Ada", "Lovelace", "ada@example.org", fields={"active": "false"})
-    with pytest.raises(ValueError, match="roles must be a list"):
+    with pytest.raises(ValueError, match="roles must be a tuple"):
         UserUpdateInput({"roles": "admin"})
-    with pytest.raises(ValueError, match="roles must be a list"):
+    with pytest.raises(ValueError, match="roles must be a tuple"):
         UserUpdateInput({"roles": [{"id": "admin"}]})
     with pytest.raises(ValueError, match="255 characters"):
         ApiTokenCreateInput(name="x" * 256)
@@ -316,16 +318,19 @@ def test_one_time_token_cannot_enter_ordinary_retained_sinks() -> None:
 
 
 class _PausingRevealToken(OneTimeUDataToken):
-    """Holder whose first plaintext read stalls, so a racing caller lands inside the read-then-clear window."""
+    """Holder whose first plaintext read stalls; a racing caller blocks on the holder lock, refused after the clear.
 
-    __slots__ = ("_guard", "_first_read", "_release", "_second_read", "_reads")
+    The second caller waits on the reveal lock, never inside the read-then-clear window, so it is refused with
+    ``RuntimeError`` once the plaintext is cleared.
+    """
+
+    __slots__ = ("_guard", "_first_read", "_release", "_reads")
 
     def __init__(self, value: str) -> None:
         super().__init__(value)
         self._reads = 0
         self._guard = Lock()
         self._first_read = Event()
-        self._second_read = Event()
         self._release = Event()
 
     def __getattribute__(self, name: str) -> object:
@@ -338,8 +343,6 @@ class _PausingRevealToken(OneTimeUDataToken):
             if reads == 1:
                 object.__getattribute__(self, "_first_read").set()
                 object.__getattribute__(self, "_release").wait(timeout=1.0)
-            elif reads == 2:
-                object.__getattribute__(self, "_second_read").set()
         return value
 
 
@@ -366,7 +369,6 @@ def test_concurrent_reveal_hands_the_plaintext_to_exactly_one_caller() -> None:
     for thread in threads:
         thread.start()
     assert holder._first_read.wait(timeout=1.0)
-    holder._second_read.wait(timeout=0.5)
     holder._release.set()
     for thread in threads:
         thread.join(timeout=5.0)
@@ -433,6 +435,7 @@ def _user_page_payload() -> dict[str, object]:
                 "token": "page-token-plaintext",
                 "token_hash": "page-token-hash",
                 "password": "page-password",
+                "api_key": "page-api-key",
             }
         ],
         "page": 1,
@@ -473,13 +476,15 @@ def test_paginated_user_reads_redact_the_same_credential_fields_as_single_reads(
             "last_name": "Lovelace",
             "slug": "ada-lovelace",
             "token": "page-token-plaintext",
+            "api_key": "page-api-key",
         },
         operation=wire.OPERATIONS["get_user"],
     )
     assert [record.resource_kind for record in page.items] == [single.resource_kind]
     assert [dict(record.payload) for record in page.items] == [dict(single.payload)]
-    for record in page.items:
+    for record in (*page.items, single):
         assert not set(record.payload) & set(_REDACTED_USER_KEYS)
+        assert record.payload["api_key"] == REDACTED
     assert "page-token-plaintext" not in repr(page.items)
 
 
@@ -647,6 +652,73 @@ def test_sync_interruption_after_dispatch_retains_ambiguous_target_receipt() -> 
     assert receipt.outcome == "ambiguous"
     assert receipt.target.value == "new-api-token"
     assert router.requests[-1].method == "POST"
+
+
+def test_sync_generator_exit_after_dispatch_retains_ambiguous_target_receipt() -> None:
+    class _AbandonedRouter(_Router):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.method == "POST" and request.url.endswith("/api/1/me/api_tokens/"):
+                self.requests.append(request)
+                raise GeneratorExit
+            return super().send(request)
+
+    router = _AbandonedRouter(_routes())
+    client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    token = ApiTokenCreateInput()
+    policy = _policy("create_api_token", "new-api-token")
+    with client, pytest.raises(GeneratorExit) as raised:
+        client.users_tokens.create_api_token(token, PERMISSIONS, policy)
+    receipt = raised.value.__dict__["mutation_receipt"]
+    assert isinstance(receipt, MutationReceipt)
+    assert receipt.outcome == "ambiguous"
+    assert receipt.target.value == "new-api-token"
+
+
+def test_sync_read_abandonment_settles_as_failed_before_reraising() -> None:
+    class _AbandonedReadRouter(_Router):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/api/1/users/person/"):
+                self.requests.append(request)
+                raise GeneratorExit
+            return super().send(request)
+
+    events = ListSink()
+    client = SyncUDataClient(
+        _AbandonedReadRouter(_routes()),
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=CREDENTIAL,
+        emitter=EventEmitter(sinks=(events,)),
+    )
+    with client, pytest.raises(GeneratorExit):
+        client.users_tokens.get_user("person")
+    assert [event.outcome for event in events.events if event.operation_id == wire.OPERATIONS["get_user"]] == ["failed"]
+
+
+def test_async_read_abandonment_settles_as_failed_before_reraising() -> None:
+    class _AbandonedReadRouter(_AsyncRouter):
+        async def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/api/1/users/person/"):
+                self.requests.append(request)
+                raise GeneratorExit
+            return await super().send(request)
+
+    events = ListSink()
+    client = AsyncUDataClient(
+        _AbandonedReadRouter(_routes()),
+        declared_udata_profile(),
+        origin=ORIGIN,
+        credentials=CREDENTIAL,
+        emitter=EventEmitter(sinks=(events,)),
+    )
+
+    async def run() -> None:
+        async with client:
+            with pytest.raises(GeneratorExit):
+                await client.users_tokens.get_user("person")
+
+    asyncio.run(run())
+    assert [event.outcome for event in events.events if event.operation_id == wire.OPERATIONS["get_user"]] == ["failed"]
 
 
 def test_async_token_create_matches_sync_receipt_and_secret_boundary() -> None:

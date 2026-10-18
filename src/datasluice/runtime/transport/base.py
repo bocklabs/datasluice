@@ -14,9 +14,6 @@ from datasluice.domain.catalog.redaction import redact_string
 if TYPE_CHECKING:
     from datasluice.runtime.resilience import DeadlineMonitor
 
-SENSITIVE_REDIRECT_HEADERS = frozenset(
-    {"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token", "x-app-token"}
-)
 _SAFE_REDIRECT_HEADERS = frozenset(
     {"accept", "content-type", "user-agent", "range", "if-none-match", "if-modified-since"}
 )

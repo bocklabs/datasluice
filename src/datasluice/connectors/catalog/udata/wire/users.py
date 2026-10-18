@@ -19,7 +19,7 @@ from datasluice.connectors.catalog.udata.models.users import (
 )
 from datasluice.connectors.catalog.udata.wire.organizations import parse_page, parse_records
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PlatformMetadata
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PlatformMetadata, redact_record_payload
 from datasluice.errors.catalog import CatalogValidationError
 
 PLATFORM = CatalogPlatform.UDATA
@@ -208,7 +208,7 @@ def parse_user(payload: object, *, operation: str) -> NativeRecord:
         platform=PLATFORM,
         resource_kind=_USER,
         id=CatalogId(platform=PLATFORM, resource_kind=_USER, value=payload["id"]),
-        payload=_redacted_user_payload(payload),
+        payload=_redacted_user_payload(redact_record_payload(payload)),
     )
 
 

@@ -1,14 +1,3 @@
-"""SQLite-indexed cache with atomic content-file publication.
-
-Writers stage bytes in a unique temporary file and rename it into place while holding a SQLite IMMEDIATE transaction.
-Other writers and orphan sweeps wait for that transaction; failed staging rolls back the metadata without replacing the
-previous content. Only complete content files are visible to readers.
-
-The index stores URL, ETag, Last-Modified, fetch time, and content length. Stale in-flight rows and orphaned content
-files are swept lazily, at most once per :data:`SWEEP_INTERVAL_SECONDS`. Connections are short-lived and explicitly
-closed after each operation.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -163,6 +152,12 @@ class ContentCache:
         tmp_path = f"{self.cache_dir}/.{sha}.tmp.{os.getpid()}.{secrets.token_hex(8)}"
         fetched_at = time.time()
 
+        try:
+            self._fs.pipe_file(tmp_path, data)
+        except Exception as exc:
+            safe_remove(self._fs, tmp_path)
+            raise DownloadError(f"Failed to publish cache content for key {key!r}") from exc
+
         conn = self._connect()
         try:
             conn.execute(_SQL_BEGIN_IMMEDIATE)
@@ -172,14 +167,13 @@ class ContentCache:
                 "VALUES (?, ?, ?, ?, ?, ?, 'ready')",
                 (sha, key, etag, last_modified, fetched_at, len(data)),
             )
-            self._fs.pipe_file(tmp_path, data)
             self._fs.mv(tmp_path, content_path)
             conn.execute("COMMIT")
         except Exception as exc:
             if conn.in_transaction:
                 conn.rollback()
             safe_remove(self._fs, tmp_path)
-            raise DownloadError("Failed to publish cache content") from exc
+            raise DownloadError(f"Failed to publish cache content for key {key!r}") from exc
         finally:
             conn.close()
 
@@ -223,7 +217,7 @@ class ContentCache:
             conn.close()
 
     def _maybe_sweep(self) -> None:
-        """Sweep stale ``writing`` rows and orphaned content files, at most once per interval.
+        """Sweep stale ``writing`` rows, expired rows, and orphaned content files, at most once per interval.
 
         Sweep failures are logged at DEBUG and never propagate — a sweep bug must never break ``get``/``put``.
         """
@@ -236,8 +230,9 @@ class ContentCache:
             try:
                 conn.execute(_SQL_BEGIN_IMMEDIATE)
                 conn.execute(
-                    "DELETE FROM cache WHERE status='writing' AND fetched_at + ? < ?",
-                    (STALE_WRITING_THRESHOLD_SECONDS, time.time()),
+                    "DELETE FROM cache WHERE (status='writing' AND fetched_at + ? < ?)"
+                    " OR (status='ready' AND fetched_at + ? < ?)",
+                    (STALE_WRITING_THRESHOLD_SECONDS, time.time(), self.ttl, time.time()),
                 )
                 known = {row[0] for row in conn.execute("SELECT sha256 FROM cache")}
                 for entry in self._fs.ls(self.cache_dir):

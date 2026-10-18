@@ -2,5 +2,6 @@
   name: pylint
   entry: pylint
   language: python
+  additional_dependencies: ["pylint"]
   types: [python]
   require_serial: true

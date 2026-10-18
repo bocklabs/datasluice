@@ -1,13 +1,3 @@
-"""Both-mode CKAN datastore projections across the split datastore v2 ids.
-
-Nine query/record-crud actions ride the optional ``query-and-record-crud`` id while ``datastore_search_sql`` owns its
-own ``sql-search`` id because the server-side sqlsearch gate disables it by default (D-02): a not-found wire envelope on
-that id classifies DEPLOYMENT_DISABLED, never disabling ordinary datastore work. ``datastore_delete`` is destructive-
-tier — it drops the whole table unless filters engage — and refuses pre-dispatch without a confirmed destructive policy
-through the single 03-03 gate; ``datastore_records_delete`` is record-scoped and never engages it. Query parameters
-(Solr and datastore dialects alike) flow verbatim per D-04.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -38,7 +28,7 @@ _GROUP = "datastore"
 
 def _mutation_target(_action: str, params: Mapping[str, object]) -> CatalogId:
     key = "resource_id" if "resource_id" in params else "name"
-    return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params.get(key, "")))
+    return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params[key]))
 
 
 def _search_params(

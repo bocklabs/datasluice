@@ -49,6 +49,7 @@ from .datasets import (
     _enforce_mutation_policy,
     _require_mutation_permission,
 )
+from .jobs import _wait_step
 from .resources import _attach, _receipt
 from .taxonomies import (
     AsyncCatalogService,
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
     from threading import Event
 
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.contracts.catalog.native.udata import CancellationEvent
     from datasluice.domain.catalog.resilience import TimeBudget
 
 HARVEST_SOURCE_KIND = ResourceKind("harvest-source")
@@ -221,22 +223,6 @@ def _waitable_handle(handle: UDataJobHandle) -> UDataJobHandle:
     if not isinstance(handle, UDataJobHandle) or handle.job_id is None:
         raise _wait_requirement()
     return handle
-
-
-def _wait_step(
-    handle: UDataJobHandle,
-    monitor: DeadlineMonitor,
-    record: MappingRecord | None,
-    delay: float,
-) -> tuple[bool, UDataJobHandle, MappingRecord | None]:
-    """Decide whether the current lease may take one more bounded poll."""
-    if handle.terminal or handle.abandoned:
-        return False, handle, record
-    if handle.polls >= handle.max_polls:
-        return False, handle.abandoned_lease(), record
-    if delay >= monitor.remaining():
-        return False, handle.abandoned_lease(exhausted=True), record
-    return True, handle, record
 
 
 def _wait_for_job(
@@ -829,7 +815,7 @@ class AsyncHarvestService(AsyncCatalogService):
         checkpoint: BulkCheckpoint | None = None,
         whole_run_budget: TimeBudget | None = None,
         item_budget: TimeBudget | None = None,
-        cancel_event: object | None = None,
+        cancel_event: CancellationEvent | None = None,
         clock: Clock = monotonic,
     ) -> HarvestBulkResult:
         """Run one confirmed, bounded, resumable admin harvest bulk plan."""

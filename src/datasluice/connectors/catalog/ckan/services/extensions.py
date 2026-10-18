@@ -1,13 +1,3 @@
-"""Both-mode CKAN background-job, task-status, and config-option projections.
-
-Background jobs and task status ride the core ``jobs-and-task-status`` id while the sysadmin-only config options own
-their admin ``config-options`` id with server authorization responses as the runtime evidence (D-09): forbidden
-envelopes map to ForbiddenError, never synthesized privilege. ``job_clear`` and ``task_status_delete`` are destructive-
-family and refuse pre-dispatch without a confirmed destructive policy through the single 03-03 gate.
-``config_option_update`` passes its key-value mapping verbatim so no server-side option name or value is translated or
-dropped.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -44,7 +34,7 @@ def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
         return CatalogId(PLATFORM, JOB, str(params.get("id", "")))
     if action.startswith("config_option"):
         return CatalogId(PLATFORM, _CONFIG_OPTION, "site-config")
-    return CatalogId(PLATFORM, TASK, str(params.get("id", "") if "id" in params else params.get("entity_id", "task")))
+    return CatalogId(PLATFORM, TASK, str(params["id"] if "id" in params else params.get("entity_id", "task")))
 
 
 class SyncExtensionsService(_SyncGroupService):

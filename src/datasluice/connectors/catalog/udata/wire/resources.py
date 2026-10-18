@@ -8,16 +8,15 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlencode
 
-from datasluice.connectors.catalog.udata.mapping import NativePageMetadata, UDataPageEnvelope, parse_native_page
+from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope, parse_native_page, shape_native_page
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, PageInfo, PlatformMetadata, _freeze_json
+from datasluice.domain.catalog.models import NativeRecord, _freeze_json
 from datasluice.errors.catalog import CatalogValidationError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.models.resources import ResourceCreateInput, ResourceUpdateInput
 
 RESOURCE_OPERATION = "udata/api-v1.dataset-resource-create-update-reorder-upload-delete"
-RESOURCE_READ_OPERATION = "udata/api-v1.resource-reads"
 RESOURCE_MUTATION_CAPABILITY = "udata/api-v1.resource-mutations"
 RESOURCE_DELETE_CAPABILITY = "udata/api-v1.resource-destructive-mutations"
 
@@ -105,7 +104,12 @@ def update_resources_request(
     dataset_id: str, values: tuple[ResourceUpdateInput, ...]
 ) -> tuple[str, str, dict[str, str], object]:
     if not values:
-        raise ValueError("uData resource reorder requires at least one resource.")
+        raise CatalogValidationError(
+            "uData resource reorder requires at least one resource.",
+            operation=REORDER_OPERATION,
+            platform="udata",
+            safe_action="Pass at least one resource update before reordering.",
+        )
     return _request(
         "PUT", f"/api/1/datasets/{_id(dataset_id, 'dataset id')}/resources/", [item.payload() for item in values]
     )
@@ -142,6 +146,13 @@ def reupload_community_request(resource_id: str) -> tuple[str, str, dict[str, st
 def v2_extras_request(
     method: str, dataset_id: str, resource_id: str, body: object = None
 ) -> tuple[str, str, dict[str, str], object | None]:
+    if method not in {"GET", "PUT", "DELETE"}:
+        raise CatalogValidationError(
+            "The uData resource method is not documented.",
+            operation=RESOURCE_OPERATION,
+            platform="udata",
+            safe_action="Use GET, PUT, or DELETE for resource routes.",
+        )
     return _request(
         method,
         f"/api/2/datasets/{_id(dataset_id, 'dataset id')}/resources/{_id(resource_id, 'resource id')}/extras/",
@@ -152,6 +163,13 @@ def v2_extras_request(
 def resource_request(
     method: str, dataset_id: str, resource_id: str, *, community: bool = False, body: object = None
 ) -> tuple[str, str, dict[str, str], object | None]:
+    if method not in {"GET", "PUT", "DELETE"}:
+        raise CatalogValidationError(
+            "The uData resource method is not documented.",
+            operation=RESOURCE_OPERATION,
+            platform="udata",
+            safe_action="Use GET, PUT, or DELETE for resource routes.",
+        )
     if community:
         path = f"/api/1/datasets/community_resources/{_id(resource_id, 'community resource id')}/"
     else:
@@ -193,6 +211,13 @@ def list_community_resources_request(
 
 
 def community_collection_request(method: str, body: object = None) -> tuple[str, str, dict[str, str], object | None]:
+    if method != "POST":
+        raise CatalogValidationError(
+            "The uData community collection method is not documented.",
+            operation=COMMUNITY_CREATE_OPERATION,
+            platform="udata",
+            safe_action="Use POST for the community collection route.",
+        )
     return _request(method, "/api/1/datasets/community_resources/", body)
 
 
@@ -263,28 +288,7 @@ def parse_v2_dataset(payload: object) -> NativeRecord:
 
 def parse_resource_page(payload: object) -> UDataPageEnvelope:
     page = parse_native_page(payload, operation=RESOURCE_OPERATION)
-    native_page = NativePageMetadata(
-        present_fields=page.present_fields,
-        page=page.page,
-        page_size=page.page_size,
-        previous_page=page.previous_page,
-        next_page=page.next_page,
-        total=page.total,
-    )
-    page_info = None
-    if page.page is not None or page.next_page is not None:
-        next_cursor = page.next_page
-        if next_cursor is not None and page.page is not None:
-            next_cursor = str(page.page + 1)
-        page_info = PageInfo(
-            cursor=None if page.page is None else str(page.page), next_cursor=next_cursor, total_items=page.total
-        )
-    return UDataPageEnvelope(
-        items=tuple(parse_resource(item) for item in page.items),
-        page=page_info,
-        platform=PlatformMetadata(platform=CatalogPlatform.UDATA, extensions={"udata.page": native_page.to_dict()}),
-        native_page=native_page,
-    )
+    return shape_native_page(page, tuple(parse_resource(item) for item in page.items))
 
 
 def parse_resource_types(payload: object) -> tuple[Mapping[str, str], ...]:

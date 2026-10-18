@@ -18,9 +18,10 @@ from datasluice.domain.catalog import (
     ResultEnvelope,
     WarningRecord,
 )
-from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.models import MappingRecord, redact_record_payload
 from datasluice.domain.catalog.redaction import MAX_METADATA_ENTRIES, MAX_TEXT_LENGTH, REDACTED, TRUNCATED
 from datasluice.exceptions import DataSluiceError
+from tests.helpers.immutability import assign_readonly
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -36,11 +37,6 @@ _CREDENTIAL_PAYLOAD: dict[str, object] = {
     "nested": {"client_secret": "live-client-secret", "safe": "kept"},
     "rows": [{"credential": "live-row-credential", "name": "kept"}],
 }
-
-
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
 
 
 def _dataset() -> DatasetRecord:
@@ -97,7 +93,7 @@ def test_native_and_normalized_records_are_recursively_immutable_and_thaw_to_fre
     with pytest.raises(TypeError):
         cast("dict[str, object]", native.payload)["state"] = "active"
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(dataset, "name", "Other")
+        assign_readonly(dataset, "name", "Other")
 
     serialized = native.to_dict()
     serialized_payload = cast("dict[str, list[dict[str, str]]]", serialized["payload"])
@@ -263,6 +259,10 @@ def test_record_payload_redaction_is_idempotent() -> None:
     restored = NativeRecord.from_dict(once)
     assert restored.to_dict() == once
     assert restored.to_dict() == NativeRecord.from_dict(restored.to_dict()).to_dict()
+
+
+def test_record_payload_redaction_keeps_an_empty_key() -> None:
+    assert redact_record_payload({"": "safe", "ok": "fine"}) == {"": "safe", "ok": "fine"}
 
 
 def test_result_envelope_serialization_redacts_record_payloads_recursively() -> None:

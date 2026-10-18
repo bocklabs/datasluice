@@ -134,8 +134,8 @@ def suggest_reuses_request(query: ReuseSuggestQuery) -> Request:
     return _request("GET", f"{_REUSE_PATH}suggest/?{_query(query.query_params())}")
 
 
-def reuse_image_request(reuse_id: str) -> tuple[str, str, dict[str, str]]:
-    return "POST", f"{_REUSE_PATH}{segment(reuse_id, REUSE_IMAGE_OPERATION)}/image/", {}
+def reuse_image_request(reuse_id: str) -> Request:
+    return _request("POST", f"{_REUSE_PATH}{segment(reuse_id, REUSE_IMAGE_OPERATION)}/image/")
 
 
 def reuse_types_request() -> Request:

@@ -9,13 +9,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from scripts import check_udata_phase_gate as gate
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import check_udata_phase_gate as gate  # type: ignore[import-not-found] # noqa: E402
 
 
 def test_profile_operations_rejects_duplicate_ids(tmp_path: Path) -> None:
@@ -41,7 +40,7 @@ def _local_receipts_present() -> bool:
 
 
 def _review_gate() -> Any:
-    import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
+    from scripts import check_udata_review_gate as review_gate
 
     return review_gate
 
@@ -157,12 +156,15 @@ def test_semantic_conformance_requires_current_head_reviews(tmp_path: Path, monk
     assert gate.semantic_conformance() == (1, total)
 
 
-def test_every_current_era_receipt_verifies_at_its_own_sha(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Known-good: every receipt of the reviewed families is valid at its recorded sha."""
+def test_each_reviewed_family_has_a_receipt_that_verifies_at_its_recorded_sha() -> None:
+    """Known-good: each reviewed family carries at least one receipt valid at its recorded sha.
+
+    Mirrors the phase gate's credit rule: the first internally verifying receipt carries the family's credit, so later
+    receipts are not checked here.
+    """
     if not _local_receipts_present():
         pytest.skip("the review receipts require the local-only dev/udata-evidence tree")
-    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
-    import check_udata_review_gate as review_gate  # type: ignore[import-not-found]
+    review_gate = _review_gate()
 
     reviewed_families = gate.FAMILIES
     for family in reviewed_families:

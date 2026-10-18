@@ -1,5 +1,3 @@
-"""Transport-backed strict-version sync and async uData clients."""
-
 from __future__ import annotations
 
 import asyncio
@@ -241,7 +239,7 @@ _DATASET_PAGE_MAX_BYTES = 8 * 1024 * 1024
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 _CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
-_CONTROLLED_DOCKERFILE_SHA256 = "d4924c2ba0dca28fead1f2c0f727f53ee8eb29fe0dfd9e9173a2edd5a873094e"
+_CONTROLLED_DOCKERFILE_SHA256 = "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28"
 _CONTROLLED_UDATA_LAYERS_SHA256 = "sha256:a91b7779e1225837c720078fff0fe151cfc2ca5da3c5a84d7c7563e819002bc6"
 _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
     (
@@ -321,6 +319,23 @@ def _dataset_idempotency(
     if any(not isinstance(part.data, bytes) for part in files):
         return IdempotencyPolicy(safe=False)
     return policy or IdempotencyPolicy(safe=method == "GET")
+
+
+def _dataset_retry_idempotency(
+    form_body: bytes | Callable[[], bytes] | None,
+    policy: IdempotencyPolicy | None,
+    method: str,
+    files: tuple[UploadPart, ...],
+) -> IdempotencyPolicy:
+    """Return the dataset retry policy, never repeating a streamed form body."""
+    if callable(form_body):
+        return IdempotencyPolicy(safe=False)
+    return _dataset_idempotency(policy, method, files)
+
+
+def _dataset_redirect_policy(redirect_mode: bool, files: tuple[UploadPart, ...]) -> RedirectPolicy:
+    """Return the dataset redirect policy, never following redirects for uploads."""
+    return RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW
 
 
 def _stream_failure_outcome(error: BaseException) -> str:
@@ -1915,6 +1930,9 @@ class SyncUDataClient(_UDataClientCore):
         **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
+        unknown = set(overrides) - set(_DatasetCallOverrides.__annotations__)
+        if unknown:
+            raise TypeError(f"Unknown dataset call overrides: {sorted(unknown)}.")
         raw_text = overrides.get("raw_text", False)
         redirect_mode = overrides.get("redirect_mode", False)
         emit_success = overrides.get("emit_success", True)
@@ -1951,7 +1969,7 @@ class SyncUDataClient(_UDataClientCore):
             ),
             body=body,
             files=files,
-            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
+            redirect_policy=_dataset_redirect_policy(redirect_mode, files),
             max_response_bytes=max_response_bytes,
             deadline=deadline,
         )
@@ -1971,9 +1989,7 @@ class SyncUDataClient(_UDataClientCore):
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=False)
-                if callable(form_body)
-                else _dataset_idempotency(idempotency_policy, method, files),
+                idempotency=_dataset_retry_idempotency(form_body, idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -2540,6 +2556,9 @@ class AsyncUDataClient(_UDataClientCore):
         **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
+        unknown = set(overrides) - set(_DatasetCallOverrides.__annotations__)
+        if unknown:
+            raise TypeError(f"Unknown dataset call overrides: {sorted(unknown)}.")
         raw_text = overrides.get("raw_text", False)
         redirect_mode = overrides.get("redirect_mode", False)
         emit_success = overrides.get("emit_success", True)
@@ -2576,7 +2595,7 @@ class AsyncUDataClient(_UDataClientCore):
             ),
             body=body,
             files=files,
-            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW,
+            redirect_policy=_dataset_redirect_policy(redirect_mode, files),
             max_response_bytes=max_response_bytes,
             deadline=deadline,
         )
@@ -2596,9 +2615,7 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=IdempotencyPolicy(safe=False)
-                if callable(form_body)
-                else _dataset_idempotency(idempotency_policy, method, files),
+                idempotency=_dataset_retry_idempotency(form_body, idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,

@@ -89,13 +89,15 @@ def test_wheel_import_proves_the_tracer_path_from_installed_content(built_wheel:
     """A fresh interpreter importing only the unpacked wheel runs the full tracer."""
     unpacked = _unpacked_wheel_source(built_wheel, tmp_path)
     tracer = Path(__file__).resolve().parent / "udata_wheel_tracer.py"
+    ambient = os.environ.get("PYTHONPATH")
+    pythonpath = str(unpacked) if not ambient else str(unpacked) + os.pathsep + ambient
     completed = subprocess.run(
         [sys.executable, str(tracer), str(unpacked)],
         capture_output=True,
         text=True,
         timeout=120,
         cwd=tmp_path,
-        env={**os.environ, "PYTHONPATH": str(unpacked) + os.pathsep + os.environ.get("PYTHONPATH", "")},
+        env={**os.environ, "PYTHONPATH": pythonpath},
     )
     assert completed.returncode == 0, completed.stderr
     assert "TRACER_OK" in completed.stdout

@@ -151,8 +151,9 @@ class _HttpxTransportBase:
     Both loops apply the one base-transport redirect policy: sensitive
     headers are re-evaluated against the target origin and any configured
     :class:`CredentialScope`, and a hop whose normalized origin differs from
-    the current one refuses to carry a request body or multipart parts what
-    the scope allows, so a cross-origin 307/308 never relays either.
+    the current one refuses to carry a request body or multipart parts
+    whatever the scope allows, so a cross-origin body-bearing hop never relays
+    either.
     """
 
     def __init__(

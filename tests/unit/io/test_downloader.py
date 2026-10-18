@@ -16,6 +16,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: answers)
+
+
 def test_downloader_rejects_dns_answers_with_private_addresses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     answers = [
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
@@ -111,12 +117,53 @@ def test_downloader_private_target_requires_explicit_allowance(tmp_path: Path) -
     assert Downloader(transport, allow_private_http=True).download(resource, tmp_path).read_bytes() == b"local"
 
 
+def test_downloader_reports_redirect_limit(tmp_path: Path) -> None:
+    from tests.helpers.httpx_probe import SyncProbe, fixed
+
+    responder = fixed(302, headers={"Location": "https://example.test/next"})
+    resource = _resource()
+    with SyncProbe(responder) as transport:
+        downloader = Downloader(transport)
+        with pytest.raises(DownloadError, match="redirect limit"):
+            downloader.download(resource, tmp_path)
+    assert len(transport.requests) == 11
+
+
+def test_downloader_reports_unusable_redirect_location(tmp_path: Path) -> None:
+    from tests.helpers.httpx_probe import SyncProbe, fixed
+
+    responder = fixed(302, headers={"Location": "http://["})
+    resource = _resource()
+    with SyncProbe(responder) as transport:
+        downloader = Downloader(transport)
+        with pytest.raises(DownloadError, match="unusable redirect Location"):
+            downloader.download(resource, tmp_path)
+    assert len(transport.requests) == 1
+
+
 def test_bad_checksum_does_not_populate_cache(tmp_path: Path) -> None:
     from datasluice.exceptions import ChecksumMismatchError
 
     cache = ContentCache(str(tmp_path / "cache"))
     transport = _Transport(RuntimeResponse(200, {}, b"corrupt"))
     resource = _resource()
+    downloader = Downloader(transport, cache=cache)
     with pytest.raises(ChecksumMismatchError):
-        Downloader(transport, cache=cache).download(resource, tmp_path, verify_hash="0" * 64)
+        downloader.download(resource, tmp_path, verify_hash="0" * 64)
     assert cache.get(resource.url or "") is None
+
+
+def test_bad_cached_checksum_evicts_the_poisoned_entry(tmp_path: Path) -> None:
+    import hashlib
+
+    from datasluice.exceptions import ChecksumMismatchError
+
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("https://catalog.example.test/data.csv", b"corrupt")
+    transport = _Transport(RuntimeResponse(200, {}, b"good"))
+    resource = _resource()
+    digest = hashlib.sha256(b"good").hexdigest()
+    with pytest.raises(ChecksumMismatchError):
+        Downloader(transport, cache=cache).download(resource, tmp_path, verify_hash=digest)
+    assert cache.get(resource.url or "") is None
+    assert transport.requests == []

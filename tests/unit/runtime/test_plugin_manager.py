@@ -8,16 +8,12 @@ import pytest
 
 from datasluice.exceptions import ConnectorNotFoundError
 from datasluice.runtime.plugin_manager import PluginFailure, PluginManager
+from tests.helpers.immutability import assign_readonly
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 CANONICAL_CONNECTOR_IDS = frozenset({"datasluice/ckan", "datasluice/udata", "datasluice/socrata"})
-
-
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
 
 
 def test_entry_point_discovery_lists_namespaced_canonical_ids() -> None:
@@ -128,7 +124,7 @@ def test_duplicate_entry_point_recorded_as_failure(monkeypatch: pytest.MonkeyPat
 def test_plugin_failure_is_frozen() -> None:
     failure = PluginFailure("test", "error")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(failure, "name", "other")
+        assign_readonly(failure, "name", "other")
 
 
 def test_get_error_message_lists_available() -> None:

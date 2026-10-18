@@ -760,6 +760,32 @@ def _assert_async_parity() -> None:
     assert [request.url for request in sync_transport.requests] == [request.url for request in async_transport.requests]
 
 
+def test_dataset_call_rejects_unknown_overrides_in_both_modes() -> None:
+    """A misspelled override fails fast in both modes instead of silently using the default."""
+    _, sync_client = _sync_root_client(_site_only_responder)
+    with sync_client, pytest.raises(TypeError, match="raw_txt"):
+        sync_client._dataset_call(  # type: ignore[call-arg]
+            method="GET",
+            path="/api/1/datasets/",
+            owning_operation="udata/api-v1.datasets",
+            raw_txt=True,
+        )
+
+    _, async_client = _async_root_client(_site_only_responder)
+
+    async def unknown_override() -> None:
+        async with async_client:
+            with pytest.raises(TypeError, match="raw_txt"):
+                await async_client._dataset_call_async(  # type: ignore[call-arg]
+                    method="GET",
+                    path="/api/1/datasets/",
+                    owning_operation="udata/api-v1.datasets",
+                    raw_txt=True,
+                )
+
+    asyncio.run(unknown_override())
+
+
 @pytest.mark.parametrize(
     "failure",
     cast("list[dict[str, object]]", _root_contract()["failure_cases"]),

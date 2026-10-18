@@ -17,7 +17,7 @@ def main(argv: list[str]) -> int:
     targets = [name for name in argv[1].split(",") if name]
     forbidden = [name for name in argv[2].split(",") if name]
     mode = argv[3]
-    if not targets:
+    if not targets or not forbidden:
         print(_USAGE)
         return 2
 

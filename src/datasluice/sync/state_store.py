@@ -1,9 +1,3 @@
-"""Incremental sync state stores: file-backed and in-memory ``StateStore`` impls.
-
-The :class:`datasluice.ports.state_store.StateStore` Protocol is the contract; this module provides its two concrete
-implementations. Both stores are dep-free at import time (stdlib + fsspec); pyarrow/dlt are never imported here.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -159,7 +153,11 @@ class FileStateStore:
 
     @contextmanager
     def key_lock(self, key: str) -> Iterator[threading.RLock]:
-        """Serialize a resource transaction across threads and local processes."""
+        """Serialize a resource transaction across threads and local processes.
+
+        On Windows the advisory file lock gives up after roughly ten seconds and raises
+        :class:`StateStoreError`; on POSIX it blocks until the lock is free.
+        """
         if not self._is_atomic_mv:
             raise StateStoreError("Sync transactions require local storage or a backend with a distributed key lock")
         with self._key_lock_held(key) as lock:
@@ -204,7 +202,12 @@ class FileStateStore:
                     lock_file.write(b"0")
                     lock_file.flush()
                 lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                except OSError as exc:
+                    raise StateStoreError(
+                        f"Timed out waiting for the per-key file lock at {sanitize_uri(path)}"
+                    ) from exc
             else:
                 import fcntl
 

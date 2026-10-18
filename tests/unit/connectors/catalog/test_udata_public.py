@@ -102,6 +102,6 @@ def test_connector_exposes_injected_normalized_native_services_and_effective_pro
 
 def test_connector_has_no_legacy_or_raw_request_escape_hatch() -> None:
     """The façade cannot expose legacy compatibility or untyped HTTP helpers."""
-    from datasluice.connectors.catalog.udata import UDataConnector
+    from datasluice.connectors.catalog.udata import UDataConnector, create_udata_connector
 
-    assert_no_transport_escape_hatch(UDataConnector, FORBIDDEN)
+    assert_no_transport_escape_hatch(UDataConnector, FORBIDDEN, create_udata_connector(_context()))

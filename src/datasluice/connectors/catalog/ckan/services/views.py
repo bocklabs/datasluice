@@ -1,11 +1,3 @@
-"""Both-mode CKAN resource-view projections under the optional views v2 id.
-
-Resource views exist only when the deployment registers a view plugin, so the whole family rides the optional
-``resource-views`` id and resolves capability evidence independently per deployment (the D-06 correction from 03-02).
-Typed methods pass documented CKAN 2.11 parameters verbatim (D-04) and view payloads stay lossless mapping records;
-mutations return CKANMutationResult through the shared receipt seam.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -49,11 +41,11 @@ def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "resource_create_default_resource_views":
         return CatalogId(PLATFORM, ResourceKind.RESOURCE, _mapping_identity(params.get("resource", ""), "id"))
     if action in {"resource_view_update", "resource_view_delete"}:
-        return CatalogId(PLATFORM, _VIEW, str(params.get("id", "")))
+        return CatalogId(PLATFORM, _VIEW, str(params["id"]))
     for key in ("resource_id", "id"):
         if key in params:
-            return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params.get(key, "")))
-    return CatalogId(PLATFORM, ResourceKind.RESOURCE, "")
+            return CatalogId(PLATFORM, ResourceKind.RESOURCE, str(params[key]))
+    raise KeyError("the view mutation carried no resource-targeting id")
 
 
 class SyncViewsService(_SyncGroupService):

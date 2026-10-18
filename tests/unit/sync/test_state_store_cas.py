@@ -470,7 +470,7 @@ def test_local_cas_coordinates_separate_processes(tmp_path: Path) -> None:
         results.close()
 
 
-def test_atomic_sync_refuses_a_store_without_a_transaction_lock(tmp_path: Path) -> None:
+def test_atomic_sync_refuses_a_store_without_a_transaction_lock() -> None:
     from datasluice.exceptions import DataSluiceError
     from datasluice.sync.sync import _resource_transaction
 

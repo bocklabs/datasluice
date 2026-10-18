@@ -214,7 +214,7 @@ def test_validate_rejects_invalid_credential_json(platform: str, credential_json
 
 
 def test_validate_redacts_socrata_multi_field_credential(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The socrata multi-field path redacts every secret-bearing field."""
+    """The socrata multi-field path redacts every secret-bearing field, even with the runtime escape hatch enabled."""
     monkeypatch.setenv("DATASLUICE_NO_REDACT", "1")
     result = runner.invoke(
         app,

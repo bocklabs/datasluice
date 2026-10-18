@@ -96,12 +96,12 @@ def test_healthy_destination_zero_write_remains(tmp_path, csv_server, make_resou
 
     with patch("datasluice.io.filesystem.open_filesystem", return_value=counting_fs):
         first = _sync(tmp_path, resource, store, transport)
-        writes_after_first = counting_fs.pipe_file_count
+        renames_after_first = counting_fs.mv_count
         second = _sync(tmp_path, resource, store, transport)
 
     assert first[0].action == "materialized"
     assert second[0].action == "skipped-unchanged"
-    assert counting_fs.pipe_file_count == writes_after_first
+    assert counting_fs.mv_count == renames_after_first
 
 
 def test_completed_resume_rematerializes_unhealthy_destination(tmp_path, csv_server, make_resource) -> None:

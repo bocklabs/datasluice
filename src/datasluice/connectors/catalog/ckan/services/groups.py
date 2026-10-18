@@ -1,11 +1,3 @@
-"""Both-mode CKAN group projections across the split v2 read and write ids.
-
-Every typed method declares its owning v2 OperationId from the checked-in manifest and passes documented CKAN 2.11
-parameters verbatim (D-04). ``group_purge`` refuses pre-dispatch without a confirmed destructive policy through the
-shared 03-03 gate; group member variants decode the connector-declared member kind. Privileged writes ride the declared
-profile plus server authorization responses, never synthesized capability claims.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,7 +11,13 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import GROUP, PLATFORM
-from datasluice.connectors.catalog.ckan.services._shared import WireParams, detail_params, drop_unset, wire_params
+from datasluice.connectors.catalog.ckan.services._shared import (
+    WireParams,
+    detail_params,
+    drop_unset,
+    fields_params,
+    wire_params,
+)
 from datasluice.domain.catalog.ids import CatalogId
 
 if TYPE_CHECKING:
@@ -36,17 +34,7 @@ _GROUP_GROUP = "groups"
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     key = "name" if action == "group_create" else "id"
-    return CatalogId(PLATFORM, GROUP, str(params.get(key, "")))
-
-
-def _fields_params(
-    id: str,
-    name: str | None,
-    title: str | None,
-    description: str | None,
-    image_url: str | None,
-) -> WireParams:
-    return wire_params({"id": id}, {"name": name, "title": title, "description": description, "image_url": image_url})
+    return CatalogId(PLATFORM, GROUP, str(params[key]))
 
 
 class SyncGroupsService(_SyncGroupService):
@@ -122,7 +110,7 @@ class SyncGroupsService(_SyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one group from documented keyword fields."""
-        return self._invoke_mutation("group_update", _fields_params(id, name, title, description, image_url), policy)
+        return self._invoke_mutation("group_update", fields_params(id, name, title, description, image_url), policy)
 
     def group_patch(
         self,
@@ -135,7 +123,7 @@ class SyncGroupsService(_SyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Patch selected group fields without replacing the record."""
-        return self._invoke_mutation("group_patch", _fields_params(id, name, title, description, image_url), policy)
+        return self._invoke_mutation("group_patch", fields_params(id, name, title, description, image_url), policy)
 
     def group_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
         """Soft-delete one group to state=deleted on the standard tier."""
@@ -238,7 +226,7 @@ class AsyncGroupsService(_AsyncGroupService):
     ) -> CKANMutationResult:
         """Update one group from documented keyword fields."""
         return await self._invoke_mutation(
-            "group_update", _fields_params(id, name, title, description, image_url), policy
+            "group_update", fields_params(id, name, title, description, image_url), policy
         )
 
     async def group_patch(
@@ -253,7 +241,7 @@ class AsyncGroupsService(_AsyncGroupService):
     ) -> CKANMutationResult:
         """Patch selected group fields without replacing the record."""
         return await self._invoke_mutation(
-            "group_patch", _fields_params(id, name, title, description, image_url), policy
+            "group_patch", fields_params(id, name, title, description, image_url), policy
         )
 
     async def group_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:

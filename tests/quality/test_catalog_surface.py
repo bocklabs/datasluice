@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.helpers.immutability import assign_readonly
 from tests.helpers.import_purity import assert_import_pulls_no_distributions
 
 if TYPE_CHECKING:
@@ -816,7 +817,7 @@ NATIVE_OPERATION_MEMBERS["udata"].update(
     }
 )
 
-LOCKED_DATASET_ROUTE_OPERATIONS = (
+LOCKED_UDATA_ROUTE_OPERATIONS = (
     frozenset(
         {
             "udata/api-v1.set_site",
@@ -935,7 +936,7 @@ JOBS_ROUTE_OPERATION_IDS = frozenset(
 )
 PLATFORM_APPROVED_ROUTE_OPERATIONS = {
     "udata": (
-        LOCKED_DATASET_ROUTE_OPERATIONS
+        LOCKED_UDATA_ROUTE_OPERATIONS
         | TAXONOMY_ROUTE_OPERATION_IDS
         | OAUTH_ROUTE_OPERATION_IDS
         | ACTIVITY_DISCUSSION_ROUTE_OPERATION_IDS
@@ -1639,11 +1640,6 @@ def test_namespaced_third_party_fake_certifies_through_the_same_runner() -> None
     assert certification.report_fingerprint == namespaced_report.fingerprint
 
 
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
-
-
 def test_public_catalog_models_are_frozen_typed_values() -> None:
     """Test 4: every public domain catalog dataclass is immutable."""
     modules = [
@@ -1675,10 +1671,10 @@ def test_public_catalog_models_are_frozen_typed_values() -> None:
 
     case = CatalogContractCase(operation_id="op")
     with pytest.raises(FrozenInstanceError):
-        _assign(case, "operation_id", "other")
+        assign_readonly(case, "operation_id", "other")
     outcome = CaseOutcome(operation_id="op", mode="sync", capability="available", state="passed")
     with pytest.raises(FrozenInstanceError):
-        _assign(outcome, "state", "failed")
+        assign_readonly(outcome, "state", "failed")
 
 
 def test_public_catalog_imports_stay_import_light() -> None:

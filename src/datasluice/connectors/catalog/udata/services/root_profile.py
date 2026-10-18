@@ -346,6 +346,9 @@ def _run_root[T](client: SyncUDataClient, action: Callable[[], T]) -> T:
     except BudgetExhaustedError:
         client._emit(operation, "budget_exhausted")
         raise
+    except asyncio.CancelledError:
+        client._emit(operation, "cancelled")
+        raise
     except SETTLEMENT_ERRORS as error:
         client._emit(operation, _failure_event(error))
         raise
@@ -624,6 +627,9 @@ class SyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
+            except asyncio.CancelledError:
+                self._client._emit(_operation_id(ROOT_OPERATION), "cancelled")
+                raise
             except SETTLEMENT_ERRORS:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise
@@ -658,6 +664,9 @@ class SyncRootProfileService:
                     response,
                     lambda: _parse_redirect(response.status_code, response.headers, path, self._client._origin),
                 )
+            except asyncio.CancelledError:
+                self._client._emit(_operation_id(ROOT_OPERATION), "cancelled")
+                raise
             except SETTLEMENT_ERRORS:
                 self._client._emit(_operation_id(ROOT_OPERATION), "failed")
                 raise

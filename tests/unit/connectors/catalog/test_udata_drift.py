@@ -6,6 +6,7 @@ import json
 import operator
 import time
 from datetime import UTC, datetime
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -380,7 +381,7 @@ def test_t02_records_expose_no_mutation_or_write_surface() -> None:
         item_count=None,
         status_code=None,
         detail="outage",
-        metadata={"note": "ok"},
+        metadata=drift._metadata({"note": "ok"}),
     )
 
     assert set(record.to_dict()) == {
@@ -398,6 +399,8 @@ def test_t02_records_expose_no_mutation_or_write_surface() -> None:
     }
     with pytest.raises(dataclasses.FrozenInstanceError):
         record.metadata = {}  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        record.metadata["note"] = "mutated"  # type: ignore[index]
 
 
 def test_t01_advisory_report_is_immutable_and_has_no_write_surface() -> None:
@@ -453,6 +456,8 @@ def test_t03_async_cancellation_propagates_and_leaves_no_pending_task() -> None:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+        leaked = [pending for pending in asyncio.all_tasks() if pending is not asyncio.current_task()]
+        assert leaked == []
 
     asyncio.run(run())
 
@@ -773,7 +778,7 @@ def test_t03_renders_are_byte_identical_for_a_fixed_clock() -> None:
 
 
 def test_t01_runners_never_write_to_the_profile_oracle_or_fixtures() -> None:
-    contracts = Path("src/datasluice/contracts/catalog")
+    contracts = Path(str(resources.files("datasluice.contracts") / "catalog"))
     before = {path: path.read_bytes() for path in sorted(contracts.rglob("*.json"))}
 
     report = run_udata_drift([_target()], transport=RecordingTransport(_compatible_routes()), now=lambda: _FIXED_NOW)

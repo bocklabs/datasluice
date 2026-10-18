@@ -15,7 +15,6 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseSearchQuery,
     ReuseSuggestQuery,
     ReuseUpdateInput,
-    linked_identifier,
 )
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import reuses as wire
@@ -64,6 +63,12 @@ _ADMIN = frozenset(
         wire.DELETE_REUSE_BADGE_OPERATION,
     }
 )
+
+
+def _upload_request(reuse_id: str, data: bytes, content_type: str) -> Request:
+    image = ReuseImageInput(data=data, content_type=content_type)
+    method, path, headers, _ = wire.reuse_image_request(reuse_id)
+    return method, path, headers, image
 
 
 class SyncReusesService(SyncCatalogService):
@@ -149,13 +154,12 @@ class SyncReusesService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
-        linked = linked_identifier(dataset_id, wire.REUSE_ADD_DATASET_OPERATION, "uData reuse dataset")
         return _mutation(
-            composite_target(reuse_id, linked),
+            composite_target(reuse_id, dataset_id),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
-            lambda: wire.reuse_add_dataset_request(reuse_id, linked),
+            lambda: wire.reuse_add_dataset_request(reuse_id, dataset_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION),
         )
 
@@ -166,13 +170,12 @@ class SyncReusesService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
-        linked = linked_identifier(dataservice_id, wire.REUSE_ADD_DATASERVICE_OPERATION, "uData reuse dataservice")
         return _mutation(
-            composite_target(reuse_id, linked),
+            composite_target(reuse_id, dataservice_id),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,
-            lambda: wire.reuse_add_dataservice_request(reuse_id, linked),
+            lambda: wire.reuse_add_dataservice_request(reuse_id, dataservice_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION),
         )
 
@@ -253,13 +256,8 @@ class SyncReusesService(SyncCatalogService):
             mutation_policy,
             "updated",
             wire.REUSE_IMAGE_OPERATION,
-            lambda: (*wire.reuse_image_request(reuse_id), None),
-            lambda request: self._mutate_upload(
-                request,
-                ReuseImageInput(data=data, content_type=content_type),
-                permissions,
-                mutation_policy,
-            ),
+            lambda: _upload_request(reuse_id, data, content_type),
+            lambda request: self._mutate_upload(request, permissions, mutation_policy),
         )
 
     def reuse_types(self) -> tuple[MappingRecord, ...]:
@@ -323,14 +321,8 @@ class SyncReusesService(SyncCatalogService):
             admin=operation in _ADMIN,
         )
 
-    def _mutate_upload(
-        self,
-        request: Request,
-        image: SupportsUpload,
-        permissions: Permissions,
-        policy: Policy,
-    ) -> Response:
-        method, path, headers, _ = request
+    def _mutate_upload(self, request: Request, permissions: Permissions, policy: Policy) -> Response:
+        method, path, headers, upload = request
         return _dataset_upload(
             self._client._dataset_call,
             self._client._resolved_credential(),
@@ -338,7 +330,7 @@ class SyncReusesService(SyncCatalogService):
             policy,
             wire.REUSE_IMAGE_OPERATION,
             (method, path, headers),
-            image,
+            cast("SupportsUpload", upload),
         )
 
 
@@ -425,13 +417,12 @@ class AsyncReusesService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
-        linked = linked_identifier(dataset_id, wire.REUSE_ADD_DATASET_OPERATION, "uData reuse dataset")
         return await _mutation_async(
-            composite_target(reuse_id, linked),
+            composite_target(reuse_id, dataset_id),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASET_OPERATION,
-            lambda: wire.reuse_add_dataset_request(reuse_id, linked),
+            lambda: wire.reuse_add_dataset_request(reuse_id, dataset_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASET_OPERATION),
         )
 
@@ -442,13 +433,12 @@ class AsyncReusesService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> ReuseMutationResult:
-        linked = linked_identifier(dataservice_id, wire.REUSE_ADD_DATASERVICE_OPERATION, "uData reuse dataservice")
         return await _mutation_async(
-            composite_target(reuse_id, linked),
+            composite_target(reuse_id, dataservice_id),
             mutation_policy,
             "updated",
             wire.REUSE_ADD_DATASERVICE_OPERATION,
-            lambda: wire.reuse_add_dataservice_request(reuse_id, linked),
+            lambda: wire.reuse_add_dataservice_request(reuse_id, dataservice_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.REUSE_ADD_DATASERVICE_OPERATION),
         )
 
@@ -529,13 +519,8 @@ class AsyncReusesService(AsyncCatalogService):
             mutation_policy,
             "updated",
             wire.REUSE_IMAGE_OPERATION,
-            lambda: (*wire.reuse_image_request(reuse_id), None),
-            lambda request: self._mutate_upload(
-                request,
-                ReuseImageInput(data=data, content_type=content_type),
-                permissions,
-                mutation_policy,
-            ),
+            lambda: _upload_request(reuse_id, data, content_type),
+            lambda request: self._mutate_upload(request, permissions, mutation_policy),
         )
 
     async def reuse_types(self) -> tuple[MappingRecord, ...]:
@@ -599,14 +584,8 @@ class AsyncReusesService(AsyncCatalogService):
             admin=operation in _ADMIN,
         )
 
-    async def _mutate_upload(
-        self,
-        request: Request,
-        image: SupportsUpload,
-        permissions: Permissions,
-        policy: Policy,
-    ) -> Response:
-        method, path, headers, _ = request
+    async def _mutate_upload(self, request: Request, permissions: Permissions, policy: Policy) -> Response:
+        method, path, headers, upload = request
         return await _dataset_upload(
             self._client._dataset_call_async,
             await self._client._resolved_credential_async(),
@@ -614,5 +593,5 @@ class AsyncReusesService(AsyncCatalogService):
             policy,
             wire.REUSE_IMAGE_OPERATION,
             (method, path, headers),
-            image,
+            cast("SupportsUpload", upload),
         )

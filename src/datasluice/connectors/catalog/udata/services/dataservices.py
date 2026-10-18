@@ -253,7 +253,7 @@ class SyncDataservicesService(SyncCatalogService):
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
             cast("bytes", text_or_headers),
-            wire._RDF_MEDIA_TYPE,
+            wire.RDF_FORMAT_MEDIA_TYPES["rdf"],
             response_media_type=negotiated,
             operation=operation,
         )
@@ -494,7 +494,7 @@ class AsyncDataservicesService(AsyncCatalogService):
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
             cast("bytes", text_or_headers),
-            wire._RDF_MEDIA_TYPE,
+            wire.RDF_FORMAT_MEDIA_TYPES["rdf"],
             response_media_type=negotiated,
             operation=operation,
         )

@@ -27,6 +27,7 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, UnsupportedCapabilityError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, success_body
+from tests.helpers.service_calls import call_service_method
 
 LOOPBACK_ORIGIN = "https://127.0.0.1:9001"
 
@@ -52,11 +53,6 @@ class StubProbeRunner:
             role_classification=RoleClassification.ANONYMOUS,
             observed_response_class=self.response_class,
         )
-
-
-def _call(service: object, name: str, /, **kwargs: object) -> object:
-    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
-    return getattr(service, name)(**kwargs)
 
 
 def _client(
@@ -144,7 +140,7 @@ def test_typed_signature_rejects_the_deprecated_page_parameter_with_type_error()
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        _call(client.datasets, "current_package_list_with_resources", page=2)
+        call_service_method(client.datasets, "current_package_list_with_resources", page=2)
 
     assert transport.requests == []
 
@@ -231,7 +227,7 @@ def test_dataset_purge_requires_a_policy_at_the_call_boundary() -> None:
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        _call(client.datasets, "dataset_purge", id="pkg-1")
+        call_service_method(client.datasets, "dataset_purge", id="pkg-1")
 
     assert transport.requests == []
 

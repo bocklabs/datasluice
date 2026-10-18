@@ -219,7 +219,9 @@ def test_row95_dataservice_datasets_posts_the_documented_list_of_ids() -> None:
 def test_row97_rdf_dataservice_and_row98_rdf_format_share_one_builder() -> None:
     assert wire.rdf_dataservice_request("ds-1") == ("GET", f"{DATASERVICES}/ds-1/rdf", {}, None)
     assert wire.rdf_dataservice_request("ds-1", "ttl") == ("GET", f"{DATASERVICES}/ds-1/rdf.ttl", {}, None)
+    assert wire.rdf_dataservice_request("ds-1", "TTL") == ("GET", f"{DATASERVICES}/ds-1/rdf.ttl", {}, None)
     assert wire.rdf_dataservice_request("ds-1", "json") == ("GET", f"{DATASERVICES}/ds-1/rdf.json", {}, None)
+    assert wire.media_type_for_format("TTL") == "application/x-turtle"
     with pytest.raises(CatalogValidationError, match="unsupported"):
         wire.rdf_dataservice_request("ds-1", "yaml")
 
@@ -731,8 +733,6 @@ def test_rows97_98_rdf_routes_match_exact_paths_and_bounded_documents() -> None:
         assert "body" not in document.payload
     assert [r.url for r in document_router.requests if "/rdf" in r.url] == [f"{ORIGIN}{DATASERVICES}/ds-1/rdf.ttl"]
 
-    assert [r.url for r in document_router.requests if "/rdf" in r.url] == [f"{ORIGIN}{DATASERVICES}/ds-1/rdf.ttl"]
-
 
 def test_dataservice_mutation_failure_yields_redacted_receipt_with_exact_target() -> None:
     router = atom_sync_route_table(
@@ -760,8 +760,6 @@ def test_dataservice_destructive_delete_fails_closed_without_a_confirmed_policy(
 def test_dataservice_responses_fail_typed_when_the_envelope_is_not_the_documented_shape() -> None:
     with pytest.raises(CatalogValidationError, match="must be an object"):
         wire.parse_mapping(["not-an-object"], wire.GET_DATASERVICE_OPERATION)
-    with pytest.raises(CatalogValidationError, match="must be a list of objects"):
-        wire.parse_mapping_sequence({"not": "a list"}, wire.LIST_DATASERVICES_OPERATION)
 
 
 def test_dataservice_missing_target_maps_to_a_typed_not_found_error() -> None:

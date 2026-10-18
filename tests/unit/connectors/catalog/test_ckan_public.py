@@ -109,6 +109,6 @@ def test_connector_exposes_injected_normalized_native_services_and_effective_pro
 
 def test_connector_has_no_transport_default_or_raw_request_escape_hatch() -> None:
     """The façade cannot bypass the typed injected-executor boundary."""
-    from datasluice.connectors.catalog.ckan import CKANConnector
+    from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connector
 
-    assert_no_transport_escape_hatch(CKANConnector, FORBIDDEN)
+    assert_no_transport_escape_hatch(CKANConnector, FORBIDDEN, create_ckan_connector(_context()))

@@ -67,11 +67,6 @@ def test_organization_catalog_extends_catalog_port() -> None:
     assert CatalogPort in OrganizationCatalog.__bases__
 
 
-def test_all_protocols_importable_individually() -> None:
-    for name in sorted(ALL_PORT_NAMES):
-        assert hasattr(ports, name), f"{name} missing from datasluice.ports"
-
-
 def test_ports_all_exposes_exactly_the_documented_protocols() -> None:
     assert set(ports.__all__) == ALL_PORT_NAMES
     assert list(ports.__all__) == sorted(ports.__all__)

@@ -23,13 +23,16 @@ def _run_probe(targets: tuple[str, ...], forbidden: tuple[str, ...], mode: str) 
 
 
 def assert_import_pulls_no_distributions(targets: str | tuple[str, ...], forbidden: tuple[str, ...]) -> None:
-    """Assert importing ``targets`` loads no importable distribution named in ``forbidden``.
+    """Assert importing ``targets`` loads no import root named in ``forbidden``.
 
-    Matches on the distribution root, so ``pyarrow`` also covers ``pyarrow.parquet``.
+    Matches on the top-level import name (``name.split(".")[0]``), so entries
+    must be import roots, not distribution names: pass ``PIL``, not ``pillow``.
+    Callers holding distribution names must map them through
+    ``importlib.metadata.packages_distributions()`` first.
     """
     resolved = (targets,) if isinstance(targets, str) else targets
     result = _run_probe(resolved, forbidden, "distribution")
-    assert result.returncode == 0, f"{result.stdout}{result.stderr}"
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
 
 
 def assert_import_pulls_no_modules(targets: str | tuple[str, ...], forbidden: tuple[str, ...]) -> None:
@@ -39,4 +42,4 @@ def assert_import_pulls_no_modules(targets: str | tuple[str, ...], forbidden: tu
     """
     resolved = (targets,) if isinstance(targets, str) else targets
     result = _run_probe(resolved, forbidden, "module")
-    assert result.returncode == 0, f"{result.stdout}{result.stderr}"
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"

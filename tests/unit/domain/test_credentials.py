@@ -6,11 +6,7 @@ import pytest
 
 from datasluice.domain import CredentialScope
 from datasluice.exceptions import PortalError, RetryableHTTPError
-
-
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
+from tests.helpers.immutability import assign_readonly
 
 
 def test_credential_scope_defaults() -> None:
@@ -23,7 +19,7 @@ def test_credential_scope_defaults() -> None:
 def test_credential_scope_is_frozen() -> None:
     scope = CredentialScope()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(scope, "send_on_redirect", True)
+        assign_readonly(scope, "send_on_redirect", True)
 
 
 def test_credential_scope_custom_values() -> None:

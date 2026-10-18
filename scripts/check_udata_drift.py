@@ -26,7 +26,6 @@ from datasluice.connectors.catalog.udata.drift import (
     PINNED_UDATA_VERSION,
     READ_ALLOWLIST,
     DriftReport,
-    UDataDriftUnavailableError,
     run_udata_drift,
 )
 
@@ -108,11 +107,7 @@ def main() -> int:
     if not APPROVED_TARGETS:
         emit(json.dumps(disabled_payload(), sort_keys=True))
         return EXIT_OK if args.allow_disabled else EXIT_DISABLED
-    try:
-        report = run_udata_drift()
-    except UDataDriftUnavailableError:
-        emit(json.dumps(disabled_payload(), sort_keys=True))
-        return EXIT_OK if args.allow_disabled else EXIT_DISABLED
+    report = run_udata_drift()
     emit(report.to_json())
     return report_exit_code(report)
 

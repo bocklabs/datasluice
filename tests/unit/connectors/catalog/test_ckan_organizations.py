@@ -23,6 +23,7 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, UnauthenticatedError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, success_body
+from tests.helpers.service_calls import call_service_method
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 ORG_READ_ID = "ckan/action-api-v3.organization-list-show-search"
@@ -55,11 +56,6 @@ MEMBER_RESULT: dict[str, object] = {
     "object_type": "user",
     "capacity": "editor",
 }
-
-
-def _call(service: object, name: str, /, **kwargs: object) -> object:
-    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
-    return getattr(service, name)(**kwargs)
 
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
@@ -177,6 +173,26 @@ def test_normalized_organization_list_uses_the_public_all_fields_action() -> Non
     assert json.loads(transport.requests[0].body or b"{}") == {"all_fields": True}
 
 
+def test_normalized_organization_list_forces_all_fields_decoding() -> None:
+    """A caller-supplied all_fields=False cannot break the record-list decoding contract."""
+    transport = SyncCaptureTransport(body=success_body([ORGANIZATION_RESULT]))
+    client = _client(transport)
+    operation = CatalogOperationRequest(
+        operation_id=OperationId("ckan", "organizations", "list"), payload={"all_fields": False}
+    )
+    guard = CatalogOperationGuard(operation_id=operation.operation_id)
+
+    client.organizations.list(operation, guard)
+
+    assert json.loads(transport.requests[0].body or b"{}") == {"all_fields": True}
+
+    async_transport = AsyncCaptureTransport(body=success_body([ORGANIZATION_RESULT]))
+    async_client = _async_client(async_transport)
+    asyncio.run(async_client.organizations.list(operation, guard))
+
+    assert json.loads(async_transport.requests[0].body or b"{}") == {"all_fields": True}
+
+
 def test_member_roles_list_returns_value_items_as_a_read() -> None:
     """The role enumeration rides the read id and decodes scalar values."""
     transport = SyncCaptureTransport(body=success_body(["admin", "editor", "member"]))
@@ -242,7 +258,7 @@ def test_organization_purge_requires_a_policy_at_the_call_boundary() -> None:
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        _call(client.organizations, "organization_purge", id="org-1")
+        call_service_method(client.organizations, "organization_purge", id="org-1")
 
     assert transport.requests == []
 

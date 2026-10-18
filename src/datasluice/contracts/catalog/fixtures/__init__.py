@@ -28,6 +28,9 @@ _OUTCOMES = frozenset(
 )
 _SUCCESS_OUTCOMES = frozenset({"core", "optional", "authenticated-success", "async-pending"})
 
+DECLARED_OUTCOMES = _OUTCOMES
+SUCCESS_OUTCOMES = _SUCCESS_OUTCOMES
+
 
 @dataclass(frozen=True, slots=True)
 class ReferenceCase:

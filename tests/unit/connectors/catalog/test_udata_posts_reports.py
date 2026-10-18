@@ -24,6 +24,7 @@ from datasluice.connectors.catalog.udata.services.posts_reports import (
     SyncPostsReportsService,
 )
 from datasluice.connectors.catalog.udata.wire import posts_reports as wire
+from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError, ForbiddenError
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
@@ -251,7 +252,7 @@ def test_post_mutations_match_exact_wire_and_receipt_targets() -> None:
             "post-1", ADMIN_PERMISSIONS, mutation_policy(wire.PUBLISH_POST_OPERATION, "post-1")
         )
         unpublished = client.posts_reports.unpublish_post(
-            "post-1", ADMIN_PERMISSIONS, mutation_policy(wire.UNPUBLISH_POST_OPERATION, "post-1")
+            "post-1", ADMIN_PERMISSIONS, mutation_policy(wire.UNPUBLISH_POST_OPERATION, "post-1", destructive=True)
         )
         image = client.posts_reports.post_image(
             "post-1", b"img-bytes", "image/png", ADMIN_PERMISSIONS, mutation_policy(wire.POST_IMAGE_OPERATION, "post-1")
@@ -267,6 +268,8 @@ def test_post_mutations_match_exact_wire_and_receipt_targets() -> None:
             assert result.receipt.outcome == "succeeded"
         assert created.receipt.target.value == "post-1"
         assert deleted.receipt.target.value == "post-1"
+        assert created.receipt.target.resource_kind == ResourceKind("post")
+        assert deleted.receipt.target.resource_kind == ResourceKind("post")
     post_requests = [r for r in router.requests if "/posts/" in r.url]
     assert [(r.method, r.url.replace(ORIGIN, "")) for r in post_requests] == [
         ("POST", "/api/1/posts/"),
@@ -347,6 +350,39 @@ def test_attributed_report_create_still_requires_matching_permission_evidence() 
     assert dict(_sole_report_post(router).headers).get("X-API-KEY") == "secret-key"
 
 
+def test_create_report_forwards_the_mutation_policy_to_both_dispatch_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    policy = mutation_policy(wire.CREATE_REPORT_OPERATION, "dataset-1")
+    seen: list[dict[str, object]] = []
+
+    def record_call(**kwargs: object) -> tuple[int, object, object]:
+        seen.append(kwargs)
+        return 201, _report(), cast("Any", None)
+
+    with sync_client(_report_route_table(atomic=False), UDATA_CREDENTIAL) as client:
+        monkeypatch.setattr(client, "_dataset_call", record_call)
+        client.posts_reports.create_report(_REPORT_CREATE, None, policy)
+        client.posts_reports.create_report(_REPORT_CREATE, PERMISSIONS, policy)
+    assert [kwargs["idempotency_policy"] for kwargs in seen] == [policy.idempotency, policy.idempotency]
+
+
+def test_create_report_forwards_the_mutation_policy_in_async_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    policy = mutation_policy(wire.CREATE_REPORT_OPERATION, "dataset-1")
+    seen: list[dict[str, object]] = []
+
+    async def record_call(**kwargs: object) -> tuple[int, object, object]:
+        seen.append(kwargs)
+        return 201, _report(), cast("Any", None)
+
+    async def run() -> None:
+        async with async_client(_report_route_table(atomic=True), UDATA_CREDENTIAL) as client:
+            monkeypatch.setattr(client, "_dataset_call_async", record_call)
+            await client.posts_reports.create_report(_REPORT_CREATE, None, policy)
+            await client.posts_reports.create_report(_REPORT_CREATE, PERMISSIONS, policy)
+
+    asyncio.run(run())
+    assert [kwargs["idempotency_policy"] for kwargs in seen] == [policy.idempotency, policy.idempotency]
+
+
 def test_anonymous_report_create_matches_stock_public_contract_async() -> None:
     router, created = asyncio.run(_create_report_async(None))
 
@@ -382,6 +418,9 @@ def test_report_and_notification_mutations_match_exact_wire_and_receipt_targets(
         assert created.receipt.target.value == "report-1"
         assert updated.receipt.target.value == "report-1"
         assert read.receipt.target.value == "notification-1"
+        assert created.receipt.target.resource_kind == ResourceKind("report")
+        assert updated.receipt.target.resource_kind == ResourceKind("report")
+        assert read.receipt.target.resource_kind == ResourceKind("notification")
 
 
 def test_post_image_rejects_invalid_upload_before_dispatch() -> None:

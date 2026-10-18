@@ -22,9 +22,9 @@ from datasluice.connectors.catalog.udata.models.organizations import (
 )
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import organizations as wire
+from datasluice.connectors.catalog.udata.wire.root_profile import _contains_sensitive_query, _validated_redirect_target
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import NativeCatalogError
@@ -41,7 +41,7 @@ from ._receipts import (
     _run_mutation,
     _run_mutation_async,
 )
-from ._receipts import _attach_receipt as _attach
+from ._receipts import _close_input as _close_logo
 from .datasets import (
     _enforce_mutation_policy,
     _require_mutation_permission,
@@ -50,7 +50,9 @@ from .datasets import (
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
     from datasluice.domain.catalog.models import MappingRecord, NativeRecord
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 type Permissions = EffectivePermissions
 type Policy = MutationPolicy | None
@@ -84,22 +86,6 @@ def _org_receipt(
     )
 
 
-def _close_logo(
-    client_input: OrganizationLogoInput,
-    result: OrganizationMutationResult | None,
-    primary_error: BaseException | None,
-) -> None:
-    try:
-        client_input.close()
-    except SETTLEMENT_ERRORS as close_error:
-        receipt = result.receipt if result is not None else getattr(primary_error, "mutation_receipt", None)
-        if isinstance(receipt, MutationReceipt):
-            _attach(close_error, receipt)
-        if primary_error is not None:
-            raise primary_error from close_error
-        raise
-
-
 def _mutation_result(receipt: MutationReceipt, payload: object) -> OrganizationMutationResult:
     if isinstance(payload, Mapping) and isinstance(payload.get("id"), str) and isinstance(payload.get("name"), str):
         return OrganizationMutationResult(
@@ -123,11 +109,14 @@ def _organization_mutation_shapers(
     kind: ResourceKind,
 ) -> tuple[FailureReceipt, ResultShaper[OrganizationMutationResult]]:
     def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
+        outcome = (
+            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
+        )
         return _org_receipt(
             operation,
             target,
             policy,
-            _mutation_outcome(error, response),
+            outcome,
             _error_status(error, response),
             mutation,
             kind=kind,
@@ -269,13 +258,21 @@ def _document(
                 platform=CatalogPlatform.UDATA.value,
                 status_code=status,
             )
+        target = _validated_redirect_target(location, client._origin, operation, status)
+        if _contains_sensitive_query(target.query):
+            raise NativeCatalogError(
+                "The uData organization redirect contains a sensitive query component.",
+                operation=operation,
+                platform=CatalogPlatform.UDATA.value,
+                status_code=status,
+            )
         return SiteDocument(
             endpoint=path,
             media_type=media_type,
             status_code=status,
             size_bytes=0,
             sha256=hashlib.sha256(b"").hexdigest(),
-            location=location,
+            location=target.path + (f"?{target.query}" if target.query else ""),
         )
     body = cast("bytes", value)
     return SiteDocument(
@@ -310,13 +307,21 @@ async def _document_async(
                 platform=CatalogPlatform.UDATA.value,
                 status_code=status,
             )
+        target = _validated_redirect_target(location, client._origin, operation, status)
+        if _contains_sensitive_query(target.query):
+            raise NativeCatalogError(
+                "The uData organization redirect contains a sensitive query component.",
+                operation=operation,
+                platform=CatalogPlatform.UDATA.value,
+                status_code=status,
+            )
         return SiteDocument(
             endpoint=path,
             media_type=media_type,
             status_code=status,
             size_bytes=0,
             sha256=hashlib.sha256(b"").hexdigest(),
-            location=location,
+            location=target.path + (f"?{target.query}" if target.query else ""),
         )
     body = cast("bytes", value)
     return SiteDocument(
@@ -794,7 +799,9 @@ class SyncOrganizationsMembershipsService:
             files=(client_input.part(),),
         )
 
-    def list_organization_datasets(self, organization_id: str, query: OrganizationDatasetQuery | None = None):
+    def list_organization_datasets(
+        self, organization_id: str, query: OrganizationDatasetQuery | None = None
+    ) -> UDataPageEnvelope:
         request = wire.organization_owned_request(organization_id, "datasets", query)
         _, payload, _ = self._client._dataset_call(
             method=request[0], path=request[1], owning_operation=wire.LIST_ORGANIZATION_DATASETS_OPERATION
@@ -1383,7 +1390,9 @@ class AsyncOrganizationsMembershipsService:
             files=(client_input.part(),),
         )
 
-    async def list_organization_datasets(self, organization_id: str, query: OrganizationDatasetQuery | None = None):
+    async def list_organization_datasets(
+        self, organization_id: str, query: OrganizationDatasetQuery | None = None
+    ) -> UDataPageEnvelope:
         request = wire.organization_owned_request(organization_id, "datasets", query)
         _, payload, _ = await self._client._dataset_call_async(
             method=request[0], path=request[1], owning_operation=wire.LIST_ORGANIZATION_DATASETS_OPERATION

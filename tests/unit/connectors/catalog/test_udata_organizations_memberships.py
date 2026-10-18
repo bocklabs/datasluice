@@ -20,19 +20,16 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
-from datasluice.connectors.catalog.udata.models.resources import (
-    MidStreamUploadError,
-    ResourceUpdateInput,
-    ResourceUploadInput,
-)
+from datasluice.connectors.catalog.udata.models.resources import ResourceUploadInput
 from datasluice.connectors.catalog.udata.services import _receipts
+from datasluice.connectors.catalog.udata.services import auth_oauth as auth_oauth_service
 from datasluice.connectors.catalog.udata.services import organizations_memberships as organization_service
+from datasluice.connectors.catalog.udata.services import users_tokens as users_tokens_service
 from datasluice.connectors.catalog.udata.services.organizations_memberships import (
     AsyncOrganizationsMembershipsService,
     SyncOrganizationsMembershipsService,
 )
 from datasluice.connectors.catalog.udata.wire import organizations as wire
-from datasluice.connectors.catalog.udata.wire import resources as resource_wire
 from datasluice.contracts.catalog.native.udata import (
     AsyncUDataOrganizationsMembershipsService,
     SyncUDataOrganizationsMembershipsService,
@@ -42,7 +39,7 @@ from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKi
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError, ForbiddenError
+from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 
 if TYPE_CHECKING:
@@ -155,6 +152,8 @@ def test_organization_wire_builders_preserve_exact_paths_and_omission() -> None:
     )
     with pytest.raises(CatalogValidationError):
         wire.get_organization_request("../secret")
+    with pytest.raises(CatalogValidationError, match="unsupported"):
+        wire.rdf_organization_format_request("org-1", "yaml")
 
 
 def test_every_organization_route_has_an_exact_wire_shape() -> None:
@@ -331,6 +330,11 @@ def test_organization_inputs_reject_non_json_field_values_with_value_error() -> 
         OrganizationCreateInput(name="Evidence", description="Org", fields={"broken": object()})
     with pytest.raises(ValueError, match="JSON-safe"):
         OrganizationUpdateInput(acronym="E", fields={"broken": object()})
+    bad_fields = cast("Mapping[str, object]", 5)
+    with pytest.raises(ValueError, match="JSON mapping"):
+        OrganizationCreateInput(name="Evidence", description="Org", fields=bad_fields)
+    with pytest.raises(ValueError, match="JSON mapping"):
+        OrganizationUpdateInput(acronym="E", fields=bad_fields)
 
 
 @pytest.mark.parametrize(
@@ -470,7 +474,9 @@ def test_async_organization_get_matches_sync_wire() -> None:
 
 
 def test_organization_family_reuses_the_shared_receipt_attachment_helper() -> None:
-    assert organization_service._attach is _receipts._attach_receipt
+    assert organization_service._close_logo is _receipts._close_input
+    assert auth_oauth_service._attach is _receipts._attach_receipt
+    assert users_tokens_service._attach is _receipts._attach_receipt
 
 
 def test_organization_page_decoders_delegate_to_the_shared_page_shape(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -634,49 +640,90 @@ def test_organization_identifiers_reject_quote_and_control_characters() -> None:
             wire.get_organization_request(cast("str", identifier))
 
 
-def test_resource_reorder_schema_violation_reaches_the_typed_catalog_surface() -> None:
-    """A malformed reorder payload is a typed schema violation, not a bare ValueError.
+def _redirect_call(location: str):
+    def call(**kwargs: object) -> tuple[int, object, object]:
+        return 302, b"", RuntimeResponse(status_code=302, headers={"location": location}, body=b"")
 
-    SyncResourcesService declares error_type = NativeCatalogError, so a bare
-    ValueError bypasses the error surface callers rely on for server-side
-    schema violations, which every other decode seam raises as CatalogValidationError.
-    """
-    reorder_url = f"{ORIGIN}/api/1/datasets/dataset/resources/"
-    transport = _Router(_routes({("PUT", reorder_url): {"not": "a list"}}))
-    client = SyncUDataClient(
-        transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
-    )
-
-    with client, pytest.raises(CatalogValidationError) as raised:
-        client.resources.reorder(
-            "dataset",
-            (ResourceUpdateInput({"id": "resource"}),),
-            PERMISSIONS,
-            _policy(resource_wire.REORDER_OPERATION, "dataset"),
-        )
-
-    assert raised.value.operation == resource_wire.REORDER_OPERATION
-    assert raised.value.platform == CatalogPlatform.UDATA.value
-    assert raised.value.safe_action == resource_wire.RESOURCE_SCHEMA_SAFE_ACTION
+    return call
 
 
-def test_preflight_upload_value_error_is_not_reported_as_ambiguous() -> None:
-    """Only a bounded-source failure proves bytes reached the transport.
+def test_interrupted_organization_mutation_is_not_misreported_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """KeyboardInterrupt keeps the interruption outcome instead of the generic ``failed``."""
 
-    ResourceUploadInput.part() raises a plain ValueError before dispatch when the source is reused or closed, so
-    classifying every OSError/ValueError as "ambiguous" recorded a successful-rejection audit trail for a write that
-    never left the client.
-    """
+    def interrupt(**kwargs: object) -> tuple[int, object, object]:
+        raise KeyboardInterrupt
+
     transport = _Router(_routes({}))
     client = SyncUDataClient(
         transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
     )
-    upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
-    upload.part()
+    with client:
+        monkeypatch.setattr(client, "_dataset_call", interrupt)
+        policy = _policy(wire.DELETE_ORGANIZATION_OPERATION, "org-1", destructive=True)
+        with pytest.raises(KeyboardInterrupt) as stopped:
+            client.organizations_memberships.delete_organization("org-1", PERMISSIONS, policy)
+    assert stopped.value.__dict__["mutation_receipt"].outcome == "cancelled"
 
-    with client, pytest.raises(ValueError) as raised:
-        client.resources.upload("dataset", upload, PERMISSIONS, _policy(resource_wire.UPLOAD_NEW_OPERATION, "dataset"))
 
-    assert not isinstance(raised.value, MidStreamUploadError)
-    assert raised.value.__dict__["mutation_receipt"].outcome == "failed"
-    assert not [request for request in transport.requests if "upload" in request.url]
+def test_interrupted_organization_mutation_is_not_misreported_as_failed_async(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The async settlement seam maps KeyboardInterrupt to the same interruption outcome."""
+
+    def interrupt(**kwargs: object) -> tuple[int, object, object]:
+        raise KeyboardInterrupt
+
+    async def run() -> None:
+        transport = _AsyncRouter(_routes({}))
+        client = AsyncUDataClient(
+            transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
+        )
+        async with client:
+            monkeypatch.setattr(client, "_dataset_call_async", interrupt)
+            await client.organizations_memberships.delete_organization(
+                "org-1", PERMISSIONS, _policy(wire.DELETE_ORGANIZATION_OPERATION, "org-1", destructive=True)
+            )
+
+    coroutine = run()
+    with pytest.raises(KeyboardInterrupt) as stopped:
+        asyncio.run(coroutine)
+    assert stopped.value.__dict__["mutation_receipt"].outcome == "cancelled"
+
+
+def test_organization_export_redirect_stores_only_the_sanitized_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = _Router(_routes({}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
+    )
+    with client:
+        monkeypatch.setattr(client, "_dataset_call", _redirect_call(f"{ORIGIN}/export/org-1/?page=2&utm_source=x"))
+        document = client.organizations_memberships.organization_datasets_csv("org-1")
+    assert document.location == "/export/org-1/?page=2&utm_source=x"
+
+
+def test_organization_export_redirect_rejects_cross_origin_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = _Router(_routes({}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
+    )
+    with client:
+        monkeypatch.setattr(
+            client,
+            "_dataset_call",
+            _redirect_call("https://evil.example.com/api/1/organizations/org-1/datasets.csv"),
+        )
+        with pytest.raises(NativeCatalogError, match="outside the configured deployment origin"):
+            client.organizations_memberships.organization_datasets_csv("org-1")
+
+
+def test_organization_export_redirect_rejects_userinfo_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = _Router(_routes({}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL, owns_transport=False
+    )
+    with client:
+        monkeypatch.setattr(
+            client,
+            "_dataset_call",
+            _redirect_call("http://user:pass@127.0.0.1:5640/api/1/organizations/org-1/datasets.csv"),
+        )
+        with pytest.raises(NativeCatalogError, match="unsafe URL components"):
+            client.organizations_memberships.organization_datasets_csv("org-1")

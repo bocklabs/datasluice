@@ -1,10 +1,3 @@
-"""Both-mode CKAN resource projections with bounded buffered multipart uploads (D-03).
-
-Uploads accept a filesystem path or an open binary handle, are buffered exactly once through the shared transport
-multipart channel, and are bounded by the configured ``max_upload_bytes`` ceiling with a typed pre-dispatch refusal.
-There is no streaming mode: the whole source becomes one immutable ``UploadPart``.
-"""
-
 from __future__ import annotations
 
 import json
@@ -100,7 +93,15 @@ def _source_name(source: str | os.PathLike[str] | BinaryIO) -> str | None:
 def _encode_field(value: object) -> bytes:
     if isinstance(value, str):
         return value.encode("utf-8")
-    return json.dumps(value, allow_nan=False).encode("utf-8")
+    try:
+        return json.dumps(value, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise CatalogValidationError(
+            "Resource upload fields require finite JSON-serializable values.",
+            operation=f"{PLATFORM.value}/{_UPLOAD_FIELD}",
+            platform=PLATFORM.value,
+            safe_action="Use finite JSON values (no NaN or Infinity) in upload fields.",
+        ) from exc
 
 
 def _multipart_parts(params: Mapping[str, object], data: bytes, file_name: str | None) -> tuple[UploadPart, ...]:

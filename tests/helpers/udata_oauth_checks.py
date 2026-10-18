@@ -30,18 +30,18 @@ def assert_oauth_mutation_sync(
     body: object,
     permissions: object,
 ) -> None:
-    """Assert the typed sync OAuth mutation reproduces the raw loopback outcome.
+    """Assert the typed sync OAuth mutation reproduces the raw status whatever the caller's stack returns.
 
-    The disposable stack has no OAuth client, so the stock endpoints reject every form. Either outcome is valid; what
-    matters is that the typed status equals the raw status and that no access token is ever retained.
+    The result is a success outcome or a CatalogError carrying the raw status. Token non-retention is owned by the
+    dedicated secret-safety tests, not by this parity check.
     """
     try:
         result = getattr(client.auth_oauth, name)(body, permissions, oauth_mutation_policy(name))
     except CatalogError as error:
         assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
         receipt = error.metadata.get("receipt")
-        if isinstance(receipt, Mapping):
-            assert receipt["audit_metadata"]["status_code"] == raw[0], name
+        assert isinstance(receipt, Mapping), name
+        assert receipt["audit_metadata"]["status_code"] == raw[0], name
     else:
         if isinstance(result, OAuthConsentOutcome):
             assert result.status_code == raw[0], name
@@ -63,8 +63,8 @@ async def assert_oauth_mutation_async(
     except CatalogError as error:
         assert error.metadata.get("status_code") == raw[0], (name, error.metadata)
         receipt = error.metadata.get("receipt")
-        if isinstance(receipt, Mapping):
-            assert receipt["audit_metadata"]["status_code"] == raw[0], name
+        assert isinstance(receipt, Mapping), name
+        assert receipt["audit_metadata"]["status_code"] == raw[0], name
     else:
         if isinstance(result, OAuthConsentOutcome):
             assert result.status_code == raw[0], name

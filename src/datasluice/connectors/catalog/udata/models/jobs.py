@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.domain.catalog.models import MappingRecord, _freeze_json
+from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.resilience import TimeBudget
 from datasluice.exceptions import DataSluiceError
@@ -67,8 +67,7 @@ class CrontabSchedule:
 
     def __post_init__(self) -> None:
         for field in CRON_FIELDS:
-            if _validated_text(getattr(self, field), field, required=True) is None:
-                raise ValueError(f"uData worker job crontab {field} must be a non-empty string.")
+            _validated_text(getattr(self, field), field, required=True)
 
     def payload(self) -> dict[str, object]:
         """Return the exact five-key crontab write body."""
@@ -113,11 +112,8 @@ class JobScheduleInput:
     enabled: bool = False
 
     def __post_init__(self) -> None:
-        if (
-            _validated_text(self.name, "name", required=True) is None
-            or _validated_text(self.task, "task", required=True) is None
-        ):
-            raise ValueError("uData worker job name and task must be non-empty strings.")
+        _validated_text(self.name, "name", required=True)
+        _validated_text(self.task, "task", required=True)
         if (self.crontab is None) == (self.interval is None):
             raise ValueError("uData worker job input requires exactly one of crontab or interval.")
         _validated_text(self.description, "description")
@@ -140,10 +136,9 @@ class JobScheduleInput:
         else:
             body["interval"] = self.interval.payload()  # type: ignore[union-attr]
         if self.args:
-            safe_args = _json_safe(list(self.args), "args")
-            body["args"] = list(safe_args) if isinstance(safe_args, list | tuple) else safe_args
+            body["args"] = _thaw_json(_json_safe(list(self.args), "args"))
         if self.kwargs:
-            body["kwargs"] = _json_safe(dict(self.kwargs), "kwargs")
+            body["kwargs"] = _thaw_json(_json_safe(dict(self.kwargs), "kwargs"))
         if self.enabled:
             body["enabled"] = True
         return body

@@ -192,6 +192,24 @@ def test_every_worker_job_route_has_an_exact_wire_shape() -> None:
     ]
 
 
+def test_worker_job_args_and_kwargs_reach_the_wire_as_plain_json() -> None:
+    """A nested mapping is thawed before dispatch, so the request body is serializable."""
+    router = sync_route_table(_routes())
+    job = _cron_input(args=({"a": 1},), kwargs={"k": "v"})
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        client.worker_jobs.create_job(job, ADMIN, mutation_policy(wire.CREATE_JOB_OPERATION, "wheel-job"))
+
+    body = json.loads(
+        next(
+            request.body or b"{}"
+            for request in router.requests
+            if request.url == f"{ORIGIN}{JOBS}" and request.method == "POST"
+        )
+    )
+    assert body["args"] == [{"a": 1}]
+    assert body["kwargs"] == {"k": "v"}
+
+
 def test_create_and_update_bodies_carry_only_the_documented_fields() -> None:
     """Absent optional fields stay omitted and exactly one schedule key is ever sent."""
     minimal = _interval_input()

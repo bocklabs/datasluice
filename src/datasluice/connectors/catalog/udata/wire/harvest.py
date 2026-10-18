@@ -155,13 +155,6 @@ def parse_record(payload: object, operation: str) -> MappingRecord:
     return MappingRecord(payload)
 
 
-def parse_optional_record(payload: object, operation: str) -> MappingRecord | None:
-    """Decode one harvest object, treating the documented empty body as absent."""
-    if payload is None or (isinstance(payload, str) and not payload) or (isinstance(payload, Mapping) and not payload):
-        return None
-    return parse_record(payload, operation)
-
-
 def parse_page(payload: object, operation: str) -> HarvestPage:
     """Decode one harvest pager envelope preserving native pager field presence."""
     page = parse_native_page(payload, operation=operation)

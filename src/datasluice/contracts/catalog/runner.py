@@ -6,7 +6,12 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
-from datasluice.contracts.catalog.fixtures import _OUTCOMES, _SUCCESS_OUTCOMES, ReferenceCase, ReferenceFixtureSet
+from datasluice.contracts.catalog.fixtures import (
+    DECLARED_OUTCOMES,
+    SUCCESS_OUTCOMES,
+    ReferenceCase,
+    ReferenceFixtureSet,
+)
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     CapabilityState,
@@ -93,7 +98,7 @@ class CatalogContractCase:
     dataset_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.operation_id or self.outcome not in _OUTCOMES or self.mode not in {"sync", "async"}:
+        if not self.operation_id or self.outcome not in DECLARED_OUTCOMES or self.mode not in {"sync", "async"}:
             raise ValueError("Catalog contract cases require a declared operation, outcome, and mode.")
         if self.dataset_id is not None and not self.dataset_id:
             raise ValueError("Catalog contract dataset IDs must be non-empty when supplied.")
@@ -164,7 +169,7 @@ def _outcome(case: CatalogContractCase, metadata: Mapping[str, object], error: E
         return CaseOutcome(
             operation_id=case.operation_id,
             mode=case.mode,
-            capability="available" if case.outcome in _SUCCESS_OUTCOMES else "unavailable",
+            capability="available" if case.outcome in SUCCESS_OUTCOMES else "unavailable",
             state="passed",
             tier=case.outcome,
             warnings=(),
@@ -173,7 +178,7 @@ def _outcome(case: CatalogContractCase, metadata: Mapping[str, object], error: E
     return CaseOutcome(
         operation_id=case.operation_id,
         mode=case.mode,
-        capability="available" if case.outcome in _SUCCESS_OUTCOMES else "unavailable",
+        capability="available" if case.outcome in SUCCESS_OUTCOMES else "unavailable",
         state="failed",
         tier=case.outcome,
         warnings=(case.pytest_id, str(error)[:256]),
@@ -188,7 +193,7 @@ def _run_reference_sync_case(
     metadata = client.platform_metadata()
     try:
         result = client.execute_case(reference_case)
-        if case.outcome not in _SUCCESS_OUTCOMES or not result.items:
+        if case.outcome not in SUCCESS_OUTCOMES or not result.items:
             raise AssertionError("The connector accepted a case that must be rejected.")
     except Exception as error:
         if isinstance(error, _EXPECTED_ERRORS.get(case.outcome, ())):
@@ -204,7 +209,7 @@ async def _run_reference_async_case(
     metadata = client.platform_metadata()
     try:
         result = await client.execute_case(reference_case)
-        if case.outcome not in _SUCCESS_OUTCOMES or not result.items:
+        if case.outcome not in SUCCESS_OUTCOMES or not result.items:
             raise AssertionError("The connector accepted a case that must be rejected.")
     except Exception as error:
         if isinstance(error, _EXPECTED_ERRORS.get(case.outcome, ())):
@@ -217,12 +222,18 @@ async def _run_reference_cases(
     cases: tuple[CatalogContractCase, ...], sync_client: object, async_client: object, fixture_set: ReferenceFixtureSet
 ) -> tuple[CaseOutcome, ...]:
     outcomes: list[CaseOutcome] = []
-    with cast("SyncCatalogClient", sync_client):
-        for case in cases:
-            if case.mode == "sync":
-                outcomes.append(
-                    _run_reference_sync_case(case, cast("_SyncReferenceCaseClient", sync_client), fixture_set)
-                )
+
+    def _run_sync_phase() -> list[CaseOutcome]:
+        phase_outcomes: list[CaseOutcome] = []
+        with cast("SyncCatalogClient", sync_client):
+            for case in cases:
+                if case.mode == "sync":
+                    phase_outcomes.append(
+                        _run_reference_sync_case(case, cast("_SyncReferenceCaseClient", sync_client), fixture_set)
+                    )
+        return phase_outcomes
+
+    outcomes.extend(await asyncio.to_thread(_run_sync_phase))
 
     async with cast("AsyncCatalogClient", async_client):
         for case in cases:
@@ -254,7 +265,7 @@ async def _run_tracer_case(
         raise ValueError("A tracer contract requires a dataset ID before dispatch.")
     _require_available(case.operation_id, sync_client.capability(case.operation_id))
     _require_available(case.operation_id, async_client.capability(case.operation_id))
-    sync_outcome = _run_tracer_sync_case(case, sync_client)
+    sync_outcome = await asyncio.to_thread(_run_tracer_sync_case, case, sync_client)
     async_outcome = await _run_tracer_async_case(case, async_client)
     return ComplianceReport(outcomes=(sync_outcome, async_outcome), platform_metadata=sync_client.platform_metadata())
 

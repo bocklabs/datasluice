@@ -56,6 +56,34 @@ def materialize_artifact(
     )
 
 
+def _validated_mode(mode: str) -> None:
+    if mode not in {"parquet", "raw"}:
+        raise ValueError(f"Unsupported materialize mode {mode!r}; expected 'parquet' or 'raw'")
+
+
+def _stored_artifact_if_current(
+    stored_artifact: Artifact | None,
+    *,
+    uri: str,
+    media_type: str,
+    size: int,
+    content_digest: str,
+    blob_digest: str,
+    mode: str,
+) -> Artifact | None:
+    if stored_artifact is None or not _is_current_artifact(
+        stored_artifact,
+        uri=uri,
+        media_type=media_type,
+        size=size,
+        content_digest=content_digest,
+        blob_digest=blob_digest,
+        mode=mode,
+    ):
+        return None
+    return stored_artifact
+
+
 def materialize(
     resource: Any,
     *,
@@ -76,8 +104,7 @@ def materialize(
     fs.makedirs(base_uri, exist_ok=True)
     identity = canonical_identity(resource)
 
-    if mode not in {"parquet", "raw"}:
-        raise ValueError(f"Unsupported materialize mode {mode!r}; expected 'parquet' or 'raw'")
+    _validated_mode(mode)
     suffix = "parquet" if mode == "parquet" else "bin"
     final_uri = f"{base_uri}/{identity}.{suffix}"
     media_type = _PARQUET_MEDIA_TYPE if mode == "parquet" else _raw_media_type(resource)
@@ -91,8 +118,8 @@ def materialize(
         existing = _existing_record(fs, final_uri, tmp_uri, media_type, content_digest, stored_checksum)
         uri = final_uri if existing else tmp_uri
         size = int(fs.info(uri)["size"])
-        blob_digest = _blob_digest_from_fs(fs, uri)
-        if existing and _is_current_artifact(
+        blob_digest = content_digest if mode == "raw" and not existing else _blob_digest_from_fs(fs, uri)
+        current = _stored_artifact_if_current(
             stored_artifact,
             uri=final_uri,
             media_type=media_type,
@@ -100,9 +127,9 @@ def materialize(
             content_digest=content_digest,
             blob_digest=blob_digest,
             mode=mode,
-        ):
-            assert stored_artifact is not None
-            return stored_artifact
+        )
+        if current is not None:
+            return current
         if not existing:
             fs.mv(tmp_uri, final_uri)
         return _artifact(
@@ -495,10 +522,27 @@ def _read_raw(resource: Any, reader: Any) -> bytes:
     transport = getattr(reader, "transport", None)
     url = getattr(access, "url", None) or getattr(resource, "url", None)
     if transport is not None and url is not None:
-        from datasluice.runtime.transport.base import RuntimeRequest
+        from datasluice.io._redirects import follow_redirects
+        from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest, RuntimeResponse
 
-        response = transport.send(RuntimeRequest(method="GET", url=url, max_response_bytes=MAX_DOCUMENT_BYTES))
-        if not 200 <= response.status_code < 300 or len(response.body) > MAX_DOCUMENT_BYTES:
+        def send(hop: str) -> RuntimeResponse:
+            return transport.send(
+                RuntimeRequest(
+                    method="GET",
+                    url=hop,
+                    redirect_policy=RedirectPolicy.NO_FOLLOW,
+                    max_response_bytes=MAX_DOCUMENT_BYTES,
+                )
+            )
+
+        response = follow_redirects(
+            url,
+            allow_private=getattr(reader, "allow_private_http", False),
+            label="Raw download",
+            error=DownloadError,
+            send=send,
+        )
+        if len(response.body) > MAX_DOCUMENT_BYTES:
             raise DownloadError("Raw download failed or exceeded the buffer limit")
         return bytes(response.body)
     raise ValueError(f"Resource {resource.id!r} cannot be read in raw mode")

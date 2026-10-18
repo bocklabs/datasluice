@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CREDENTIALS_FILE="${1:?usage: bootstrap_tokens.sh <credentials-file> (path outside the repository, never committed)}"
+CREDENTIALS_FILE="${1:?usage: bootstrap_tokens.sh <credentials-file> [env-file] (credentials path outside the repository, never committed)}"
 COMPOSE_FILE="$(cd "$(dirname "$0")/.." && pwd)/compose.yaml"
 ENV_FILE="${2:-$(cd "$(dirname "$0")/.." && pwd)/.env}"
-EVIDENCE_ORIGIN="${UDATA_EVIDENCE_ORIGIN:-http://127.0.0.1:5640}"
 TOKEN_NAME="datasluice-evidence-capture"
 
 REPO_ROOT="$(git -C "$(cd "$(dirname "$0")" && pwd)" rev-parse --show-toplevel 2>/dev/null || true)"
-CREDENTIALS_PATH="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$CREDENTIALS_FILE")"
-if [ -n "$REPO_ROOT" ] && [[ "$CREDENTIALS_PATH" == "$REPO_ROOT"/* ]]; then
+CREDENTIALS_FILE="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$CREDENTIALS_FILE")"
+if [ -n "$REPO_ROOT" ] && [[ "$CREDENTIALS_FILE" == "$REPO_ROOT"/* ]]; then
   echo "refusing to write credentials inside the repository: ${CREDENTIALS_FILE}" >&2
   exit 1
 fi

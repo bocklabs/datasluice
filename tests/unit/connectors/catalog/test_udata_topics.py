@@ -26,7 +26,8 @@ from datasluice.connectors.catalog.udata.services.topics import AsyncTopicsServi
 from datasluice.connectors.catalog.udata.wire import topics as wire
 from datasluice.contracts.catalog.native.udata import AsyncUDataTopicsService, SyncUDataTopicsService
 from datasluice.domain.catalog.auth import EffectivePermissions
-from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import (
     CatalogConflictError,
     CatalogError,
@@ -58,7 +59,7 @@ from tests.helpers.udata_test_support import (
 )
 
 if TYPE_CHECKING:
-    from datasluice.domain.catalog.receipts import MutationReceipt
+    from datasluice.domain.catalog.models import MappingRecord
 
 ORIGIN = UDATA_ORIGIN
 PERMISSIONS = UDATA_PERMISSIONS
@@ -497,6 +498,47 @@ def test_topic_element_requires_a_title_or_a_linked_element() -> None:
         TopicUpdateInput(elements=(TopicElementInput(description="orphan"),))
 
 
+def test_topic_update_rejects_elements_that_are_not_topic_element_inputs() -> None:
+    """The replace path enforces the same per-item type check as the create path."""
+    for elements in (({"title": "x"},), ("x",)):
+        invalid = cast("tuple[TopicElementInput, ...]", elements)
+        with pytest.raises(ValueError, match="tuple of topic element inputs"):
+            TopicUpdateInput(elements=invalid)
+
+
+def test_topic_element_reference_is_frozen() -> None:
+    """A validated element reference cannot be mutated after construction."""
+    element = TopicElementInput(element={"class": "Dataset", "id": "d-1"})
+    assert element.payload() == {"element": {"class": "Dataset", "id": "d-1"}}
+    with pytest.raises(TypeError):
+        cast("dict[str, str]", element.element)["class"] = "Reuse"
+
+
+def test_topic_mutation_result_requires_a_receipt_and_a_mapping_record() -> None:
+    """A mistyped receipt or record must fail at construction, not inside ``to_dict``."""
+    receipt = MutationReceipt(
+        operation=wire.CREATE_TOPIC_OPERATION,
+        outcome="succeeded",
+        target=CatalogId(CatalogPlatform.UDATA, ResourceKind("topic"), "topic-1"),
+    )
+    bad_receipt = cast("MutationReceipt", object())
+    with pytest.raises(ValueError, match="receipt and a mapping record"):
+        TopicMutationResult(bad_receipt)
+    record = cast("MappingRecord", {"id": "topic-1"})
+    with pytest.raises(ValueError, match="receipt and a mapping record"):
+        TopicMutationResult(receipt, record=record)
+
+
+def test_topic_mutation_failure_names_the_topic_subject() -> None:
+    """Paging and element labels identify the owning uData family in surfaced errors."""
+    with pytest.raises(ValueError, match="uData topic list page must be a positive integer"):
+        TopicListQuery(page=0)
+    with pytest.raises(ValueError, match="uData topic search page_size must be an integer"):
+        TopicSearchQuery(page_size=0)
+    with pytest.raises(ValueError, match="uData topic element page must be a positive integer"):
+        TopicElementsQuery(page=0)
+
+
 def test_topic_element_update_accepts_a_field_only_change() -> None:
     """The pinned element PUT merges onto the stored element, so a description-only change is stock-accepted."""
     assert TopicElementInput(description="rewritten").payload() == {"description": "rewritten"}
@@ -807,7 +849,6 @@ def test_destructive_topic_mutations_require_a_confirmed_destructive_policy(
 ) -> None:
     """Every destructive transition needs an explicit confirmed, destructive, bound policy."""
     operation, target, destructive = policy
-    router = sync_route_table(with_site_route({}))
     arguments: list[object] = ["topic-1", PERMISSIONS if method != "unfeature_topic" else ADMIN_PERMISSIONS]
     if method == "topic_element_delete":
         arguments.insert(1, "element-1")

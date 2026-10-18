@@ -15,45 +15,16 @@ from datasluice.errors.catalog import BudgetExhaustedError
 from datasluice.runtime.resilience import DeadlineMonitor
 from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest, TransportError
 from datasluice.runtime.transport.urllib_transport import UrllibCatalogTransport, _tls_context
-from tests.helpers.catalog_transport import AsyncLoopbackTransport, SyncLoopbackTransport
+from tests.helpers.catalog_transport import (
+    AsyncLoopbackTransport,
+    SyncLoopbackTransport,
+    _FakeResponse,
+    _RecordingOpener,
+)
 from tests.helpers.http_server import MockResponse, start_test_server
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from urllib.request import Request
-
-
-class _FakeResponse:
-    def __init__(self, status: int, headers: Mapping[str, str], body: bytes = b"") -> None:
-        self.status = status
-        self.headers = headers
-        self._body = body
-        self._offset = 0
-        self.closed = False
-
-    def read(self, size: int | None = None) -> bytes:
-        if size is None:
-            chunk = self._body[self._offset :]
-            self._offset = len(self._body)
-            return chunk
-        chunk = self._body[self._offset : self._offset + size]
-        self._offset += len(chunk)
-        return chunk
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class _RecordingOpener:
-    def __init__(self, responses: list[_FakeResponse]) -> None:
-        self.requests: list[Request] = []
-        self.timeouts: list[float] = []
-        self._responses = responses
-
-    def open(self, request: Request, *, timeout: float) -> _FakeResponse:
-        self.requests.append(request)
-        self.timeouts.append(timeout)
-        return self._responses[len(self.requests) - 1]
 
 
 class _LoopingRedirectOpener:
@@ -307,6 +278,19 @@ def test_urllib_forwarded_url_keeps_query_intact_while_failure_surface_redacts()
     assert "keep=value" in str(excinfo.value)
 
 
+def test_urllib_refuses_userinfo_redirect_target_before_a_second_request() -> None:
+    opener = _RecordingOpener([_FakeResponse(302, {"Location": "https://user:fixture-password@example.test/next"})])
+    transport = UrllibCatalogTransport()
+    cast("Any", transport)._opener = opener
+
+    request = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"})
+    with pytest.raises(TransportError, match="embedded credentials") as excinfo:
+        transport.send(request)
+
+    assert len(opener.requests) == 1
+    assert "fixture-password" not in str(excinfo.value)
+
+
 def test_urllib_cross_origin_redirect_forwards_presigned_query_verbatim() -> None:
     location = "https://cdn.test/download?X-Amz-Signature=sig123&X-Amz-Credential=AKIA%2F20260822&keep=value"
     opener = _RecordingOpener([_FakeResponse(302, {"Location": location}), _FakeResponse(200, {})])
@@ -367,7 +351,7 @@ def test_urllib_https_to_http_downgrade_strips_sensitive_headers() -> None:
     assert "x-benign" not in forwarded
 
 
-def test_urllib_exceeding_max_redirects_raises_transport_failure() -> None:
+def test_urllib_exceeding_max_redirects_raises_transport_error() -> None:
     opener = _LoopingRedirectOpener()
     transport = UrllibCatalogTransport(max_redirects=3)
     cast("Any", transport)._opener = opener

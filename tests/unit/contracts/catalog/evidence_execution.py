@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
-    from pathlib import Path
 
 CLIENT_CONSTRUCTORS = {"create_sync_client": "sync", "create_async_client": "async"}
-CLIENT_FAMILIES = {"auth_oauth", "taxonomies", "users_tokens", "organizations_memberships"}
+CLIENT_FAMILIES = {"auth_oauth", "taxonomies", "users_tokens", "organizations_memberships", "spatial"}
+_OAUTH_HELPERS_PATH = Path(__file__).resolve().parents[3] / "helpers/udata_oauth_checks.py"
 _TYPED_METHOD_ALIASES = {
     "add_dataset_badge": "add_badge",
     "allowed_extensions": "extensions",
@@ -66,6 +67,8 @@ def _fstring_hole(item: ast.JoinedStr, literals: Mapping[str, list[str]]) -> tup
             template += value.value
             continue
         if isinstance(value, ast.FormattedValue) and isinstance(value.value, ast.Name) and value.value.id in literals:
+            if hole is not None:
+                return template, None
             hole = value.value.id
             template += "\x00"
             continue
@@ -137,10 +140,6 @@ def _dynamic_names(
     return names
 
 
-def _string_constants(node: ast.AST) -> set[str]:
-    return {item.value for item in ast.walk(node) if isinstance(item, ast.Constant) and isinstance(item.value, str)}
-
-
 def _matching_call_arguments(nodes: set[ast.AST], function_name: str) -> list[list[ast.expr]]:
     """Return argument lists for calls to one helper function."""
     return [
@@ -167,7 +166,7 @@ def _getattr_parameters(function: ast.AST) -> set[str]:
 def _argument_methods(
     argument: ast.expr,
     bound: dict[str, set[str]],
-    dynamic: set[str],
+    dynamic: dict[str, list[str]],
     literals: Mapping[str, list[str]],
 ) -> set[str]:
     """Return the method names one call argument can stand for."""
@@ -176,7 +175,7 @@ def _argument_methods(
     if isinstance(argument, ast.JoinedStr):
         return _expanded_literal_names(argument, literals)
     if isinstance(argument, ast.Name):
-        return bound.get(argument.id, set()) | (dynamic if argument.id in dynamic else set())
+        return bound.get(argument.id, set()) | set(literals.get(argument.id, ())) | set(dynamic.get(argument.id, ()))
     return set()
 
 
@@ -185,7 +184,7 @@ def _bind_call_arguments(
     arguments: list[ast.expr],
     method_parameters: set[str],
     bound: dict[str, set[str]],
-    dynamic: set[str],
+    dynamic: dict[str, list[str]],
     literals: Mapping[str, list[str]],
 ) -> bool:
     """Fold one call's arguments into the bound method-name parameters, reporting any growth."""
@@ -204,7 +203,7 @@ def _propagate_bound_parameters(
     functions: Mapping[str, Def],
     method_parameters: Mapping[str, set[str]],
     bound: dict[str, set[str]],
-    dynamic: set[str],
+    dynamic: dict[str, list[str]],
 ) -> bool:
     """Propagate one round of call arguments through every helper, reporting any growth."""
     changed = False
@@ -278,7 +277,7 @@ def _forwarded_method_parameters(functions: Mapping[str, Def], method_parameters
     return changed
 
 
-def _bound_method_parameters(nodes: set[ast.AST], dynamic: set[str]) -> dict[str, set[str]]:
+def _bound_method_parameters(nodes: set[ast.AST], dynamic: dict[str, list[str]]) -> dict[str, set[str]]:
     """Bind helper method-name parameters from call arguments, propagating through wrappers."""
     functions = {function.name: function for function in nodes if isinstance(function, Def)}
     method_parameters = {name: _getattr_parameters(function) for name, function in functions.items()}
@@ -320,14 +319,12 @@ def _family_bound_parameters(nodes: set[ast.AST]) -> set[str]:
     return bound
 
 
-def _attribute_methods(item: ast.Call, methods: set[str]) -> set[str]:
-    """Return the method a call drives through a typed family attribute."""
-    if not isinstance(item.func, ast.Attribute):
-        return set()
-    target = item.func.value
+def _attribute_methods(item: ast.Attribute, methods: set[str]) -> set[str]:
+    """Return the method a typed family attribute drives or hands to a caller."""
+    target = item.value
     if not isinstance(target, ast.Attribute) or target.attr not in CLIENT_FAMILIES:
         return set()
-    return {item.func.attr} if item.func.attr in methods else set()
+    return {item.attr} if item.attr in methods else set()
 
 
 def _family_getattr_receiver(item: ast.Call, family_parameters: set[str]) -> ast.expr | None:
@@ -344,7 +341,6 @@ def _family_getattr_receiver(item: ast.Call, family_parameters: set[str]) -> ast
 
 def _getattr_methods(
     item: ast.Call,
-    declared: set[str],
     bound_methods: dict[str, set[str]],
     dynamic: dict[str, list[str]],
     family_parameters: set[str],
@@ -356,26 +352,26 @@ def _getattr_methods(
     if isinstance(name, ast.Constant) and isinstance(name.value, str):
         return {name.value}
     if isinstance(name, ast.Name):
-        return set(dynamic.get(name.id, ())) | bound_methods.get(name.id, set()) | declared
+        return set(dynamic.get(name.id, ())) | bound_methods.get(name.id, set())
     return set()
 
 
 def _call_method_names(
     node: ast.AST,
     methods: set[str],
-    declared: set[str],
     bound_methods: dict[str, set[str]],
     family_parameters: set[str],
+    functions: Mapping[str, ast.AST] | None = None,
     enclosing: ast.AST | None = None,
 ) -> set[str]:
     """Return methods invoked through a typed family attribute or its dynamic dispatch."""
     names: set[str] = set()
-    dynamic = _dynamic_names(node, enclosing=enclosing)
-    for item in ast.walk(node):
-        if not isinstance(item, ast.Call):
-            continue
-        names |= _attribute_methods(item, methods)
-        names |= _getattr_methods(item, declared, bound_methods, dynamic, family_parameters)
+    dynamic = _dynamic_names(node, functions=functions, enclosing=enclosing)
+    for item in _own_nodes(node):
+        if isinstance(item, ast.Call):
+            names |= _getattr_methods(item, bound_methods, dynamic, family_parameters)
+        elif isinstance(item, ast.Attribute):
+            names |= _attribute_methods(item, methods)
     return names & methods
 
 
@@ -392,8 +388,12 @@ def _reached_nodes(
     seen.add(node)
     reachable = {node}
     for name in _own_calls(node):
-        if name in functions or name in nested:
-            reachable |= _reached_nodes(functions[name] if name in functions else nested[name], functions, nested, seen)
+        if name not in functions and name not in nested:
+            continue
+        callee = functions[name] if name in functions else nested[name]
+        if isinstance(callee, Def) and _client_modes(callee):
+            continue
+        reachable |= _reached_nodes(callee, functions, nested, seen)
     return reachable
 
 
@@ -416,7 +416,7 @@ def _function_definitions(body: Iterable[ast.AST]) -> dict[str, Def]:
 
 def _passes(target: ast.AST) -> list[ast.AST]:
     """Return a test function together with every function nested inside it."""
-    return [target, *(node for node in ast.walk(target) if isinstance(node, Def))]
+    return [target, *(node for node in ast.walk(target) if isinstance(node, Def) and node is not target)]
 
 
 def _client_modes(node: ast.AST) -> set[str]:
@@ -430,21 +430,17 @@ def _client_modes(node: ast.AST) -> set[str]:
 
 def _reached_methods(
     reached: ast.AST,
-    reached_nodes: set[ast.AST],
-    current: ast.AST,
     methods: set[str],
+    bound_methods: dict[str, set[str]],
+    family_parameters: set[str],
     callable_functions: Mapping[str, ast.AST],
     target: ast.AST,
 ) -> set[str]:
     """Return the typed method names one function of a pass reaches."""
     names = {name.removeprefix("auth_oauth.") for name in _expanded_fstrings(reached) if name.startswith("auth_oauth.")}
-    family_parameters = _family_bound_parameters(reached_nodes)
-    declared = {value for reached_node in reached_nodes for value in _string_constants(reached_node)}
-    loop_names = set(_dynamic_names(current, callable_functions, enclosing=target)) | set(
-        _dynamic_names(reached, callable_functions, enclosing=target)
+    return names | _call_method_names(
+        reached, methods, bound_methods, family_parameters, functions=callable_functions, enclosing=target
     )
-    bound_methods = _bound_method_parameters(reached_nodes, loop_names)
-    return names | _call_method_names(reached, methods, declared, bound_methods, family_parameters, enclosing=target)
 
 
 def _pass_methods(
@@ -456,10 +452,16 @@ def _pass_methods(
 ) -> set[str]:
     """Return the typed method names one pass reaches across its whole call closure."""
     reached_nodes = _cached_reached_nodes(current, callable_functions, callable_functions, closures)
+    family_parameters = _family_bound_parameters(reached_nodes)
+    dynamic: dict[str, list[str]] = {}
+    for node in reached_nodes:
+        for key, values in _dynamic_names(node, callable_functions, enclosing=target).items():
+            dynamic.setdefault(key, []).extend(values)
+    bound_methods = _bound_method_parameters(reached_nodes, dynamic)
     return {
         name
         for reached in reached_nodes
-        for name in _reached_methods(reached, reached_nodes, current, methods, callable_functions, target)
+        for name in _reached_methods(reached, methods, bound_methods, family_parameters, callable_functions, target)
     }
 
 
@@ -481,7 +483,8 @@ def executed_modes(source: str, test_name: str, methods: set[str]) -> dict[str, 
     parsed = ast.parse(source)
     functions = _function_definitions(parsed.body)
     target = functions[test_name]
-    callable_functions = {**functions, **_function_definitions(ast.walk(target))}
+    oauth_helpers = _function_definitions(ast.parse(_OAUTH_HELPERS_PATH.read_text(encoding="utf-8")).body)
+    callable_functions = {**oauth_helpers, **functions, **_function_definitions(ast.walk(target))}
     closures: dict[ast.AST, set[ast.AST]] = {}
     modes_by_method: dict[str, set[str]] = {method: set() for method in methods}
     for current in _passes(target):
@@ -501,12 +504,41 @@ def typed_methods(operation_ids: set[str]) -> set[str]:
     }
 
 
-def unexecuted_operations(source: str, test_name: str, operation_ids: set[str], claimed_modes: list[str]) -> set[str]:
-    """Return the recorded operations no pass actually drives in every claimed mode."""
-    covered = executed_modes(source, test_name, typed_methods(operation_ids))
+def unexecuted_operations(
+    source: str, test_name: str | tuple[str, ...], operation_ids: set[str], claimed_modes: list[str]
+) -> set[str]:
+    """Return the recorded operations no pass actually drives in every claimed mode.
+
+    A tuple of test names merges coverage: an operation counts as driven when any
+    one of the claiming tests drives it in every claimed mode.
+    """
+    tests = test_name if isinstance(test_name, tuple) else (test_name,)
+    covered: dict[str, set[str]] = {}
+    for test in tests:
+        for method, modes in executed_modes(source, test, typed_methods(operation_ids)).items():
+            covered.setdefault(method, set()).update(modes)
     return {
         operation for operation in operation_ids if not set(claimed_modes) <= covered[typed_methods({operation}).pop()]
     }
+
+
+def reaches_client(source: str, test_ids: tuple[str, ...], constructor: str) -> bool:
+    """Return whether any named test reaches the client constructor through its call graph."""
+    functions = {node.name: node for node in ast.parse(source).body if isinstance(node, Def)}
+    seen: set[ast.AST] = set()
+    pending = [functions[test_id] for test_id in test_ids if test_id in functions]
+    while pending:
+        node = pending.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if any(
+            isinstance(item, ast.Call) and isinstance(item.func, ast.Name) and item.func.id == constructor
+            for item in ast.walk(node)
+        ):
+            return True
+        pending.extend(functions[name] for name in _callee_names(node) if name in functions)
+    return False
 
 
 def controlled_test_source(root: Path) -> str:

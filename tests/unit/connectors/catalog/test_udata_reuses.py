@@ -10,6 +10,7 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseCreateInput,
     ReuseFollowersQuery,
     ReuseListQuery,
+    ReuseMutationResult,
     ReuseSearchQuery,
     ReuseSuggestQuery,
     ReuseUpdateInput,
@@ -20,6 +21,8 @@ from datasluice.connectors.catalog.udata.services.reuses import (
     SyncReusesService,
 )
 from datasluice.connectors.catalog.udata.wire import reuses as wire
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError, ForbiddenError
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
@@ -39,6 +42,8 @@ from tests.helpers.udata_test_support import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from datasluice.domain.catalog.models import MappingRecord
 
 ORIGIN = UDATA_ORIGIN
 PERMISSIONS = UDATA_PERMISSIONS
@@ -288,10 +293,13 @@ def test_reuse_linked_identifiers_fail_closed_before_any_dispatch(linked_id: obj
         )
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
-        with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-            client.reuses.reuse_add_dataset("reuse-1", cast("str", linked_id), PERMISSIONS, None)
-        with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-            client.reuses.reuse_add_dataservice("reuse-1", cast("str", linked_id), PERMISSIONS, None)
+        linked = cast("str", linked_id)
+        with pytest.raises(CatalogValidationError, match="one URL-safe path segment") as dataset_error:
+            client.reuses.reuse_add_dataset("reuse-1", linked, PERMISSIONS, None)
+        with pytest.raises(CatalogValidationError, match="one URL-safe path segment") as dataservice_error:
+            client.reuses.reuse_add_dataservice("reuse-1", linked, PERMISSIONS, None)
+    assert dataset_error.value.__dict__["mutation_receipt"].outcome == "rejected"
+    assert dataservice_error.value.__dict__["mutation_receipt"].outcome == "rejected"
     assert [r for r in router.requests if "/reuses/" in r.url] == []
 
 
@@ -309,10 +317,13 @@ def test_reuse_linked_identifiers_fail_closed_in_async_mode(linked_id: object) -
 
     async def run() -> None:
         async with async_client(router, UDATA_CREDENTIAL) as client:
-            with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-                await client.reuses.reuse_add_dataset("reuse-1", cast("str", linked_id), PERMISSIONS, None)
-            with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-                await client.reuses.reuse_add_dataservice("reuse-1", cast("str", linked_id), PERMISSIONS, None)
+            linked = cast("str", linked_id)
+            with pytest.raises(CatalogValidationError, match="one URL-safe path segment") as dataset_error:
+                await client.reuses.reuse_add_dataset("reuse-1", linked, PERMISSIONS, None)
+            with pytest.raises(CatalogValidationError, match="one URL-safe path segment") as dataservice_error:
+                await client.reuses.reuse_add_dataservice("reuse-1", linked, PERMISSIONS, None)
+            assert dataset_error.value.__dict__["mutation_receipt"].outcome == "rejected"
+            assert dataservice_error.value.__dict__["mutation_receipt"].outcome == "rejected"
 
     asyncio.run(run())
     assert [r for r in router.requests if "/reuses/" in r.url] == []
@@ -479,6 +490,29 @@ def test_reuse_filters_are_deep_frozen(query_type: type[ReuseListQuery] | type[R
     ]
 
 
+def test_reuse_filters_cannot_repeat_the_top_level_q_field() -> None:
+    """``q`` has one source of truth, so the filter spelling is refused instead of duplicated on the wire."""
+    for query_type in (ReuseListQuery, ReuseSearchQuery):
+        with pytest.raises(ValueError, match="not documented choices"):
+            query_type(filters={"q": "x"})
+    assert [key for key, _ in ReuseListQuery(q="x").query_params() if key == "q"] == ["q"]
+
+
+def test_reuse_mutation_result_requires_a_receipt_and_a_mapping_record() -> None:
+    """A mistyped receipt or record must fail at construction, not inside ``to_dict``."""
+    receipt = MutationReceipt(
+        operation=wire.CREATE_REUSE_OPERATION,
+        outcome="succeeded",
+        target=CatalogId(CatalogPlatform.UDATA, ResourceKind("reuse"), "reuse-1"),
+    )
+    bad_receipt = cast("MutationReceipt", object())
+    with pytest.raises(ValueError, match="receipt and a mapping record"):
+        ReuseMutationResult(bad_receipt)
+    record = cast("MappingRecord", {"id": "reuse-1"})
+    with pytest.raises(ValueError, match="receipt and a mapping record"):
+        ReuseMutationResult(receipt, record=record)
+
+
 def test_reuse_badge_and_feature_mutations_match_exact_wire() -> None:
     router = atom_sync_route_table(
         with_site_route(
@@ -551,6 +585,7 @@ def test_badge_admin_operations_refuse_non_admin_credentials_before_dispatch(met
 
 
 def test_reuse_image_upload_streams_multipart_and_receipts() -> None:
+    assert len(wire.reuse_image_request("reuse-1")) == 4
     router = atom_sync_route_table(
         with_site_route({("POST", f"{ORIGIN}/api/1/reuses/reuse-1/image/"): (200, _reuse())})
     )
@@ -561,6 +596,31 @@ def test_reuse_image_upload_streams_multipart_and_receipts() -> None:
         assert result.receipt.target.value == "reuse-1"
         assert router.requests[-1].method == "POST"
         assert router.requests[-1].url == f"{ORIGIN}/api/1/reuses/reuse-1/image/"
+
+
+def test_reuse_image_rejects_non_bytes_upload_with_a_receipt_before_dispatch() -> None:
+    router = atom_sync_route_table(with_site_route({}))
+    not_bytes = cast("bytes", "not-bytes")
+    policy = _policy(wire.REUSE_IMAGE_OPERATION, "reuse-1")
+    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ValueError) as raised:
+        client.reuses.reuse_image("reuse-1", not_bytes, "image/png", PERMISSIONS, policy)
+    assert raised.value.__dict__["mutation_receipt"].outcome == "rejected"
+    assert router.requests == []
+
+
+def test_reuse_image_rejects_non_bytes_upload_in_async_mode() -> None:
+    router = atom_async_route_table(with_site_route({}))
+
+    async def run() -> None:
+        async with async_client(router, UDATA_CREDENTIAL) as client:
+            not_bytes = cast("bytes", "not-bytes")
+            policy = _policy(wire.REUSE_IMAGE_OPERATION, "reuse-1")
+            with pytest.raises(ValueError) as raised:
+                await client.reuses.reuse_image("reuse-1", not_bytes, "image/png", PERMISSIONS, policy)
+            assert raised.value.__dict__["mutation_receipt"].outcome == "rejected"
+
+    asyncio.run(run())
+    assert router.requests == []
 
 
 def test_reuse_follower_mutations_match_exact_wire() -> None:

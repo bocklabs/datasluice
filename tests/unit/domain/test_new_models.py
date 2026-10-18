@@ -24,11 +24,7 @@ from datasluice.domain import (
 )
 from datasluice.domain.catalog import CatalogId, CatalogPlatform, DatasetRecord, ResourceKind
 from datasluice.domain.detection import DetectionEvidence
-
-
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
+from tests.helpers.immutability import assign_readonly
 
 
 def test_schema_defaults() -> None:
@@ -42,7 +38,7 @@ def test_schema_defaults() -> None:
 def test_schema_is_frozen() -> None:
     schema = Schema(name="s")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(schema, "name", "other")
+        assign_readonly(schema, "name", "other")
 
 
 def test_resource_access_subclass_kind_defaults() -> None:
@@ -64,9 +60,9 @@ def test_http_download_defaults() -> None:
 def test_resource_access_is_frozen() -> None:
     http = HttpDownload(url="https://x")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(http, "url", "https://y")
+        assign_readonly(http, "url", "https://y")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(http, "kind", "other")
+        assign_readonly(http, "kind", "other")
 
 
 def test_resource_access_is_base_of_subclasses() -> None:
@@ -95,13 +91,13 @@ def test_detection_result_accepts_none_portal_type() -> None:
 def test_detection_result_is_frozen() -> None:
     result = DetectionResult(portal_type="ckan")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(result, "confidence", 1.0)
+        assign_readonly(result, "confidence", 1.0)
 
 
 def test_detection_evidence_is_frozen() -> None:
     evidence = DetectionEvidence(check="api", matched=True)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(evidence, "matched", False)
+        assign_readonly(evidence, "matched", False)
 
 
 def test_detection_result_confidence_range_enforced() -> None:
@@ -141,7 +137,7 @@ def test_catalog_models_are_immutable_and_versioned() -> None:
     assert CatalogId.from_dict(identifier.to_dict()) == identifier
     assert DatasetRecord.from_dict(record.to_dict()) == record
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(record, "name", "Other")
+        assign_readonly(record, "name", "Other")
     with pytest.raises(TypeError):
         cast("dict[str, object]", record.extensions)["example.org"] = {}
 
@@ -170,7 +166,7 @@ def test_artifact_defaults() -> None:
 def test_artifact_is_frozen() -> None:
     artifact = _artifact()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(artifact, "size", 1)
+        assign_readonly(artifact, "size", 1)
 
 
 def _artifact() -> Artifact:
@@ -202,4 +198,4 @@ def test_sync_state_defaults() -> None:
 def test_sync_state_is_frozen() -> None:
     state = SyncState(cursor={"res-1": "2026-01-01T00:00:00Z"})
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(state, "cursor", {"res-1": "2026-02-01T00:00:00Z"})
+        assign_readonly(state, "cursor", {"res-1": "2026-02-01T00:00:00Z"})

@@ -17,42 +17,6 @@ from datasluice.errors.catalog import UnauthenticatedError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
-RELATIONSHIPS_ID = "ckan/action-api-v3.relationships-follows"
-EXPECTED_RELATIONSHIP_ACTIONS = frozenset(
-    {
-        "package_relationships_list",
-        "package_relationship_create",
-        "package_relationship_update",
-        "package_relationship_delete",
-        "follow_dataset",
-        "unfollow_dataset",
-        "am_following_dataset",
-        "follow_group",
-        "unfollow_group",
-        "am_following_group",
-        "follow_user",
-        "unfollow_user",
-        "am_following_user",
-        "dataset_follower_count",
-        "dataset_follower_list",
-        "group_follower_count",
-        "group_follower_list",
-        "organization_follower_count",
-        "organization_follower_list",
-        "user_follower_count",
-        "user_follower_list",
-        "dataset_followee_count",
-        "dataset_followee_list",
-        "group_followee_count",
-        "group_followee_list",
-        "organization_followee_count",
-        "organization_followee_list",
-        "user_followee_count",
-        "user_followee_list",
-        "followee_count",
-        "followee_list",
-    }
-)
 
 USER_RESULT: dict[str, object] = {"id": "user-1", "name": "admin", "display_name": "Site Admin"}
 

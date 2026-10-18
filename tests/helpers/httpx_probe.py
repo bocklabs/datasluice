@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Self
 
-import httpx
+import pytest
 
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
@@ -16,6 +16,11 @@ from datasluice.runtime.transport.httpx_transport import (
     AsyncHttpxCatalogTransport,
     HttpxCatalogTransport,
 )
+
+if TYPE_CHECKING:
+    import httpx
+else:
+    httpx = pytest.importorskip("httpx")
 
 if TYPE_CHECKING:
     from types import TracebackType

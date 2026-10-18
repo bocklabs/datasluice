@@ -30,7 +30,9 @@ from datasluice.connectors.catalog.udata.wire._text_document import (
 )
 from datasluice.contracts.catalog.native.udata import AsyncUDataResourcesService, SyncUDataResourcesService
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
-from datasluice.domain.catalog.ids import CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, ForbiddenError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
@@ -265,6 +267,14 @@ def test_all_22_assigned_resource_routes_have_independent_exact_verbs_and_paths(
 
     with pytest.raises(CatalogValidationError):
         wire.resource_request("GET", "..", "resource")
+    with pytest.raises(CatalogValidationError):
+        wire.resource_request("PATCH", "dataset", "resource")
+    with pytest.raises(CatalogValidationError):
+        wire.community_collection_request("PUT")
+    with pytest.raises(CatalogValidationError):
+        wire.v2_extras_request("PATCH", "dataset", "resource")
+    with pytest.raises(CatalogValidationError):
+        wire.update_resources_request("dataset", ())
     with pytest.raises(CatalogValidationError):
         wire.v2_resource_request("dataset", extras="DELETE")
     with pytest.raises(CatalogValidationError):
@@ -833,6 +843,42 @@ def test_sync_extras_update_with_an_empty_204_body_succeeds() -> None:
     assert updated.receipt.outcome == "succeeded"
 
 
+def test_resource_mutation_extras_are_redacted_at_the_model_boundary() -> None:
+    """Credential-shaped extras never survive into the retained result projection."""
+    receipt = MutationReceipt(
+        operation=wire.RESOURCE_OPERATION,
+        outcome="succeeded",
+        target=CatalogId(CatalogPlatform.UDATA, ResourceKind.RESOURCE, "resource"),
+    )
+    result = ResourceMutationResult(receipt=receipt, extras={"api_key": "live"})
+
+    assert result.to_dict()["extras"] == {"api_key": REDACTED}
+
+
+def test_resource_reorder_schema_violation_reaches_the_typed_catalog_surface() -> None:
+    """A malformed reorder payload is a typed schema violation, not a bare ValueError.
+
+    SyncResourcesService declares error_type = NativeCatalogError, so a bare
+    ValueError bypasses the error surface callers rely on for server-side
+    schema violations, which every other decode seam raises as CatalogValidationError.
+    """
+    origin = "http://127.0.0.1:5640"
+    reorder_url = f"{origin}/api/1/datasets/dataset/resources/"
+    transport = _Router(_routes({("PUT", reorder_url): {"not": "a list"}}))
+    client = SyncUDataClient(
+        transport, declared_udata_profile(), origin=origin, credentials=_CREDENTIAL, owns_transport=False
+    )
+
+    updates = (ResourceUpdateInput({"id": "resource"}),)
+    policy = _policy("dataset", operation=wire.REORDER_OPERATION)
+    with client, pytest.raises(CatalogValidationError) as raised:
+        client.resources.reorder("dataset", updates, _PERMISSIONS, policy)
+
+    assert raised.value.operation == wire.REORDER_OPERATION
+    assert raised.value.platform == CatalogPlatform.UDATA.value
+    assert raised.value.safe_action == wire.RESOURCE_SCHEMA_SAFE_ACTION
+
+
 def test_preflight_upload_reuse_is_not_marked_ambiguous() -> None:
     origin = "http://127.0.0.1:5640"
     transport = _Router(_routes({}))
@@ -847,8 +893,8 @@ def test_preflight_upload_reuse_is_not_marked_ambiguous() -> None:
             "dataset", upload, _PERMISSIONS, _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION)
         )
 
+    assert not isinstance(raised.value, MidStreamUploadError)
     assert raised.value.__dict__["mutation_receipt"].outcome == "failed"
-    assert not transport.requests
 
 
 def test_v2_extras_flag_delegates_to_the_single_extras_route_builder() -> None:

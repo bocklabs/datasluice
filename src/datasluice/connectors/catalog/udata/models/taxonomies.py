@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from datasluice.connectors.catalog.udata.models._segment import path_segment
-
-if TYPE_CHECKING:
-    from datasluice.domain.catalog.models import MappingRecord
-    from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.connectors.catalog.udata.models._segment import path_segment, safe_segment
+from datasluice.domain.catalog.models import MappingRecord
+from datasluice.domain.catalog.receipts import MutationReceipt
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +16,7 @@ class BadgeCreateInput:
     kind: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.kind, str) or not self.kind or any(c in "/?#\"'" for c in self.kind):
+        if not safe_segment(self.kind):
             raise ValueError("uData badge kind must be one non-empty URL-safe segment.")
 
     def payload(self) -> dict[str, str]:
@@ -51,6 +48,12 @@ class TaxonomyMutationResult:
 
     receipt: MutationReceipt
     record: MappingRecord | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt, MutationReceipt) or (
+            self.record is not None and not isinstance(self.record, MappingRecord)
+        ):
+            raise ValueError("uData taxonomy mutation results require a receipt and a mapping record.")
 
     def to_dict(self) -> dict[str, object]:
         return {

@@ -429,6 +429,39 @@ def test_mutually_exclusive_relationship_identifiers_are_refused() -> None:
         ContactPointCreateInput(name="Support", role="invented-role", email="support@example.test")
 
 
+def test_contact_point_emails_with_multiple_at_signs_are_refused() -> None:
+    """The local part may not carry a second at-sign, matching the sibling email validators."""
+    with pytest.raises(ValueError, match="valid email address"):
+        ContactPointUpdateInput(email="a@b@c.com")
+    with pytest.raises(ValueError, match="valid email address"):
+        ContactPointCreateInput(name="x", role="creator", email="a@b@c.com")
+
+
+def test_visualization_x_axis_sort_keys_are_validated_against_their_own_choices() -> None:
+    """A sort key and a sort direction are not interchangeable."""
+    with pytest.raises(ValueError, match="not a documented choice"):
+        VisualizationCreateInput(
+            title="t",
+            description="d",
+            x_axis={"column_x": "c", "type": "continuous", "sort_x_by": "asc"},
+            series=({"resource_id": "r", "type": "line"},),
+        )
+    with pytest.raises(ValueError, match="not a documented choice"):
+        VisualizationCreateInput(
+            title="t",
+            description="d",
+            x_axis={"column_x": "c", "type": "continuous", "sort_x_direction": "axis_x"},
+            series=({"resource_id": "r", "type": "line"},),
+        )
+
+
+def test_contact_point_create_requires_a_documented_role() -> None:
+    """The create route posts the role unconditionally, so an absent role fails locally."""
+    role = cast("str", None)
+    with pytest.raises(ValueError):
+        ContactPointCreateInput(name="x", role=role)
+
+
 def test_mutation_permissions_discriminate_each_route_in_both_modes() -> None:
     """T-04-GEO-01: a denial is proven by zero network calls, and the grant still succeeds."""
     routes = _routes()

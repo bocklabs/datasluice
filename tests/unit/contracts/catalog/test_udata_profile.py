@@ -10,8 +10,10 @@ from typing import Any
 import pytest
 
 from tests.unit.contracts.catalog.evidence_execution import (
+    _expanded_fstrings,
     controlled_test_source,
     executed_modes,
+    reaches_client,
     typed_methods,
     unexecuted_operations,
 )
@@ -153,23 +155,30 @@ _USER_ROUTE_OPERATION_IDS = {
 
 # Each recorded evidence family is claimed by the controlled test that drives it;
 # the read and mutation matrices are separate tests for the user and organization
-# families and one combined test for the OAuth family.
-_EVIDENCE_CLAIMING_TESTS = {
+# families and one combined test for the OAuth family. A kind lists every test
+# whose passes jointly drive the recorded operations.
+_EVIDENCE_CLAIMING_TESTS: dict[str, dict[str, tuple[str, ...]]] = {
     "controlled_oauth_evidence": {
-        "read": "test_controlled_oauth_routes_match_raw_semantics_in_both_modes",
-        "mutation": "test_controlled_oauth_routes_match_raw_semantics_in_both_modes",
+        "read": ("test_controlled_oauth_routes_match_raw_semantics_in_both_modes",),
+        "mutation": ("test_controlled_oauth_routes_match_raw_semantics_in_both_modes",),
     },
     "controlled_user_evidence": {
-        "read": "test_controlled_user_reads_match_raw_routes_in_both_modes",
-        "mutation": "test_controlled_user_mutations_match_raw_routes_in_both_modes",
+        "read": ("test_controlled_user_reads_match_raw_routes_in_both_modes",),
+        "mutation": ("test_controlled_user_mutations_match_raw_routes_in_both_modes",),
     },
     "controlled_organization_evidence": {
-        "read": "test_controlled_organization_read_matrix_matches_raw_routes",
-        "mutation": "test_controlled_organization_mutations_match_raw_routes_in_both_modes",
+        "read": ("test_controlled_organization_read_matrix_matches_raw_routes",),
+        "mutation": ("test_controlled_organization_mutations_match_raw_routes_in_both_modes",),
     },
     "controlled_taxonomy_evidence": {
-        "read": "test_controlled_taxonomy_reads_match_raw_routes_in_both_modes",
-        "mutation": "test_controlled_taxonomy_badge_lifecycle_matches_raw_in_both_modes",
+        "read": ("test_controlled_taxonomy_reads_match_raw_routes_in_both_modes",),
+        "mutation": ("test_controlled_taxonomy_badge_lifecycle_matches_raw_in_both_modes",),
+    },
+    "controlled_spatial_evidence": {
+        "read": (
+            "test_controlled_spatial_reads_match_raw_routes_in_both_modes",
+            "test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error",
+        ),
     },
 }
 
@@ -313,7 +322,7 @@ def _head_revision() -> str:
     ).stdout.strip()
 
 
-def _history_is_truncated(revisions: list[str], families: set[str]) -> str:
+def _history_is_truncated(revisions: list[str], families: set[str]) -> tuple[str, dict[str, str | None]]:
     """Return why the evidence history cannot be walked, or an empty string if it can.
 
     A truncated clone cannot see the commit that first wrote a record, so walking
@@ -326,6 +335,10 @@ def _history_is_truncated(revisions: list[str], families: set[str]) -> str:
        resolves to HEAD, but a family that predates HEAD can only resolve to HEAD
        when its real history is missing, so resolving every family to HEAD proves
        the walk saw only the tip.
+
+    Returns:
+        The truncation reason, plus the family-to-introducing-commit map for the
+        walkable case so callers never repeat the per-family history walk.
     """
     if (
         subprocess.run(
@@ -337,13 +350,14 @@ def _history_is_truncated(revisions: list[str], families: set[str]) -> str:
         ).stdout.strip()
         == "true"
     ):
-        return "the clone is shallow, so commits before HEAD are absent"
+        return "the clone is shallow, so commits before HEAD are absent", {}
     if not revisions:
-        return "evidence.json has no reachable history"
+        return "evidence.json has no reachable history", {}
     head = _head_revision()
-    if all(_introducing_commit(family, revisions) == head for family in families):
-        return f"every family resolves to HEAD {head[:12]}, so earlier history is unreachable"
-    return ""
+    introducing = {family: _introducing_commit(family, revisions) for family in families}
+    if all(revision == head for revision in introducing.values()):
+        return f"every family resolves to HEAD {head[:12]}, so earlier history is unreachable", introducing
+    return "", introducing
 
 
 def _introducing_commit(family: str, revisions: list[str]) -> str | None:
@@ -368,13 +382,13 @@ def test_each_controlled_record_digests_the_files_at_its_introducing_commit() ->
     assert families, "no controlled evidence records found"
 
     revisions = _evidence_revisions()
-    truncated = _history_is_truncated(revisions, set(families))
+    truncated, introducing = _history_is_truncated(revisions, set(families))
     if truncated:
         pytest.skip(f"provenance walk unavailable: {truncated}; run this test against a full clone")
 
     for family, record in sorted(families.items()):
         recaptured = isinstance(record.get("recaptured_at"), str)
-        revision = None if recaptured else _introducing_commit(family, revisions)
+        revision = None if recaptured else introducing[family]
         for field, path in _PROVENANCE_FILES.items():
             if field not in record:
                 continue
@@ -607,6 +621,37 @@ def test_controlled_taxonomy_evidence_covers_every_route_in_both_modes() -> None
         assert f"def {test_id}(" in wheel_source, test_id
 
 
+def test_controlled_spatial_evidence_covers_every_route_in_both_modes() -> None:
+    controlled = _read_json(_EVIDENCE_PATH)["controlled_spatial_evidence"]
+    evidence = controlled["route_differential"]
+    reads = evidence["read_operations"]
+
+    assert set(reads) == _SPATIAL_ROUTE_OPERATION_IDS
+    assert evidence["read_modes"] == ["sync", "async"]
+    assert evidence["mutation_operations"] == []
+    assert evidence["mutation_modes"] == []
+    assert controlled["sanitized"] is True
+    assert controlled["stack_version"] == "17.6.0"
+
+    controlled_source = (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_text()
+    wheel_source = (_ROOT / "tests/e2e/test_udata_wheel.py").read_text()
+    for test_id in controlled["test_ids"][:2]:
+        assert f"def {test_id}(" in controlled_source, test_id
+    for test_id in controlled["test_ids"][2:]:
+        assert f"def {test_id}(" in wheel_source, test_id
+
+    assert (
+        controlled["controlled_test_sha256"]
+        == hashlib.sha256(
+            (_ROOT / "tests/integration/connectors/catalog/test_udata_controlled.py").read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        controlled["wheel_test_sha256"]
+        == hashlib.sha256((_ROOT / "tests/e2e/test_udata_wheel.py").read_bytes()).hexdigest()
+    )
+
+
 def test_deployment_dependent_routes_require_observed_effective_evidence() -> None:
     """Declared plugin/configuration routes never claim universal availability."""
     profile = _read_json(_PROFILE_PATH)
@@ -715,7 +760,9 @@ def test_controlled_topic_evidence_covers_every_route_in_both_modes() -> None:
 
     assert evidence["read_modes"] == ["sync", "async"]
     assert evidence["mutation_modes"] == ["sync", "async"]
-    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+    assert reaches_client(controlled_source, tuple(controlled["test_ids"]), "create_async_client"), (
+        "async read and mutation passes are required"
+    )
 
     for field, path in (
         ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),
@@ -752,7 +799,9 @@ def test_controlled_contact_visualization_evidence_covers_every_route_in_both_mo
 
     assert evidence["read_modes"] == ["sync", "async"]
     assert evidence["mutation_modes"] == ["sync", "async"]
-    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+    assert reaches_client(controlled_source, tuple(controlled["test_ids"]), "create_async_client"), (
+        "async read and mutation passes are required"
+    )
 
     for field, path in (
         ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),
@@ -776,9 +825,13 @@ def _without_async_passes(source: str, test_name: str) -> str:
     async_passes = [node for node in ast.walk(target) if isinstance(node, ast.AsyncFunctionDef)]
     assert async_passes, f"{test_name} must drive an async pass"
     lines = source.splitlines(keepends=True)
-    first = min(_definition_start(pass_) for pass_ in async_passes)
-    last = max((pass_.end_lineno or pass_.lineno) for pass_ in async_passes)
-    return "".join(lines[: first - 1] + lines[last:])
+    spans = sorted(
+        ((_definition_start(pass_), pass_.end_lineno or pass_.lineno) for pass_ in async_passes),
+        reverse=True,
+    )
+    for start, end in spans:
+        del lines[start - 1 : end]
+    return "".join(lines)
 
 
 def test_controlled_evidence_coverage_is_derived_from_executed_passes() -> None:
@@ -795,12 +848,12 @@ def test_controlled_evidence_coverage_is_derived_from_executed_passes() -> None:
 
     for family, tests in _EVIDENCE_CLAIMING_TESTS.items():
         differential = evidence_document[family]["route_differential"]
-        for kind in ("read", "mutation"):
+        for kind, claiming_tests in tests.items():
             unexecuted[f"{family}.{kind}"] = unexecuted_operations(
                 source,
-                tests[kind],
-                set(differential[f"{kind}_operations"]),
-                differential[f"{kind}_modes"],
+                claiming_tests,
+                set(differential.get(f"{kind}_operations", [])),
+                differential.get(f"{kind}_modes", []),
             )
 
     assert {family: operations for family, operations in unexecuted.items() if operations} == {}
@@ -816,7 +869,7 @@ def test_the_execution_gate_fails_when_the_async_mutation_pass_is_removed() -> N
     differential = _read_json(_EVIDENCE_PATH)["controlled_oauth_evidence"]["route_differential"]
     mutations = set(differential["mutation_operations"])
     modes = differential["mutation_modes"]
-    test = _EVIDENCE_CLAIMING_TESTS["controlled_oauth_evidence"]["mutation"]
+    test = _EVIDENCE_CLAIMING_TESTS["controlled_oauth_evidence"]["mutation"][0]
 
     gutted = _without_async_passes(source, test)
     assert gutted != source, "the async OAuth mutation pass was not found to remove"
@@ -830,7 +883,7 @@ def test_the_execution_gate_fails_when_a_user_async_mutation_pass_is_removed() -
     differential = _read_json(_EVIDENCE_PATH)["controlled_user_evidence"]["route_differential"]
     mutations = set(differential["mutation_operations"])
     modes = differential["mutation_modes"]
-    test = _EVIDENCE_CLAIMING_TESTS["controlled_user_evidence"]["mutation"]
+    test = _EVIDENCE_CLAIMING_TESTS["controlled_user_evidence"]["mutation"][0]
 
     gutted = _without_async_passes(source, test)
 
@@ -844,8 +897,8 @@ def test_the_taxonomy_execution_gate_fails_when_either_mode_pass_is_removed() ->
     differential = _read_json(_EVIDENCE_PATH)["controlled_taxonomy_evidence"]["route_differential"]
     mutations = set(differential["mutation_operations"])
     modes = differential["mutation_modes"]
-    test = _EVIDENCE_CLAIMING_TESTS["controlled_taxonomy_evidence"]["mutation"]
-    read_test = _EVIDENCE_CLAIMING_TESTS["controlled_taxonomy_evidence"]["read"]
+    test = _EVIDENCE_CLAIMING_TESTS["controlled_taxonomy_evidence"]["mutation"][0]
+    read_test = _EVIDENCE_CLAIMING_TESTS["controlled_taxonomy_evidence"]["read"][0]
 
     without_sync = _without_nested_pass(source, test, "exercise")
     without_async = _without_async_passes(source, test)
@@ -869,6 +922,18 @@ def test_unrelated_name() -> None:
 """
     methods = typed_methods({"udata/oauth.revoke-token"})
     assert executed_modes(source, "test_unrelated_name", methods) == {"revoke_token": set()}
+
+
+def test_the_expansion_helper_refuses_an_fstring_with_two_loop_holes() -> None:
+    """A second loop-literal hole is unresolvable, so no single-loop substitution may be produced."""
+    source = """\
+def test_two_holes() -> None:
+    for a in ("x",):
+        for b in ("y",):
+            f"{a}/{b}"
+"""
+
+    assert _expanded_fstrings(ast.parse(source)) == {"\x00/"}
 
 
 def _without_nested_pass(source: str, test_name: str, pass_name: str) -> str:
@@ -949,7 +1014,9 @@ def test_controlled_jobs_evidence_covers_every_route_in_both_modes() -> None:
 
     assert evidence["read_modes"] == ["sync", "async"]
     assert evidence["mutation_modes"] == ["sync", "async"]
-    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+    assert reaches_client(controlled_source, tuple(controlled["test_ids"]), "create_async_client"), (
+        "async read and mutation passes are required"
+    )
     assert "worker_jobs" in tracer_source, "the tracer must execute the family from installed content"
 
     for field, path in (
@@ -1066,7 +1133,9 @@ def test_controlled_transfers_evidence_covers_the_state_machine_in_both_modes() 
 
     assert evidence["read_modes"] == ["sync", "async"]
     assert evidence["mutation_modes"] == ["sync", "async"]
-    assert controlled_source.count("create_async_client(") >= 2, "async read and mutation passes are required"
+    assert reaches_client(controlled_source, tuple(controlled["test_ids"]), "create_async_client"), (
+        "async read and mutation passes are required"
+    )
 
     for field, path in (
         ("controlled_test_sha256", "tests/integration/connectors/catalog/test_udata_controlled.py"),

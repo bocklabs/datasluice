@@ -77,15 +77,7 @@ class Downloader:
         data = cached if cached is not None else self._fetch(resource.url)
 
         if verify_hash:
-            import hashlib
-
-            actual = hashlib.new(hash_algorithm, data).hexdigest()
-            if actual.lower() != verify_hash.lower():
-                raise ChecksumMismatchError(
-                    f"Checksum mismatch for {sanitize_uri(resource.url)}",
-                    expected=verify_hash,
-                    actual=actual,
-                )
+            self._verify_checksum(resource.url, data, verify_hash, hash_algorithm, cache_key, cached)
 
         if self.cache and cached is None:
             self.cache.put(cache_key, data)
@@ -96,6 +88,28 @@ class Downloader:
             return Path(uri)
 
         return save_bytes(data, dest or ".", fname)
+
+    def _verify_checksum(
+        self,
+        url: str,
+        data: bytes,
+        verify_hash: str,
+        hash_algorithm: str,
+        cache_key: str,
+        cached: bytes | None,
+    ) -> None:
+        """Verify *data* against the expected digest, evicting a cached copy that no longer matches."""
+        import hashlib
+
+        actual = hashlib.new(hash_algorithm, data).hexdigest()
+        if actual.lower() != verify_hash.lower():
+            if self.cache is not None and cached is not None:
+                self.cache.delete(cache_key)
+            raise ChecksumMismatchError(
+                f"Checksum mismatch for {sanitize_uri(url)}",
+                expected=verify_hash,
+                actual=actual,
+            )
 
     def _fetch(self, url: str) -> bytes:
         """Fetch bytes through the runtime transport and validate the HTTP outcome."""

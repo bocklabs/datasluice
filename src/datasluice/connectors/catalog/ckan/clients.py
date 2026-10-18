@@ -107,6 +107,7 @@ if TYPE_CHECKING:
 
 PLATFORM = CatalogPlatform.CKAN
 _ACTION_PATH = "/api/3/action/"
+_HTTPS_PREFIX = "https://"
 _PROFILE_RESOURCE = "ckan-2.11.json"
 _STATUS_RESPONSE_CLASSES = {401: ProbeResponseClass.UNAUTHORIZED, 403: ProbeResponseClass.FORBIDDEN}
 _NATIVE_GROUP_SAFE_ACTION = "Call the action through its owning native group projection."
@@ -136,6 +137,14 @@ def _dispatch_request(
     url = f"{origin}{_ACTION_PATH}{entry.name}"
     headers = _auth_headers(credential)
     if files:
+        buffered = sum(len(part.data) for part in files if isinstance(part.data, bytes))
+        if max_bytes is not None and buffered > max_bytes:
+            raise CatalogValidationError(
+                "CKAN multipart uploads exceed the configured upload byte ceiling.",
+                operation=entry.owning_operation_id,
+                platform=PLATFORM.value,
+                safe_action="Reduce the upload size or raise max_upload_bytes.",
+            )
         return RuntimeRequest(
             method="POST",
             url=url,
@@ -322,7 +331,7 @@ class SyncCKANClient:
             probe_runner=settings.probe_runner,
             ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
-            deployment_origin=settings.base_url if settings.base_url.startswith("https://") else None,
+            deployment_origin=settings.base_url if settings.base_url.startswith(_HTTPS_PREFIX) else None,
         )
         self._credential_scope = credential_scope(settings.credential)
         self._profile = self._capabilities.baseline_profile
@@ -504,7 +513,7 @@ class SyncCKANClient:
         if scope != self._credential_scope:
             self._capabilities.invalidate()
             self._credential_scope = scope
-        effective = self._capabilities.resolve(owning_id, credential_scope=scope)
+        effective = self._capabilities.resolve(owning_id)
         build_catalog_operation_guard(owning_id, effective).require_allowed()
         policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
         idempotency = (
@@ -702,7 +711,7 @@ class AsyncCKANClient:
             async_probe_runner=settings.async_probe_runner,
             ttl_seconds=settings.capability_cache_ttl,
             clock=clock,
-            deployment_origin=settings.base_url if settings.base_url.startswith("https://") else None,
+            deployment_origin=settings.base_url if settings.base_url.startswith(_HTTPS_PREFIX) else None,
         )
         self._credential_scope = credential_scope(settings.credential)
         self._profile = self._capabilities.baseline_profile
@@ -888,7 +897,7 @@ class AsyncCKANClient:
         if scope != self._credential_scope:
             self._capabilities.invalidate()
             self._credential_scope = scope
-        effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
+        effective = await self._capabilities.resolve_async(owning_id)
         build_catalog_operation_guard(owning_id, effective).require_allowed()
         policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
         idempotency = (
@@ -1093,7 +1102,7 @@ class _SyncFamilyService[T]:
         if self._family == "organizations":
             operation = CatalogOperationRequest(
                 operation_id=operation.operation_id,
-                payload={"all_fields": True, **operation.payload},
+                payload={**operation.payload, "all_fields": True},
                 mutation_policy=operation.mutation_policy,
             )
         return self._client._dispatch(
@@ -1193,7 +1202,7 @@ class _AsyncFamilyService[T]:
         if self._family == "organizations":
             operation = CatalogOperationRequest(
                 operation_id=operation.operation_id,
-                payload={"all_fields": True, **operation.payload},
+                payload={**operation.payload, "all_fields": True},
                 mutation_policy=operation.mutation_policy,
             )
         return await self._client._dispatch(
@@ -1685,7 +1694,7 @@ def _default_probe_runners(
     if settings.probe_policy != "auto":
         return None, None
     origin = normalize_origin(settings.base_url)
-    if not origin.startswith("https://"):
+    if not origin.startswith(_HTTPS_PREFIX):
         raise UnsupportedCapabilityError(
             f"The non-HTTPS origin {origin} receives no default probe runners.",
             operation=f"{PLATFORM.value}/probes",

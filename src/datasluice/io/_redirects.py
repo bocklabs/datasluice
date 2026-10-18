@@ -46,10 +46,14 @@ def follow_redirects[T: (RuntimeResponse, RuntimeStreamResponse)](
         if 200 <= response.status_code < 300:
             return response
         headers = {key.lower(): value for key, value in response.headers.items()}
-        redirecting = response.status_code in _REDIRECT_STATUSES and "location" in headers and hop < _MAX_HOPS
         if on_discard is not None:
             on_discard(response)
-        if not redirecting:
+        if response.status_code not in _REDIRECT_STATUSES or "location" not in headers:
             raise error(f"{label} for {sanitize_uri(url)!r} returned HTTP {response.status_code}")
-        url = urljoin(url, headers["location"])
-    raise error(f"{label} exceeded its redirect limit")
+        if hop == _MAX_HOPS:
+            raise error(f"{label} for {sanitize_uri(url)!r} exceeded its redirect limit")
+        try:
+            url = urljoin(url, headers["location"])
+        except ValueError:
+            raise error(f"{label} for {sanitize_uri(url)!r} returned an unusable redirect Location") from None
+    raise AssertionError("unreachable")

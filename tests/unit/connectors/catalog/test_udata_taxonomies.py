@@ -220,7 +220,7 @@ def test_taxonomy_reads_decode_losslessly_and_fail_typed_in_both_modes() -> None
 
 _MALFORMED_SUGGEST_SIZES = (0, -1, 101, True, False, 1.0, 10.5, "10", None, [10], b"10")
 _MALFORMED_SUGGEST_QUERIES = (5, None, b"csv", ["csv"], {"q": "csv"}, True)
-_MALFORMED_BADGE_KINDS = ("", "a/b", "a?b", "a#b", 'a"b', "a'b", 4, None, True)
+_MALFORMED_BADGE_KINDS = ("", "a/b", "a?b", "a#b", 'a"b', "a'b", "a\x01b", 4, None, True)
 _ROUTE_ONLY_BADGE_KINDS = (".", "..", "a\x00b", "a\nb")
 _MALFORMED_SEGMENTS = (
     "",
@@ -288,9 +288,10 @@ def test_malformed_badge_kinds_are_rejected_before_dispatch(kind: object) -> Non
 
 
 @pytest.mark.parametrize("kind", _ROUTE_ONLY_BADGE_KINDS)
-def test_dot_and_control_badge_kinds_are_stopped_at_the_route_boundary(kind: str) -> None:
-    """`BadgeCreateInput` only screens separators; the shared segment guard screens the rest."""
-    assert BadgeCreateInput(kind=kind).payload() == {"kind": kind}
+def test_dot_and_control_badge_kinds_are_refused_at_construction_and_route(kind: str) -> None:
+    """``BadgeCreateInput`` now shares the segment rule, so the same values fail in both places."""
+    with pytest.raises(ValueError, match="one non-empty URL-safe segment"):
+        BadgeCreateInput(kind=kind)
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
         wire.delete_badge_request("dataset-1", kind)
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):

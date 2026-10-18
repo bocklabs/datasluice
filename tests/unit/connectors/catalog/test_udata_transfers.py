@@ -682,7 +682,16 @@ def test_a_pre_dispatch_rejection_still_carries_the_exact_composite_target() -> 
 
 @pytest.mark.parametrize(
     "payload",
-    [None, "transfer", 4, [], {"status": "pending"}, {"id": "", "status": "pending"}, {"id": "transfer-1"}],
+    [
+        None,
+        "transfer",
+        4,
+        [],
+        {"status": "pending"},
+        {"id": "", "status": "pending"},
+        {"id": "transfer-1"},
+        {"id": "transfer-1", "status": []},
+    ],
 )
 def test_a_malformed_transfer_object_fails_the_decoder(payload: object) -> None:
     with pytest.raises(CatalogValidationError):
@@ -716,7 +725,7 @@ def test_transfers_are_bounded_before_dispatch() -> None:
     assert linked_identifier("dataset-1", wire.LIST_TRANSFERS_OPERATION, "uData transfer subject") == "dataset-1"
 
 
-def test_transfer_dispatch_uses_the_exact_operation_string_in_both_modes() -> None:
+def test_transfer_dispatch_uses_the_exact_operation_string_in_both_modes(monkeypatch: pytest.MonkeyPatch) -> None:
     """The capability gate and the receipt must name the same pinned operation."""
     captured: list[dict[str, object]] = []
 
@@ -733,3 +742,18 @@ def test_transfer_dispatch_uses_the_exact_operation_string_in_both_modes() -> No
     assert captured[0]["owning_operation"] == wire.REQUEST_TRANSFER_OPERATION
     assert captured[0]["path"] == "/api/1/transfer/"
     assert result.receipt.operation == wire.REQUEST_TRANSFER_OPERATION
+
+    async def run_async() -> None:
+        async def async_capture(**kwargs: object) -> tuple[int, object, object]:
+            assert kwargs["owning_operation"] == wire.REQUEST_TRANSFER_OPERATION
+            assert kwargs["path"] == "/api/1/transfer/"
+            return 201, _transfer(), object()
+
+        async with async_client(async_route_table(with_site_route({})), UDATA_CREDENTIAL) as client:
+            monkeypatch.setattr(client, "_dataset_call_async", async_capture)
+            result = await client.transfers.request_transfer(
+                SUBJECT, PERMISSIONS, _policy(wire.REQUEST_TRANSFER_OPERATION, COMPOSITE_TARGET)
+            )
+        assert result.receipt.operation == wire.REQUEST_TRANSFER_OPERATION
+
+    asyncio.run(run_async())

@@ -39,12 +39,12 @@ def _clean_env(venv: str) -> dict[str, str]:
     return {"PATH": str(Path(venv) / "bin"), "HOME": os.environ.get("HOME", ""), "LANG": "en_US.UTF-8"}
 
 
-def _run_probe(venv: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+def _run_probe(env_info: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [venv["python"], str(_PROBE), *args],
+        [env_info["python"], str(_PROBE), *args],
         capture_output=True,
         text=True,
-        env=_clean_env(venv["venv"]),
+        env=_clean_env(env_info["venv"]),
         timeout=120,
     )
 

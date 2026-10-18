@@ -133,7 +133,7 @@ def test_tag_suggest_query_rejects_undocumented_values(q: str, size: int) -> Non
         TagSuggestQuery(q=q, size=size)
 
 
-@pytest.mark.parametrize("size", [0, 1025, "32"])
+@pytest.mark.parametrize("size", [0, 1025, "32", True])
 def test_avatar_request_rejects_undocumented_sizes(size: object) -> None:
     with pytest.raises(ValueError):
         AvatarRequest(identifier="org-1", size=cast("int", size))

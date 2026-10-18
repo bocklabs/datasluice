@@ -18,6 +18,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError
+from urllib.parse import urljoin, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import uuid4
 
@@ -465,6 +466,14 @@ def _assert_records_match_raw(method: str, payload: object, records: tuple[objec
     assert [_plain_json(_record_payload(item)) for item in records] == _plain_json(redacted_items), method
 
 
+def _sanitized_redirect_location(location: str | None) -> str | None:
+    """Return the same-origin path+query projection the connector stores for redirects."""
+    if location is None:
+        return None
+    target = urlsplit(urljoin(f"{ORIGIN}/", location))
+    return target.path + (f"?{target.query}" if target.query else "")
+
+
 def _assert_typed_read_matches_raw(
     method: str, status: int, payload: object, headers: Mapping[str, str], typed: object
 ) -> None:
@@ -473,7 +482,7 @@ def _assert_typed_read_matches_raw(
         assert typed.status_code == status
         media_type = headers.get("content-type", "application/octet-stream")
         assert typed.media_type == media_type
-        assert typed.location == headers.get("location")
+        assert typed.location == _sanitized_redirect_location(headers.get("location"))
         if status in {301, 302, 303, 307, 308}:
             assert typed.size_bytes == 0
             assert typed.sha256 == hashlib.sha256(b"").hexdigest()
@@ -3590,7 +3599,7 @@ def _probe_controlled_oauth_raw(token: str) -> _ControlledOAuthRaw:
     # The stock /oauth/error page renders api/oauth_error.html, which this image
     # does not ship, so the deployment itself answers 500. The connector must
     # surface that status unchanged rather than mask or invent a body.
-    assert raw_error[0] >= 200
+    assert raw_error[0] == 500, raw_error[0]
     return _ControlledOAuthRaw(
         error=raw_error,
         client_info=raw_client_info,
@@ -4246,13 +4255,13 @@ def _controlled_member_notifications(member_token: str) -> tuple[object, object,
 
 def _cancel_evidence_invitation(token: str, invitation_id: str) -> None:
     """Cancel the disposable evidence organization invitation, tolerating a refusal from the deployment."""
-    with contextlib.suppress(CatalogError):
+    with contextlib.suppress(OSError, json.JSONDecodeError):
         _direct_request(token, "POST", f"/api/1/organizations/evidence-organization/membership/{invitation_id}/cancel/")
 
 
 def _mark_controlled_notification_read(member_token: str, notification_id: str) -> None:
     """Mark the disposable notification handled again, tolerating a refusal from the deployment."""
-    with contextlib.suppress(CatalogError):
+    with contextlib.suppress(OSError, json.JSONDecodeError):
         _direct_request(member_token, "POST", f"/api/1/notifications/{notification_id}/read/", body={})
 
 
@@ -4384,15 +4393,17 @@ def _cleanup_sync_controlled_post_run(
                 permissions,
                 _posts_reports_mutation_policy("udata/api-v1.update-report", report_id),
             )
-        with contextlib.suppress(CatalogError):
-            client.posts_reports.unpublish_post(
-                post_id, permissions, _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id)
-            )
-        deleted = client.posts_reports.delete_post(
+    with contextlib.suppress(CatalogError):
+        client.posts_reports.unpublish_post(
             post_id,
             permissions,
-            _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
+            _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id, destructive=True),
         )
+    deleted = client.posts_reports.delete_post(
+        post_id,
+        permissions,
+        _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
+    )
     assert deleted.record is None
 
 
@@ -4554,15 +4565,17 @@ async def _cleanup_async_controlled_post_run(
                 permissions,
                 _posts_reports_mutation_policy("udata/api-v1.update-report", report_id),
             )
-        with contextlib.suppress(CatalogError):
-            await client.posts_reports.unpublish_post(
-                post_id, permissions, _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id)
-            )
-        deleted = await client.posts_reports.delete_post(
+    with contextlib.suppress(CatalogError):
+        await client.posts_reports.unpublish_post(
             post_id,
             permissions,
-            _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
+            _posts_reports_mutation_policy("udata/api-v1.unpublish-post", post_id, destructive=True),
         )
+    deleted = await client.posts_reports.delete_post(
+        post_id,
+        permissions,
+        _posts_reports_mutation_policy("udata/api-v1.delete-post", post_id, destructive=True),
+    )
     assert deleted.record is None
 
 
@@ -4736,7 +4749,7 @@ def test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error() ->
     assert status == 500
 
     with create_sync_client(UDataClientSettings(base_url=ORIGIN)) as client:
-        sync_error = _spatial_outcome(client.spatial.spatial_zones, "missing-zone")
+        sync_error = _spatial_outcome(client.spatial.spatial_zones, ("missing-zone",))
 
     async def run_async() -> None:
         async with create_async_client(UDataClientSettings(base_url=ORIGIN)) as client:

@@ -1,7 +1,3 @@
-ci:
-  skip: [pylint]
-
-
 repos:
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.21.2
@@ -55,8 +51,8 @@ repos:
       - id: jscpd
         name: code duplication
         entry: npx --yes jscpd@4.3.0 --min-lines 10 --min-tokens 70 --threshold 1.5
-          --reporters consoleFull --output /tmp/jscpd-precommit
-          --ignore "**/node_modules/**,**/.venv/**,**/jscpd-report.json"
+          --reporters consoleFull
+          --ignore "**/node_modules/**,**/.venv/**"
           src tests scripts providers
         language: system
         pass_filenames: false
@@ -98,4 +94,4 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
-        args: ["--ignore-words-list=blocs,pathc"]
+        args: ["--ignore-words-list=blocs"]

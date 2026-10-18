@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from urllib.parse import urlencode
 
@@ -15,6 +16,7 @@ from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceUpdateInput,
     segment,
 )
+from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES
 from datasluice.connectors.catalog.udata.wire._text_document import APPROVED_TEXT_MEDIA_TYPES, bound_text_document
 from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import CatalogValidationError
@@ -39,20 +41,6 @@ UNFOLLOW_DATASERVICE_OPERATION = "udata/api-v1.unfollow-dataservice"
 _DATASERVICE_PATH = "/api/1/dataservices/"
 _DATASERVICE_V2_PATH = "/api/2/dataservices/"
 _ATOM_MEDIA_TYPE = "application/atom+xml"
-_RDF_MEDIA_TYPE = "application/rdf+xml"
-_TURTLE_MEDIA_TYPE = "application/x-turtle"
-_JSON_LD_MEDIA_TYPE = "application/ld+json"
-RDF_FORMAT_MEDIA_TYPES = {
-    "rdf": _RDF_MEDIA_TYPE,
-    "xml": _RDF_MEDIA_TYPE,
-    "ttl": _TURTLE_MEDIA_TYPE,
-    "turtle": _TURTLE_MEDIA_TYPE,
-    "n3": "text/n3",
-    "nt": "application/n-triples",
-    "trig": "application/trig",
-    "json": _JSON_LD_MEDIA_TYPE,
-    "jsonld": _JSON_LD_MEDIA_TYPE,
-}
 _PINNED_SCHEMA_ACTION = "Verify the response against the pinned uData 17.6 schema."
 
 type Request = tuple[str, str, dict[str, str], object | None]
@@ -67,22 +55,23 @@ def _query(pairs: Iterable[tuple[str, str]]) -> str:
 
 
 def _format_extension(value: str) -> str:
-    """Validate one stock RDF format extension and return it unchanged."""
-    if not isinstance(value, str) or not value:
+    """Validate one stock RDF format extension and return its lowercased form."""
+    if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,16}", value) is None:
         raise CatalogValidationError(
             "The uData RDF format is invalid.",
             operation=RDF_DATASERVICE_FORMAT_OPERATION,
             platform=PLATFORM,
             safe_action="Use a short ASCII uData RDF extension.",
         )
-    if value not in RDF_FORMAT_MEDIA_TYPES:
+    extension = value.lower()
+    if extension not in RDF_FORMAT_MEDIA_TYPES:
         raise CatalogValidationError(
             "The uData RDF format is unsupported.",
             operation=RDF_DATASERVICE_FORMAT_OPERATION,
             platform=PLATFORM,
             safe_action="Use a stock uData RDF extension.",
         )
-    return value
+    return extension
 
 
 def media_type_for_format(extension: str) -> str:
@@ -196,17 +185,6 @@ def parse_mapping(payload: object, operation: str) -> MappingRecord:
     return MappingRecord(payload)
 
 
-def parse_mapping_sequence(payload: object, operation: str) -> tuple[MappingRecord, ...]:
-    if not isinstance(payload, list) or not all(isinstance(item, Mapping) for item in payload):
-        raise CatalogValidationError(
-            "The uData dataservice response must be a list of objects.",
-            operation=operation,
-            platform=PLATFORM,
-            safe_action=_PINNED_SCHEMA_ACTION,
-        )
-    return tuple(MappingRecord(item) for item in payload)
-
-
 def parse_text_document(
     body: bytes,
     media_type: str,
@@ -222,6 +200,7 @@ def parse_text_document(
         operation=operation,
         platform=PLATFORM,
         subject="dataservice",
+        list_approved_action=True,
         approved_media_types=frozenset({"application/atom+xml"})
         if operation == RECENT_DATASERVICES_ATOM_FEED_OPERATION
         else APPROVED_TEXT_MEDIA_TYPES,

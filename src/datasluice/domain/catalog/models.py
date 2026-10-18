@@ -114,7 +114,7 @@ def redact_record_payload(value: Mapping[str, object], *, _depth: int = 0) -> di
         return {TRUNCATED: TRUNCATED}
     redacted: dict[str, object] = {}
     for key, nested in value.items():
-        if not isinstance(key, str) or not key:
+        if not isinstance(key, str):
             continue
         if is_sensitive_record_key(key):
             redacted[key] = REDACTED
@@ -458,7 +458,10 @@ class UserRecord:
 
 @dataclass(frozen=True)
 class NativeRecord:
-    """A lossless immutable envelope for one platform-native record."""
+    """An immutable envelope for one platform-native record.
+
+    The in-memory payload keeps every captured field; ``to_dict`` returns a bounded, redacted copy.
+    """
 
     kind: ClassVar[str] = "native_record"
 
@@ -557,7 +560,10 @@ class ValueRecord:
 
 @dataclass(frozen=True)
 class MappingRecord:
-    """A lossless immutable envelope for one arbitrary platform JSON object."""
+    """An immutable envelope for one arbitrary platform JSON object.
+
+    The in-memory payload keeps every captured field; ``to_dict`` returns a bounded, redacted copy.
+    """
 
     kind: ClassVar[str] = "mapping_record"
 

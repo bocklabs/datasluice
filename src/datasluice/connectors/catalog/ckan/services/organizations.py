@@ -1,12 +1,3 @@
-"""Both-mode CKAN organization projections: exhaustive org and membership actions.
-
-Every typed method declares its owning v2 OperationId from the checked-in manifest and passes documented CKAN 2.11
-parameters verbatim (D-04). Admin-tier honesty is structural, not probed: privileged writes dispatch on the declared
-profile and the SERVER's authorization responses are the runtime evidence. ``organization_purge`` refuses pre-dispatch
-without a confirmed destructive policy through the shared 03-03 gate and returns a ``CKANMutationResult`` with a
-redacted receipt (D-09).
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -20,7 +11,13 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncOrganizationService,
 )
 from datasluice.connectors.catalog.ckan.mapping import MEMBER, PLATFORM
-from datasluice.connectors.catalog.ckan.services._shared import WireParams, detail_params, drop_unset, wire_params
+from datasluice.connectors.catalog.ckan.services._shared import (
+    WireParams,
+    detail_params,
+    drop_unset,
+    fields_params,
+    wire_params,
+)
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
 
 if TYPE_CHECKING:
@@ -53,20 +50,6 @@ def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action in _ORG_ID_ACTIONS:
         return CatalogId(PLATFORM, ResourceKind.ORGANIZATION, str(params.get("id", "")))
     return CatalogId(PLATFORM, MEMBER, str(params.get("object", "")))
-
-
-def _fields_params(
-    id: str,
-    name: str | None,
-    title: str | None,
-    description: str | None,
-    image_url: str | None,
-    users: MemberNameList | None,
-) -> WireParams:
-    return wire_params(
-        {"id": id},
-        {"name": name, "title": title, "description": description, "image_url": image_url, "users": users},
-    )
 
 
 class SyncOrganizationsService(_SyncOrganizationService):
@@ -157,7 +140,7 @@ class SyncOrganizationsService(_SyncOrganizationService):
     ) -> CKANMutationResult:
         """Update one organization from documented keyword fields."""
         return self._invoke_mutation(
-            "organization_update", _fields_params(id, name, title, description, image_url, users), policy
+            "organization_update", fields_params(id, name, title, description, image_url, users), policy
         )
 
     def organization_patch(
@@ -173,7 +156,7 @@ class SyncOrganizationsService(_SyncOrganizationService):
     ) -> CKANMutationResult:
         """Patch selected organization fields without replacing the record."""
         return self._invoke_mutation(
-            "organization_patch", _fields_params(id, name, title, description, image_url, users), policy
+            "organization_patch", fields_params(id, name, title, description, image_url, users), policy
         )
 
     def organization_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -307,7 +290,7 @@ class AsyncOrganizationsService(_AsyncOrganizationService):
     ) -> CKANMutationResult:
         """Update one organization from documented keyword fields."""
         return await self._invoke_mutation(
-            "organization_update", _fields_params(id, name, title, description, image_url, users), policy
+            "organization_update", fields_params(id, name, title, description, image_url, users), policy
         )
 
     async def organization_patch(
@@ -323,7 +306,7 @@ class AsyncOrganizationsService(_AsyncOrganizationService):
     ) -> CKANMutationResult:
         """Patch selected organization fields without replacing the record."""
         return await self._invoke_mutation(
-            "organization_patch", _fields_params(id, name, title, description, image_url, users), policy
+            "organization_patch", fields_params(id, name, title, description, image_url, users), policy
         )
 
     async def organization_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:

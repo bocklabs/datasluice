@@ -4,17 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
 
-if TYPE_CHECKING:
-    from datasluice.domain.catalog.receipts import MutationReceipt
-
-_REUSE_FILTERS = ("q", "dataset", "featured", "topic", "type", "tag", "organization", "organization_badge", "owner")
+_REUSE_FILTERS = ("dataset", "featured", "topic", "type", "tag", "organization", "organization_badge", "owner")
 _REUSE_BOOLEAN_FILTERS = ("featured",)
 _REUSE_SORTS = ("created", "last_modified", "title", "datasets", "followers", "views")
 _REUSE_SORT_CHOICES = frozenset(_REUSE_SORTS) | frozenset(f"-{name}" for name in _REUSE_SORTS)
@@ -365,6 +362,12 @@ class ReuseMutationResult:
 
     receipt: MutationReceipt
     record: MappingRecord | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt, MutationReceipt) or (
+            self.record is not None and not isinstance(self.record, MappingRecord)
+        ):
+            raise ValueError("uData reuse mutation results require a receipt and a mapping record.")
 
     def to_dict(self) -> dict[str, object]:
         return {

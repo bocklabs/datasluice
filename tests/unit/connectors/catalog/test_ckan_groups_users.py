@@ -21,6 +21,7 @@ from datasluice.domain.catalog.redaction import REDACTED
 from datasluice.domain.catalog.safety import ConcurrencyPolicy, ConfirmationPolicy, MutationPolicy
 from datasluice.errors.catalog import CatalogValidationError, UnauthenticatedError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, failure_body, success_body
+from tests.helpers.service_calls import call_service_method
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 GROUP_READ_ID = "ckan/action-api-v3.group-list-show-search"
@@ -64,11 +65,6 @@ EXPECTED_USER_ACTIONS = frozenset(
 
 GROUP_RESULT: dict[str, object] = {"id": "grp-1", "name": "transit-group", "title": "Transit"}
 PACKAGE_ROW: dict[str, object] = {"id": "pkg-9", "name": "route-dataset", "title": "Routes"}
-
-
-def _call(service: object, name: str, /, **kwargs: object) -> object:
-    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
-    return getattr(service, name)(**kwargs)
 
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
@@ -335,7 +331,7 @@ def test_api_token_revoke_requires_the_token_id_at_the_call_boundary() -> None:
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        _call(client.users, "api_token_revoke")
+        call_service_method(client.users, "api_token_revoke")
 
     assert transport.requests == []
 

@@ -21,6 +21,7 @@ from datasluice.domain.catalog.models import MappingRecord, NativeRecord, ValueR
 from datasluice.domain.catalog.operations import OperationId
 from datasluice.errors.catalog import CatalogValidationError
 from tests.helpers.capture_transport import AsyncCaptureTransport, SyncCaptureTransport, success_body
+from tests.helpers.service_calls import call_service_method
 
 LOOPBACK_ORIGIN = "http://127.0.0.1:9001"
 VOCAB_READ_ID = "ckan/action-api-v3.tags-vocabularies-licenses-list-show"
@@ -50,11 +51,6 @@ EXPECTED_VOCABULARY_ACTIONS = frozenset(
 TAG_RESULT: dict[str, object] = {"id": "tag-1", "name": "health"}
 VOCABULARY_RESULT: dict[str, object] = {"id": "vocab-1", "name": "genres", "tags": [TAG_RESULT]}
 LICENSE_ROW: dict[str, object] = {"id": "cc-by", "title": "CC BY 4.0", "url": "https://creativecommons.org"}
-
-
-def _call(service: object, name: str, /, **kwargs: object) -> object:
-    """Invoke a typed service method by runtime name so the boundary TypeError is what is observed."""
-    return getattr(service, name)(**kwargs)
 
 
 def _client(transport: SyncCaptureTransport) -> SyncCKANClient:
@@ -128,10 +124,10 @@ def test_deprecated_fields_parameter_is_unrepresentable_on_typed_signatures() ->
     client = _client(transport)
 
     with pytest.raises(TypeError):
-        _call(client.vocabularies_licenses, "tag_search", fields=["name"])
+        call_service_method(client.vocabularies_licenses, "tag_search", fields=["name"])
 
     with pytest.raises(TypeError):
-        _call(client.vocabularies_licenses, "tag_autocomplete", fields=["name"])
+        call_service_method(client.vocabularies_licenses, "tag_autocomplete", fields=["name"])
 
     assert transport.requests == []
 

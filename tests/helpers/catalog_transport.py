@@ -115,12 +115,13 @@ class AsyncLoopbackTransport:
         self._writer = writer
         request = self._request(parsed, headers)
         try:
-            writer.write(request.encode("ascii"))
-            await writer.drain()
-            status = _status_code(await reader.readline())
-            response_headers = await _response_headers(reader)
-            body = await _async_body(reader, response_headers)
-            return LoopbackResponse(status=status, headers=response_headers, body=body)
+            async with asyncio.timeout(2):
+                writer.write(request.encode("ascii"))
+                await writer.drain()
+                status = _status_code(await reader.readline())
+                response_headers = await _response_headers(reader)
+                body = await _async_body(reader, response_headers)
+                return LoopbackResponse(status=status, headers=response_headers, body=body)
         finally:
             writer.close()
             await writer.wait_closed()
@@ -158,3 +159,36 @@ async def _async_body(reader: asyncio.StreamReader, headers: Mapping[str, str]) 
             await reader.readexactly(2)
     content_length = int(_header(headers, "content-length") or "0")
     return await reader.readexactly(content_length)
+
+
+class _FakeResponse:
+    def __init__(self, status: int, headers: Mapping[str, str], body: bytes = b"") -> None:
+        self.status = status
+        self.headers = headers
+        self._body = body
+        self._offset = 0
+        self.closed = False
+
+    def read(self, size: int | None = None) -> bytes:
+        if size is None:
+            chunk = self._body[self._offset :]
+            self._offset = len(self._body)
+            return chunk
+        chunk = self._body[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _RecordingOpener:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self.requests: list[Request] = []
+        self.timeouts: list[float] = []
+        self._responses = responses
+
+    def open(self, request: Request, *, timeout: float) -> _FakeResponse:
+        self.requests.append(request)
+        self.timeouts.append(timeout)
+        return self._responses[len(self.requests) - 1]

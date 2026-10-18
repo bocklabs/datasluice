@@ -568,7 +568,7 @@ def test_main_refuses_source_extraction_mixed_with_reconciliation(tmp_path: Path
         oracle.main(argv)
 
 
-def test_main_with_no_arguments_reports_the_reconciliation_contract(tmp_path: Path) -> None:
+def test_main_with_no_arguments_reports_the_reconciliation_contract() -> None:
     """An empty invocation falls through to the reconciliation guard, not the extraction one."""
     with pytest.raises(SystemExit, match="are required together"):
         oracle.main([])

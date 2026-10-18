@@ -18,6 +18,7 @@ from datasluice.domain.catalog import (
     ResourceKind,
 )
 from datasluice.exceptions import DataSluiceError
+from tests.helpers.immutability import assign_readonly
 
 
 @pytest.mark.parametrize(
@@ -28,11 +29,6 @@ def test_patch_request_preserves_each_tri_state(value: object, expected: dict[st
     request = PatchRequest(fields={"title": value})
 
     assert request.to_wire() == expected
-
-
-def _assign(target: object, field: str, value: object) -> None:
-    """Assign a read-only field so the frozen-dataclass rejection is what the assertion observes."""
-    setattr(target, field, value)
 
 
 def test_create_rejects_unset_and_patch_retains_tri_state_for_round_trips() -> None:
@@ -59,7 +55,7 @@ def test_mutation_receipt_preserves_safe_tokens_and_rejects_credential_metadata(
     assert isinstance(receipt.audit_metadata, MappingProxyType)
     assert MutationReceipt.from_dict(receipt.to_dict()) == receipt
     with pytest.raises(dataclasses.FrozenInstanceError):
-        _assign(receipt, "outcome", "failed")
+        assign_readonly(receipt, "outcome", "failed")
     with pytest.raises(DataSluiceError):
         MutationReceipt(
             operation="datasets.update",

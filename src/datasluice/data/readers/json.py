@@ -54,7 +54,7 @@ class JSONReader(BaseFormatReader):
     def _read_jsonl(source: Any, pa: Any, batch_size: int) -> Iterator[Any]:
         import pyarrow.json as paj
 
-        read_options = paj.ReadOptions(block_size=65536, use_threads=False)
+        read_options = paj.ReadOptions(block_size=1 << 20, use_threads=False)
         try:
             with paj.open_json(source, read_options=read_options) as reader:
                 for batch in reader:

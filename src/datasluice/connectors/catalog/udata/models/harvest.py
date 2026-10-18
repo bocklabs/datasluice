@@ -34,7 +34,6 @@ HARVEST_ITEM_STATUSES = frozenset({"pending", "started", "done", "failed", "skip
 HARVEST_BULK_ACTIONS = frozenset({"delete-source", "unschedule-source", "run-source"})
 HARVEST_DESTRUCTIVE_BULK_ACTIONS = frozenset({"delete-source", "unschedule-source"})
 
-ALLOWED_CRAWL_SCHEMES = frozenset({"http", "https"})
 _ABSOLUTE_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
 _CRON_FIELD = re.compile(r"^[0-9*,/\-]+$")
 _MAX_PAGE = 100_000
@@ -560,6 +559,8 @@ class HarvestBulkTargets:
     source_ids: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if isinstance(self.source_ids, (str, bytes)):
+            raise ValueError("uData harvest bulk targets must be a tuple of source identifiers, not a bare string.")
         if not isinstance(self.source_ids, tuple):
             object.__setattr__(self, "source_ids", tuple(self.source_ids))
         if not 1 <= len(self.source_ids) <= _MAX_BULK_TARGETS:

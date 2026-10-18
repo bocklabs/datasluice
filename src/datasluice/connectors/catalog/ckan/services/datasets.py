@@ -99,7 +99,7 @@ def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action in _ORG_TARGET_ACTIONS:
         return CatalogId(PLATFORM, ResourceKind.ORGANIZATION, str(params.get("org_id", "")))
     key = "name" if action == "package_create" else "id"
-    return CatalogId(PLATFORM, ResourceKind.DATASET, str(params.get(key, "")))
+    return CatalogId(PLATFORM, ResourceKind.DATASET, str(params[key]))
 
 
 class SyncDatasetsService(_SyncDatasetService):

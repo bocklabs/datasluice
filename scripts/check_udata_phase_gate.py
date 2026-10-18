@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import hashlib
 import importlib
 import json
 import re
@@ -68,10 +67,6 @@ REVIEWS_DIR_NAMES = {
 
 class GateError(Exception):
     """One gate check's fail-closed refusal to pass the phase."""
-
-
-def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _run(command: list[str]) -> tuple[int, str]:

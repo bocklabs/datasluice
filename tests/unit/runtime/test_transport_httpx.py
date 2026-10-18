@@ -73,6 +73,15 @@ def test_httpx_transport_parses_retry_after_http_date_form() -> None:
     assert 0 <= response.retry_after <= 120
 
 
+@pytest.mark.parametrize("value", ["inf", "1e999"])
+def test_httpx_transport_non_finite_retry_after_maps_to_none(value: str) -> None:
+    """A non-finite Retry-After maps to no delay instead of failing response construction."""
+    with SyncProbe(fixed(429, headers={"Retry-After": value})) as probe:
+        response = probe.send(RuntimeRequest("GET", "https://example.test/"))
+
+    assert response.retry_after is None
+
+
 def test_httpx_transport_absent_retry_after_header_maps_to_none() -> None:
     """A response without Retry-After carries a None delay."""
     with SyncProbe(fixed(200, content=b"no-delay")) as probe:
@@ -81,7 +90,7 @@ def test_httpx_transport_absent_retry_after_header_maps_to_none() -> None:
     assert response.retry_after is None
 
 
-def test_httpx_transport_maps_transport_failure() -> None:
+def test_httpx_transport_maps_transport_error() -> None:
     def responder(request: Request) -> Response:
         raise httpx.ConnectTimeout("timed out with password=transport-fixture-secret", request=request)
 
@@ -259,6 +268,25 @@ def test_async_httpx_cross_origin_body_redirect_fails_closed() -> None:
     assert probe.requests[0].content == body
 
 
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_async_httpx_cross_origin_non_post_body_redirect_fails_closed(status: int) -> None:
+    """A 301/302 keeps a non-POST body, so the async refusal cannot key off the status alone."""
+    body = urlencode({"token": "redirect-body-secret"}).encode()
+    message = "a cross-origin body-bearing redirect target must not receive the body"
+    probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", status, "origin.test"))
+
+    async def send() -> None:
+        async with probe:
+            request = RuntimeRequest("PUT", "https://origin.test/resources/1/extras/", REDIRECT_BODY_HEADERS, body)
+            with pytest.raises(TransportError, match="different redirect origin"):
+                await probe.send(request)
+
+    asyncio.run(send())
+
+    assert len(probe.requests) == 1
+    assert probe.requests[0].content == body
+
+
 def test_async_httpx_cross_origin_multipart_redirect_fails_closed() -> None:
     message = "a cross-origin files-bearing redirect target must not receive the parts"
     probe = AsyncProbe(redirect_then_fail(message, "https://other.test/next", 307, "origin.test"))
@@ -285,7 +313,7 @@ def test_async_httpx_cross_origin_multipart_redirect_fails_closed() -> None:
     assert b"a,b\n1,2" in probe.requests[0].content
 
 
-def test_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
+def test_httpx_exceeding_max_redirects_raises_transport_error() -> None:
     with (
         SyncProbe(redirect_loop(302, "https://example.test/loop/"), max_redirects=3) as probe,
         pytest.raises(TransportError, match="redirect limit"),
@@ -466,7 +494,7 @@ def test_async_httpx_redirect_preserves_method_and_body(status: int) -> None:
     assert body == b'{"key": "v"}'
 
 
-def test_async_httpx_exceeding_max_redirects_raises_transport_failure() -> None:
+def test_async_httpx_exceeding_max_redirects_raises_transport_error() -> None:
     probe = AsyncProbe(redirect_loop(302, "https://example.test/loop/"), max_redirects=3)
 
     async def send() -> None:

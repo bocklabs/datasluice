@@ -67,17 +67,45 @@ _MUTATION_LABEL = {
     wire.READ_NOTIFICATION_OPERATION: "updated",
 }
 
-_mutation = partial(
+_POST_KIND = ResourceKind("post")
+_REPORT_KIND = ResourceKind("report")
+_NOTIFICATION_KIND = ResourceKind("notification")
+
+_post_mutation = partial(
     _run_mutation,
     SETTLEMENT_ERRORS,
     PostMutationResult,
-    ResourceKind.RESOURCE,
+    _POST_KIND,
 )
-_mutation_async = partial(
+_report_mutation = partial(
+    _run_mutation,
+    SETTLEMENT_ERRORS,
+    PostMutationResult,
+    _REPORT_KIND,
+)
+_notification_mutation = partial(
+    _run_mutation,
+    SETTLEMENT_ERRORS,
+    PostMutationResult,
+    _NOTIFICATION_KIND,
+)
+_post_mutation_async = partial(
     _run_mutation_async,
     ASYNC_SETTLEMENT_ERRORS,
     PostMutationResult,
-    ResourceKind.RESOURCE,
+    _POST_KIND,
+)
+_report_mutation_async = partial(
+    _run_mutation_async,
+    ASYNC_SETTLEMENT_ERRORS,
+    PostMutationResult,
+    _REPORT_KIND,
+)
+_notification_mutation_async = partial(
+    _run_mutation_async,
+    ASYNC_SETTLEMENT_ERRORS,
+    PostMutationResult,
+    _NOTIFICATION_KIND,
 )
 
 
@@ -119,13 +147,13 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions | None = None,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _report_mutation(
             client_input.subject["id"],
             mutation_policy,
             _MUTATION_LABEL[wire.CREATE_REPORT_OPERATION],
             wire.CREATE_REPORT_OPERATION,
             lambda: wire.create_report_request(client_input),
-            lambda request: self._create_report(request, permissions),
+            lambda request: self._create_report(request, permissions, mutation_policy),
             success_target=lambda payload: _record_id(payload, "report"),
         )
 
@@ -144,7 +172,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _report_mutation(
             report_id,
             mutation_policy,
             _MUTATION_LABEL[wire.UPDATE_REPORT_OPERATION],
@@ -167,7 +195,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _post_mutation(
             client_input.name,
             mutation_policy,
             _MUTATION_LABEL[wire.CREATE_POST_OPERATION],
@@ -197,7 +225,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _post_mutation(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.UPDATE_POST_OPERATION],
@@ -212,7 +240,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _post_mutation(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.DELETE_POST_OPERATION],
@@ -228,7 +256,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _post_mutation(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.PUBLISH_POST_OPERATION],
@@ -243,13 +271,14 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _post_mutation(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.UNPUBLISH_POST_OPERATION],
             wire.UNPUBLISH_POST_OPERATION,
             lambda: wire.unpublish_post_request(post_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.UNPUBLISH_POST_OPERATION),
+            destructive=True,
         )
 
     def post_image(
@@ -260,7 +289,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _post_mutation(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.POST_IMAGE_OPERATION],
@@ -277,7 +306,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _post_mutation(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.RESIZE_POST_IMAGE_OPERATION],
@@ -302,7 +331,7 @@ class SyncPostsReportsService(SyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return _mutation(
+        return _notification_mutation(
             notification_id,
             mutation_policy,
             _MUTATION_LABEL[wire.READ_NOTIFICATION_OPERATION],
@@ -311,7 +340,7 @@ class SyncPostsReportsService(SyncCatalogService):
             lambda request: self._mutate(request, permissions, mutation_policy, wire.READ_NOTIFICATION_OPERATION),
         )
 
-    def _create_report(self, request: Request, permissions: Permissions | None) -> Response:
+    def _create_report(self, request: Request, permissions: Permissions | None, policy: Policy) -> Response:
         method, path, headers, body = request
         operation = wire.CREATE_REPORT_OPERATION
         credential = self._client._resolved_credential()
@@ -323,8 +352,9 @@ class SyncPostsReportsService(SyncCatalogService):
                 headers=headers,
                 json_body=body,
                 credential=credential,
+                idempotency_policy=policy.idempotency if policy else None,
             )
-        return _dataset_mutate(self._client._dataset_call, credential, permissions, None, operation, request)
+        return _dataset_mutate(self._client._dataset_call, credential, permissions, policy, operation, request)
 
     def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
         return _dataset_mutate(
@@ -347,7 +377,7 @@ class SyncPostsReportsService(SyncCatalogService):
             operation,
             (method, path, headers),
             cast("SupportsUpload", upload),
-            admin=True,
+            admin=operation in _ADMIN,
         )
 
 
@@ -372,13 +402,13 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions | None = None,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _report_mutation_async(
             client_input.subject["id"],
             mutation_policy,
             _MUTATION_LABEL[wire.CREATE_REPORT_OPERATION],
             wire.CREATE_REPORT_OPERATION,
             lambda: wire.create_report_request(client_input),
-            lambda request: self._create_report(request, permissions),
+            lambda request: self._create_report(request, permissions, mutation_policy),
             success_target=lambda payload: _record_id(payload, "report"),
         )
 
@@ -394,7 +424,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _report_mutation_async(
             report_id,
             mutation_policy,
             _MUTATION_LABEL[wire.UPDATE_REPORT_OPERATION],
@@ -419,7 +449,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _post_mutation_async(
             client_input.name,
             mutation_policy,
             _MUTATION_LABEL[wire.CREATE_POST_OPERATION],
@@ -449,7 +479,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _post_mutation_async(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.UPDATE_POST_OPERATION],
@@ -464,7 +494,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _post_mutation_async(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.DELETE_POST_OPERATION],
@@ -480,7 +510,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _post_mutation_async(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.PUBLISH_POST_OPERATION],
@@ -495,13 +525,14 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _post_mutation_async(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.UNPUBLISH_POST_OPERATION],
             wire.UNPUBLISH_POST_OPERATION,
             lambda: wire.unpublish_post_request(post_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.UNPUBLISH_POST_OPERATION),
+            destructive=True,
         )
 
     async def post_image(
@@ -512,7 +543,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _post_mutation_async(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.POST_IMAGE_OPERATION],
@@ -529,7 +560,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _post_mutation_async(
             post_id,
             mutation_policy,
             _MUTATION_LABEL[wire.RESIZE_POST_IMAGE_OPERATION],
@@ -556,7 +587,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
         permissions: Permissions,
         mutation_policy: Policy = None,
     ) -> PostMutationResult:
-        return await _mutation_async(
+        return await _notification_mutation_async(
             notification_id,
             mutation_policy,
             _MUTATION_LABEL[wire.READ_NOTIFICATION_OPERATION],
@@ -565,7 +596,7 @@ class AsyncPostsReportsService(AsyncCatalogService):
             lambda request: self._mutate(request, permissions, mutation_policy, wire.READ_NOTIFICATION_OPERATION),
         )
 
-    async def _create_report(self, request: Request, permissions: Permissions | None) -> Response:
+    async def _create_report(self, request: Request, permissions: Permissions | None, policy: Policy) -> Response:
         method, path, headers, body = request
         operation = wire.CREATE_REPORT_OPERATION
         credential = await self._client._resolved_credential_async()
@@ -577,9 +608,10 @@ class AsyncPostsReportsService(AsyncCatalogService):
                 headers=headers,
                 json_body=body,
                 credential=credential,
+                idempotency_policy=policy.idempotency if policy else None,
             )
         return await _dataset_mutate(
-            self._client._dataset_call_async, credential, permissions, None, operation, request
+            self._client._dataset_call_async, credential, permissions, policy, operation, request
         )
 
     async def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
@@ -605,5 +637,5 @@ class AsyncPostsReportsService(AsyncCatalogService):
             operation,
             (method, path, headers),
             cast("SupportsUpload", upload),
-            admin=True,
+            admin=operation in _ADMIN,
         )

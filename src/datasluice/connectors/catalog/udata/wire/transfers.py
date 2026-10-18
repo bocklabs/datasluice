@@ -21,12 +21,6 @@ LIST_TRANSFERS_OPERATION = "udata/api-v1.list-transfers"
 REQUEST_TRANSFER_OPERATION = "udata/api-v1.request-transfer"
 GET_TRANSFER_OPERATION = "udata/api-v1.get-transfer"
 RESPOND_TO_TRANSFER_OPERATION = "udata/api-v1.respond-to-transfer"
-TRANSFER_OPERATIONS = (
-    LIST_TRANSFERS_OPERATION,
-    REQUEST_TRANSFER_OPERATION,
-    GET_TRANSFER_OPERATION,
-    RESPOND_TO_TRANSFER_OPERATION,
-)
 _TRANSFER_PATH = "/api/1/transfer/"
 _PINNED_SCHEMA_ACTION = "Verify the response against the pinned uData 17.6 schema."
 
@@ -103,7 +97,8 @@ def parse_transfer(payload: object, operation: str) -> MappingRecord:
             platform=PLATFORM,
             safe_action=_PINNED_SCHEMA_ACTION,
         )
-    if payload.get("status") not in TRANSFER_STATUSES:
+    status = payload.get("status")
+    if not isinstance(status, str) or status not in TRANSFER_STATUSES:
         raise CatalogValidationError(
             "The uData transfer response status is not a documented transfer status.",
             operation=operation,

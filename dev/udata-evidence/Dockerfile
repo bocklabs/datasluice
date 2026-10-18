@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM ghcr.io/astral-sh/uv@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
 
 FROM python@sha256:b6bd71b0dd3811ddbcbc523ec2965fd1e1bcfdf7a20ab24679273d3bee726129
@@ -9,7 +10,9 @@ COPY --from=uv /uv /uvx /bin/
 COPY build-inputs.sha256 build-requirements.in build-requirements.txt debian.sources requirements.in requirements.txt requirements-auth.txt /opt/udata-build/
 COPY upstream/pyproject.toml /opt/udata-build/upstream/pyproject.toml
 
-RUN echo '0846b917ed93cdc4011f75ba3406da7ed3f10fa6a3a6d0d4da2d4f22edc79b1b  /opt/udata-build/build-inputs.sha256' | sha256sum --check - \
+RUN printf '%s\n' \
+    '0846b917ed93cdc4011f75ba3406da7ed3f10fa6a3a6d0d4da2d4f22edc79b1b  /opt/udata-build/build-inputs.sha256' \
+    | sha256sum --check - \
     && cd /opt/udata-build \
     && sha256sum --check build-inputs.sha256 \
     && cp debian.sources /etc/apt/sources.list.d/debian.sources \
@@ -28,8 +31,15 @@ RUN echo '0846b917ed93cdc4011f75ba3406da7ed3f10fa6a3a6d0d4da2d4f22edc79b1b  /opt
         --build-constraints /opt/udata-build/build-requirements.txt /opt/udata \
     && uv pip uninstall --system 'Flask-Security' \
     && uv pip install --system --no-cache --require-hashes --no-deps --force-reinstall \
-        --only-binary :all: --requirements /opt/udata-build/requirements-auth.txt \
-    && python -c 'from flask_security.utils import get_within_delta'
+        --only-binary :all: --requirements /opt/udata-build/requirements-auth.txt
+
+RUN python - <<'PY'
+import importlib.metadata as md
+
+assert md.version("flask-security-too") == "5.6.1"
+assert not any(d.metadata.get("Name", "").lower() == "flask-security" for d in md.distributions())
+from flask_security.utils import get_within_delta
+PY
 
 WORKDIR /opt/udata
 
