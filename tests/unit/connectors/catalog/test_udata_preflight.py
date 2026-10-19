@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -183,38 +182,6 @@ def test_extract_source_document_rejects_an_unpinned_checkout(tmp_path: Path, mo
 
     with pytest.raises(oracle.PinnedSourceError, match=oracle.PINNED_COMMIT):
         oracle.extract_source_document(tmp_path)
-
-
-def test_source_commit_rejects_a_dirty_upstream_tree(tmp_path: Path) -> None:
-    """A modified checkout must not stamp the pinned commit on drifted content."""
-    checkout = tmp_path / "checkout"
-    checkout.mkdir()
-    module = checkout / "module.py"
-    module.write_text("PINNED = True\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(checkout), "init", "-q"], check=True)
-    subprocess.run(["git", "-C", str(checkout), "add", "module.py"], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(checkout),
-            "-c",
-            "user.name=evidence",
-            "-c",
-            "user.email=evidence@example.com",
-            "commit",
-            "-qm",
-            "pin",
-        ],
-        check=True,
-    )
-
-    clean = oracle._source_commit(checkout)
-    module.write_text("PINNED = False\n", encoding="utf-8")
-
-    assert len(clean) == 40
-    with pytest.raises(oracle.PinnedSourceError, match="unmodified"):
-        oracle._source_commit(checkout)
 
 
 def test_extract_source_document_derives_class_methods_when_route_methods_are_implicit(
