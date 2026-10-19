@@ -11,7 +11,6 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-PUBLISH_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yaml"
 BUILD_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "build.yaml"
 RELEASE_PLEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-please.yaml"
 RELEASE_CONFIG = REPO_ROOT / "release-please-config.json"
@@ -19,16 +18,6 @@ RELEASE_MANIFEST = REPO_ROOT / ".release-please-manifest.json"
 REGISTRY_PATH = REPO_ROOT / "providers" / "registry.json"
 
 _TDD_RED = os.environ.get("DATASLUICE_TDD_RED") == "1"
-
-REQUIRED_PUBLISH_INPUTS = [
-    "component",
-    "package_path",
-    "package_name",
-    "version",
-    "ref",
-    "testpypi_environment",
-    "pypi_environment",
-]
 
 PROVIDER_PATH = "providers/apache-airflow"
 
@@ -65,43 +54,6 @@ def _require(ready: bool, message: str) -> None:
     if _TDD_RED:
         pytest.fail(message, pytrace=False)
     pytest.skip(message)
-
-
-def _publish_interface_ready() -> bool:
-    if not PUBLISH_WORKFLOW.exists():
-        return False
-    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
-    on = publish.get("on")
-    if not isinstance(on, dict) or "workflow_call" not in on:
-        return False
-    inputs = on["workflow_call"].get("inputs") or {}
-    if set(inputs) != set(REQUIRED_PUBLISH_INPUTS):
-        return False
-    return all(
-        isinstance(inputs[name], dict) and inputs[name].get("required") is True and inputs[name].get("type") == "string"
-        for name in REQUIRED_PUBLISH_INPUTS
-    )
-
-
-def _convention_smoke_ready() -> bool:
-    if not _publish_interface_ready():
-        return False
-    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
-    jobs = publish.get("jobs") or {}
-    smoke = jobs.get("smoke")
-    if not isinstance(smoke, dict):
-        return False
-    env = smoke.get("env") or {}
-    if env.get("SMOKE_VENV") != "/tmp/smoke-${{ inputs.component }}":
-        return False
-    steps = smoke.get("steps") or []
-    provider_steps = [s for s in steps if isinstance(s, dict) and s.get("if") == "inputs.package_name != 'datasluice'"]
-    if not provider_steps:
-        return False
-    ps = provider_steps[0]
-    if ps.get("working-directory") != "${{ inputs.package_path }}":
-        return False
-    return "tests/smoke.py" in str(ps.get("run", ""))
 
 
 def _provider_registry_ready() -> bool:
@@ -196,16 +148,6 @@ def _routing_ready() -> bool:
     return has_release and has_collect and has_provider_releases
 
 
-def _workflow_call_inputs(publish: dict) -> dict:
-    on = publish.get("on")
-    if not isinstance(on, dict):
-        return {}
-    call = on.get("workflow_call")
-    if not isinstance(call, dict):
-        return {}
-    return call.get("inputs") or {}
-
-
 @dataclass(frozen=True)
 class _Commit:
     package: str
@@ -286,24 +228,6 @@ def _collect_providers(registry: dict, release_outputs: dict) -> list[dict]:
     return releases
 
 
-def test_reusable_publish_interface() -> None:
-    """publish.yaml is a workflow_call with exactly the typed required inputs and no release-event trigger."""
-    _require(_publish_interface_ready(), "publish.yaml is not yet a typed reusable workflow")
-    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
-    assert "workflow_call" in publish["on"]
-    inputs = publish["on"]["workflow_call"]["inputs"]
-    assert set(inputs) == set(REQUIRED_PUBLISH_INPUTS)
-    for name in REQUIRED_PUBLISH_INPUTS:
-        spec = inputs[name]
-        assert spec["required"] is True, f"input {name} must be required"
-        assert spec["type"] == "string", f"input {name} must be a string"
-    for job in ("build", "publish-testpypi", "smoke", "publish-pypi"):
-        assert job in publish["jobs"], f"publish.yaml is missing the {job} job"
-    raw = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-    assert "github.event.release" not in raw
-    assert "release: published" not in raw
-
-
 def test_trusted_publishing_runs_in_top_level_workflow() -> None:
     """OIDC publishing jobs live in the top-level workflow, not the reusable build workflow."""
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
@@ -324,19 +248,16 @@ def test_trusted_publishing_runs_in_top_level_workflow() -> None:
         assert job["uses"] == "$/.github/workflows/build.yaml"
 
 
-def test_publish_workflow_delegates_build_without_duplicate_publish_jobs() -> None:
-    """The reusable publish workflow has one build child and no conditional duplicate jobs."""
-    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
+def test_build_workflow_is_build_only() -> None:
+    """The reusable build workflow exposes exactly one build job."""
     build = _load_gh_yaml(BUILD_WORKFLOW)
-    assert publish["jobs"]["build"]["uses"] == "$/.github/workflows/build.yaml"
     assert set(build["jobs"]) == {"build"}
 
 
 def test_exact_artifact_reused() -> None:
     """The exact-ref artifact is attested once, uploaded uniquely, and reused for production with no rebuild."""
-    _require(_publish_interface_ready(), "publish.yaml is not yet a typed reusable workflow")
-    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
-    jobs = publish["jobs"]
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    jobs = workflow["jobs"]
     build = _load_gh_yaml(BUILD_WORKFLOW)
     build_steps = build["jobs"]["build"]["steps"]
     checkout = next(s for s in build_steps if "checkout" in s.get("uses", ""))
@@ -349,46 +270,55 @@ def test_exact_artifact_reused() -> None:
     artifact_name = upload["with"]["name"]
     assert "${{ inputs.component }}" in artifact_name
     assert "${{ inputs.version }}" in artifact_name
-    for job in ("publish-testpypi", "publish-pypi"):
-        download = next(s for s in jobs[job]["steps"] if "download-artifact" in s.get("uses", ""))
-        assert download["with"]["name"] == artifact_name, f"{job} must reuse the exact build artifact"
-    pypi_commands = " ".join(str(s.get("run", "")) for s in jobs["publish-pypi"]["steps"])
-    assert "uv build" not in pypi_commands, "production must not rebuild after smoke"
-    assert "twine check" not in pypi_commands
+    for job_name, expected_artifact in (
+        ("publish-core-testpypi", "dist-core-${{ needs.release-please.outputs.core--version }}"),
+        ("publish-core-pypi", "dist-core-${{ needs.release-please.outputs.core--version }}"),
+        ("publish-providers-testpypi", "dist-${{ matrix.provider.slug }}-${{ matrix.provider.version }}"),
+        ("publish-providers-pypi", "dist-${{ matrix.provider.slug }}-${{ matrix.provider.version }}"),
+    ):
+        download = next(s for s in jobs[job_name]["steps"] if "download-artifact" in s.get("uses", ""))
+        assert download["with"]["name"] == expected_artifact, f"{job_name} must reuse the exact build artifact"
+    for job_name in ("publish-core-pypi", "publish-providers-pypi"):
+        publish_commands = " ".join(str(s.get("run", "")) for s in jobs[job_name]["steps"])
+        assert "uv build" not in publish_commands, "production must not rebuild after smoke"
+        assert "twine check" not in publish_commands
 
 
 def test_candidate_smoke_precedes_production() -> None:
-    """TestPyPI candidate install/smoke runs before the caller-selected PyPI environment promotion."""
-    _require(_convention_smoke_ready(), "convention-based publish smoke not yet implemented")
-    publish = _load_gh_yaml(PUBLISH_WORKFLOW)
-    jobs = publish["jobs"]
-    assert jobs["smoke"]["needs"] == ["build", "publish-testpypi"]
-    assert jobs["publish-pypi"]["needs"] == ["build", "publish-testpypi", "smoke"]
-    assert jobs["publish-testpypi"]["environment"]["name"] == "${{ inputs.testpypi_environment }}"
-    assert jobs["publish-pypi"]["environment"]["name"] == "${{ inputs.pypi_environment }}"
-    assert jobs["publish-testpypi"]["environment"]["name"] != jobs["publish-pypi"]["environment"]["name"]
-    assert jobs["smoke"]["env"]["SMOKE_VENV"] == "/tmp/smoke-${{ inputs.component }}"
-    smoke_steps = jobs["smoke"]["steps"]
-    install = next(s for s in smoke_steps if "uv pip install" in s.get("run", ""))
-    assert "--index-url https://test.pypi.org/simple/" in install["run"]
-    assert "--extra-index-url https://pypi.org/simple/" in install["run"]
-    assert '"${PACKAGE_NAME}==${PACKAGE_VERSION}"' in install["run"]
-    install_env = install["env"]
-    assert install_env["PACKAGE_NAME"] == "${{ inputs.package_name }}"
-    assert install_env["PACKAGE_VERSION"] == "${{ inputs.version }}"
-    assert "${{ inputs." not in install["run"], "run block must not expand workflow template expressions"
-    assert "$SMOKE_VENV" in install["run"]
-    core_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name == 'datasluice'")
-    assert "$SMOKE_VENV" in core_smoke["run"]
-    assert "import datasluice" in core_smoke["run"]
-    assert "--help" in core_smoke["run"]
-    provider_smoke = next(s for s in smoke_steps if s.get("if") == "inputs.package_name != 'datasluice'")
-    assert provider_smoke["working-directory"] == "${{ inputs.package_path }}"
-    assert '"$SMOKE_VENV/bin/python" tests/smoke.py' in provider_smoke["run"]
-    provider_run = provider_smoke["run"]
-    assert "get_provider_info" not in provider_run
-    assert "DataSluiceHook" not in provider_run
-    assert "example_datasluice.py" not in provider_run
+    """TestPyPI candidate install/smoke runs before the PyPI environment promotion."""
+    workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
+    jobs = workflow["jobs"]
+    assert jobs["publish-core-smoke"]["needs"] == ["release-please", "publish-core-build", "publish-core-testpypi"]
+    assert jobs["publish-core-pypi"]["needs"] == [
+        "release-please",
+        "publish-core-build",
+        "publish-core-testpypi",
+        "publish-core-smoke",
+    ]
+    assert jobs["publish-core-testpypi"]["environment"]["name"] == "test-pypi"
+    assert jobs["publish-core-pypi"]["environment"]["name"] == "pypi"
+    assert jobs["publish-providers-smoke"]["needs"] == [
+        "release-please",
+        "publish-providers-build",
+        "publish-providers-testpypi",
+    ]
+    assert "publish-providers-smoke" in jobs["publish-providers-pypi"]["needs"]
+    assert jobs["publish-providers-testpypi"]["environment"]["name"] == "${{ matrix.provider.testpypi_env }}"
+    assert jobs["publish-providers-pypi"]["environment"]["name"] == "${{ matrix.provider.pypi_env }}"
+    for job_name in ("publish-core-smoke", "publish-providers-smoke"):
+        install = next(s for s in jobs[job_name]["steps"] if "uv pip install" in s.get("run", ""))
+        assert "--index-url https://test.pypi.org/simple/" in install["run"]
+        assert "--extra-index-url https://pypi.org/simple/" in install["run"]
+        assert "$SMOKE_VENV" in install["run"]
+        assert "${{" not in install["run"], "run block must not expand workflow template expressions"
+    core_check = next(s for s in jobs["publish-core-smoke"]["steps"] if "import datasluice" in str(s.get("run", "")))
+    assert "--help" in str(core_check["run"])
+    provider_check = next(s for s in jobs["publish-providers-smoke"]["steps"] if s.get("working-directory"))
+    assert provider_check["working-directory"] == "${{ matrix.provider.path }}"
+    assert '"$SMOKE_VENV/bin/python" tests/smoke.py' in str(provider_check["run"])
+    assert "get_provider_info" not in str(provider_check["run"])
+    assert "DataSluiceHook" not in str(provider_check["run"])
+    assert "example_datasluice.py" not in str(provider_check["run"])
 
 
 def test_manifest_components() -> None:
@@ -452,10 +382,7 @@ def test_initial_release_versions_and_tags() -> None:
 
 def test_release_outputs_route_without_release_event() -> None:
     """Release outputs route through a collect step into core and matrix publish callers without a release event."""
-    _require(
-        _publish_interface_ready() and _routing_ready(),
-        "collect/matrix routing not yet wired to the publish interface",
-    )
+    _require(_routing_ready(), "collect/matrix routing not yet wired")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     assert "release" not in workflow["on"], "package publication must not listen for release events"
     raw = RELEASE_PLEASE_WORKFLOW.read_text(encoding="utf-8")
@@ -487,10 +414,7 @@ def test_release_outputs_route_without_release_event() -> None:
 
 def test_provider_only_and_joint_dependencies() -> None:
     """Provider matrix runs after core in joint releases but proceeds in provider-only and skips when empty."""
-    _require(
-        _publish_interface_ready() and _routing_ready(),
-        "core-before-providers matrix routing not yet wired",
-    )
+    _require(_routing_ready(), "core-before-providers matrix routing not yet wired")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]
     core = jobs["publish-core-build"]
@@ -523,10 +447,7 @@ def test_provider_only_and_joint_dependencies() -> None:
 
 def test_distinct_production_environments() -> None:
     """Core uses test-pypi/pypi; each provider matrix cell uses slug-derived env names from the registry."""
-    _require(
-        _publish_interface_ready() and _routing_ready() and _provider_registry_ready(),
-        "distinct environments not yet wired",
-    )
+    _require(_routing_ready() and _provider_registry_ready(), "distinct environments not yet wired")
     workflow = _load_gh_yaml(RELEASE_PLEASE_WORKFLOW)
     jobs = workflow["jobs"]
     core_with = jobs["publish-core-build"]["with"]

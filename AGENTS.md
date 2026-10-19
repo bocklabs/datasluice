@@ -75,9 +75,14 @@ GitHub Actions (`.github/workflows/ci.yaml`):
 
 Automated by **Release Please** (`.github/workflows/release-please.yaml`). Commits **must** use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, …). On push to `main`, Release Please maintains a release PR that bumps `version` in `pyproject.toml` and updates `CHANGELOG.md`. Merging that PR tags the release and creates a GitHub Release.
 
-Publishing (`.github/workflows/publish.yaml`) triggers on `release: published`:
-1. **Build** — builds, validates (`twine check`), attests provenance, uploads the artifact.
-2. **TestPyPI** (`test-pypi` env, secret `TEST_PYPI_API_KEY`) — publishes automatically.
-3. **PyPI** (`pypi` env, secret `PYPI_API_KEY`) — `needs` TestPyPI to pass, then **waits for approval** (required reviewers on the `pypi` environment) before publishing.
+Publishing runs inside `.github/workflows/release-please.yaml`, routed from the Release Please outputs — never from a `release` event, and never from a reusable workflow:
+1. **Build** — `.github/workflows/build.yaml` (the only reusable workflow) checks out the exact release tag, guards its inputs against `providers/registry.json`, builds, runs `twine check`, attests provenance, and uploads the `dist-<component>-<version>` artifact.
+2. **TestPyPI** — OIDC trusted publishing; no API keys. Core uses the `test-pypi` environment; each provider uses `<slug>-test-pypi`.
+3. **Smoke** — installs the exact released version from TestPyPI (PyPI resolves dependencies) and checks import/CLI before promotion.
+4. **PyPI** — OIDC trusted publishing after smoke passes. Core uses `pypi`; providers use `<slug>-pypi`. Required reviewers on `pypi`/`airflow-pypi` gate the production upload.
 
+The repo releases two packages: `datasluice` (root) and `apache-airflow-providers-datasluice` (`providers/apache-airflow/`), routed through `providers/registry.json` into the provider matrix.
+
+- **PyPI Trusted Publishing rejects reusable workflows.** Keep OIDC publish jobs top-level in `release-please.yaml`; never move them into a reusable workflow.
+- **Failed publish run?** Recover with `gh run rerun --failed` on the Release Please run (uploads are `skip-existing`), or cut the next version.
 - **No manual tagging.** Config lives in `release-please-config.json` + `.release-please-manifest.json`.
