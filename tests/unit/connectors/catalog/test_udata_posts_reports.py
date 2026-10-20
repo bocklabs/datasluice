@@ -427,13 +427,15 @@ def test_report_and_notification_mutations_match_exact_wire_and_receipt_targets(
 
 def test_post_image_rejects_invalid_upload_before_dispatch() -> None:
     router = atom_sync_route_table(with_site_route({}))
+    image = cast("bytes", "not-bytes")
+    policy = mutation_policy(wire.POST_IMAGE_OPERATION, "post-1")
     with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ValueError):
         client.posts_reports.post_image(
             "post-1",
-            cast("bytes", "not-bytes"),
+            image,
             "image/png",
             ADMIN_PERMISSIONS,
-            mutation_policy(wire.POST_IMAGE_OPERATION, "post-1"),
+            policy,
         )
     assert router.requests == []
 
@@ -443,10 +445,9 @@ def test_mutation_failure_carries_exact_target_receipt() -> None:
         with_site_route({("DELETE", f"{ORIGIN}/api/1/posts/post-1/"): (404, {"message": "Not found"})})
     )
     with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = mutation_policy(wire.DELETE_POST_OPERATION, "post-1", destructive=True)
         with pytest.raises(CatalogNotFoundError) as error:
-            client.posts_reports.delete_post(
-                "post-1", ADMIN_PERMISSIONS, mutation_policy(wire.DELETE_POST_OPERATION, "post-1", destructive=True)
-            )
+            client.posts_reports.delete_post("post-1", ADMIN_PERMISSIONS, policy)
         assert error.value.__dict__["mutation_receipt"].target.value == "post-1"
 
 
@@ -516,15 +517,18 @@ def test_report_mappings_reject_non_json_safe_values(bad: Mapping[str, object]) 
 @pytest.mark.parametrize("method,args", [("list_reports", (PERMISSIONS,)), ("get_report", ("report-1", PERMISSIONS))])
 def test_report_reads_require_admin_permissions_in_both_modes(method: str, args: tuple[object, ...]) -> None:
     router = atom_sync_route_table(with_site_route({}))
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError):
-        getattr(client.posts_reports, method)(*args)
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        read = getattr(client.posts_reports, method)
+        with pytest.raises(ForbiddenError):
+            read(*args)
     assert not [request for request in router.requests if "/reports/" in request.url]
 
     async def run() -> None:
         async_router = atom_async_route_table(with_site_route({}))
         async with async_client(async_router, UDATA_CREDENTIAL) as client:
+            read = getattr(client.posts_reports, method)
             with pytest.raises(ForbiddenError):
-                await getattr(client.posts_reports, method)(*args)
+                await read(*args)
         assert not [request for request in async_router.requests if "/reports/" in request.url]
 
     asyncio.run(run())
@@ -538,8 +542,9 @@ def test_post_mutation_result_requires_a_receipt_and_a_mapping_record() -> None:
         target=CatalogId(CatalogPlatform.UDATA, ResourceKind("post"), "post-1"),
     )
     bad_receipt = cast("MutationReceipt", "x")
+    record = cast("MappingRecord", {})
     with pytest.raises(ValueError, match="receipt and a mapping record"):
-        PostMutationResult(bad_receipt, record=cast("MappingRecord", {}))
+        PostMutationResult(bad_receipt, record=record)
     record = cast("MappingRecord", {"id": "post-1"})
     with pytest.raises(ValueError, match="receipt and a mapping record"):
         PostMutationResult(receipt, record=record)

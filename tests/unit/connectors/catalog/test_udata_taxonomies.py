@@ -139,8 +139,9 @@ def test_every_taxonomy_route_has_an_exact_wire_shape() -> None:
         ("GET", "/api/1/datasets/schemas/"),
         ("GET", "/api/2/datasets/dataset-1/schemas/"),
     ]
+    badge = BadgeCreateInput(kind="certified")
     with pytest.raises(CatalogValidationError):
-        wire.add_badge_request("../secret", BadgeCreateInput(kind="certified"))
+        wire.add_badge_request("../secret", badge)
     with pytest.raises(CatalogValidationError):
         wire.delete_badge_request("dataset-1", "")
 
@@ -269,22 +270,25 @@ _TAXONOMY_READ_PATHS = (
 @pytest.mark.parametrize("size", _MALFORMED_SUGGEST_SIZES)
 def test_malformed_suggest_sizes_are_rejected_before_dispatch(size: object) -> None:
     """`size` must be a real integer in 1..100; bool, float, and str are all malformed."""
+    invalid_size = cast("int", size)
     with pytest.raises(ValueError, match="size"):
-        SuggestQuery("csv", size=cast("int", size))
+        SuggestQuery("csv", size=invalid_size)
 
 
 @pytest.mark.parametrize("query", _MALFORMED_SUGGEST_QUERIES)
 def test_malformed_suggest_queries_are_rejected_before_dispatch(query: object) -> None:
     """`q` reaches the query string verbatim, so a non-string must never be coerced."""
+    invalid_query = cast("str", query)
     with pytest.raises(ValueError, match="query"):
-        SuggestQuery(cast("str", query))
+        SuggestQuery(invalid_query)
 
 
 @pytest.mark.parametrize("kind", _MALFORMED_BADGE_KINDS)
 def test_malformed_badge_kinds_are_rejected_before_dispatch(kind: object) -> None:
     """The badge kind is a path segment on delete and a body value on add."""
+    invalid_kind = cast("str", kind)
     with pytest.raises(ValueError, match="kind"):
-        BadgeCreateInput(kind=cast("str", kind))
+        BadgeCreateInput(kind=invalid_kind)
 
 
 @pytest.mark.parametrize("kind", _ROUTE_ONLY_BADGE_KINDS)
@@ -294,15 +298,17 @@ def test_dot_and_control_badge_kinds_are_refused_at_construction_and_route(kind:
         BadgeCreateInput(kind=kind)
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
         wire.delete_badge_request("dataset-1", kind)
+    badge = BadgeCreateInput("certified")
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-        wire.add_badge_request(kind, BadgeCreateInput("certified"))
+        wire.add_badge_request(kind, badge)
 
 
 @pytest.mark.parametrize("identifier", _MALFORMED_SEGMENTS)
 def test_malformed_taxonomy_segments_never_reach_a_route(identifier: object) -> None:
     """Dot segments, separators, and control characters must be refused, not quoted."""
+    invalid_identifier = cast("str", identifier)
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-        segment(cast("str", identifier), wire.DELETE_BADGE_OPERATION)
+        segment(invalid_identifier, wire.DELETE_BADGE_OPERATION)
 
 
 @pytest.mark.parametrize("payload", _MALFORMED_OBJECT_LISTS)
@@ -329,8 +335,10 @@ def test_non_finite_taxonomy_responses_fail_typed_without_a_raw_body(
             ("GET", f"{ORIGIN}{path}"): (200, shape.replace(b"@@", literal)),
         }
     )
-    with sync_client(router, None) as client, pytest.raises(NativeCatalogError) as raised:
-        getattr(client.taxonomies, read)(*arguments)
+    with sync_client(router, None) as client:
+        method = getattr(client.taxonomies, read)
+        with pytest.raises(NativeCatalogError) as raised:
+            method(*arguments)
     rendered = repr(raised.value) + str(raised.value.__dict__)
     assert literal.decode() not in rendered
     assert "secret-key" not in rendered
@@ -354,8 +362,9 @@ def test_taxonomy_malformed_and_nonfinite_property_corpus(
         for body in bodies:
             router = async_route_table(with_site_route({("GET", f"{ORIGIN}{path}"): (200, body)}))
             async with async_client(router, None) as client:
+                method = getattr(client.taxonomies, read)
                 with pytest.raises((NativeCatalogError, CatalogValidationError)) as raised:
-                    await getattr(client.taxonomies, read)(*arguments)
+                    await method(*arguments)
             assert "corpus-private-value" not in repr(raised.value.__dict__)
 
     if asynchronous:
@@ -363,11 +372,10 @@ def test_taxonomy_malformed_and_nonfinite_property_corpus(
     else:
         for body in bodies:
             router = sync_route_table(with_site_route({("GET", f"{ORIGIN}{path}"): (200, body)}))
-            with (
-                sync_client(router, None) as client,
-                pytest.raises((NativeCatalogError, CatalogValidationError)) as raised,
-            ):
-                getattr(client.taxonomies, read)(*arguments)
+            with sync_client(router, None) as client:
+                method = getattr(client.taxonomies, read)
+                with pytest.raises((NativeCatalogError, CatalogValidationError)) as raised:
+                    method(*arguments)
             assert "corpus-private-value" not in repr(raised.value.__dict__)
 
 
@@ -438,10 +446,9 @@ def test_badge_permissions_discriminate_add_from_delete_in_both_modes() -> None:
         with sync_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
                 client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS, delete_policy)
+            badge = BadgeCreateInput("certified")
             with pytest.raises(ForbiddenError) as denied_add:
-                client.taxonomies.add_badge(
-                    "dataset-1", BadgeCreateInput("certified"), DELETE_ONLY_PERMISSIONS, add_policy
-                )
+                client.taxonomies.add_badge("dataset-1", badge, DELETE_ONLY_PERMISSIONS, add_policy)
             assert denied_delete.value.operation == wire.DELETE_BADGE_OPERATION
             assert denied_add.value.operation == wire.ADD_BADGE_OPERATION
             assert denied_delete.value.capability_state == "forbidden"
@@ -465,10 +472,9 @@ def test_badge_permissions_discriminate_add_from_delete_in_both_modes() -> None:
         async with async_client(router, UDATA_CREDENTIAL) as client:
             with pytest.raises(ForbiddenError) as denied_delete:
                 await client.taxonomies.delete_badge("dataset-1", "certified", ADD_ONLY_PERMISSIONS, delete_policy)
+            badge = BadgeCreateInput("certified")
             with pytest.raises(ForbiddenError) as denied_add:
-                await client.taxonomies.add_badge(
-                    "dataset-1", BadgeCreateInput("certified"), DELETE_ONLY_PERMISSIONS, add_policy
-                )
+                await client.taxonomies.add_badge("dataset-1", badge, DELETE_ONLY_PERMISSIONS, add_policy)
             assert denied_delete.value.operation == wire.DELETE_BADGE_OPERATION
             assert denied_add.value.operation == wire.ADD_BADGE_OPERATION
             assert denied_delete.value.capability_state == "forbidden"
@@ -513,8 +519,9 @@ def test_badge_admin_operations_refuse_non_admin_credentials_in_both_modes(metho
         with sync_client(router, UDATA_CREDENTIAL) as client:
             if method_name == "add_badge":
                 client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), ADMIN_PERMISSIONS, add_policy)
+                badge = BadgeCreateInput("certified")
                 with pytest.raises(ForbiddenError):
-                    client.taxonomies.add_badge("dataset-1", BadgeCreateInput("certified"), PERMISSIONS, add_policy)
+                    client.taxonomies.add_badge("dataset-1", badge, PERMISSIONS, add_policy)
             else:
                 client.taxonomies.delete_badge("dataset-1", "certified", ADMIN_PERMISSIONS, delete_policy)
                 with pytest.raises(ForbiddenError):
@@ -528,10 +535,9 @@ def test_badge_admin_operations_refuse_non_admin_credentials_in_both_modes(metho
                 await client.taxonomies.add_badge(
                     "dataset-1", BadgeCreateInput("certified"), ADMIN_PERMISSIONS, add_policy
                 )
+                badge = BadgeCreateInput("certified")
                 with pytest.raises(ForbiddenError):
-                    await client.taxonomies.add_badge(
-                        "dataset-1", BadgeCreateInput("certified"), PERMISSIONS, add_policy
-                    )
+                    await client.taxonomies.add_badge("dataset-1", badge, PERMISSIONS, add_policy)
             else:
                 await client.taxonomies.delete_badge("dataset-1", "certified", ADMIN_PERMISSIONS, delete_policy)
                 with pytest.raises(ForbiddenError):

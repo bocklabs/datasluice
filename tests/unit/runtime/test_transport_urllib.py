@@ -62,8 +62,9 @@ def test_urllib_send_enforces_max_response_bytes() -> None:
     transport = UrllibCatalogTransport()
     cast("Any", transport)._opener = opener
 
+    request = RuntimeRequest("GET", "https://example.test/", max_response_bytes=5)
     with pytest.raises(TransportError, match="byte limit"):
-        transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=5))
+        transport.send(request)
 
     assert transport.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=6)).body == b"abcdef"
 
@@ -81,8 +82,9 @@ def test_urllib_checks_the_deadline_during_reads_and_closes_the_response() -> No
     transport = UrllibCatalogTransport()
     cast("Any", transport)._opener = opener
     deadline = DeadlineMonitor(TimeBudget(connect=1, read=1, write=1, total=1), clock=lambda: now[0])
+    request = RuntimeRequest("GET", "https://example.test/", deadline=deadline)
     with pytest.raises(BudgetExhaustedError):
-        transport.send(RuntimeRequest("GET", "https://example.test/", deadline=deadline))
+        transport.send(request)
     assert opener.timeouts == [1.0]
     assert response.closed
 
@@ -422,15 +424,14 @@ def test_urllib_cross_origin_body_redirect_fails_closed(status: int) -> None:
     transport = UrllibCatalogTransport()
     cast("Any", transport)._opener = opener
 
+    request = RuntimeRequest(
+        "POST",
+        "https://origin.test/oauth/revoke",
+        {"Content-Type": "application/x-www-form-urlencoded"},
+        body,
+    )
     with pytest.raises(TransportError, match="different redirect origin"):
-        transport.send(
-            RuntimeRequest(
-                "POST",
-                "https://origin.test/oauth/revoke",
-                {"Content-Type": "application/x-www-form-urlencoded"},
-                body,
-            )
-        )
+        transport.send(request)
 
     assert len(opener.requests) == 1
     assert opener.requests[0].data == body
@@ -444,15 +445,14 @@ def test_urllib_cross_origin_non_post_body_redirect_fails_closed(status: int) ->
     transport = UrllibCatalogTransport()
     cast("Any", transport)._opener = opener
 
+    request = RuntimeRequest(
+        "PUT",
+        "https://origin.test/resources/1/extras/",
+        {"Content-Type": "application/x-www-form-urlencoded"},
+        body,
+    )
     with pytest.raises(TransportError, match="different redirect origin"):
-        transport.send(
-            RuntimeRequest(
-                "PUT",
-                "https://origin.test/resources/1/extras/",
-                {"Content-Type": "application/x-www-form-urlencoded"},
-                body,
-            )
-        )
+        transport.send(request)
 
     assert len(opener.requests) == 1
     assert opener.requests[0].data == body
@@ -472,52 +472,49 @@ def test_urllib_malformed_location_port_does_not_escape_send() -> None:
     assert "authorization" not in forwarded
 
 
-def test_urllib_credential_scope_retains_authorization_on_allowed_cross_origin_hop() -> None:
-    scope = CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True)
-    opener = _RecordingOpener([_FakeResponse(302, {"Location": "https://other.test/next"}), _FakeResponse(200, {})])
+@pytest.mark.parametrize(
+    ("scope", "location", "retains_authorization"),
+    [
+        pytest.param(
+            CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True),
+            "https://other.test/next",
+            True,
+            id="allowed-cross-origin",
+        ),
+        pytest.param(
+            CredentialScope(allowed_hosts=("example.test",), send_on_redirect=True),
+            "https://other.test/next",
+            False,
+            id="disallowed-target",
+        ),
+        pytest.param(
+            CredentialScope(allowed_hosts=("example.test",), allowed_schemes=("https",)),
+            "/next",
+            False,
+            id="same-origin-without-send-on-redirect",
+        ),
+        pytest.param(
+            CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True),
+            "http://other.test/next",
+            False,
+            id="disallowed-http-downgrade",
+        ),
+    ],
+)
+def test_urllib_credential_scope_controls_redirect_authorization(
+    scope: CredentialScope, location: str, retains_authorization: bool
+) -> None:
+    opener = _RecordingOpener([_FakeResponse(302, {"Location": location}), _FakeResponse(200, {})])
     transport = UrllibCatalogTransport(credential_scope=scope)
     cast("Any", transport)._opener = opener
 
     transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"}))
 
     forwarded = {key.lower(): value for key, value in opener.requests[1].header_items()}
-    assert forwarded["authorization"] == "Bearer secret"
-
-
-def test_urllib_credential_scope_strips_authorization_for_disallowed_target() -> None:
-    scope = CredentialScope(allowed_hosts=("example.test",), send_on_redirect=True)
-    opener = _RecordingOpener([_FakeResponse(302, {"Location": "https://other.test/next"}), _FakeResponse(200, {})])
-    transport = UrllibCatalogTransport(credential_scope=scope)
-    cast("Any", transport)._opener = opener
-
-    transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"}))
-
-    forwarded = {key.lower(): value for key, value in opener.requests[1].header_items()}
-    assert "authorization" not in forwarded
-
-
-def test_urllib_credential_scope_requires_send_on_redirect_even_for_same_origin() -> None:
-    scope = CredentialScope(allowed_hosts=("example.test",), allowed_schemes=("https",))
-    opener = _RecordingOpener([_FakeResponse(302, {"Location": "/next"}), _FakeResponse(200, {})])
-    transport = UrllibCatalogTransport(credential_scope=scope)
-    cast("Any", transport)._opener = opener
-
-    transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"}))
-
-    forwarded = {key.lower(): value for key, value in opener.requests[1].header_items()}
-    assert "authorization" not in forwarded
-
-
-def test_urllib_credential_scope_blocks_scheme_downgrade_to_disallowed_http() -> None:
-    scope = CredentialScope(allowed_hosts=("other.test",), allowed_schemes=("https",), send_on_redirect=True)
-    opener = _RecordingOpener([_FakeResponse(302, {"Location": "http://other.test/next"}), _FakeResponse(200, {})])
-    transport = UrllibCatalogTransport(credential_scope=scope)
-    cast("Any", transport)._opener = opener
-
-    transport.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"}))
-
-    forwarded = {key.lower(): value for key, value in opener.requests[1].header_items()}
-    assert "authorization" not in forwarded
+    if retains_authorization:
+        assert forwarded["authorization"] == "Bearer secret"
+    else:
+        assert "authorization" not in forwarded
 
 
 def test_async_loopback_transport_decodes_chunked_round_trip() -> None:
@@ -547,6 +544,7 @@ def test_urllib_transport_failures_retain_their_cause() -> None:
 
     transport = UrllibCatalogTransport()
     cast("Any", transport)._opener = _FailingOpener()
+    request = RuntimeRequest("GET", "https://example.test/start")
     with pytest.raises(TransportError, match="could not complete") as excinfo:
-        transport.send(RuntimeRequest("GET", "https://example.test/start"))
+        transport.send(request)
     assert isinstance(excinfo.value.__cause__, OSError)

@@ -202,19 +202,21 @@ def test_every_harvest_route_has_an_exact_wire_shape() -> None:
 @pytest.mark.parametrize("identifier", [".", "..", "a/b", "a?b", "a#b", "", "a\x00b", 4, None])
 def test_malformed_harvest_segments_never_reach_a_route(identifier: object) -> None:
     """Dot segments and separators are refused, never percent-quoted into a new route."""
+    typed_identifier = cast("str", identifier)
     for builder in (wire.get_source_request, wire.delete_source_request, wire.run_source_request):
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-            builder(cast("str", identifier))
+            builder(typed_identifier)
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-        wire.get_job_request(cast("str", identifier))
+        wire.get_job_request(typed_identifier)
 
 
 @pytest.mark.parametrize("page_size", [0, -1, 101, True, False, 1.0, 10.5, "10", None])
 def test_harvest_page_sizes_are_bounded_before_dispatch(page_size: object) -> None:
     """A pager is an amplification lever, so every ceiling is validated pre-dispatch."""
+    typed_page_size = cast("int", page_size)
     for factory in (HarvestSourceQuery, HarvestJobQuery, HarvestJobItemsQuery):
         with pytest.raises(ValueError, match="page_size"):
-            factory(page_size=cast("int", page_size))
+            factory(page_size=typed_page_size)
     assert HarvestSourceQuery(page_size=100).query_params()[1] == ("page_size", "100")
 
 
@@ -252,8 +254,9 @@ def test_private_harvest_endpoints_dispatch_nothing_through_every_write_route(ur
     with sync_client(router, UDATA_CREDENTIAL) as client:
         tampered = HarvestSourceInput(name="probe", url="https://example.org/feed", backend="csv")
         object.__setattr__(tampered, "url", url)
+        policy = _policy("harvest-source:create")
         with pytest.raises(CatalogValidationError, match="permitted crawl target") as refused:
-            client.harvest_moderation_admin.create_source(tampered, PERMISSIONS, _policy("harvest-source:create"))
+            client.harvest_moderation_admin.create_source(tampered, PERMISSIONS, policy)
     assert _dispatches(router) == []
     receipt = refused.value.__dict__["mutation_receipt"]
     assert receipt.outcome == "rejected"
@@ -317,22 +320,22 @@ def test_harvest_writes_require_admin_evidence_and_a_confirmed_target() -> None:
     router = sync_route_table(with_site_route(_writes()))
     with sync_client(router, UDATA_CREDENTIAL) as client:
         service = client.harvest_moderation_admin
+        source_input = HarvestSourceInput(name="opendata", url="https://example.org/feed", backend="csv")
+        create_policy = _policy("harvest-source:create")
         with pytest.raises(ForbiddenError) as unprivileged:
-            service.create_source(
-                HarvestSourceInput(name="opendata", url="https://example.org/feed", backend="csv"),
-                UDATA_PERMISSIONS,
-                _policy("harvest-source:create"),
-            )
+            service.create_source(source_input, UDATA_PERMISSIONS, create_policy)
         assert unprivileged.value.operation == HARVEST_OPERATION
         assert unprivileged.value.capability_state == "forbidden"
         assert _dispatches(router) == []
 
+        nondestructive_policy = _policy("source-1")
         with pytest.raises(ForbiddenError):
-            service.delete_source("source-1", PERMISSIONS, _policy("source-1"))
+            service.delete_source("source-1", PERMISSIONS, nondestructive_policy)
         assert _dispatches(router) == []
 
+        wrong_target_policy = _policy("source-2", destructive=True)
         with pytest.raises(ForbiddenError):
-            service.delete_source("source-1", PERMISSIONS, _policy("source-2", destructive=True))
+            service.delete_source("source-1", PERMISSIONS, wrong_target_policy)
         assert _dispatches(router) == []
 
 
@@ -431,12 +434,13 @@ def test_bulk_plan_refusal_dispatches_nothing_and_receipts_the_plan_target(mutat
     with sync_client(router, UDATA_CREDENTIAL) as client:
         service = client.harvest_moderation_admin
         preview = service.preview_bulk("delete-source", targets)
+        policy = _policy(mutation, destructive=True)
         with pytest.raises(ForbiddenError) as refused:
             service.run_bulk(
                 "delete-source",
                 targets,
                 PERMISSIONS,
-                _policy(mutation, destructive=True),
+                policy,
                 checkpoint_sink=lambda checkpoint: None,
             )
     assert _dispatches(router) == []
@@ -674,13 +678,10 @@ def test_a_job_wait_stops_at_its_budget_and_reports_exhaustion() -> None:
 def test_waiting_without_a_queued_job_is_refused_before_any_dispatch() -> None:
     """A handle with no job identifier cannot poll, and says so instead of guessing."""
     router = sync_route_table(with_site_route(_writes()))
-    with (
-        sync_client(router, UDATA_CREDENTIAL) as client,
-        pytest.raises(CatalogValidationError, match="queued job identifier"),
-    ):
-        client.harvest_moderation_admin.wait_for_job(
-            UDataJobHandle(source_id="source-1"), PERMISSIONS, sleeper=lambda delay: None
-        )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        handle = UDataJobHandle(source_id="source-1")
+        with pytest.raises(CatalogValidationError, match="queued job identifier"):
+            client.harvest_moderation_admin.wait_for_job(handle, PERMISSIONS, sleeper=lambda delay: None)
     assert _dispatches(router) == []
 
 
@@ -753,16 +754,15 @@ def test_malformed_harvest_responses_fail_typed_without_a_raw_body(payload: obje
         ("GET", _url("/api/1/harvest/sources/?page=1&page_size=20")): (200, payload),
         ("GET", _url("/api/1/harvest/backends/")): (200, payload),
     }
-    with (
-        sync_client(sync_route_table(with_site_route(routes)), UDATA_CREDENTIAL) as client,
-        pytest.raises(CatalogValidationError) as raised,
-    ):
+    with sync_client(sync_route_table(with_site_route(routes)), UDATA_CREDENTIAL) as client:
         arguments: tuple[object, ...] = (
             (HarvestSourceQuery(), PERMISSIONS) if reader == "list_sources" else ("source-1", PERMISSIONS)
         )
         if reader == "backends":
             arguments = (PERMISSIONS,)
-        getattr(client.harvest_moderation_admin, reader)(*arguments)
+        read = getattr(client.harvest_moderation_admin, reader)
+        with pytest.raises(CatalogValidationError) as raised:
+            read(*arguments)
     rendered = repr(raised.value) + str(raised.value.__dict__)
     assert _SECRET not in rendered
 
@@ -800,12 +800,9 @@ def test_harvest_job_status_is_validated_before_it_can_be_awaited() -> None:
             wire.parse_job_status({"status": "exploded"}, HARVEST_OPERATION)
         with pytest.raises(CatalogValidationError, match="known job status"):
             wire.parse_job_status({}, HARVEST_OPERATION)
+        handle = UDataJobHandle(source_id="source-1", job_id="job-9", poll_interval=0.0)
         with pytest.raises(CatalogValidationError):
-            client.harvest_moderation_admin.wait_for_job(
-                UDataJobHandle(source_id="source-1", job_id="job-9", poll_interval=0.0),
-                PERMISSIONS,
-                sleeper=lambda delay: None,
-            )
+            client.harvest_moderation_admin.wait_for_job(handle, PERMISSIONS, sleeper=lambda delay: None)
 
 
 @pytest.mark.parametrize(
@@ -823,29 +820,37 @@ def test_harvest_job_status_is_validated_before_it_can_be_awaited() -> None:
 )
 def test_malformed_harvest_write_inputs_are_rejected_before_dispatch(mutation: Mapping[str, object]) -> None:
     """Presence-aware write bodies never coerce a caller value into a deployment payload."""
+    name = cast("str", mutation.get("name", ""))
+    url = cast("str", mutation.get("url", ""))
+    backend = cast("str", mutation.get("backend", ""))
+    owner_id = cast("str | None", mutation.get("owner_id"))
+    active = cast("bool | None", mutation.get("active"))
+    config = cast("Mapping[str, object] | None", mutation.get("config"))
     with pytest.raises((ValueError, CatalogValidationError)):
         HarvestSourceInput(
-            name=cast("str", mutation.get("name", "")),
-            url=cast("str", mutation.get("url", "")),
-            backend=cast("str", mutation.get("backend", "")),
-            owner_id=cast("str | None", mutation.get("owner_id")),
-            active=cast("bool | None", mutation.get("active")),
-            config=cast("Mapping[str, object] | None", mutation.get("config")),
+            name=name,
+            url=url,
+            backend=backend,
+            owner_id=owner_id,
+            active=active,
+            config=config,
         )
 
 
 @pytest.mark.parametrize("cron", ["", "0 6 * *", "0 6 * * * *", "@daily", "0 6 * * MON", "x" * 40, 5])
 def test_malformed_harvest_cron_expressions_are_rejected(cron: object) -> None:
     """A cron string is passed to the deployment verbatim, so it is screened first."""
+    typed_cron = cast("str", cron)
     with pytest.raises(ValueError, match="cron"):
-        HarvestScheduleInput(cast("str", cron))
+        HarvestScheduleInput(typed_cron)
 
 
 @pytest.mark.parametrize("state", ["approved", "", None, 4])
 def test_unknown_harvest_validation_states_are_rejected(state: object) -> None:
     """Validation state is a pinned vocabulary the deployment enforces."""
+    typed_state = cast("str", state)
     with pytest.raises(ValueError, match="validation state"):
-        HarvestValidationInput(cast("str", state))
+        HarvestValidationInput(typed_state)
 
 
 def test_refused_harvest_validation_requires_a_comment() -> None:

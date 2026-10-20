@@ -20,6 +20,22 @@ from datasluice.connectors.catalog.udata.models.organizations import (
     OrganizationSuggestQuery,
     OrganizationUpdateInput,
 )
+from datasluice.connectors.catalog.udata.services._receipts import (
+    FailureReceipt,
+    ResultShaper,
+    _error_status,
+    _mutation_outcome,
+    _operation_id,
+    _receipt_policy,
+    _run_receipted_mutation,
+    _run_receipted_mutation_async,
+)
+from datasluice.connectors.catalog.udata.services._receipts import _close_input as _close_logo
+from datasluice.connectors.catalog.udata.services.datasets import (
+    _enforce_mutation_policy,
+    _require_mutation_permission,
+    _safe_target_value,
+)
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import organizations as wire
 from datasluice.connectors.catalog.udata.wire.root_profile import _contains_sensitive_query, _validated_redirect_target
@@ -30,23 +46,6 @@ from datasluice.domain.catalog.udata import SiteDocument
 from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.mutation import build_mutation_receipt
 from datasluice.runtime.transport.base import RuntimeResponse
-
-from ._receipts import (
-    FailureReceipt,
-    ResultShaper,
-    _error_status,
-    _mutation_outcome,
-    _operation_id,
-    _receipt_policy,
-    _run_receipted_mutation,
-    _run_receipted_mutation_async,
-)
-from ._receipts import _close_input as _close_logo
-from .datasets import (
-    _enforce_mutation_policy,
-    _require_mutation_permission,
-    _safe_target_value,
-)
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -246,6 +245,12 @@ def _document(
         redirect_mode=True,
         max_response_bytes=client._root_export_max_bytes,
     )
+    return _document_result(path, client._origin, operation, status, value, response)
+
+
+def _document_result(
+    path: str, origin: str, operation: str, status: int, value: object, response: RuntimeResponse
+) -> SiteDocument:
     media_type = _header(response, "content-type") or "application/octet-stream"
     if status in {301, 302, 303, 307, 308}:
         location = _header(response, "location")
@@ -256,7 +261,7 @@ def _document(
                 platform=CatalogPlatform.UDATA.value,
                 status_code=status,
             )
-        target = _validated_redirect_target(location, client._origin, operation, status)
+        target = _validated_redirect_target(location, origin, operation, status)
         if _contains_sensitive_query(target.query):
             raise NativeCatalogError(
                 "The uData organization redirect contains a sensitive query component.",
@@ -295,40 +300,7 @@ async def _document_async(
         redirect_mode=True,
         max_response_bytes=client._root_export_max_bytes,
     )
-    media_type = _header(response, "content-type") or "application/octet-stream"
-    if status in {301, 302, 303, 307, 308}:
-        location = _header(response, "location")
-        if not location:
-            raise NativeCatalogError(
-                "The uData organization redirect omits its Location header.",
-                operation=operation,
-                platform=CatalogPlatform.UDATA.value,
-                status_code=status,
-            )
-        target = _validated_redirect_target(location, client._origin, operation, status)
-        if _contains_sensitive_query(target.query):
-            raise NativeCatalogError(
-                "The uData organization redirect contains a sensitive query component.",
-                operation=operation,
-                platform=CatalogPlatform.UDATA.value,
-                status_code=status,
-            )
-        return SiteDocument(
-            endpoint=path,
-            media_type=media_type,
-            status_code=status,
-            size_bytes=0,
-            sha256=hashlib.sha256(b"").hexdigest(),
-            location=target.path + (f"?{target.query}" if target.query else ""),
-        )
-    body = cast("bytes", value)
-    return SiteDocument(
-        endpoint=path,
-        media_type=media_type,
-        status_code=status,
-        size_bytes=len(body),
-        sha256=hashlib.sha256(body).hexdigest(),
-    )
+    return _document_result(path, client._origin, operation, status, value, response)
 
 
 def _header(response: RuntimeResponse, name: str) -> str | None:

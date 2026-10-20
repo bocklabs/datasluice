@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit
 from datasluice._uri import sanitize_uri
 from datasluice.data.access import DataPlaneResourceReader
 from datasluice.domain import HttpDownload, LocalFile, ObjectStorage, Resource
+from datasluice.domain._json import object_dict
 from datasluice.domain.artifact import _freeze_extensions
 from datasluice.domain.catalog.auth import CredentialResolver as CredentialResolver
 from datasluice.exceptions import (
@@ -72,14 +73,7 @@ def _validate_uri(value: object, path: str) -> str:
 
 
 def _object_dict(value: object, path: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise _contract_error(path)
-    result: dict[str, object] = {}
-    for key, nested in value.items():
-        if not isinstance(key, str):
-            raise _contract_error(path)
-        result[key] = nested
-    return result
+    return object_dict(value, path, _contract_error)
 
 
 @dataclass(frozen=True)

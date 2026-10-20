@@ -115,8 +115,9 @@ def test_t01_both_runners_refuse_before_transport() -> None:
     with pytest.raises(UDataDriftUnavailableError):
         run_udata_drift()
 
+    operation = run_udata_drift_async()
     with pytest.raises(UDataDriftUnavailableError):
-        asyncio.run(run_udata_drift_async())
+        asyncio.run(operation)
 
 
 def test_t04_every_allowlisted_read_is_an_anonymous_get() -> None:

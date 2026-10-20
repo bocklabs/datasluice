@@ -119,15 +119,19 @@ async def _runtime_response_async(response: Any, request: RuntimeRequest, httpx:
         await response.aclose()
 
 
+def _check_read_bounds(request: RuntimeRequest, size: int) -> None:
+    if request.deadline is not None:
+        request.deadline.assert_dispatchable()
+    if request.max_response_bytes is not None:
+        _enforce_body_limit(size, request.max_response_bytes)
+
+
 def _read_body(response: Any, request: RuntimeRequest) -> bytes:
     if request.max_response_bytes is None and request.deadline is None:
         return response.content
     body = bytearray()
     for chunk in response.iter_bytes():
-        if request.deadline is not None:
-            request.deadline.assert_dispatchable()
-        if request.max_response_bytes is not None:
-            _enforce_body_limit(len(body) + len(chunk), request.max_response_bytes)
+        _check_read_bounds(request, len(body) + len(chunk))
         body.extend(chunk)
     if request.deadline is not None:
         request.deadline.assert_dispatchable()
@@ -139,10 +143,7 @@ async def _read_body_async(response: Any, request: RuntimeRequest) -> bytes:
         return await response.aread()
     body = bytearray()
     async for chunk in response.aiter_bytes():
-        if request.deadline is not None:
-            request.deadline.assert_dispatchable()
-        if request.max_response_bytes is not None:
-            _enforce_body_limit(len(body) + len(chunk), request.max_response_bytes)
+        _check_read_bounds(request, len(body) + len(chunk))
         body.extend(chunk)
     if request.deadline is not None:
         request.deadline.assert_dispatchable()
@@ -208,11 +209,8 @@ class _HttpxTransportBase:
         seen = 0
         try:
             for chunk in response.iter_bytes():
-                if request.deadline is not None:
-                    request.deadline.assert_dispatchable()
                 seen += len(chunk)
-                if request.max_response_bytes is not None:
-                    _enforce_body_limit(seen, request.max_response_bytes)
+                _check_read_bounds(request, seen)
                 yield chunk
             if request.deadline is not None:
                 request.deadline.assert_dispatchable()
@@ -223,11 +221,8 @@ class _HttpxTransportBase:
         seen = 0
         try:
             async for chunk in response.aiter_bytes():
-                if request.deadline is not None:
-                    request.deadline.assert_dispatchable()
                 seen += len(chunk)
-                if request.max_response_bytes is not None:
-                    _enforce_body_limit(seen, request.max_response_bytes)
+                _check_read_bounds(request, seen)
                 yield chunk
             if request.deadline is not None:
                 request.deadline.assert_dispatchable()

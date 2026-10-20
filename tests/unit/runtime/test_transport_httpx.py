@@ -95,8 +95,9 @@ def test_httpx_transport_maps_transport_error() -> None:
         raise httpx.ConnectTimeout("timed out with password=transport-fixture-secret", request=request)
 
     probe = SyncProbe(responder)
+    request = RuntimeRequest("GET", "https://example.test/")
     with probe, pytest.raises(TransportError) as raised:
-        probe.send(RuntimeRequest("GET", "https://example.test/"))
+        probe.send(request)
 
     assert "transport-fixture-secret" not in "".join(traceback.format_exception(raised.value))
     assert raised.value.__cause__ is None
@@ -166,11 +167,12 @@ def test_httpx_transport_same_origin_redirect_preserves_caller_headers() -> None
 
 
 def test_redirect_userinfo_is_rejected_before_a_second_request() -> None:
+    request = RuntimeRequest("GET", "https://example.test/start")
     with (
         SyncProbe(redirect_to("https://user:fixture-password@example.test/next", 302, at_path("/start"))) as probe,
         pytest.raises(TransportError, match="embedded credentials"),
     ):
-        probe.send(RuntimeRequest("GET", "https://example.test/start"))
+        probe.send(request)
 
     assert len(probe.requests) == 1
 
@@ -180,10 +182,9 @@ def test_async_redirect_userinfo_is_rejected_before_a_second_request() -> None:
 
     async def send() -> None:
         async with probe:
+            request = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"})
             with pytest.raises(TransportError, match="embedded credentials") as excinfo:
-                await probe.send(
-                    RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"})
-                )
+                await probe.send(request)
             assert "fixture-password" not in str(excinfo.value)
 
     asyncio.run(send())
@@ -219,11 +220,12 @@ def test_httpx_cross_origin_body_redirect_fails_closed(status: int) -> None:
     body = urlencode({"token": "redirect-body-secret"}).encode()
     message = "a cross-origin body-bearing redirect target must not receive the body"
 
+    request = RuntimeRequest("POST", "https://origin.test/oauth/revoke", REDIRECT_BODY_HEADERS, body)
     with (
         SyncProbe(redirect_then_fail(message, "https://other.test/next", status, "origin.test")) as probe,
         pytest.raises(TransportError, match="different redirect origin"),
     ):
-        probe.send(RuntimeRequest("POST", "https://origin.test/oauth/revoke", REDIRECT_BODY_HEADERS, body))
+        probe.send(request)
 
     assert len(probe.requests) == 1
     assert probe.requests[0].content == body
@@ -234,19 +236,16 @@ def test_httpx_cross_origin_multipart_redirect_fails_closed(status: int) -> None
     """A 307/308 preserves the parts, so a cross-origin relay must be refused before the upload."""
     message = "a cross-origin files-bearing redirect target must not receive the parts"
 
+    request = RuntimeRequest(
+        "POST",
+        "https://origin.test/upload",
+        files=(UploadPart(field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"),),
+    )
     with (
         SyncProbe(redirect_then_fail(message, "https://other.test/next", status, "origin.test")) as probe,
         pytest.raises(TransportError, match="different redirect origin"),
     ):
-        probe.send(
-            RuntimeRequest(
-                "POST",
-                "https://origin.test/upload",
-                files=(
-                    UploadPart(field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"),
-                ),
-            )
-        )
+        probe.send(request)
 
     assert len(probe.requests) == 1
 
@@ -257,11 +256,12 @@ def test_httpx_cross_origin_non_post_body_redirect_fails_closed(status: int) -> 
     body = urlencode({"token": "redirect-body-secret"}).encode()
     message = "a cross-origin body-bearing redirect target must not receive the body"
 
+    request = RuntimeRequest("PUT", "https://origin.test/resources/1/extras/", REDIRECT_BODY_HEADERS, body)
     with (
         SyncProbe(redirect_then_fail(message, "https://other.test/next", status, "origin.test")) as probe,
         pytest.raises(TransportError, match="different redirect origin"),
     ):
-        probe.send(RuntimeRequest("PUT", "https://origin.test/resources/1/extras/", REDIRECT_BODY_HEADERS, body))
+        probe.send(request)
 
     assert len(probe.requests) == 1
     assert probe.requests[0].content == body
@@ -274,10 +274,11 @@ def test_async_httpx_cross_origin_body_redirect_fails_closed() -> None:
 
     async def send() -> None:
         async with probe:
-            await probe.send(RuntimeRequest("POST", "https://origin.test/oauth/revoke", REDIRECT_BODY_HEADERS, body))
+            request = RuntimeRequest("POST", "https://origin.test/oauth/revoke", REDIRECT_BODY_HEADERS, body)
+            with pytest.raises(TransportError, match="different redirect origin"):
+                await probe.send(request)
 
-    with pytest.raises(TransportError, match="different redirect origin"):
-        asyncio.run(send())
+    asyncio.run(send())
 
     assert len(probe.requests) == 1
     assert probe.requests[0].content == body
@@ -308,20 +309,17 @@ def test_async_httpx_cross_origin_multipart_redirect_fails_closed() -> None:
 
     async def send() -> None:
         async with probe:
-            await probe.send(
-                RuntimeRequest(
-                    "POST",
-                    "https://origin.test/upload",
-                    files=(
-                        UploadPart(
-                            field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"
-                        ),
-                    ),
-                )
+            request = RuntimeRequest(
+                "POST",
+                "https://origin.test/upload",
+                files=(
+                    UploadPart(field_name="upload", file_name="data.csv", content_type="text/csv", data=b"a,b\n1,2"),
+                ),
             )
+            with pytest.raises(TransportError, match="different redirect origin"):
+                await probe.send(request)
 
-    with pytest.raises(TransportError, match="different redirect origin"):
-        asyncio.run(send())
+    asyncio.run(send())
 
     assert len(probe.requests) == 1
     assert b'name="upload"; filename="data.csv"' in probe.requests[0].content
@@ -329,11 +327,12 @@ def test_async_httpx_cross_origin_multipart_redirect_fails_closed() -> None:
 
 
 def test_httpx_exceeding_max_redirects_raises_transport_error() -> None:
+    request = RuntimeRequest("GET", "https://example.test/start")
     with (
         SyncProbe(redirect_loop(302, "https://example.test/loop/"), max_redirects=3) as probe,
         pytest.raises(TransportError, match="redirect limit"),
     ):
-        probe.send(RuntimeRequest("GET", "https://example.test/start"))
+        probe.send(request)
 
     assert len(probe.requests) == 4
 
@@ -341,11 +340,12 @@ def test_httpx_exceeding_max_redirects_raises_transport_error() -> None:
 def test_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() -> None:
     location = "file:///etc/passwd?token=topsecret&keep=value"
 
+    request = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"})
     with (
         SyncProbe(fixed(302, headers={"Location": location})) as probe,
         pytest.raises(TransportError, match="file:///etc/passwd") as excinfo,
     ):
-        probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
+        probe.send(request)
 
     assert "topsecret" not in str(excinfo.value)
     assert "topsecret" not in str(excinfo.value.__cause__)
@@ -369,8 +369,9 @@ def test_httpx_malformed_redirect_location_closes_response_before_failing() -> N
         return response
 
     probe = SyncProbe(responder)
+    request = RuntimeRequest("GET", "https://example.test/start")
     with probe, pytest.raises(TransportError):
-        probe.send(RuntimeRequest("GET", "https://example.test/start"))
+        probe.send(request)
 
     assert closed == [True]
 
@@ -516,8 +517,9 @@ def test_async_httpx_exceeding_max_redirects_raises_transport_error() -> None:
 
     async def send() -> None:
         async with probe:
+            request = RuntimeRequest("GET", "https://example.test/start")
             with pytest.raises(TransportError, match="redirect limit"):
-                await probe.send(RuntimeRequest("GET", "https://example.test/start"))
+                await probe.send(request)
 
     asyncio.run(send())
 
@@ -542,8 +544,9 @@ def test_async_httpx_malformed_redirect_location_closes_response_before_failing(
     async def send() -> None:
         probe = AsyncProbe(responder)
         async with probe:
+            request = RuntimeRequest("GET", "https://example.test/start")
             with pytest.raises(TransportError):
-                await probe.send(RuntimeRequest("GET", "https://example.test/start"))
+                await probe.send(request)
 
     asyncio.run(send())
 
@@ -556,8 +559,9 @@ def test_async_httpx_refuses_non_http_redirect_target_and_redacts_failure_surfac
     async def send() -> object:
         probe = AsyncProbe(fixed(302, headers={"Location": location}))
         async with probe:
+            request = RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"})
             with pytest.raises(TransportError, match="file:///etc/passwd") as excinfo:
-                await probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
+                await probe.send(request)
             return excinfo.value
 
     failure = cast("TransportError", asyncio.run(send()))
@@ -624,8 +628,9 @@ def test_httpx_send_wraps_midstream_httpx_errors_during_bounded_reads() -> None:
         response.iter_bytes = failing_bytes
         return response
 
+    request = RuntimeRequest("GET", "https://example.test/", max_response_bytes=1024)
     with SyncProbe(responder) as probe, pytest.raises(TransportError):
-        probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=1024))
+        probe.send(request)
 
 
 def test_httpx_send_stream_enforces_max_response_bytes() -> None:
@@ -667,8 +672,9 @@ def test_httpx_send_stream_allows_the_exact_boundary() -> None:
 
 def test_httpx_send_enforces_max_response_bytes() -> None:
     with SyncProbe(fixed(200, content=b"abcdef")) as probe:
+        request = RuntimeRequest("GET", "https://example.test/", max_response_bytes=2)
         with pytest.raises(TransportError, match="byte limit"):
-            probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+            probe.send(request)
         response = probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=6))
         assert response.body == b"abcdef"
 
@@ -677,8 +683,9 @@ def test_async_httpx_send_enforces_max_response_bytes() -> None:
     async def send() -> None:
         probe = AsyncProbe(fixed(200, content=b"abcdef"))
         async with probe:
+            request = RuntimeRequest("GET", "https://example.test/", max_response_bytes=2)
             with pytest.raises(TransportError, match="byte limit"):
-                await probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=2))
+                await probe.send(request)
             response = await probe.send(RuntimeRequest("GET", "https://example.test/", max_response_bytes=6))
             assert response.body == b"abcdef"
 

@@ -61,7 +61,8 @@ def test_source_closed_on_construction_failure(monkeypatch) -> None:
     assert source.close_calls == 1
 
 
-def test_batch_size_zero_rejected_before_source_acquisition(monkeypatch) -> None:
+@pytest.mark.parametrize("batch_size", [0, -1], ids=["zero", "negative"])
+def test_invalid_batch_size_rejected_before_source_acquisition(monkeypatch, batch_size: int) -> None:
     reader = DataPlaneResourceReader()
     acquisitions: list[Any] = []
 
@@ -75,26 +76,7 @@ def test_batch_size_zero_rejected_before_source_acquisition(monkeypatch) -> None
 
     resource = _local_csv_resource()
     with pytest.raises(DataSluiceError, match="batch_size"):
-        reader.open(resource, batch_size=0)
-
-    assert acquisitions == []
-
-
-def test_batch_size_negative_rejected_before_source_acquisition(monkeypatch) -> None:
-    reader = DataPlaneResourceReader()
-    acquisitions: list[Any] = []
-
-    def fail_open(access: Any):
-        acquisitions.append(access)
-        raise AssertionError("source must not be acquired")
-
-    monkeypatch.setattr(reader, "_open_local_file", fail_open)
-
-    from datasluice.exceptions import DataSluiceError
-
-    resource = _local_csv_resource()
-    with pytest.raises(DataSluiceError, match="batch_size"):
-        reader.open(resource, batch_size=-1)
+        reader.open(resource, batch_size=batch_size)
 
     assert acquisitions == []
 

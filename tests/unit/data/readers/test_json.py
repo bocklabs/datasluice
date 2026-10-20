@@ -83,14 +83,16 @@ def test_json_skips_utf8_bom() -> None:
 
 def test_json_array_rejects_non_object_elements() -> None:
     src = io.BytesIO(b'[{"id": 1}, "not-a-dict", {"id": 2}]')
+    batches = JSONReader().read_batches(src)
     with pytest.raises(FormatError, match="elements must be objects"):
-        list(JSONReader().read_batches(src))
+        list(batches)
 
 
 def test_json_array_has_a_document_size_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_base_mod, "MAX_DOCUMENT_BYTES", 16)
+    batches = JSONReader().read_batches(io.BytesIO(b'[{"name":"too much data"}]'))
     with pytest.raises(FormatError, match="limited"):
-        list(JSONReader().read_batches(io.BytesIO(b'[{"name":"too much data"}]')))
+        list(batches)
 
 
 def test_jsonl_yields_before_reading_the_entire_source() -> None:

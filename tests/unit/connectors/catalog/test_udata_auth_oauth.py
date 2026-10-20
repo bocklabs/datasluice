@@ -119,10 +119,11 @@ def test_query_routes_send_the_parameters_stock_requires() -> None:
 
 
 def test_query_routes_refuse_a_request_stock_would_reject() -> None:
+    query = OAuthClientRequest(client_id=None)
     with pytest.raises(ValueError):
-        wire.build_request("authorize", OAuthClientRequest(client_id=None))
+        wire.build_request("authorize", query)
     with pytest.raises(ValueError):
-        wire.build_request("client_info", OAuthClientRequest(client_id=None))
+        wire.build_request("client_info", query)
 
 
 def test_oauth_token_route_sends_exact_form_without_cookie_or_session_auth() -> None:
@@ -172,8 +173,10 @@ def test_oauth_client_info_reports_the_stock_session_gate_without_fabricating_co
         declared_routes(("GET", "/oauth/client_info?client_id=client-id", 401, None), site=SITE)
     )
     client = sync_client(router, CREDENTIAL)
-    with client, pytest.raises(CatalogError):
-        client.auth_oauth.client_info(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+    with client:
+        query = OAuthClientRequest(client_id="client-id")
+        with pytest.raises(CatalogError):
+            client.auth_oauth.client_info(query, PERMISSIONS)
     assert router.requests[-1].url == f"{ORIGIN}/oauth/client_info?client_id=client-id"
 
 
@@ -238,18 +241,21 @@ def test_oauth_read_error_keeps_http_status_instead_of_becoming_session_metadata
     routes = declared_routes(
         ("GET", "/oauth/authorize?client_id=client-id&response_type=code", status, {"message": "rejected"}), site=SITE
     )
-    with pytest.raises(CatalogError) as raised:
-        if async_mode:
+    query = OAuthClientRequest(client_id="client-id")
+    if async_mode:
 
-            async def run() -> None:
-                async with async_client(html_async_route_table(routes), CREDENTIAL) as client:
-                    await client.auth_oauth.authorize(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+        async def run() -> CatalogError:
+            async with async_client(html_async_route_table(routes), CREDENTIAL) as client:
+                with pytest.raises(CatalogError) as raised:
+                    await client.auth_oauth.authorize(query, PERMISSIONS)
+                return raised.value
 
-            asyncio.run(run())
-        else:
-            with sync_client(html_sync_route_table(routes), CREDENTIAL) as client:
-                client.auth_oauth.authorize(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
-    assert raised.value.metadata["status_code"] == status
+        error = asyncio.run(run())
+    else:
+        with sync_client(html_sync_route_table(routes), CREDENTIAL) as client, pytest.raises(CatalogError) as raised:
+            client.auth_oauth.authorize(query, PERMISSIONS)
+        error = raised.value
+    assert error.metadata["status_code"] == status
 
 
 def test_oauth_authorize_get_sends_the_query_and_no_form_body() -> None:
@@ -376,8 +382,10 @@ def test_client_info_and_authorize_never_send_the_api_key() -> None:
     router = html_sync_route_table(routes)
     with sync_client(router, CREDENTIAL) as client:
         for name in ("client_info", "authorize"):
+            method = getattr(client.auth_oauth, name)
+            query = OAuthClientRequest(client_id="client-id")
             with pytest.raises(CatalogError):
-                getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+                method(query, PERMISSIONS)
     oauth_requests = [request for request in router.requests if request.url.startswith(f"{ORIGIN}/oauth/")]
     assert {request.url.split("/oauth/")[1].partition("?")[0] for request in oauth_requests} == {
         "client_info",
@@ -413,11 +421,9 @@ def test_invalid_oauth_inputs_fail_before_any_dispatch() -> None:
     )
     client = sync_client(router, CREDENTIAL)
     with client, pytest.raises(ValueError):
-        client.auth_oauth.access_token(OAuthTokenRequest(grant_type="", client_id="c"), PERMISSIONS)
+        OAuthTokenRequest(grant_type="", client_id="c")
     with client, pytest.raises(ValueError):
-        client.auth_oauth.access_token(
-            OAuthTokenRequest(grant_type="client_credentials", client_id="c", scope=""), PERMISSIONS
-        )
+        OAuthTokenRequest(grant_type="client_credentials", client_id="c", scope="")
     assert router.requests == [], router.requests
 
 
@@ -428,9 +434,7 @@ def test_authorization_code_grant_requires_the_pkce_verifier_before_dispatch() -
     )
     client = sync_client(router, CREDENTIAL)
     with client, pytest.raises(ValueError, match="code_verifier"):
-        client.auth_oauth.access_token(
-            OAuthTokenRequest(grant_type="authorization_code", client_id="client-id", code="code-1"), PERMISSIONS
-        )
+        OAuthTokenRequest(grant_type="authorization_code", client_id="client-id", code="code-1")
     assert router.requests == [], router.requests
 
 
@@ -499,16 +503,21 @@ def test_malformed_json_on_query_reads_fails_with_operation_identity(name: str) 
     path = wire.build_request(name, OAuthClientRequest(client_id="client-id"))[1]
     router = html_sync_route_table(declared_routes(("GET", path, 200, b"{"), site=SITE))
     client = sync_client(router, CREDENTIAL)
-    with client, pytest.raises(CatalogValidationError) as raised:
-        getattr(client.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+    with client:
+        method = getattr(client.auth_oauth, name)
+        query = OAuthClientRequest(client_id="client-id")
+        with pytest.raises(CatalogValidationError) as raised:
+            method(query, PERMISSIONS)
     assert raised.value.operation == wire.OPERATIONS[name]
 
     async def run() -> None:
         async with async_client(
             html_async_route_table(declared_routes(("GET", path, 200, b"{"), site=SITE)), CREDENTIAL
         ) as async_client_:
+            method = getattr(async_client_.auth_oauth, name)
+            query = OAuthClientRequest(client_id="client-id")
             with pytest.raises(CatalogValidationError):
-                await getattr(async_client_.auth_oauth, name)(OAuthClientRequest(client_id="client-id"), PERMISSIONS)
+                await method(query, PERMISSIONS)
 
     asyncio.run(run())
 
@@ -528,16 +537,13 @@ def test_malformed_json_on_query_reads_fails_with_operation_identity(name: str) 
     ],
 )
 def test_token_success_requires_typed_metadata(document: dict[str, object]) -> None:
+    receipt = MutationReceipt(
+        operation=wire.OPERATIONS["access_token"],
+        outcome="succeeded",
+        target=CatalogId(CatalogPlatform.UDATA, ResourceKind("oauth-token"), "self"),
+    )
     with pytest.raises(CatalogValidationError) as raised:
-        wire.parse_token(
-            "access_token",
-            document,
-            MutationReceipt(
-                operation=wire.OPERATIONS["access_token"],
-                outcome="succeeded",
-                target=CatalogId(CatalogPlatform.UDATA, ResourceKind("oauth-token"), "self"),
-            ),
-        )
+        wire.parse_token("access_token", document, receipt)
     assert raised.value.operation == wire.OPERATIONS["access_token"]
 
 
@@ -566,11 +572,13 @@ def test_post_dispatch_token_decode_failure_keeps_receipt_and_failed_event(
     router = html_sync_route_table(declared_routes(("POST", path, 200, payload), site=SITE))
     client = sync_client(router, CREDENTIAL, emitter=EventEmitter(sinks=(events,)))
     policy = None if name == "access_token" else _policy(name, f"request:{name}", destructive=True)
-    with client, pytest.raises(CatalogValidationError) as raised:
+    with client:
         if isinstance(body, OAuthTokenRequest):
-            client.auth_oauth.access_token(body, PERMISSIONS)
+            with pytest.raises(CatalogValidationError) as raised:
+                client.auth_oauth.access_token(body, PERMISSIONS)
         else:
-            client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
+            with pytest.raises(CatalogValidationError) as raised:
+                client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
     assert_ambiguous_mutation_receipt(
         raised.value,
         raised.value.__dict__["mutation_receipt"],
@@ -593,10 +601,11 @@ def test_async_post_dispatch_token_decode_failure_keeps_receipt_and_failed_event
 
     async def run() -> tuple[CatalogValidationError, MutationReceipt]:
         async with async_client(router, CREDENTIAL, emitter=EventEmitter(sinks=(events,))) as client:
-            with pytest.raises(CatalogValidationError) as raised:
-                if isinstance(body, OAuthTokenRequest):
+            if isinstance(body, OAuthTokenRequest):
+                with pytest.raises(CatalogValidationError) as raised:
                     await client.auth_oauth.access_token(body, PERMISSIONS)
-                else:
+            else:
+                with pytest.raises(CatalogValidationError) as raised:
                     await client.auth_oauth.revoke_token(body, PERMISSIONS, policy)
             return raised.value, raised.value.__dict__["mutation_receipt"]
 

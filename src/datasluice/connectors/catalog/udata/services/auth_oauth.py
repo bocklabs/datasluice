@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthAuthorizeDecision,
@@ -16,6 +16,17 @@ from datasluice.connectors.catalog.udata.models.oauth import (
     OAuthTokenResult,
 )
 from datasluice.connectors.catalog.udata.secrets import UDataOAuthSecret
+from datasluice.connectors.catalog.udata.services._receipts import _attach_receipt as _attach
+from datasluice.connectors.catalog.udata.services._receipts import (
+    _error_status,
+    _failure_event,
+    _mutation_outcome,
+)
+from datasluice.connectors.catalog.udata.services.datasets import (
+    _enforce_mutation_policy,
+    _require_mutation_permission,
+)
+from datasluice.connectors.catalog.udata.services.organizations_memberships import _org_receipt
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import oauth as wire
 from datasluice.domain.catalog.auth import EffectivePermissions
@@ -23,18 +34,6 @@ from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import BudgetExhaustedError, CatalogValidationError, NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse
-
-from ._receipts import _attach_receipt as _attach
-from ._receipts import (
-    _error_status,
-    _failure_event,
-    _mutation_outcome,
-)
-from .datasets import (
-    _enforce_mutation_policy,
-    _require_mutation_permission,
-)
-from .organizations_memberships import _org_receipt
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -171,6 +170,72 @@ def _error_receipt(
     )
 
 
+def _begin_write(
+    origin: str,
+    name: str,
+    body: object,
+    operation: str,
+    mutation_policy: Policy,
+) -> tuple[str, str, dict[str, str], wire.OAuthForm | None]:
+    _validate_exchange_endpoint(body, origin)
+    if name != "access_token":
+        _enforce_mutation_policy(operation, _target(name), mutation_policy, destructive=name in _DESTRUCTIVE)
+    return wire.build_request(name, body)
+
+
+def _write_arguments(
+    name: str,
+    operation: str,
+    permissions: Permissions,
+    credential: object,
+    mutation_policy: Policy,
+    encoded: wire.OAuthForm | None,
+) -> Any:
+    return {
+        "owning_operation": operation,
+        "permissions": permissions,
+        "credential": credential,
+        "idempotency_policy": mutation_policy.idempotency if mutation_policy else None,
+        "emit_success": False,
+        "form_body": encoded,
+        "omit_credential": not wire.sends_credential(name),
+        "raw_text": name == "authorize_post",
+        "redirect_mode": True,
+    }
+
+
+def _finish_write[Result](
+    body: object,
+    status: int,
+    payload: object,
+    response: RuntimeResponse,
+    decode: Callable[[int, object, str], Result],
+) -> Result:
+    _validate_consent_redirect(body, response)
+    return decode(status, payload, _media_type(response.headers))
+
+
+def _settle_write_failure(
+    error: BaseException,
+    name: str,
+    mutation_policy: Policy,
+    payload: object,
+    result: object,
+    response: RuntimeResponse | None,
+    encoded: wire.OAuthForm | None,
+) -> None:
+    _discard_payload(payload)
+    _discard_result(result)
+    _error_receipt(
+        error,
+        name,
+        mutation_policy,
+        _scrub(response),
+        interrupted=isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)),
+        dispatched=encoded is not None and encoded.send_started,
+    )
+
+
 class SyncAuthOAuthService:
     """Named synchronous stock uData /oauth routes."""
 
@@ -227,45 +292,21 @@ class SyncAuthOAuthService:
         encoded: wire.OAuthForm | None = None
         result: object = None
         try:
-            _validate_exchange_endpoint(body, self._client._origin)
-            if name != "access_token":
-                _enforce_mutation_policy(operation, _target(name), mutation_policy, destructive=name in _DESTRUCTIVE)
             credential = _require_mutation_permission(self._client._resolved_credential(), operation, permissions)
-            method, path, headers, encoded = wire.build_request(name, body)
+            method, path, headers, encoded = _begin_write(self._client._origin, name, body, operation, mutation_policy)
             status, payload, response = self._client._dataset_call(
                 method=method,
                 path=path,
                 headers=headers,
-                owning_operation=operation,
-                permissions=permissions,
-                credential=credential,
-                idempotency_policy=mutation_policy.idempotency if mutation_policy else None,
-                emit_success=False,
-                form_body=encoded,
-                omit_credential=not wire.sends_credential(name),
-                raw_text=name == "authorize_post",
-                redirect_mode=True,
+                **_write_arguments(name, operation, permissions, credential, mutation_policy, encoded),
             )
-            _validate_consent_redirect(body, response)
-            media_type = _media_type(response.headers)
-            response = _scrub(response)
-            decoded = decode(status, payload, media_type)
+            decoded = _finish_write(body, status, payload, response, decode)
             result = decoded
             self._client._emit(operation, "succeeded")
             return decoded
         except SETTLEMENT_ERRORS as error:
-            _discard_payload(payload)
-            _discard_result(result)
-            response = _scrub(response)
             self._client._emit(operation, _failure_event(error))
-            _error_receipt(
-                error,
-                name,
-                mutation_policy,
-                response,
-                interrupted=isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)),
-                dispatched=encoded is not None and encoded.send_started,
-            )
+            _settle_write_failure(error, name, mutation_policy, payload, result, response, encoded)
             raise
         finally:
             _discard_payload(payload)
@@ -419,47 +460,23 @@ class AsyncAuthOAuthService:
         encoded: wire.OAuthForm | None = None
         result: object = None
         try:
-            _validate_exchange_endpoint(body, self._client._origin)
-            if name != "access_token":
-                _enforce_mutation_policy(operation, _target(name), mutation_policy, destructive=name in _DESTRUCTIVE)
             credential = _require_mutation_permission(
                 await self._client._resolved_credential_async(), operation, permissions
             )
-            method, path, headers, encoded = wire.build_request(name, body)
+            method, path, headers, encoded = _begin_write(self._client._origin, name, body, operation, mutation_policy)
             status, payload, response = await self._client._dataset_call_async(
                 method=method,
                 path=path,
                 headers=headers,
-                owning_operation=operation,
-                permissions=permissions,
-                credential=credential,
-                idempotency_policy=mutation_policy.idempotency if mutation_policy else None,
-                emit_success=False,
-                form_body=encoded,
-                omit_credential=not wire.sends_credential(name),
-                raw_text=name == "authorize_post",
-                redirect_mode=True,
+                **_write_arguments(name, operation, permissions, credential, mutation_policy, encoded),
             )
-            _validate_consent_redirect(body, response)
-            media_type = _media_type(response.headers)
-            response = _scrub(response)
-            decoded = decode(status, payload, media_type)
+            decoded = _finish_write(body, status, payload, response, decode)
             result = decoded
             self._client._emit(operation, "succeeded")
             return decoded
         except ASYNC_SETTLEMENT_ERRORS as error:
-            _discard_payload(payload)
-            _discard_result(result)
-            response = _scrub(response)
             self._client._emit(operation, _failure_event(error))
-            _error_receipt(
-                error,
-                name,
-                mutation_policy,
-                response,
-                interrupted=isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)),
-                dispatched=encoded is not None and encoded.send_started,
-            )
+            _settle_write_failure(error, name, mutation_policy, payload, result, response, encoded)
             raise
         finally:
             _discard_payload(payload)

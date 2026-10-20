@@ -12,11 +12,12 @@ from datasluice.connectors.catalog.udata.settings import normalize_origin
 from datasluice.domain.catalog.auth import credential_scope
 from datasluice.errors.catalog import (
     BudgetExhaustedError,
+    CatalogError,
     CatalogUnavailableError,
     NativeCatalogError,
     map_catalog_error,
 )
-from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest
+from datasluice.runtime.transport.base import CatalogTransport, RuntimeRequest, RuntimeResponse
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -191,9 +192,19 @@ class SiteVersionGate:
     def _probe(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         if self._transport is None:
             raise RuntimeError("The strict site gate requires a synchronous transport.")
+        request = self._probe_request(deadline)
+        try:
+            response = self._transport.send(request)
+        except BudgetExhaustedError:
+            raise
+        except Exception as exc:
+            raise self._transport_error() from exc
+        return self._decode_probe(response, deadline)
+
+    def _probe_request(self, deadline: DeadlineMonitor | None) -> RuntimeRequest:
         if deadline is not None:
             deadline.assert_dispatchable()
-        request = RuntimeRequest(
+        return RuntimeRequest(
             method="GET",
             url=f"{self._origin}{SITE_PATH}",
             headers={},
@@ -201,18 +212,18 @@ class SiteVersionGate:
             max_response_bytes=_SITE_PROBE_MAX_BYTES,
             deadline=deadline,
         )
-        try:
-            response = self._transport.send(request)
-        except BudgetExhaustedError:
-            raise
-        except Exception as exc:
-            raise map_catalog_error(
-                NativeCatalogError(
-                    "The uData site probe transport failed.",
-                    operation=SITE_OPERATION_ID,
-                    platform="udata",
-                )
-            ) from exc
+
+    @staticmethod
+    def _transport_error() -> CatalogError:
+        return map_catalog_error(
+            NativeCatalogError(
+                "The uData site probe transport failed.",
+                operation=SITE_OPERATION_ID,
+                platform="udata",
+            )
+        )
+
+    def _decode_probe(self, response: RuntimeResponse, deadline: DeadlineMonitor | None) -> SiteVersion:
         if deadline is not None:
             deadline.assert_dispatchable()
         if response.status_code in {401, 403, 423}:
@@ -296,59 +307,11 @@ class AsyncSiteVersionGate(SiteVersionGate):
         return observed
 
     async def _probe_async(self, deadline: DeadlineMonitor | None = None) -> SiteVersion:
-        import json
-
-        if deadline is not None:
-            deadline.assert_dispatchable()
-        request = RuntimeRequest(
-            method="GET",
-            url=f"{self._origin}{SITE_PATH}",
-            headers={},
-            body=None,
-            max_response_bytes=_SITE_PROBE_MAX_BYTES,
-            deadline=deadline,
-        )
+        request = self._probe_request(deadline)
         try:
             response = await self._async_transport.send(request)
         except BudgetExhaustedError:
             raise
         except Exception as exc:
-            raise map_catalog_error(
-                NativeCatalogError(
-                    "The uData site probe transport failed.",
-                    operation=SITE_OPERATION_ID,
-                    platform="udata",
-                )
-            ) from exc
-        if deadline is not None:
-            deadline.assert_dispatchable()
-        if response.status_code in {401, 403, 423}:
-            raise map_catalog_error(
-                NativeCatalogError(
-                    "The uData site probe requires deployment access.",
-                    operation=SITE_OPERATION_ID,
-                    platform="udata",
-                    status_code=response.status_code,
-                    capability_state={401: "unauthorized", 403: "forbidden", 423: "disabled"}[response.status_code],
-                    safe_action="Verify access to the deployment's stock /api/1/site/ document.",
-                )
-            )
-        if not 200 <= response.status_code < 300:
-            raise UDataVersionError(
-                version_state="missing",
-                message=f"The uData site probe returned HTTP {response.status_code}.",
-                safe_action="Verify the deployment origin exposes the stock /api/1/site/ document.",
-            )
-        invalid_payload = False
-        try:
-            payload = json.loads(response.body)
-        except (TypeError, ValueError):
-            invalid_payload = True
-            payload = None
-        if invalid_payload:
-            raise UDataVersionError(
-                version_state="malformed",
-                message="The uData site probe returned an invalid JSON result.",
-                safe_action="Verify the deployment serves the stock /api/1/site/ JSON document.",
-            )
-        return require_exact_version(parse_site_version(payload), self._pinned_version)
+            raise self._transport_error() from exc
+        return self._decode_probe(response, deadline)

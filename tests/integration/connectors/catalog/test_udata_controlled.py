@@ -3738,11 +3738,12 @@ def test_controlled_oauth_rejects_unconfirmed_destructive_revocation() -> None:
     permissions = EffectivePermissions.for_credential(
         credential, platform=CatalogPlatform.UDATA, roles=frozenset({"admin"})
     )
+    request = OAuthRevokeRequest(token="controlled-absent-token")
     with (
         create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client,
         pytest.raises(CatalogError) as denial,
     ):
-        client.auth_oauth.revoke_token(OAuthRevokeRequest(token="controlled-absent-token"), permissions)
+        client.auth_oauth.revoke_token(request, permissions)
     assert denial.value.metadata.get("status_code") is None
 
 
@@ -3756,8 +3757,9 @@ def test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes
         ):
             status, payload, _ = _direct_request("", "GET", path)
             if status != 200:
+                operation = getattr(client.activity_discussions, method)
                 with pytest.raises(CatalogError):
-                    getattr(client.activity_discussions, method)(*args)
+                    operation(*args)
                 continue
             typed = getattr(client.activity_discussions, method)(*args)
             assert status == 200
@@ -3773,8 +3775,9 @@ def test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes
             ):
                 status, payload, _ = _direct_request("", "GET", path)
                 if status != 200:
+                    operation = getattr(client.activity_discussions, method)
                     with pytest.raises(CatalogError):
-                        await getattr(client.activity_discussions, method)(*args)
+                        await operation(*args)
                     continue
                 operation = getattr(client.activity_discussions, method)(*args)
                 typed = await operation
@@ -3962,8 +3965,9 @@ def _exercise_sync_reuse_reads() -> None:
         for path, method, args in _controlled_reuse_read_cases():
             status, payload, _ = _direct_request("", "GET", path, max_bytes=65536)
             if status != 200:
+                operation = getattr(client.reuses, method)
                 with pytest.raises(CatalogError) as error:
-                    getattr(client.reuses, method)(*args)
+                    operation(*args)
                 _assert_reuse_read_failure_agrees(error.value, status, method)
                 continue
             typed = getattr(client.reuses, method)(*args)
@@ -3977,8 +3981,9 @@ async def _exercise_async_reuse_reads() -> None:
         for path, method, args in _controlled_reuse_async_read_cases():
             status, payload, _ = _direct_request("", "GET", path)
             if status != 200:
+                operation = getattr(client.reuses, method)
                 with pytest.raises(CatalogError) as error:
-                    await getattr(client.reuses, method)(*args)
+                    await operation(*args)
                 _assert_reuse_read_failure_agrees(error.value, status, method)
                 continue
             operation = getattr(client.reuses, method)(*args)
@@ -4060,10 +4065,9 @@ def test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up() -> None:
             assert updated.record is not None
             assert updated.record.payload["title"] == f"{title} renamed"
 
+            badge_policy = policy("udata/api-v1.add-reuse-badge", reuse_id)
             with pytest.raises(CatalogError):
-                client.reuses.add_reuse_badge(
-                    reuse_id, "badger", permissions, policy("udata/api-v1.add-reuse-badge", reuse_id)
-                )
+                client.reuses.add_reuse_badge(reuse_id, "badger", permissions, badge_policy)
 
             featured = client.reuses.feature_reuse(
                 reuse_id, permissions, policy("udata/api-v1.feature-reuse", reuse_id)
@@ -4161,8 +4165,9 @@ def _exercise_sync_posts_reports_reads(token: str, cases: tuple[tuple[str, str, 
                 args = (permissions, *args)
             status, payload, _ = _direct_request(token, "GET", path, max_bytes=65536)
             if status != 200:
+                operation = getattr(client.posts_reports, method)
                 with pytest.raises(CatalogError) as error:
-                    getattr(client.posts_reports, method)(*args)
+                    operation(*args)
                 assert error.value.metadata.get("status_code") == status, method
                 continue
             typed = getattr(client.posts_reports, method)(*args)
@@ -4183,8 +4188,9 @@ async def _exercise_async_posts_reports_reads(
                 args = (permissions, *args)
             status, payload, _ = _direct_request(token, "GET", path, max_bytes=65536)
             if status != 200:
+                operation = getattr(client.posts_reports, method)
                 with pytest.raises(CatalogError) as error:
-                    await getattr(client.posts_reports, method)(*args)
+                    await operation(*args)
                 assert error.value.metadata.get("status_code") == status, method
                 continue
             operation = getattr(client.posts_reports, method)(*args)

@@ -27,6 +27,7 @@ PLATFORM = CatalogPlatform.UDATA
 _USER = ResourceKind("user")
 _REDACTED_USER_FIELDS = frozenset({"token", "token_hash", "password"})
 _TOKEN_SCHEMA_ACTION = "Verify the response against the pinned token schema."
+_USER_SCHEMA_ACTION = "Verify the response against the pinned user schema."
 
 OPERATIONS = {
     name: f"udata/api-{version}.{name.replace('_', '-')}"
@@ -194,14 +195,14 @@ def parse_user(payload: object, *, operation: str) -> NativeRecord:
             "The uData user response omitted its id.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned user schema.",
+            safe_action=_USER_SCHEMA_ACTION,
         )
     if not isinstance(payload.get("first_name"), str) or not isinstance(payload.get("last_name"), str):
         raise CatalogValidationError(
             "The uData user response omitted its name.",
             operation=operation,
             platform=PLATFORM.value,
-            safe_action="Verify the response against the pinned user schema.",
+            safe_action=_USER_SCHEMA_ACTION,
         )
     return NativeRecord(
         platform=PLATFORM,
@@ -287,7 +288,7 @@ def parse_user_page(payload: object, *, operation: str) -> UDataPageEnvelope:
                 "The uData user response omitted its name.",
                 operation=operation,
                 platform=PLATFORM.value,
-                safe_action="Verify the response against the pinned user schema.",
+                safe_action=_USER_SCHEMA_ACTION,
             )
     return UDataPageEnvelope(
         items=tuple(replace(item, payload=_redacted_user_payload(item.payload)) for item in envelope.items),

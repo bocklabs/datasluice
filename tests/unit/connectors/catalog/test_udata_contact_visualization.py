@@ -300,8 +300,9 @@ def test_list_query_encodes_every_documented_filter_and_omits_the_rest() -> None
     )
     with pytest.raises(ValueError, match="sort"):
         VisualizationListQuery(sort="nonsense")
+    typed_private = cast("bool", "true")
     with pytest.raises(ValueError, match="private"):
-        VisualizationListQuery(private=cast("bool", "true"))
+        VisualizationListQuery(private=typed_private)
 
 
 def test_create_and_update_bodies_omit_every_absent_key() -> None:
@@ -345,8 +346,9 @@ def test_image_input_encodes_the_stock_multipart_file_part() -> None:
     assert VisualizationImageInput(data=b"w", content_type="image/webp").part().file_name == "visualization-image.webp"
     with pytest.raises(ValueError, match="content type"):
         VisualizationImageInput(data=b"x", content_type="application/pdf")
+    typed_data = cast("bytes", "not-bytes")
     with pytest.raises(ValueError, match="bytes"):
-        VisualizationImageInput(data=cast("bytes", "not-bytes"), content_type="image/png")
+        VisualizationImageInput(data=typed_data, content_type="image/png")
 
 
 _MALFORMED_SEGMENTS = (
@@ -370,8 +372,9 @@ _MALFORMED_SEGMENTS = (
 @pytest.mark.parametrize("identifier", _MALFORMED_SEGMENTS)
 def test_malformed_contact_visualization_segments_never_reach_a_route(identifier: object) -> None:
     """Dot segments, separators, and control characters are refused, never quoted."""
+    typed_identifier = cast("str", identifier)
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-        segment(cast("str", identifier), wire.GET_VISUALIZATION_OPERATION)
+        segment(typed_identifier, wire.GET_VISUALIZATION_OPERATION)
 
 
 _IDENTIFIER_ROUTES: tuple[tuple[str, tuple[object, ...]], ...] = (
@@ -392,30 +395,21 @@ def test_identifier_routes_are_screened_before_any_dispatch(
 ) -> None:
     """T-04-GEO-01: a retargeting identifier is refused before the site probe or any request."""
     router = sync_route_table(with_site_route({}))
-    with (
-        sync_client(router, UDATA_CREDENTIAL) as client,
-        pytest.raises(CatalogValidationError, match="one URL-safe path segment"),
-    ):
-        getattr(client.contact_visualization, method)(identifier, *tail)
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        invoke = getattr(client.contact_visualization, method)
+        with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+            invoke(identifier, *tail)
     assert router.requests == [], method
 
 
 def test_linked_owner_and_organization_identifiers_are_validated_before_dispatch() -> None:
     """T-04-GEO-01: relationship identifiers travel in a body and carry the same policy."""
     router = sync_route_table(with_site_route({}))
-    with sync_client(router, UDATA_CREDENTIAL) as client:
+    with sync_client(router, UDATA_CREDENTIAL):
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-            client.contact_visualization.create_contact_point(
-                _contact_input(owner="../admin"),
-                _CONTACT_CREATE_ONLY,
-                mutation_policy(wire.CREATE_CONTACT_POINT_OPERATION, "contacts"),
-            )
+            _contact_input(owner="../admin")
         with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-            client.contact_visualization.create_visualization(
-                _visualization_input(owner=None, organization="a/b"),
-                _VISUALIZATION_CREATE_ONLY,
-                mutation_policy(wire.CREATE_VISUALIZATION_OPERATION, "Population"),
-            )
+            _visualization_input(owner=None, organization="a/b")
     assert router.requests == []
 
 
@@ -479,8 +473,9 @@ def test_mutation_permissions_discriminate_each_route_in_both_modes() -> None:
         router = sync_route_table(routes)
         with sync_client(router, UDATA_CREDENTIAL) as client:
             service = client.contact_visualization
+            visualization_input = _visualization_input()
             with pytest.raises(ForbiddenError) as denied_create:
-                service.create_visualization(_visualization_input(), _VISUALIZATION_EDIT_ONLY)
+                service.create_visualization(visualization_input, _VISUALIZATION_EDIT_ONLY)
             with pytest.raises(ForbiddenError) as denied_delete:
                 service.delete_contact_point("cp-1", _CONTACT_CREATE_ONLY)
             assert denied_create.value.operation == wire.CREATE_VISUALIZATION_OPERATION
@@ -505,10 +500,9 @@ def test_mutation_permissions_discriminate_each_route_in_both_modes() -> None:
 
         async with async_client(router, UDATA_CREDENTIAL) as client:
             service = client.contact_visualization
+            contact_point_update_input = ContactPointUpdateInput(role="creator")
             with pytest.raises(ForbiddenError) as denied_update:
-                await service.update_contact_point(
-                    "cp-1", ContactPointUpdateInput(role="creator"), _CONTACT_DELETE_ONLY
-                )
+                await service.update_contact_point("cp-1", contact_point_update_input, _CONTACT_DELETE_ONLY)
             assert denied_update.value.operation == wire.UPDATE_CONTACT_POINT_OPERATION
             assert [request for request in router.requests if "/api/" in request.url] == []
 
@@ -537,15 +531,17 @@ _MALFORMED_PAGES = (0, -1, True, 1.0, "1", None)
 @pytest.mark.parametrize("page_size", _MALFORMED_PAGE_SIZES)
 def test_malformed_page_sizes_are_rejected_before_dispatch(page_size: object) -> None:
     """T-04-GEO-02: the pager ceiling is a real integer bound, so bool, float, and str fail."""
+    typed_page_size = cast("int", page_size)
     with pytest.raises(ValueError, match="page_size"):
-        VisualizationListQuery(page_size=cast("int", page_size))
+        VisualizationListQuery(page_size=typed_page_size)
 
 
 @pytest.mark.parametrize("page", _MALFORMED_PAGES)
 def test_malformed_pages_are_rejected_before_dispatch(page: object) -> None:
     """T-04-GEO-02: page 0 and negative or non-integer pages never reach the pager."""
+    typed_page = cast("int", page)
     with pytest.raises(ValueError, match="page"):
-        VisualizationListQuery(page=cast("int", page))
+        VisualizationListQuery(page=typed_page)
 
 
 def test_visualization_paging_accepts_the_exact_ceiling_boundary() -> None:
@@ -831,13 +827,11 @@ def test_image_upload_sends_the_stock_multipart_file_part() -> None:
 def test_image_upload_requires_permission_before_any_byte_is_sent() -> None:
     """T-04-GEO-01: an unauthorized upload never reaches the transport."""
     router = sync_route_table(_routes())
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as denied:
-        client.contact_visualization.visualization_image(
-            "viz-1",
-            VisualizationImageInput(data=b"png-bytes", content_type="image/png"),
-            _IMAGE_DENIED,
-            mutation_policy(wire.VISUALIZATION_IMAGE_OPERATION, "viz-1"),
-        )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        image_input = VisualizationImageInput(data=b"png-bytes", content_type="image/png")
+        policy = mutation_policy(wire.VISUALIZATION_IMAGE_OPERATION, "viz-1")
+        with pytest.raises(ForbiddenError) as denied:
+            client.contact_visualization.visualization_image("viz-1", image_input, _IMAGE_DENIED, policy)
     assert denied.value.operation == wire.VISUALIZATION_IMAGE_OPERATION
     assert [request for request in router.requests if "/api/" in request.url] == []
 
@@ -886,12 +880,10 @@ def test_status_failures_decode_into_the_documented_error_shape(
 def test_delete_failures_keep_the_exact_target_and_a_redacted_receipt() -> None:
     """A refused delete stays visible against its exact target."""
     router = sync_route_table(with_site_route({("DELETE", f"{ORIGIN}{CONTACTS}cp-1/"): (403, {"message": "Denied"})}))
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as raised:
-        client.contact_visualization.delete_contact_point(
-            "cp-1",
-            _CONTACT_DELETE_ONLY,
-            mutation_policy(wire.DELETE_CONTACT_POINT_OPERATION, "cp-1", destructive=True),
-        )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = mutation_policy(wire.DELETE_CONTACT_POINT_OPERATION, "cp-1", destructive=True)
+        with pytest.raises(ForbiddenError) as raised:
+            client.contact_visualization.delete_contact_point("cp-1", _CONTACT_DELETE_ONLY, policy)
 
     receipt = _receipt_from(raised.value)
     assert receipt.outcome == "failed"
@@ -903,12 +895,10 @@ def test_delete_failures_keep_the_exact_target_and_a_redacted_receipt() -> None:
 def test_a_destructive_delete_requires_a_confirmed_destructive_policy() -> None:
     """T-04-GEO-01: a delete without the destructive flag is refused before dispatch."""
     router = sync_route_table(_routes())
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as raised:
-        client.contact_visualization.delete_visualization(
-            "viz-1",
-            _VISUALIZATION_DELETE_ONLY,
-            mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1"),
-        )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1")
+        with pytest.raises(ForbiddenError) as raised:
+            client.contact_visualization.delete_visualization("viz-1", _VISUALIZATION_DELETE_ONLY, policy)
 
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in router.requests if request.method == "DELETE"] == []
@@ -917,12 +907,10 @@ def test_a_destructive_delete_requires_a_confirmed_destructive_policy() -> None:
 def test_a_confirmation_bound_to_another_target_is_refused_before_dispatch() -> None:
     """T-04-GEO-01: the confirmation must name this operation and this exact target."""
     router = sync_route_table(_routes())
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(ForbiddenError) as raised:
-        client.contact_visualization.delete_contact_point(
-            "cp-1",
-            _CONTACT_DELETE_ONLY,
-            mutation_policy(wire.DELETE_CONTACT_POINT_OPERATION, "cp-2", destructive=True),
-        )
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        policy = mutation_policy(wire.DELETE_CONTACT_POINT_OPERATION, "cp-2", destructive=True)
+        with pytest.raises(ForbiddenError) as raised:
+            client.contact_visualization.delete_contact_point("cp-1", _CONTACT_DELETE_ONLY, policy)
 
     assert _receipt_from(raised.value).outcome == "rejected"
     assert [request for request in router.requests if request.method == "DELETE"] == []
@@ -931,12 +919,11 @@ def test_a_confirmation_bound_to_another_target_is_refused_before_dispatch() -> 
 def test_unauthenticated_mutations_fail_closed_before_dispatch() -> None:
     """A mutation without resolved credential evidence never leaves the process."""
     router = sync_route_table(_routes())
-    with sync_client(router, None) as client, pytest.raises(UnauthenticatedError):
-        client.contact_visualization.create_contact_point(
-            _contact_input(),
-            _CONTACT_CREATE_ONLY,
-            mutation_policy(wire.CREATE_CONTACT_POINT_OPERATION, "contacts"),
-        )
+    with sync_client(router, None) as client:
+        contact_input = _contact_input()
+        policy = mutation_policy(wire.CREATE_CONTACT_POINT_OPERATION, "contacts")
+        with pytest.raises(UnauthenticatedError):
+            client.contact_visualization.create_contact_point(contact_input, _CONTACT_CREATE_ONLY, policy)
     assert [request for request in router.requests if "/api/" in request.url] == []
 
 
@@ -1024,12 +1011,9 @@ def test_cancelled_sync_mutation_records_a_cancelled_receipt_with_the_exact_targ
     """T-04-GEO-02: an interrupted delete stays `cancelled` against its exact target."""
     client, _ = _sync_interrupted_client(KeyboardInterrupt())
 
+    policy = mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True)
     with pytest.raises(KeyboardInterrupt) as stopped:
-        client.contact_visualization.delete_visualization(
-            "viz-1",
-            _VISUALIZATION_DELETE_ONLY,
-            mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True),
-        )
+        client.contact_visualization.delete_visualization("viz-1", _VISUALIZATION_DELETE_ONLY, policy)
 
     receipt = _receipt_from(stopped.value)
     assert receipt.outcome == "cancelled"
@@ -1044,12 +1028,9 @@ def test_cancelled_async_mutation_mirrors_the_sync_cancelled_receipt() -> None:
     client, _ = _async_interrupted_client(asyncio.CancelledError())
 
     async def run() -> None:
+        policy = mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True)
         with pytest.raises(asyncio.CancelledError) as cancelled:
-            await client.contact_visualization.delete_visualization(
-                "viz-1",
-                _VISUALIZATION_DELETE_ONLY,
-                mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True),
-            )
+            await client.contact_visualization.delete_visualization("viz-1", _VISUALIZATION_DELETE_ONLY, policy)
         receipt = _receipt_from(cancelled.value)
         assert receipt.outcome == "cancelled"
         assert receipt.target.value == "viz-1"
@@ -1142,12 +1123,9 @@ def test_sync_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() -> 
     """T-04-GEO-02: a during-dispatch timeout is failed, not cancelled, and the client stays ready."""
     client, transport = _sync_interrupted_client(TimeoutError())
 
+    policy = mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True)
     with pytest.raises(TimeoutError) as stopped:
-        client.contact_visualization.delete_visualization(
-            "viz-1",
-            _VISUALIZATION_DELETE_ONLY,
-            mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True),
-        )
+        client.contact_visualization.delete_visualization("viz-1", _VISUALIZATION_DELETE_ONLY, policy)
 
     receipt = _receipt_from(stopped.value)
     assert receipt.outcome == "failed"
@@ -1164,12 +1142,9 @@ def test_async_timed_out_mutation_keeps_failed_receipt_and_ready_post_state() ->
     client, transport = _async_interrupted_client(TimeoutError())
 
     async def run() -> None:
+        policy = mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True)
         with pytest.raises(TimeoutError) as stopped:
-            await client.contact_visualization.delete_visualization(
-                "viz-1",
-                _VISUALIZATION_DELETE_ONLY,
-                mutation_policy(wire.DELETE_VISUALIZATION_OPERATION, "viz-1", destructive=True),
-            )
+            await client.contact_visualization.delete_visualization("viz-1", _VISUALIZATION_DELETE_ONLY, policy)
         receipt = _receipt_from(stopped.value)
         assert receipt.outcome == "failed"
         assert receipt.target.value == "viz-1"
@@ -1224,8 +1199,10 @@ def test_non_finite_responses_fail_typed_without_echoing_the_raw_body(
 ) -> None:
     """A non-finite constant is not JSON and must never reach a typed record or an error."""
     router = sync_route_table(with_site_route({("GET", f"{ORIGIN}{path}"): (200, shape.replace(b"@@", literal))}))
-    with sync_client(router, UDATA_CREDENTIAL) as client, pytest.raises(NativeCatalogError) as raised:
-        getattr(client.contact_visualization, read)(*arguments)
+    with sync_client(router, UDATA_CREDENTIAL) as client:
+        method = getattr(client.contact_visualization, read)
+        with pytest.raises(NativeCatalogError) as raised:
+            method(*arguments)
 
     rendered = repr(raised.value) + str(raised.value.__dict__)
     assert literal.decode() not in rendered
@@ -1253,16 +1230,19 @@ def test_typed_inputs_and_records_are_immutable() -> None:
         cast("MutableMapping[str, object]", record.payload)["title"] = "changed"
 
     page = wire.parse_visualization_page(_page(_visualization()))
+    set_field = operator.methodcaller("__setattr__", "total", 99)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        operator.methodcaller("__setattr__", "total", 99)(page)
+        set_field(page)
 
 
 def test_mutable_pager_metadata_is_refused() -> None:
     """The typed page refuses a non-frozenset presence record rather than coercing it."""
+    typed_present_fields = cast("frozenset[str]", {"data"})
     with pytest.raises(ValueError, match="frozenset"):
-        VisualizationPage(items=(), present_fields=cast("frozenset[str]", {"data"}))
+        VisualizationPage(items=(), present_fields=typed_present_fields)
+    typed_items = cast("tuple[MappingRecord, ...]", ({"id": "viz-1"},))
     with pytest.raises(ValueError, match="mapping records"):
-        VisualizationPage(items=cast("tuple[MappingRecord, ...]", ({"id": "viz-1"},)))
+        VisualizationPage(items=typed_items)
 
 
 def test_mutation_results_only_carry_a_receipt_and_a_redacted_record() -> None:

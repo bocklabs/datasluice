@@ -36,6 +36,13 @@ _CHUNK_SIZE = 1 << 20
 type FieldValues = Mapping[str, object]
 type SearchFilters = Mapping[str, object]
 
+
+def _resource_params(base: dict[str, object], fields: Mapping[str, object]) -> dict[str, object]:
+    params = dict(base)
+    params.update({key: value for key, value in fields.items() if value is not None})
+    return params
+
+
 _RESOURCE_FIELDS = (
     "url",
     "name",
@@ -152,8 +159,7 @@ class SyncResourcesService(_SyncResourceService):
         unknown = set(fields) - set(_RESOURCE_FIELDS)
         if unknown:
             raise TypeError(f"resource_create received undocumented field(s): {sorted(unknown)}")
-        params: dict[str, object] = {"package_id": package_id}
-        params.update({key: value for key, value in fields.items() if value is not None})
+        params = _resource_params({"package_id": package_id}, fields)
         return self._invoke_mutation("resource_create", params, policy, upload)
 
     def resource_update(
@@ -168,8 +174,7 @@ class SyncResourcesService(_SyncResourceService):
         unknown = set(fields) - set(_RESOURCE_FIELDS) - {"package_id"}
         if unknown:
             raise TypeError(f"resource_update received undocumented field(s): {sorted(unknown)}")
-        params: dict[str, object] = {"id": id}
-        params.update({key: value for key, value in fields.items() if value is not None})
+        params = _resource_params({"id": id}, fields)
         return self._invoke_mutation("resource_update", params, policy, upload)
 
     def resource_patch(
@@ -184,8 +189,7 @@ class SyncResourcesService(_SyncResourceService):
         unknown = set(fields) - set(_RESOURCE_FIELDS) - {"package_id"}
         if unknown:
             raise TypeError(f"resource_patch received undocumented field(s): {sorted(unknown)}")
-        params: dict[str, object] = {"id": id}
-        params.update({key: value for key, value in fields.items() if value is not None})
+        params = _resource_params({"id": id}, fields)
         return self._invoke_mutation("resource_patch", params, policy, upload)
 
     def resource_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -251,8 +255,7 @@ class AsyncResourcesService(_AsyncResourceService):
         unknown = set(fields) - set(_RESOURCE_FIELDS)
         if unknown:
             raise TypeError(f"resource_create received undocumented field(s): {sorted(unknown)}")
-        params: dict[str, object] = {"package_id": package_id}
-        params.update({key: value for key, value in fields.items() if value is not None})
+        params = _resource_params({"package_id": package_id}, fields)
         return await self._invoke_mutation("resource_create", params, policy, upload)
 
     async def resource_update(
@@ -267,8 +270,7 @@ class AsyncResourcesService(_AsyncResourceService):
         unknown = set(fields) - set(_RESOURCE_FIELDS) - {"package_id"}
         if unknown:
             raise TypeError(f"resource_update received undocumented field(s): {sorted(unknown)}")
-        params: dict[str, object] = {"id": id}
-        params.update({key: value for key, value in fields.items() if value is not None})
+        params = _resource_params({"id": id}, fields)
         return await self._invoke_mutation("resource_update", params, policy, upload)
 
     async def resource_patch(
@@ -283,8 +285,7 @@ class AsyncResourcesService(_AsyncResourceService):
         unknown = set(fields) - set(_RESOURCE_FIELDS) - {"package_id"}
         if unknown:
             raise TypeError(f"resource_patch received undocumented field(s): {sorted(unknown)}")
-        params: dict[str, object] = {"id": id}
-        params.update({key: value for key, value in fields.items() if value is not None})
+        params = _resource_params({"id": id}, fields)
         return await self._invoke_mutation("resource_patch", params, policy, upload)
 
     async def resource_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:

@@ -78,16 +78,18 @@ def test_factory_accepts_canonical_context_and_validates_profile_identity() -> N
 
     assert isinstance(connector, UDataConnector)
 
+    foreign_context = _context(profile=_FOREIGN_PROFILE)
     with pytest.raises(ValueError, match="uData"):
-        create_udata_connector(_context(profile=_FOREIGN_PROFILE))
+        create_udata_connector(foreign_context)
 
 
 def test_factory_requires_both_typed_executor_modes() -> None:
     """A façade cannot silently fall back to an absent executor mode."""
     from datasluice.connectors.catalog.udata import create_udata_connector
 
+    missing_sync_context = context_missing_sync_executor(_PROFILE)
     with pytest.raises(ValueError, match="synchronous"):
-        create_udata_connector(context_missing_sync_executor(_PROFILE))
+        create_udata_connector(missing_sync_context)
 
 
 def test_connector_exposes_injected_normalized_native_services_and_effective_profile() -> None:

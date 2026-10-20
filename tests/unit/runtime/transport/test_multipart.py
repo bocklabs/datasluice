@@ -111,10 +111,12 @@ def test_upload_part_requires_a_stream_to_be_both_readable_and_closeable() -> No
         def close(self) -> None:
             return None
 
+    readable = cast("UploadStream", _ReadableOnly())
+    closeable = cast("UploadStream", _CloseableOnly())
     with pytest.raises(ValueError, match="bytes or a closeable byte stream"):
-        UploadPart(field_name="upload", data=cast("UploadStream", _ReadableOnly()))
+        UploadPart(field_name="upload", data=readable)
     with pytest.raises(ValueError, match="bytes or a closeable byte stream"):
-        UploadPart(field_name="upload", data=cast("UploadStream", _CloseableOnly()))
+        UploadPart(field_name="upload", data=closeable)
 
 
 def test_reprs_render_field_names_and_lengths_but_never_part_bytes() -> None:

@@ -481,8 +481,9 @@ def test_atomic_sync_refuses_a_store_without_a_transaction_lock() -> None:
     class UnlockedStore:
         pass
 
+    store = UnlockedStore()
     with pytest.raises(DataSluiceError, match="key_lock"):
-        _resource_transaction(UnlockedStore(), "resource", is_atomic=True)
+        _resource_transaction(store, "resource", is_atomic=True)
 
 
 def test_file_state_store_satisfies_the_key_lock_capability() -> None:

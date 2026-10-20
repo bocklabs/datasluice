@@ -124,7 +124,7 @@ def test_avatar_identifier_is_encoded_exactly_once() -> None:
 @pytest.mark.parametrize("identifier", [".", "..", "a/b", 'a"b'])
 def test_avatar_identifier_rejects_unsafe_segments(identifier: str) -> None:
     with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
-        wire.avatar_request(AvatarRequest(identifier=identifier, size=8))
+        AvatarRequest(identifier=identifier, size=8)
 
 
 @pytest.mark.parametrize(("q", "size"), [("", 5), ("env", 0), ("env", 101), ("env", True)])
@@ -135,8 +135,9 @@ def test_tag_suggest_query_rejects_undocumented_values(q: str, size: int) -> Non
 
 @pytest.mark.parametrize("size", [0, 1025, "32", True])
 def test_avatar_request_rejects_undocumented_sizes(size: object) -> None:
+    typed_size = cast("int", size)
     with pytest.raises(ValueError):
-        AvatarRequest(identifier="org-1", size=cast("int", size))
+        AvatarRequest(identifier="org-1", size=typed_size)
 
 
 def test_require_extension_operation_rejects_unknown_operations() -> None:

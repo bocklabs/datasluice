@@ -17,14 +17,8 @@ from datasluice.connectors.catalog.udata.models.jobs import (
     UDataJobHandle,
     WorkerTaskWaitResult,
 )
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.connectors.catalog.udata.wire import jobs as wire
-from datasluice.domain.catalog.models import MappingRecord
-from datasluice.errors.catalog import BudgetExhaustedError, NativeCatalogError
-from datasluice.runtime.resilience import DeadlineMonitor
-
-from .datasets import _require_mutation_permission
-from .taxonomies import (
+from datasluice.connectors.catalog.udata.services.datasets import _require_mutation_permission
+from datasluice.connectors.catalog.udata.services.taxonomies import (
     AsyncCatalogService,
     Permissions,
     Policy,
@@ -36,6 +30,11 @@ from .taxonomies import (
     _run_mutation,
     _run_mutation_async,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire import jobs as wire
+from datasluice.domain.catalog.models import MappingRecord
+from datasluice.errors.catalog import BudgetExhaustedError, NativeCatalogError
+from datasluice.runtime.resilience import DeadlineMonitor
 
 if TYPE_CHECKING:
     from typing import Protocol, Self

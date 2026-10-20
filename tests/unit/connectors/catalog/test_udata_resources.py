@@ -556,10 +556,9 @@ def test_upload_capability_uses_declared_route_with_colliding_dataset_id() -> No
         sync_transport, declared_udata_profile(), origin=origin, credentials=_CREDENTIAL, owns_transport=False
     )
 
+    upload = ResourceUploadInput(BytesIO(b"x"), "data.csv", 1)
     with sync_client, pytest.raises(ForbiddenError) as raised:
-        sync_client.resources.upload(
-            "r", ResourceUploadInput(BytesIO(b"x"), "data.csv", 1), permissions, policy, resource_id="resource"
-        )
+        sync_client.resources.upload("r", upload, permissions, policy, resource_id="resource")
 
     assert raised.value.operation == wire.UPLOAD_REPLACE_OPERATION
     assert not sync_transport.requests
@@ -571,10 +570,11 @@ def test_upload_capability_uses_declared_route_with_colliding_dataset_id() -> No
 
     async def run() -> ForbiddenError:
         async with async_client:
+            upload = ResourceUploadInput(BytesIO(b"x"), "data.csv", 1)
             with pytest.raises(ForbiddenError) as async_raised:
                 await async_client.resources.upload(
                     "r",
-                    ResourceUploadInput(BytesIO(b"x"), "data.csv", 1),
+                    upload,
                     permissions,
                     policy,
                     resource_id="resource",
@@ -617,9 +617,9 @@ def test_resource_inputs_do_not_render_upload_or_configuration_values() -> None:
 def test_upload_rejects_a_source_larger_than_its_byte_ceiling() -> None:
     upload = ResourceUploadInput(source=BytesIO(b"abcd"), file_name="data.csv", max_upload_bytes=3)
 
+    part = upload.part()
+    assert not isinstance(part.data, bytes)
     with pytest.raises(MidStreamUploadError, match="byte limit"):
-        part = upload.part()
-        assert not isinstance(part.data, bytes)
         part.data.read()
 
 
@@ -632,12 +632,14 @@ def test_interrupted_upload_closes_source_and_attaches_cancelled_receipt() -> No
     )
     source = BytesIO(b"abc")
 
+    upload = ResourceUploadInput(source=source, file_name="data.csv", max_upload_bytes=3)
+    policy = _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION)
     with client, pytest.raises(KeyboardInterrupt) as raised:
         client.resources.upload(
             "dataset",
-            ResourceUploadInput(source=source, file_name="data.csv", max_upload_bytes=3),
+            upload,
             _PERMISSIONS,
-            _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION),
+            policy,
         )
 
     assert source.closed
@@ -893,10 +895,9 @@ def test_preflight_upload_reuse_is_not_marked_ambiguous() -> None:
     upload = ResourceUploadInput(BytesIO(b"abc"), "data.csv", 3)
     upload.part()
 
+    policy = _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION)
     with client, pytest.raises(ValueError) as raised:
-        client.resources.upload(
-            "dataset", upload, _PERMISSIONS, _policy("dataset", operation=wire.UPLOAD_NEW_OPERATION)
-        )
+        client.resources.upload("dataset", upload, _PERMISSIONS, policy)
 
     assert not isinstance(raised.value, MidStreamUploadError)
     assert raised.value.__dict__["mutation_receipt"].outcome == "failed"
@@ -952,8 +953,9 @@ def test_empty_user_update_fields_report_emptiness_not_a_mapping_failure() -> No
     with pytest.raises(ValueError, match="at least one documented field") as empty:
         UserUpdateInput({})
     assert "JSON mapping" not in str(empty.value)
+    invalid_fields = cast("Mapping[str, object]", "about")
     with pytest.raises(ValueError, match="JSON mapping") as not_a_mapping:
-        UserUpdateInput(cast("Mapping[str, object]", "about"))
+        UserUpdateInput(invalid_fields)
     assert "at least one documented field" not in str(not_a_mapping.value)
     assert UserUpdateInput({"website": None}).payload() == {"website": None}
 

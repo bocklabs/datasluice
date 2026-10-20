@@ -54,8 +54,9 @@ def test_non_finite_user_response_raises_native_error_with_operation(async_mode:
             async with async_client:
                 await async_client.users_tokens.get_user("person")
 
+        coroutine = read_user()
         with pytest.raises(NativeCatalogError) as raised:
-            asyncio.run(read_user())
+            asyncio.run(coroutine)
     else:
         sync_client = SyncUDataClient(_Router(routes), declared_udata_profile(), origin=ORIGIN)
         with sync_client, pytest.raises(NativeCatalogError) as raised:
@@ -145,10 +146,10 @@ def test_malformed_created_token_cannot_survive_in_exception_or_receipt() -> Non
         emitter=EventEmitter(sinks=(events,)),
     )
     with client:
+        token_input = ApiTokenCreateInput()
+        policy = _policy("create_api_token", "new-api-token")
         with pytest.raises(CatalogValidationError) as raised:
-            client.users_tokens.create_api_token(
-                ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
-            )
+            client.users_tokens.create_api_token(token_input, PERMISSIONS, policy)
         error = raised.value
         receipt = error.__dict__["mutation_receipt"]
         assert isinstance(receipt, MutationReceipt)
@@ -200,10 +201,10 @@ def test_interruption_after_token_response_redacts_traceback_locals(
 
     monkeypatch.setattr(users_tokens_service, "RuntimeResponse", interrupt_before_response_redaction)
     with client:
+        token_input = ApiTokenCreateInput()
+        policy = _policy("create_api_token", "new-api-token")
         with pytest.raises(exception_type) as raised:
-            client.users_tokens.create_api_token(
-                ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
-            )
+            client.users_tokens.create_api_token(token_input, PERMISSIONS, policy)
         traceback = raised.value.__traceback__
         while traceback is not None:
             frame = traceback.tb_frame
@@ -270,10 +271,10 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
 
     async def run() -> None:
         async with client:
+            token_input = ApiTokenCreateInput()
+            policy = _policy("create_api_token", "new-api-token")
             with pytest.raises(exception_type) as raised:
-                await client.users_tokens.create_api_token(
-                    ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
-                )
+                await client.users_tokens.create_api_token(token_input, PERMISSIONS, policy)
             _assert_interrupted_frames_are_redacted(
                 raised.value,
                 plaintext,
@@ -324,10 +325,10 @@ def test_interruption_after_token_decode_discards_reveal_once_result(monkeypatch
 
     monkeypatch.setattr(users_tokens_service, "_shape_mutation", capture_result)
     monkeypatch.setattr(client, "_emit", interrupt_after_decode)
+    token_input = ApiTokenCreateInput()
+    policy = _policy("create_api_token", "new-api-token")
     with client, pytest.raises(KeyboardInterrupt) as raised:
-        client.users_tokens.create_api_token(
-            ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
-        )
+        client.users_tokens.create_api_token(token_input, PERMISSIONS, policy)
     assert len(shaped_results) == 1
     with pytest.raises(RuntimeError):
         shaped_results[0].secret.reveal_once()
@@ -383,8 +384,9 @@ def test_avatar_close_failure_carries_the_successful_mutation_receipt() -> None:
     router = _Router(_routes(("POST", "/api/1/me/avatar/", 200, {"image": "avatar-path"})))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     upload = UserAvatarInput(_CloseFault(b"image"), "avatar.png", max_upload_bytes=16, content_type="image/png")
+    policy = _policy("my_avatar", "me")
     with client, pytest.raises(OSError) as raised:
-        client.users_tokens.my_avatar(upload, PERMISSIONS, _policy("my_avatar", "me"))
+        client.users_tokens.my_avatar(upload, PERMISSIONS, policy)
     receipt = raised.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
     assert receipt.outcome == "succeeded"

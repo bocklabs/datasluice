@@ -740,12 +740,7 @@ def _classified_read(
     return _structural_outcome(target, operation, response, payload, response_class), None
 
 
-def _dispatch_read(
-    target: DriftTarget,
-    operation_id: str,
-    transport: DriftTransport,
-    deadline: DeadlineMonitor,
-) -> tuple[DriftRecord, str | None]:
+def _read_request(target: DriftTarget, operation_id: str) -> tuple[ReadOperation, RuntimeRequest]:
     operation = _require_allowlisted_read(operation_id)
     request = operation.build_request(target.origin)
     if request.method != "GET" or request.body is not None or request.files:
@@ -755,6 +750,16 @@ def _dispatch_read(
             platform=PLATFORM.value,
             safe_action="Keep the drift allowlist restricted to anonymous bodyless GET reads.",
         )
+    return operation, request
+
+
+def _dispatch_read(
+    target: DriftTarget,
+    operation_id: str,
+    transport: DriftTransport,
+    deadline: DeadlineMonitor,
+) -> tuple[DriftRecord, str | None]:
+    operation, request = _read_request(target, operation_id)
     try:
         deadline.assert_dispatchable(operation.operation_id, PLATFORM.value)
         response = transport.send(request)
@@ -782,15 +787,7 @@ async def _dispatch_read_async(
     transport: AsyncDriftTransport,
     deadline: DeadlineMonitor,
 ) -> tuple[DriftRecord, str | None]:
-    operation = _require_allowlisted_read(operation_id)
-    request = operation.build_request(target.origin)
-    if request.method != "GET" or request.body is not None or request.files:
-        raise CatalogValidationError(
-            "Drift reads dispatch only anonymous bodyless GET requests.",
-            operation=operation_id,
-            platform=PLATFORM.value,
-            safe_action="Keep the drift allowlist restricted to anonymous bodyless GET reads.",
-        )
+    operation, request = _read_request(target, operation_id)
     try:
         deadline.assert_dispatchable(operation.operation_id, PLATFORM.value)
         response = await asyncio.wait_for(transport.send(request), timeout=deadline.remaining())

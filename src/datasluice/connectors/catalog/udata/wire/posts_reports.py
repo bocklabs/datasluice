@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from urllib.parse import urlencode
+from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models.posts_reports import (
     NotificationQuery,
@@ -16,9 +15,17 @@ from datasluice.connectors.catalog.udata.models.posts_reports import (
     ReportUpdateInput,
     segment,
 )
+from datasluice.connectors.catalog.udata.wire._common import (
+    Request,
+    build_request,
+    parse_mapping_payload,
+    parse_mapping_sequence_payload,
+)
 from datasluice.connectors.catalog.udata.wire._text_document import bound_text_document
 from datasluice.domain.catalog.models import MappingRecord
-from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 PLATFORM = "udata"
 LIST_REPORTS_OPERATION = "udata/api-v1.list-reports"
@@ -65,69 +72,60 @@ _POSTS_PATH = "/api/1/posts/"
 _REPORTS_PATH = "/api/1/reports/"
 _NOTIFICATIONS_PATH = "/api/1/notifications/"
 _ATOM_MEDIA_TYPE = "application/atom+xml"
-_PINNED_SCHEMA_ACTION = "Verify the response against the pinned uData 17.6 schema."
-
-type Request = tuple[str, str, dict[str, str], object | None]
-
-
-def _request(method: str, path: str, body: object = None) -> Request:
-    return method, path, {}, body
-
-
-def _query(pairs: list[tuple[str, str]]) -> str:
-    return urlencode(pairs)
 
 
 def list_reports_request(query: ReportQuery | None = None) -> Request:
-    return _request("GET", f"{_REPORTS_PATH}?{_query((query or ReportQuery()).query_params())}")
+    return build_request("GET", _REPORTS_PATH, query=(query or ReportQuery()).query_params())
 
 
 def create_report_request(client_input: ReportCreateInput) -> Request:
-    return _request("POST", _REPORTS_PATH, client_input.payload())
+    return build_request("POST", _REPORTS_PATH, client_input.payload())
 
 
 def get_report_request(report_id: str) -> Request:
-    return _request("GET", f"{_REPORTS_PATH}{segment(report_id, GET_REPORT_OPERATION)}/")
+    return build_request("GET", f"{_REPORTS_PATH}{segment(report_id, GET_REPORT_OPERATION)}/")
 
 
 def update_report_request(report_id: str, client_input: ReportUpdateInput) -> Request:
-    return _request("PATCH", f"{_REPORTS_PATH}{segment(report_id, UPDATE_REPORT_OPERATION)}/", client_input.payload())
+    return build_request(
+        "PATCH", f"{_REPORTS_PATH}{segment(report_id, UPDATE_REPORT_OPERATION)}/", client_input.payload()
+    )
 
 
 def list_reports_reasons_request() -> Request:
-    return _request("GET", f"{_REPORTS_PATH}reasons/")
+    return build_request("GET", f"{_REPORTS_PATH}reasons/")
 
 
 def list_posts_request(query: PostListQuery | None = None) -> Request:
-    return _request("GET", f"{_POSTS_PATH}?{_query((query or PostListQuery()).query_params())}")
+    return build_request("GET", _POSTS_PATH, query=(query or PostListQuery()).query_params())
 
 
 def create_post_request(client_input: PostCreateInput) -> Request:
-    return _request("POST", _POSTS_PATH, client_input.payload())
+    return build_request("POST", _POSTS_PATH, client_input.payload())
 
 
 def recent_posts_atom_feed_request() -> Request:
-    return _request("GET", f"{_POSTS_PATH}recent.atom")
+    return build_request("GET", f"{_POSTS_PATH}recent.atom")
 
 
 def get_post_request(post_id: str) -> Request:
-    return _request("GET", f"{_POSTS_PATH}{segment(post_id, GET_POST_OPERATION)}/")
+    return build_request("GET", f"{_POSTS_PATH}{segment(post_id, GET_POST_OPERATION)}/")
 
 
 def update_post_request(post_id: str, client_input: PostUpdateInput) -> Request:
-    return _request("PUT", f"{_POSTS_PATH}{segment(post_id, UPDATE_POST_OPERATION)}/", client_input.payload())
+    return build_request("PUT", f"{_POSTS_PATH}{segment(post_id, UPDATE_POST_OPERATION)}/", client_input.payload())
 
 
 def delete_post_request(post_id: str) -> Request:
-    return _request("DELETE", f"{_POSTS_PATH}{segment(post_id, DELETE_POST_OPERATION)}/")
+    return build_request("DELETE", f"{_POSTS_PATH}{segment(post_id, DELETE_POST_OPERATION)}/")
 
 
 def publish_post_request(post_id: str) -> Request:
-    return _request("POST", f"{_POSTS_PATH}{segment(post_id, PUBLISH_POST_OPERATION)}/publish/")
+    return build_request("POST", f"{_POSTS_PATH}{segment(post_id, PUBLISH_POST_OPERATION)}/publish/")
 
 
 def unpublish_post_request(post_id: str) -> Request:
-    return _request("DELETE", f"{_POSTS_PATH}{segment(post_id, UNPUBLISH_POST_OPERATION)}/publish/")
+    return build_request("DELETE", f"{_POSTS_PATH}{segment(post_id, UNPUBLISH_POST_OPERATION)}/publish/")
 
 
 def post_image_request(post_id: str) -> tuple[str, str, dict[str, str]]:
@@ -139,40 +137,26 @@ def resize_post_image_request(post_id: str) -> tuple[str, str, dict[str, str]]:
 
 
 def search_posts_request(query: PostSearchQuery | None = None) -> Request:
-    return _request("GET", f"/api/2/posts/search/?{_query((query or PostSearchQuery()).query_params())}")
+    return build_request("GET", "/api/2/posts/search/", query=(query or PostSearchQuery()).query_params())
 
 
 def list_notifications_request(query: NotificationQuery | None = None) -> Request:
-    return _request("GET", f"{_NOTIFICATIONS_PATH}?{_query((query or NotificationQuery()).query_params())}")
+    return build_request("GET", _NOTIFICATIONS_PATH, query=(query or NotificationQuery()).query_params())
 
 
 def read_notification_request(notification_id: str) -> Request:
-    return _request(
+    return build_request(
         "POST",
         f"{_NOTIFICATIONS_PATH}{segment(notification_id, READ_NOTIFICATION_OPERATION)}/read/",
     )
 
 
 def parse_mapping(payload: object, operation: str) -> MappingRecord:
-    if not isinstance(payload, Mapping):
-        raise CatalogValidationError(
-            "The uData post, report, or notification response must be an object.",
-            operation=operation,
-            platform=PLATFORM,
-            safe_action=_PINNED_SCHEMA_ACTION,
-        )
-    return MappingRecord(payload)
+    return parse_mapping_payload(payload, operation, "post, report, or notification")
 
 
 def parse_mapping_sequence(payload: object, operation: str) -> tuple[MappingRecord, ...]:
-    if not isinstance(payload, list) or not all(isinstance(item, Mapping) for item in payload):
-        raise CatalogValidationError(
-            "The uData post, report, or notification response must be a list of objects.",
-            operation=operation,
-            platform=PLATFORM,
-            safe_action=_PINNED_SCHEMA_ACTION,
-        )
-    return tuple(MappingRecord(item) for item in payload)
+    return parse_mapping_sequence_payload(payload, operation, "post, report, or notification")
 
 
 def parse_text_document(

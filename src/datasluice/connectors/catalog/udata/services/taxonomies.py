@@ -4,12 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
-from typing import TYPE_CHECKING, NoReturn, Protocol
+from typing import TYPE_CHECKING, NoReturn, Protocol, cast
 
 from datasluice.connectors.catalog.udata.models.taxonomies import (
     BadgeCreateInput,
     SuggestQuery,
     TaxonomyMutationResult,
+)
+from datasluice.connectors.catalog.udata.services._receipts import (
+    _error_status,
+    _mutation_outcome,
+)
+from datasluice.connectors.catalog.udata.services.datasets import (
+    _enforce_mutation_policy,
+    _require_mutation_permission,
 )
 from datasluice.connectors.catalog.udata.services.resources import _attach, _receipt
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
@@ -21,15 +29,6 @@ from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.transport.base import RuntimeResponse, UploadPart
-
-from ._receipts import (
-    _error_status,
-    _mutation_outcome,
-)
-from .datasets import (
-    _enforce_mutation_policy,
-    _require_mutation_permission,
-)
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -249,13 +248,33 @@ def _target(dataset_id: str, kind: str | None = None) -> str:
 
 class SyncCatalogService:
     _client: SyncUDataClient
+    _admin_operations: frozenset[str] = frozenset()
 
     def _read[T](self, request: Request, operation: str, parser: Parser[T]) -> T:
         return _parsed(_dataset_read(self._client._dataset_call, request, operation), operation, parser)
 
     def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
         return _dataset_mutate(
-            self._client._dataset_call, self._client._resolved_credential(), permissions, policy, operation, request
+            self._client._dataset_call,
+            self._client._resolved_credential(),
+            permissions,
+            policy,
+            operation,
+            request,
+            admin=operation in self._admin_operations,
+        )
+
+    def _mutate_upload(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
+        method, path, headers, upload = request
+        return _dataset_upload(
+            self._client._dataset_call,
+            self._client._resolved_credential(),
+            permissions,
+            policy,
+            operation,
+            (method, path, headers),
+            cast("SupportsUpload", upload),
+            admin=operation in self._admin_operations,
         )
 
     def _admin_mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
@@ -272,6 +291,7 @@ class SyncCatalogService:
 
 class AsyncCatalogService:
     _client: AsyncUDataClient
+    _admin_operations: frozenset[str] = frozenset()
 
     async def _read[T](self, request: Request, operation: str, parser: Parser[T]) -> T:
         return _parsed(await _dataset_read(self._client._dataset_call_async, request, operation), operation, parser)
@@ -284,6 +304,22 @@ class AsyncCatalogService:
             policy,
             operation,
             request,
+            admin=operation in self._admin_operations,
+        )
+
+    async def _mutate_upload(
+        self, request: Request, permissions: Permissions, policy: Policy, operation: str
+    ) -> Response:
+        method, path, headers, upload = request
+        return await _dataset_upload(
+            self._client._dataset_call_async,
+            await self._client._resolved_credential_async(),
+            permissions,
+            policy,
+            operation,
+            (method, path, headers),
+            cast("SupportsUpload", upload),
+            admin=operation in self._admin_operations,
         )
 
     async def _admin_mutate(

@@ -144,6 +144,6 @@ class Downloader:
             try:
                 path = self.download(resource, dest)
                 results.append(path)
-            except (DownloadError, ChecksumMismatchError, OSError):
+            except (DownloadError, OSError):
                 logger.exception("Failed to download %s", resource.id)
         return results

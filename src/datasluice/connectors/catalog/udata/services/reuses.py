@@ -16,26 +16,21 @@ from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseSuggestQuery,
     ReuseUpdateInput,
 )
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.connectors.catalog.udata.wire import reuses as wire
-from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.errors.catalog import NativeCatalogError
-
-from .datasets import _header
-from .posts_reports import _record_id
-from .taxonomies import (
+from datasluice.connectors.catalog.udata.services.datasets import _header
+from datasluice.connectors.catalog.udata.services.posts_reports import _record_id
+from datasluice.connectors.catalog.udata.services.taxonomies import (
     AsyncCatalogService,
     Permissions,
     Policy,
     Request,
-    Response,
-    SupportsUpload,
     SyncCatalogService,
-    _dataset_mutate,
-    _dataset_upload,
     _run_mutation,
     _run_mutation_async,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire import reuses as wire
+from datasluice.domain.catalog.ids import ResourceKind
+from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -73,6 +68,8 @@ def _upload_request(reuse_id: str, data: bytes, content_type: str) -> Request:
 
 class SyncReusesService(SyncCatalogService):
     """Typed synchronous reuse and reuse-follower operations."""
+
+    _admin_operations = frozenset(_ADMIN)
 
     def __init__(self, client: SyncUDataClient) -> None:
         self._client = client
@@ -257,7 +254,7 @@ class SyncReusesService(SyncCatalogService):
             "updated",
             wire.REUSE_IMAGE_OPERATION,
             lambda: _upload_request(reuse_id, data, content_type),
-            lambda request: self._mutate_upload(request, permissions, mutation_policy),
+            lambda request: self._mutate_upload(request, permissions, mutation_policy, wire.REUSE_IMAGE_OPERATION),
         )
 
     def reuse_types(self) -> tuple[MappingRecord, ...]:
@@ -308,29 +305,6 @@ class SyncReusesService(SyncCatalogService):
             lambda: wire.unfollow_reuse_request(reuse_id),
             lambda request: self._mutate(request, permissions, mutation_policy, wire.UNFOLLOW_REUSE_OPERATION),
             destructive=True,
-        )
-
-    def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
-        return _dataset_mutate(
-            self._client._dataset_call,
-            self._client._resolved_credential(),
-            permissions,
-            policy,
-            operation,
-            request,
-            admin=operation in _ADMIN,
-        )
-
-    def _mutate_upload(self, request: Request, permissions: Permissions, policy: Policy) -> Response:
-        method, path, headers, upload = request
-        return _dataset_upload(
-            self._client._dataset_call,
-            self._client._resolved_credential(),
-            permissions,
-            policy,
-            wire.REUSE_IMAGE_OPERATION,
-            (method, path, headers),
-            cast("SupportsUpload", upload),
         )
 
 
@@ -520,7 +494,7 @@ class AsyncReusesService(AsyncCatalogService):
             "updated",
             wire.REUSE_IMAGE_OPERATION,
             lambda: _upload_request(reuse_id, data, content_type),
-            lambda request: self._mutate_upload(request, permissions, mutation_policy),
+            lambda request: self._mutate_upload(request, permissions, mutation_policy, wire.REUSE_IMAGE_OPERATION),
         )
 
     async def reuse_types(self) -> tuple[MappingRecord, ...]:
@@ -573,25 +547,4 @@ class AsyncReusesService(AsyncCatalogService):
             destructive=True,
         )
 
-    async def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
-        return await _dataset_mutate(
-            self._client._dataset_call_async,
-            await self._client._resolved_credential_async(),
-            permissions,
-            policy,
-            operation,
-            request,
-            admin=operation in _ADMIN,
-        )
-
-    async def _mutate_upload(self, request: Request, permissions: Permissions, policy: Policy) -> Response:
-        method, path, headers, upload = request
-        return await _dataset_upload(
-            self._client._dataset_call_async,
-            await self._client._resolved_credential_async(),
-            permissions,
-            policy,
-            wire.REUSE_IMAGE_OPERATION,
-            (method, path, headers),
-            cast("SupportsUpload", upload),
-        )
+    _admin_operations = frozenset(_ADMIN)

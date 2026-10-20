@@ -8,10 +8,9 @@ from datasluice.connectors.catalog.udata.models.spatial import (
     SpatialDatasetQuery,
     SpatialSuggestQuery,
 )
+from datasluice.connectors.catalog.udata.services.taxonomies import AsyncCatalogService, SyncCatalogService
 from datasluice.connectors.catalog.udata.wire import spatial as wire
 from datasluice.errors.catalog import NativeCatalogError
-
-from .taxonomies import AsyncCatalogService, SyncCatalogService
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient

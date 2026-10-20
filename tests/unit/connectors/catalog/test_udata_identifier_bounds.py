@@ -110,8 +110,9 @@ def test_zone_lists_stop_after_the_count_limit(count: int) -> None:
     if count == 100:
         assert spatial.spatial_zones_request(ids())[1].count("zone-1") == 100
     else:
+        identifiers = ids()
         with pytest.raises(CatalogValidationError, match="100"):
-            spatial.spatial_zones_request(ids())
+            spatial.spatial_zones_request(identifiers)
     assert consumed == count
 
 
@@ -244,10 +245,12 @@ def test_individual_transfer_receipts_are_immutable_and_target_specific(asynchro
     def check(receipt: MutationReceipt) -> None:
         assert receipt.operation == operation
         assert receipt.target.value == "transfer-1"
+        set_outcome = methodcaller("__setattr__", "outcome", "failed")
         with pytest.raises(FrozenInstanceError):
-            methodcaller("__setattr__", "outcome", "failed")(receipt)
+            set_outcome(receipt)
+        audit_metadata = cast("dict[str, object]", receipt.audit_metadata)
         with pytest.raises(TypeError):
-            setitem(cast("dict[str, object]", receipt.audit_metadata), "mutation", "changed")
+            setitem(audit_metadata, "mutation", "changed")
         copied = receipt.to_dict()
         cast("dict[str, object]", copied["audit_metadata"])["mutation"] = "changed"
         assert receipt.audit_metadata["mutation"] == "refused"
@@ -255,10 +258,9 @@ def test_individual_transfer_receipts_are_immutable_and_target_specific(asynchro
     async def run() -> None:
         router = async_route_table(routes)
         async with async_client(router, UDATA_CREDENTIAL) as client:
+            response_input = TransferResponseInput("refuse")
             with pytest.raises(ForbiddenError) as raised:
-                await client.transfers.respond_to_transfer(
-                    "transfer-2", TransferResponseInput("refuse"), UDATA_PERMISSIONS, policy
-                )
+                await client.transfers.respond_to_transfer("transfer-2", response_input, UDATA_PERMISSIONS, policy)
             assert _receipt_from(raised.value).target.value == "transfer-2"
             assert router.requests == []
             result = await client.transfers.respond_to_transfer(
@@ -271,10 +273,9 @@ def test_individual_transfer_receipts_are_immutable_and_target_specific(asynchro
     else:
         router = sync_route_table(routes)
         with sync_client(router, UDATA_CREDENTIAL) as client:
+            response_input = TransferResponseInput("refuse")
             with pytest.raises(ForbiddenError) as raised:
-                client.transfers.respond_to_transfer(
-                    "transfer-2", TransferResponseInput("refuse"), UDATA_PERMISSIONS, policy
-                )
+                client.transfers.respond_to_transfer("transfer-2", response_input, UDATA_PERMISSIONS, policy)
             assert _receipt_from(raised.value).target.value == "transfer-2"
             assert router.requests == []
             check(
@@ -289,10 +290,12 @@ def test_caller_targets_cannot_override_an_empty_drift_allowlist(asynchronous: b
     target = drift.DriftTarget("unapproved", "https://example.test", (drift.SITE_OPERATION_ID,))
     transport = Mock()
     transport.send.side_effect = AssertionError("An unapproved target must not dispatch.")
-    with pytest.raises(drift.UDataDriftUnavailableError):
-        if asynchronous:
-            asyncio.run(drift.run_udata_drift_async([target], transport=transport))
-        else:
+    if asynchronous:
+        coroutine = drift.run_udata_drift_async([target], transport=transport)
+        with pytest.raises(drift.UDataDriftUnavailableError):
+            asyncio.run(coroutine)
+    else:
+        with pytest.raises(drift.UDataDriftUnavailableError):
             drift.run_udata_drift([target], transport=transport)
     transport.send.assert_not_called()
 
@@ -313,9 +316,11 @@ def test_drift_selection_requires_exact_approved_targets(
         "duplicate": [approved, approved],
     }[change]
     transport = Mock()
-    with pytest.raises(CatalogValidationError):
-        if asynchronous:
-            asyncio.run(drift.run_udata_drift_async(selected, transport=transport))
-        else:
+    if asynchronous:
+        coroutine = drift.run_udata_drift_async(selected, transport=transport)
+        with pytest.raises(CatalogValidationError):
+            asyncio.run(coroutine)
+    else:
+        with pytest.raises(CatalogValidationError):
             drift.run_udata_drift(selected, transport=transport)
     transport.send.assert_not_called()

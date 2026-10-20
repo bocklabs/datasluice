@@ -6,12 +6,13 @@ import json
 import math
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date
 from functools import cached_property, lru_cache, partial
 from importlib import resources
 from time import monotonic, sleep
-from typing import TYPE_CHECKING, Self, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, ClassVar, Self, TypedDict, Unpack, cast
 from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.mapping import (
@@ -992,6 +993,26 @@ async def _authorize_async_dispatch(
     return clock() - state[2] <= _CONTROLLED_AUTHORITY_TTL_SECONDS and evidence == state[1]
 
 
+def _controlled_dispatch_state[T](
+    client_registry: _IdentityRegistry[object],
+    transport_registry: _IdentityRegistry[T],
+    client: object,
+    transport: object,
+    request: RuntimeRequest,
+    credential: object,
+    body: object,
+    origin: str,
+) -> T:
+    if client_registry.get(client) is not transport:
+        raise _controlled_error(_UDATA_SITE_PATCH_NOT_VERIFIED_CLIENT)
+    if origin != _CONTROLLED_ORIGIN or request.method != "PATCH" or request.url != f"{_CONTROLLED_ORIGIN}/api/1/site/":
+        raise _controlled_error(_UDATA_SITE_PATCH_NOT_VERIFIED_CLIENT)
+    state = _registry_state(transport_registry, transport)
+    if state is None or not isinstance(credential, UDataCredential) or not isinstance(body, Mapping):
+        raise _controlled_error("The controlled uData site PATCH requires a resolved credential and body.")
+    return state
+
+
 def _dispatch_sync_controlled(
     client_registry: _IdentityRegistry[object],
     transport_registry: _IdentityRegistry[_ControlledSyncState],
@@ -1002,13 +1023,9 @@ def _dispatch_sync_controlled(
     body: object,
     origin: str,
 ) -> RuntimeResponse:
-    if client_registry.get(client) is not transport:
-        raise _controlled_error(_UDATA_SITE_PATCH_NOT_VERIFIED_CLIENT)
-    if origin != _CONTROLLED_ORIGIN or request.method != "PATCH" or request.url != f"{_CONTROLLED_ORIGIN}/api/1/site/":
-        raise _controlled_error(_UDATA_SITE_PATCH_NOT_VERIFIED_CLIENT)
-    state = _registry_state(transport_registry, transport)
-    if state is None or not isinstance(credential, UDataCredential) or not isinstance(body, Mapping):
-        raise _controlled_error("The controlled uData site PATCH requires a resolved credential and body.")
+    state = _controlled_dispatch_state(
+        client_registry, transport_registry, client, transport, request, credential, body, origin
+    )
     return state[3].dispatch(state[0], credential, body, docker_endpoint=state[4])
 
 
@@ -1022,13 +1039,9 @@ async def _dispatch_async_controlled(
     body: object,
     origin: str,
 ) -> RuntimeResponse:
-    if client_registry.get(client) is not transport:
-        raise _controlled_error(_UDATA_SITE_PATCH_NOT_VERIFIED_CLIENT)
-    if origin != _CONTROLLED_ORIGIN or request.method != "PATCH" or request.url != f"{_CONTROLLED_ORIGIN}/api/1/site/":
-        raise _controlled_error(_UDATA_SITE_PATCH_NOT_VERIFIED_CLIENT)
-    state = _registry_state(transport_registry, transport)
-    if state is None or not isinstance(credential, UDataCredential) or not isinstance(body, Mapping):
-        raise _controlled_error("The controlled uData site PATCH requires a resolved credential and body.")
+    state = _controlled_dispatch_state(
+        client_registry, transport_registry, client, transport, request, credential, body, origin
+    )
     if state[4] is None:
         raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
     return await state[3].dispatch(state[0], credential, body, docker_endpoint=state[4])
@@ -1128,15 +1141,15 @@ def _build_controlled_types():
 
 
 @dataclass(slots=True)
-class _SyncStreamGuard:
+class _StreamGuard[T]:
     client: _UDataClientCore
     owning_id: OperationId
     key: CircuitKey
-    response: RuntimeStreamResponse
+    response: T
     deadline: DeadlineMonitor
     settled: bool = False
     consumed: bool = False
-    stream_chunks: Generator[bytes] | None = None
+    _settlement_errors: ClassVar[tuple[type[BaseException], ...]] = SETTLEMENT_ERRORS
 
     def settle_failure(self, error: BaseException) -> None:
         if self.settled:
@@ -1159,7 +1172,7 @@ class _SyncStreamGuard:
             return
         try:
             self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
-        except SETTLEMENT_ERRORS as error:
+        except self._settlement_errors as error:
             self.settle_failure(error)
             raise
         self.settled = True
@@ -1167,6 +1180,11 @@ class _SyncStreamGuard:
         after = self.client._breakers.record_success(self.key)
         self.client._emit_breaker_change(self.owning_id, before.open, after.open)
         self.client._emit(self.owning_id, "succeeded")
+
+
+@dataclass(slots=True)
+class _SyncStreamGuard(_StreamGuard[RuntimeStreamResponse]):
+    stream_chunks: Generator[bytes] | None = None
 
     def chunks(self) -> Generator[bytes]:
         try:
@@ -1216,45 +1234,9 @@ class _SyncStreamGuard:
 
 
 @dataclass(slots=True)
-class _AsyncStreamGuard:
-    client: _UDataClientCore
-    owning_id: OperationId
-    key: CircuitKey
-    response: AsyncRuntimeStreamResponse
-    deadline: DeadlineMonitor
-    settled: bool = False
-    consumed: bool = False
+class _AsyncStreamGuard(_StreamGuard[AsyncRuntimeStreamResponse]):
     stream_chunks: AsyncGenerator[bytes] | None = None
-
-    def settle_failure(self, error: BaseException) -> None:
-        if self.settled:
-            return
-        self.settled = True
-        if isinstance(error, TransportError):
-            before = self.client._breakers.inspect(self.key)
-            after = self.client._breakers.record_transport_failure(self.key)
-            self.client._emit_breaker_change(self.owning_id, before.open, after.open)
-        if isinstance(error, BudgetExhaustedError):
-            used = max(0.0, self.client._budget.total - self.deadline.remaining())
-            self.client._emit(self.owning_id, "budget_exhausted", budget_usage=used)
-        elif error.__class__.__name__ == "CancelledError":
-            self.client._emit(self.owning_id, "cancelled")
-        else:
-            self.client._emit(self.owning_id, "failed")
-
-    def settle_success(self) -> None:
-        if self.settled:
-            return
-        try:
-            self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
-        except ASYNC_SETTLEMENT_ERRORS as error:
-            self.settle_failure(error)
-            raise
-        self.settled = True
-        before = self.client._breakers.inspect(self.key)
-        after = self.client._breakers.record_success(self.key)
-        self.client._emit_breaker_change(self.owning_id, before.open, after.open)
-        self.client._emit(self.owning_id, "succeeded")
+    _settlement_errors = ASYNC_SETTLEMENT_ERRORS
 
     async def chunks(self) -> AsyncGenerator[bytes]:
         try:
@@ -1299,6 +1281,47 @@ class _AsyncStreamGuard:
             failure_callback=self.settle_failure,
             completion_callback=self.settle_success,
         )
+
+
+@dataclass(slots=True)
+class _RequestAttempt:
+    client: _UDataClientCore
+    owning_id: OperationId
+    key: CircuitKey
+    request: RuntimeRequest
+    recorded: bool = False
+    attempts: int = 0
+    response: RuntimeResponse | None = None
+
+    @contextmanager
+    def dispatch(self, form_body: Callable[[], bytes] | None = None) -> Generator[RuntimeRequest]:
+        self.attempts += 1
+        self.recorded = False
+        self.response = None
+        before = self.client._breakers.inspect(self.key)
+        request = replace(self.request, body=form_body()) if form_body is not None else self.request
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+        try:
+            yield request
+            if request.deadline is not None:
+                request.deadline.assert_dispatchable()
+        except BudgetExhaustedError as error:
+            _settle_dataset_budget_error(error, request, self.response)
+            raise
+        except TransportError:
+            self.recorded = True
+            after = self.client._breakers.record_transport_failure(self.key)
+            self.client._emit_breaker_change(self.owning_id, before.open, after.open)
+            raise
+        assert self.response is not None
+        after = self.client._breakers.record_response(self.key, self.response.status_code)
+        self.recorded = True
+        self.client._emit_breaker_change(self.owning_id, before.open, after.open)
+
+    def release_trial(self) -> None:
+        if not self.recorded:
+            self.client._breakers.release_trial(self.key)
 
 
 class _UDataClientOptions(TypedDict, total=False):
@@ -1470,6 +1493,127 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._site_gate.invalidate()
             self._credential_scope = scope
         return scope
+
+    def _dataset_deadline(
+        self, owning_operation: str, overrides: _DatasetCallOverrides, closed_error: str
+    ) -> tuple[OperationId, DeadlineMonitor]:
+        unknown = set(overrides) - set(_DatasetCallOverrides.__annotations__)
+        if unknown:
+            raise TypeError(f"Unknown dataset call overrides: {sorted(unknown)}.")
+        if self._closed:
+            raise RuntimeError(closed_error)
+        owning_id = _operation_id_from(owning_operation)
+        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        return owning_id, deadline
+
+    def _dataset_request(
+        self,
+        owning_id: OperationId,
+        deadline: DeadlineMonitor,
+        *,
+        method: str,
+        path: str,
+        headers: Mapping[str, str] | None,
+        credential: object | None,
+        json_body: object,
+        form_body: bytes | Callable[[], bytes] | None,
+        files: tuple[UploadPart, ...],
+        idempotency_policy: IdempotencyPolicy | None,
+        max_response_bytes: int | None,
+        overrides: _DatasetCallOverrides,
+    ) -> RuntimeRequest:
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        body = self._dataset_body(json_body, form_body, files, owning_id)
+        return RuntimeRequest(
+            method=method,
+            url=self._origin + path,
+            headers=self._request_headers(
+                headers, credential, idempotency_policy, body, json_media_fallback=form_body is None and not files
+            ),
+            body=body,
+            files=files,
+            redirect_policy=_dataset_redirect_policy(overrides.get("redirect_mode", False), files),
+            max_response_bytes=1_048_576 if max_response_bytes is None else max_response_bytes,
+            deadline=deadline,
+        )
+
+    @contextmanager
+    def _dataset_retry(self, attempt: _RequestAttempt, *, emit_success: bool) -> Generator[None]:
+        try:
+            yield
+        except Exception as error:
+            self._emit_dataset_failure(attempt.owning_id, error, emit_success=emit_success)
+            raise
+        finally:
+            attempt.release_trial()
+
+    def _finish_dataset_call(
+        self,
+        owning_id: OperationId,
+        response: RuntimeResponse,
+        request: RuntimeRequest,
+        scope: str,
+        overrides: _DatasetCallOverrides,
+    ) -> tuple[int, object, RuntimeResponse]:
+        emit_success = overrides.get("emit_success", True)
+        try:
+            result = self._decode_dataset_response(
+                owning_id,
+                response,
+                redirect_mode=overrides.get("redirect_mode", False),
+                raw_text=overrides.get("raw_text", False),
+                max_response_bytes=request.max_response_bytes,
+                method=request.method,
+                credential_scope=scope,
+                accept_status=overrides.get("accept_status"),
+            )
+        except Exception as error:
+            self._emit_dataset_failure(owning_id, error, emit_success=emit_success)
+            raise
+        if emit_success:
+            self._emit(owning_id, "succeeded")
+        return result
+
+    def _dataset_page_request(
+        self,
+        owning_id: OperationId,
+        operation: CatalogOperationRequest,
+        effective: EffectiveCapabilityProfile,
+        credential: object | None,
+    ) -> tuple[RuntimeRequest, DeadlineMonitor]:
+        self._require_dispatchable(owning_id, effective)
+        params = self._validate_page_params(operation)
+        request = _page_request(origin=self._origin, params=params)
+        if credential is not None:
+            request = replace(request, headers=_auth_headers(credential))
+        deadline = DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        return request, deadline
+
+    @contextmanager
+    def _trace_dispatch(self, attempt: _RequestAttempt, deadline: DeadlineMonitor) -> Generator[None]:
+        owning_id = attempt.owning_id
+        try:
+            yield
+        except BudgetExhaustedError:
+            self._emit(
+                owning_id,
+                "budget_exhausted",
+                budget_usage=max(0.0, self._budget.total - deadline.remaining()),
+            )
+            raise
+        except Exception:
+            self._emit(owning_id, "failed", retry_count=max(0, attempt.attempts - 1))
+            raise
+        finally:
+            attempt.release_trial()
+        self._emit(
+            owning_id,
+            "succeeded",
+            retry_count=max(0, attempt.attempts - 1),
+            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
+        )
 
     def _dataset_body(
         self,
@@ -1876,42 +2020,21 @@ class SyncUDataClient(_UDataClientCore):
 
     def _send_dataset_attempt(
         self,
-        owning_id: OperationId,
-        key: CircuitKey,
-        request: RuntimeRequest,
+        attempt: _RequestAttempt,
         credential: object | None,
         json_body: object,
         controlled: bool,
-        recorded: list[bool],
         form_body: Callable[[], bytes] | None = None,
         _dispatch_sync: Callable[..., RuntimeResponse] = _controlled_dispatch_gate.dispatch_sync,
     ) -> RuntimeResponse:
-        recorded[0] = False
-        before = self._breakers.inspect(key)
-        if form_body is not None:
-            request = replace(request, body=form_body())
-        if request.deadline is not None:
-            request.deadline.assert_dispatchable()
-        response = None
-        try:
+        with attempt.dispatch(form_body) as request:
             if controlled:
-                response = _dispatch_sync(self, self._transport, request, credential, json_body, origin=self._origin)
+                attempt.response = _dispatch_sync(
+                    self, self._transport, request, credential, json_body, origin=self._origin
+                )
             else:
-                response = cast("CatalogTransport", self._transport).send(request)
-            if request.deadline is not None:
-                request.deadline.assert_dispatchable()
-        except BudgetExhaustedError as error:
-            _settle_dataset_budget_error(error, request, response)
-            raise
-        except TransportError:
-            recorded[0] = True
-            after = self._breakers.record_transport_failure(key)
-            self._emit_breaker_change(owning_id, before.open, after.open)
-            raise
-        after = self._breakers.record_response(key, response.status_code)
-        recorded[0] = True
-        self._emit_breaker_change(owning_id, before.open, after.open)
-        return response
+                attempt.response = cast("CatalogTransport", self._transport).send(request)
+        return cast("RuntimeResponse", attempt.response)
 
     def _dataset_call(
         self,
@@ -1930,23 +2053,9 @@ class SyncUDataClient(_UDataClientCore):
         **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
-        unknown = set(overrides) - set(_DatasetCallOverrides.__annotations__)
-        if unknown:
-            raise TypeError(f"Unknown dataset call overrides: {sorted(unknown)}.")
-        raw_text = overrides.get("raw_text", False)
-        redirect_mode = overrides.get("redirect_mode", False)
-        emit_success = overrides.get("emit_success", True)
-        accept_status = overrides.get("accept_status")
-        omit_credential = overrides.get("omit_credential", False)
-        if max_response_bytes is None:
-            max_response_bytes = 1_048_576
-        if self._closed:
-            raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
-        owning_id = _operation_id_from(owning_operation)
-        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        owning_id, deadline = self._dataset_deadline(owning_operation, overrides, _SYNC_UDATA_CLIENT_CLOSED)
         self._require_site_version(deadline=deadline)
-        if omit_credential:
+        if overrides.get("omit_credential", False):
             resolved_credential = None
         elif credential is not None:
             resolved_credential = credential
@@ -1955,38 +2064,30 @@ class SyncUDataClient(_UDataClientCore):
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
         self._require_dispatchable(owning_id, effective, permissions)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        body = self._dataset_body(json_body, form_body, files, owning_id)
-        request = RuntimeRequest(
+        request = self._dataset_request(
+            owning_id,
+            deadline,
             method=method,
-            url=self._origin + path,
-            headers=self._request_headers(
-                headers,
-                resolved_credential,
-                idempotency_policy,
-                body,
-                json_media_fallback=form_body is None and not files,
-            ),
-            body=body,
+            path=path,
+            headers=headers,
+            credential=resolved_credential,
+            json_body=json_body,
+            form_body=form_body,
             files=files,
-            redirect_policy=_dataset_redirect_policy(redirect_mode, files),
+            idempotency_policy=idempotency_policy,
             max_response_bytes=max_response_bytes,
-            deadline=deadline,
+            overrides=overrides,
         )
-        key = self._admit_request(owning_id, request)
-        recorded = [False]
+        attempt = _RequestAttempt(self, owning_id, self._admit_request(owning_id, request), request)
         send = partial(
             self._send_dataset_attempt,
-            owning_id,
-            key,
-            request,
+            attempt,
             resolved_credential,
             json_body,
             owning_operation == SET_SITE_OPERATION,
-            recorded,
             form_body if callable(form_body) else None,
         )
-        try:
+        with self._dataset_retry(attempt, emit_success=overrides.get("emit_success", True)):
             response = RetryLoop(
                 budget=self._budget,
                 idempotency=_dataset_retry_idempotency(form_body, idempotency_policy, method, files),
@@ -1994,29 +2095,7 @@ class SyncUDataClient(_UDataClientCore):
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
             ).run(send)
-        except Exception as error:
-            self._emit_dataset_failure(owning_id, error, emit_success=emit_success)
-            raise
-        finally:
-            if not recorded[0]:
-                self._breakers.release_trial(key)
-        try:
-            result = self._decode_dataset_response(
-                owning_id,
-                response,
-                redirect_mode=redirect_mode,
-                raw_text=raw_text,
-                max_response_bytes=max_response_bytes,
-                method=method,
-                credential_scope=scope,
-                accept_status=accept_status,
-            )
-        except Exception as error:
-            self._emit_dataset_failure(owning_id, error, emit_success=emit_success)
-            raise
-        if emit_success:
-            self._emit(owning_id, "succeeded")
-        return result
+        return self._finish_dataset_call(owning_id, response, request, scope, overrides)
 
     def _root_call(
         self,

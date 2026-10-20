@@ -8,7 +8,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from time import monotonic
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast, override
 
 from datasluice.connectors.catalog.udata.models.extensions import (
     AVAILABLE,
@@ -16,15 +16,14 @@ from datasluice.connectors.catalog.udata.models.extensions import (
     ExtensionEvidence,
     TagSuggestQuery,
 )
+from datasluice.connectors.catalog.udata.services._receipts import _error_status
+from datasluice.connectors.catalog.udata.services.datasets import _header
 from datasluice.connectors.catalog.udata.services.taxonomies import AsyncCatalogService, SyncCatalogService
 from datasluice.connectors.catalog.udata.wire import extensions as wire
 from datasluice.domain.catalog.auth import credential_scope
 from datasluice.domain.catalog.profiles import ProbeResponseClass
 from datasluice.errors.catalog import NativeCatalogError
 from datasluice.runtime.constants import DEFAULT_CAPABILITY_CACHE_TTL_SECONDS
-
-from ._receipts import _error_status
-from .datasets import _header
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -381,7 +380,17 @@ class SyncExtensionsService(SyncCatalogService):
         self._evidence_cache.invalidate()
 
 
-class AsyncExtensionsService(AsyncCatalogService):
+class _AsyncExtensionEvidenceService(Protocol):
+    """Keep cached evidence access awaitable on the asynchronous service."""
+
+    async def evidence(self, operation: str) -> ExtensionEvidence | None: ...
+
+    async def proven_operations(self) -> tuple[str, ...]: ...
+
+    async def refresh(self) -> None: ...
+
+
+class AsyncExtensionsService(AsyncCatalogService, _AsyncExtensionEvidenceService):
     """Typed asynchronous methods for the assigned stock extension family."""
 
     def __init__(self, client: AsyncUDataClient, evidence_cache: ExtensionEvidenceCache | None = None) -> None:
@@ -451,15 +460,18 @@ class AsyncExtensionsService(AsyncCatalogService):
         scope = credential_scope(self._client.credentials)
         return await _prove_async(self._evidence_cache, scope, operation, lambda: _async_probe_read(self, operation))
 
+    @override
     async def evidence(self, operation: str) -> ExtensionEvidence | None:
         """Return one fresh cached evidence entry without dispatching anything."""
         wire.require_extension_operation(operation)
         return self._evidence_cache.evidence(credential_scope(self._client.credentials), operation)
 
+    @override
     async def proven_operations(self) -> tuple[str, ...]:
         """Return the operations currently proven available for the configured credential scope."""
         return self._evidence_cache.proven_operations(credential_scope(self._client.credentials))
 
+    @override
     async def refresh(self) -> None:
         """Discard every cached evidence entry so the next proof runs a fresh harmless probe."""
         self._evidence_cache.invalidate()

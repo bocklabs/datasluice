@@ -50,8 +50,9 @@ def _descriptor() -> OAuthFlow:
 @pytest.mark.parametrize("state", [None, "", "attacker-state"])
 def test_exchange_requires_callback_state_at_request_creation(state: object) -> None:
     binding = begin_authorization_code(_descriptor())
+    typed_state = cast("str", state)
     with pytest.raises(CatalogValidationError):
-        binding.token_request("code", state=cast("str", state))
+        binding.token_request("code", state=typed_state)
 
 
 def test_direct_code_grant_cannot_bypass_binding_or_change_bound_fields() -> None:
@@ -78,8 +79,9 @@ def test_direct_code_grant_cannot_bypass_binding_or_change_bound_fields() -> Non
     ],
 )
 def test_binding_rejects_unsafe_registered_redirects(redirect: str) -> None:
+    descriptor = replace(_descriptor(), redirect_uri=redirect)
     with pytest.raises(ValueError):
-        begin_authorization_code(replace(_descriptor(), redirect_uri=redirect))
+        begin_authorization_code(descriptor)
 
 
 @pytest.mark.parametrize(
@@ -189,25 +191,25 @@ def test_shared_client_guard_refuses_secret_reveal_before_dispatch(
 
     monkeypatch.setattr(UDataOAuthSecret, "reveal", reveal)
     router = _AsyncRouter() if async_mode else _Router()
-    with pytest.raises(CatalogValidationError, match="controlled local deployment"):
-        if async_mode:
-            assert isinstance(router, _AsyncRouter)
+    policy = _policy("revoke_token", "request:revoke_token", destructive=True)
+    if async_mode:
+        assert isinstance(router, _AsyncRouter)
 
-            async def run() -> None:
-                async with AsyncUDataClient(
-                    router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
-                ) as client:
-                    await client.auth_oauth.revoke_token(
-                        request, PERMISSIONS, _policy("revoke_token", "request:revoke_token", destructive=True)
-                    )
+        async def run() -> None:
+            async with AsyncUDataClient(
+                router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL
+            ) as client:
+                with pytest.raises(CatalogValidationError, match="controlled local deployment"):
+                    await client.auth_oauth.revoke_token(request, PERMISSIONS, policy)
 
-            asyncio.run(run())
-        else:
-            assert isinstance(router, _Router)
-            with SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client:
-                client.auth_oauth.revoke_token(
-                    request, PERMISSIONS, _policy("revoke_token", "request:revoke_token", destructive=True)
-                )
+        asyncio.run(run())
+    else:
+        assert isinstance(router, _Router)
+        with (
+            SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL) as client,
+            pytest.raises(CatalogValidationError, match="controlled local deployment"),
+        ):
+            client.auth_oauth.revoke_token(request, PERMISSIONS, policy)
     assert reveals == []
     assert all(item.url.endswith("/api/1/site/") for item in router.requests)
 
@@ -217,17 +219,17 @@ def test_shared_client_never_retries_a_refresh_grant(async_mode: bool) -> None:
     routes = declared_routes(("POST", "/oauth/token", 503, {"error": "temporarily_unavailable"}))
     request = OAuthTokenRequest("refresh_token", "client", refresh_token="old-refresh")
     router = html_async_route_table(routes) if async_mode else html_sync_route_table(routes)
-    with pytest.raises(CatalogError):
-        if async_mode:
+    if async_mode:
 
-            async def run() -> None:
-                async with async_client(cast("AsyncRouteRouter", router), CREDENTIAL) as client:
+        async def run() -> None:
+            async with async_client(cast("AsyncRouteRouter", router), CREDENTIAL) as client:
+                with pytest.raises(CatalogError):
                     await client.auth_oauth.access_token(request, PERMISSIONS)
 
-            asyncio.run(run())
-        else:
-            with sync_client(cast("SyncRouteRouter", router), CREDENTIAL) as client:
-                client.auth_oauth.access_token(request, PERMISSIONS)
+        asyncio.run(run())
+    else:
+        with sync_client(cast("SyncRouteRouter", router), CREDENTIAL) as client, pytest.raises(CatalogError):
+            client.auth_oauth.access_token(request, PERMISSIONS)
     assert len([item for item in router.requests if item.url.endswith("/oauth/token")]) == 1
 
 
@@ -291,11 +293,14 @@ def test_code_exchange_cannot_send_to_an_unbound_catalog(async_mode: bool) -> No
     client._origin = "https://attacker.test"
     binding = begin_authorization_code(_descriptor())
     body = binding.token_request("code", state=binding.expected_state)
-    with pytest.raises(CatalogValidationError, match="endpoint") as excinfo:
-        if async_mode:
-            asyncio.run(AsyncAuthOAuthService(cast("AsyncUDataClient", client)).access_token(body, PERMISSIONS))
-        else:
-            SyncAuthOAuthService(cast("SyncUDataClient", client)).access_token(body, PERMISSIONS)
+    if async_mode:
+        coroutine = AsyncAuthOAuthService(cast("AsyncUDataClient", client)).access_token(body, PERMISSIONS)
+        with pytest.raises(CatalogValidationError, match="endpoint") as excinfo:
+            asyncio.run(coroutine)
+    else:
+        service = SyncAuthOAuthService(cast("SyncUDataClient", client))
+        with pytest.raises(CatalogValidationError, match="endpoint") as excinfo:
+            service.access_token(body, PERMISSIONS)
     assert client.forms == []
     assert cast("MutationReceipt", excinfo.value.__dict__["mutation_receipt"]).outcome == "rejected"
 
@@ -324,11 +329,14 @@ def test_refresh_failures_discard_form_and_preserve_caller_credential(
     )
     client = _Client(failure, cancel_before_send=before_send)
     body = OAuthTokenRequest("refresh_token", "client", refresh_token="old-refresh")
-    with pytest.raises(failure_type) as raised:
-        if async_mode:
-            asyncio.run(AsyncAuthOAuthService(cast("AsyncUDataClient", client)).access_token(body, PERMISSIONS))
-        else:
-            SyncAuthOAuthService(cast("SyncUDataClient", client)).access_token(body, PERMISSIONS)
+    if async_mode:
+        coroutine = AsyncAuthOAuthService(cast("AsyncUDataClient", client)).access_token(body, PERMISSIONS)
+        with pytest.raises(failure_type) as raised:
+            asyncio.run(coroutine)
+    else:
+        service = SyncAuthOAuthService(cast("SyncUDataClient", client))
+        with pytest.raises(failure_type) as raised:
+            service.access_token(body, PERMISSIONS)
     assert client.sends == (0 if before_send else 1)
     assert len(client.forms) == 1
     with pytest.raises(RuntimeError):
@@ -391,10 +399,12 @@ def test_interruption_after_decode_discards_unreturned_tokens(async_mode: bool) 
 
     client.fail_success_event = True
     body = OAuthTokenRequest("client_credentials", "client")
-    with pytest.raises(RuntimeError):
-        if isinstance(service, AsyncAuthOAuthService):
-            asyncio.run(service._write_async("access_token", body, PERMISSIONS, None, decode))
-        else:
+    if isinstance(service, AsyncAuthOAuthService):
+        coroutine = service._write_async("access_token", body, PERMISSIONS, None, decode)
+        with pytest.raises(RuntimeError):
+            asyncio.run(coroutine)
+    else:
+        with pytest.raises(RuntimeError):
             service._write("access_token", body, PERMISSIONS, None, decode)
     assert client.response_payload == {}
     assert len(decoded) == 1
@@ -483,8 +493,9 @@ def test_malformed_token_response_removes_all_plaintext(invalid: dict[str, objec
     from datasluice.connectors.catalog.udata.services.auth_oauth import _success_receipt
 
     payload = {"token_type": "Bearer", "access_token": "private-access", "refresh_token": "private-refresh", **invalid}
+    receipt = _success_receipt(wire.OPERATIONS["access_token"], "self", None, 200)
     with pytest.raises(CatalogValidationError) as raised:
-        wire.parse_token("access_token", payload, _success_receipt(wire.OPERATIONS["access_token"], "self", None, 200))
+        wire.parse_token("access_token", payload, receipt)
     assert payload == {}
     traceback = raised.value.__traceback__
     while traceback is not None:

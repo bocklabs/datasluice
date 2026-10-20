@@ -99,11 +99,13 @@ def test_contract_cases_include_anonymous_mutation_capability_bulk_and_both_mode
 def test_runner_rejects_missing_cases_before_dispatch() -> None:
     sync_client = SyncReferenceConnector()
     async_client = AsyncReferenceConnector()
+    typed_sync_client = cast("SyncCatalogClient", sync_client)
+    typed_async_client = cast("AsyncCatalogClient", async_client)
     with pytest.raises(ValueError, match="one or more declared cases"):
         run_catalog_contract(
             (),
-            sync_client=cast("SyncCatalogClient", sync_client),
-            async_client=cast("AsyncCatalogClient", async_client),
+            sync_client=typed_sync_client,
+            async_client=typed_async_client,
         )
     assert sync_client.dispatches == []
 
@@ -111,11 +113,14 @@ def test_runner_rejects_missing_cases_before_dispatch() -> None:
 def test_matrix_requires_its_pinned_fixture_set() -> None:
     sync_client = SyncReferenceConnector()
     async_client = AsyncReferenceConnector()
+    typed_sync_client = cast("SyncCatalogClient", sync_client)
+    typed_async_client = cast("AsyncCatalogClient", async_client)
+    cases = (CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),)
     with pytest.raises(ValueError, match="pinned fixture set"):
         run_catalog_contract(
-            (CatalogContractCase(operation_id="datasets.get", dataset_id="fixture-dataset"),),
-            sync_client=cast("SyncCatalogClient", sync_client),
-            async_client=cast("AsyncCatalogClient", async_client),
+            cases,
+            sync_client=typed_sync_client,
+            async_client=typed_async_client,
         )
     assert sync_client.dispatches == []
 
@@ -124,16 +129,20 @@ def test_runner_rejects_cases_outside_the_pinned_fixture_set() -> None:
     fixture_set = load_reference_fixture_set("ckan")
     sync_client = SyncReferenceConnector(fixture_set)
     async_client = AsyncReferenceConnector(fixture_set)
+    typed_sync_client = cast("SyncCatalogClient", sync_client)
+    typed_async_client = cast("AsyncCatalogClient", async_client)
+    cases = (CatalogContractCase(operation_id="unknown.operation"),)
     with pytest.raises(ValueError, match="generated from the pinned fixture set"):
         run_catalog_contract(
-            (CatalogContractCase(operation_id="unknown.operation"),),
-            sync_client=cast("SyncCatalogClient", sync_client),
-            async_client=cast("AsyncCatalogClient", async_client),
+            cases,
+            sync_client=typed_sync_client,
+            async_client=typed_async_client,
             fixture_set=fixture_set,
         )
     assert sync_client.dispatches == []
 
 
 def test_case_generation_requires_a_reference_fixture_set() -> None:
+    fixture_set = cast("ReferenceFixtureSet", object())
     with pytest.raises(TypeError, match="pinned reference fixture set"):
-        catalog_contract_cases(cast("ReferenceFixtureSet", object()))
+        catalog_contract_cases(fixture_set)

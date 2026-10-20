@@ -152,6 +152,31 @@ class PostSearchQuery:
         return _paging(params, self.page, self.page_size)
 
 
+def _validate_post_fields(instance: PostCreateInput | PostUpdateInput) -> None:
+    for name in ("content", "headline", "image_url", "credit_to", "credit_url"):
+        _text(getattr(instance, name), f"post {name}")
+    _choice(instance.body_type, _POST_BODY_TYPES, "post body_type")
+    _choice(instance.kind, _POST_KINDS, "post kind")
+    _strings(instance.tags, "post tags")
+    for name in ("datasets", "reuses", "blocs"):
+        value = getattr(instance, name)
+        if value is not None:
+            object.__setattr__(instance, name, _mappings(value, f"post {name}"))
+
+
+def _post_payload(instance: PostCreateInput | PostUpdateInput) -> dict[str, object]:
+    body: dict[str, object] = {}
+    for name in ("name", "content", "headline", "body_type", "kind", "image_url", "credit_to", "credit_url"):
+        if (value := getattr(instance, name)) is not None:
+            body[name] = value
+    if instance.tags is not None:
+        body["tags"] = list(instance.tags)
+    for name in ("datasets", "reuses", "blocs"):
+        if (value := getattr(instance, name)) is not None:
+            body[name] = [_thaw_json(item) for item in value]
+    return body
+
+
 @dataclass(frozen=True, slots=True)
 class PostCreateInput:
     """Presence-aware create payload for POST /api/1/posts/."""
@@ -171,27 +196,10 @@ class PostCreateInput:
 
     def __post_init__(self) -> None:
         _text(self.name, "post name", required=True)
-        for name in ("content", "headline", "image_url", "credit_to", "credit_url"):
-            _text(getattr(self, name), f"post {name}")
-        _choice(self.body_type, _POST_BODY_TYPES, "post body_type")
-        _choice(self.kind, _POST_KINDS, "post kind")
-        _strings(self.tags, "post tags")
-        for name in ("datasets", "reuses", "blocs"):
-            value = getattr(self, name)
-            if value is not None:
-                object.__setattr__(self, name, _mappings(value, f"post {name}"))
+        _validate_post_fields(self)
 
     def payload(self) -> dict[str, object]:
-        body: dict[str, object] = {"name": self.name}
-        for name in ("content", "headline", "body_type", "kind", "image_url", "credit_to", "credit_url"):
-            if (value := getattr(self, name)) is not None:
-                body[name] = value
-        if self.tags is not None:
-            body["tags"] = list(self.tags)
-        for name in ("datasets", "reuses", "blocs"):
-            if (value := getattr(self, name)) is not None:
-                body[name] = [_thaw_json(item) for item in value]
-        return body
+        return _post_payload(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,15 +221,7 @@ class PostUpdateInput:
 
     def __post_init__(self) -> None:
         _text(self.name, "post name")
-        for name in ("content", "headline", "image_url", "credit_to", "credit_url"):
-            _text(getattr(self, name), f"post {name}")
-        _choice(self.body_type, _POST_BODY_TYPES, "post body_type")
-        _choice(self.kind, _POST_KINDS, "post kind")
-        _strings(self.tags, "post tags")
-        for name in ("datasets", "reuses", "blocs"):
-            value = getattr(self, name)
-            if value is not None:
-                object.__setattr__(self, name, _mappings(value, f"post {name}"))
+        _validate_post_fields(self)
         if all(
             value is None
             for value in (
@@ -242,16 +242,7 @@ class PostUpdateInput:
             raise ValueError("uData post updates require at least one field.")
 
     def payload(self) -> dict[str, object]:
-        body: dict[str, object] = {}
-        for name in ("name", "content", "headline", "body_type", "kind", "image_url", "credit_to", "credit_url"):
-            if (value := getattr(self, name)) is not None:
-                body[name] = value
-        if self.tags is not None:
-            body["tags"] = list(self.tags)
-        for name in ("datasets", "reuses", "blocs"):
-            if (value := getattr(self, name)) is not None:
-                body[name] = [_thaw_json(item) for item in value]
-        return body
+        return _post_payload(self)
 
 
 def _image_filename(content_type: str) -> str:

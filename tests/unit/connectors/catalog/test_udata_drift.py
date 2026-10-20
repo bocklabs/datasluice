@@ -409,10 +409,12 @@ def test_t01_advisory_report_is_immutable_and_has_no_write_surface() -> None:
     transport = RecordingTransport(_compatible_routes())
     report = run_udata_drift([_target()], transport=transport, now=lambda: _FIXED_NOW)
 
+    set_outcome = operator.methodcaller("__setattr__", "outcome", "matched")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        operator.methodcaller("__setattr__", "outcome", "matched")(report.records[0])
+        set_outcome(report.records[0])
+    set_advisory = operator.methodcaller("__setattr__", "advisory_only", False)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        operator.methodcaller("__setattr__", "advisory_only", False)(report)
+        set_advisory(report)
     assert not hasattr(report, "write_profile")
     assert not hasattr(report, "apply")
     assert set(vars(drift)) & {"write_profile", "apply_drift", "update_profile", "persist"} == set()
@@ -603,13 +605,14 @@ def test_t04_allowlist_mapping_is_read_only_by_construction() -> None:
     ["udata/api-v1.create-dataset", "udata/api-v2.delete-topic", "udata/api-v2.update-topic"],
 )
 def test_t04_a_mutation_class_row_cannot_even_be_constructed_as_a_drift_read(mutation_operation: str) -> None:
+    expected_envelope_keys = frozenset({"data"})
     with pytest.raises(ValueError) as raised:
         ReadOperation(
             operation_id=mutation_operation,
             method="GET",
             path="/api/1/datasets/",
             query=(),
-            expected_envelope_keys=frozenset({"data"}),
+            expected_envelope_keys=expected_envelope_keys,
         )
 
     assert "read-class" in str(raised.value)
@@ -698,14 +701,16 @@ def test_t04_a_drift_target_cannot_name_a_read_absent_from_the_allowlist(mutatio
 
 
 def test_t04_drift_targets_reject_non_https_and_unbounded_read_sets() -> None:
+    reads = _first_reads()
     with pytest.raises(CatalogValidationError, match="HTTPS"):
-        DriftTarget(alias="primary", origin="http://127.0.0.1:5640", reads=_first_reads())
+        DriftTarget(alias="primary", origin="http://127.0.0.1:5640", reads=reads)
     with pytest.raises(ValueError):
-        DriftTarget(alias="PRIMARY", origin=ORIGIN, reads=_first_reads())
+        DriftTarget(alias="PRIMARY", origin=ORIGIN, reads=reads)
     with pytest.raises(ValueError):
-        DriftTarget(alias="primary", origin="", reads=_first_reads())
+        DriftTarget(alias="primary", origin="", reads=reads)
+    unbounded_reads = reads + ("udata/api-v2.list-topics",)
     with pytest.raises(CatalogValidationError):
-        DriftTarget(alias="primary", origin=ORIGIN, reads=_first_reads() + ("udata/api-v2.list-topics",))
+        DriftTarget(alias="primary", origin=ORIGIN, reads=unbounded_reads)
     with pytest.raises(CatalogValidationError):
         DriftTarget(alias="primary", origin=ORIGIN, reads=("udata/api-v2.list-topics",))
     with pytest.raises(CatalogValidationError):
@@ -720,8 +725,9 @@ def test_t03_runs_are_bounded_to_the_reviewed_target_and_read_counts() -> None:
     targets = [
         DriftTarget(alias=f"t{index}", origin=ORIGIN, reads=_first_reads()) for index in range(MAX_TARGETS_PER_RUN + 1)
     ]
+    transport = RecordingTransport(_compatible_routes())
     with pytest.raises(CatalogValidationError, match="reviewed targets"):
-        run_udata_drift(targets, transport=RecordingTransport(_compatible_routes()))
+        run_udata_drift(targets, transport=transport)
 
 
 def test_t03_multiple_approved_targets_produce_one_bounded_report_each() -> None:

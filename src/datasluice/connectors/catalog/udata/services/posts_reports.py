@@ -18,25 +18,22 @@ from datasluice.connectors.catalog.udata.models.posts_reports import (
     ReportQuery,
     ReportUpdateInput,
 )
-from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
-from datasluice.connectors.catalog.udata.wire import posts_reports as wire
-from datasluice.domain.catalog.ids import ResourceKind
-from datasluice.errors.catalog import NativeCatalogError
-
-from .taxonomies import (
+from datasluice.connectors.catalog.udata.services.taxonomies import (
     AsyncCatalogService,
     Permissions,
     Policy,
     Request,
     Response,
-    SupportsUpload,
     SyncCatalogService,
     _dataset_mutate,
-    _dataset_upload,
     _parsed,
     _run_mutation,
     _run_mutation_async,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire import posts_reports as wire
+from datasluice.domain.catalog.ids import ResourceKind
+from datasluice.errors.catalog import NativeCatalogError
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
@@ -127,6 +124,8 @@ def _record_id(payload: object, fallback: str) -> str:
 
 class SyncPostsReportsService(SyncCatalogService):
     """Typed synchronous post, report, and notification operations."""
+
+    _admin_operations = frozenset(_ADMIN)
 
     def __init__(self, client: SyncUDataClient) -> None:
         self._client = client
@@ -355,30 +354,6 @@ class SyncPostsReportsService(SyncCatalogService):
                 idempotency_policy=policy.idempotency if policy else None,
             )
         return _dataset_mutate(self._client._dataset_call, credential, permissions, policy, operation, request)
-
-    def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
-        return _dataset_mutate(
-            self._client._dataset_call,
-            self._client._resolved_credential(),
-            permissions,
-            policy,
-            operation,
-            request,
-            admin=operation in _ADMIN,
-        )
-
-    def _mutate_upload(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
-        method, path, headers, upload = request
-        return _dataset_upload(
-            self._client._dataset_call,
-            self._client._resolved_credential(),
-            permissions,
-            policy,
-            operation,
-            (method, path, headers),
-            cast("SupportsUpload", upload),
-            admin=operation in _ADMIN,
-        )
 
 
 class AsyncPostsReportsService(AsyncCatalogService):
@@ -614,28 +589,4 @@ class AsyncPostsReportsService(AsyncCatalogService):
             self._client._dataset_call_async, credential, permissions, policy, operation, request
         )
 
-    async def _mutate(self, request: Request, permissions: Permissions, policy: Policy, operation: str) -> Response:
-        return await _dataset_mutate(
-            self._client._dataset_call_async,
-            await self._client._resolved_credential_async(),
-            permissions,
-            policy,
-            operation,
-            request,
-            admin=operation in _ADMIN,
-        )
-
-    async def _mutate_upload(
-        self, request: Request, permissions: Permissions, policy: Policy, operation: str
-    ) -> Response:
-        method, path, headers, upload = request
-        return await _dataset_upload(
-            self._client._dataset_call_async,
-            await self._client._resolved_credential_async(),
-            permissions,
-            policy,
-            operation,
-            (method, path, headers),
-            cast("SupportsUpload", upload),
-            admin=operation in _ADMIN,
-        )
+    _admin_operations = frozenset(_ADMIN)

@@ -227,8 +227,9 @@ def test_user_and_api_token_inputs_reject_invalid_documented_values() -> None:
         UserUpdateInput({"roles": [{"id": "admin"}]})
     with pytest.raises(ValueError, match="255 characters"):
         ApiTokenCreateInput(name="x" * 256)
+    expires_at = datetime.now(UTC) - timedelta(seconds=1)
     with pytest.raises(ValueError, match="in the future"):
-        ApiTokenCreateInput(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        ApiTokenCreateInput(expires_at=expires_at)
 
 
 @pytest.mark.parametrize(
@@ -247,7 +248,7 @@ def test_invalid_user_updates_fail_before_dispatch(fields: dict[str, object]) ->
     )
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     with client, pytest.raises(ValueError):
-        client.users_tokens.update_me(UserUpdateInput(fields), PERMISSIONS, _policy("update_me", "me"))
+        UserUpdateInput(fields)
     assert router.requests == []
 
 
@@ -546,15 +547,13 @@ def test_revoke_requires_exact_target_and_receipts_deployment_disabled() -> None
     router = _Router(_routes(("DELETE", "/api/1/me/api_tokens/token-id/", 423, {"message": "read only"})))
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     with client:
+        wrong_target_policy = _policy("revoke_api_token", "other", destructive=True)
         with pytest.raises(ForbiddenError) as denied:
-            client.users_tokens.revoke_api_token(
-                "token-id", PERMISSIONS, _policy("revoke_api_token", "other", destructive=True)
-            )
+            client.users_tokens.revoke_api_token("token-id", PERMISSIONS, wrong_target_policy)
         assert not router.requests
+        policy = _policy("revoke_api_token", "token-id", destructive=True)
         with pytest.raises(CatalogUnavailableError) as unavailable:
-            client.users_tokens.revoke_api_token(
-                "token-id", PERMISSIONS, _policy("revoke_api_token", "token-id", destructive=True)
-            )
+            client.users_tokens.revoke_api_token("token-id", PERMISSIONS, policy)
     denied_receipt = denied.value.__dict__["mutation_receipt"]
     assert isinstance(denied_receipt, MutationReceipt)
     assert denied_receipt.outcome == "rejected"
@@ -572,12 +571,13 @@ def test_user_admin_mutations_deny_non_admin_before_dispatch() -> None:
     email = "controlled@example.org"
     target = f"request:{hashlib.sha256(email.encode()).hexdigest()[:24]}"
     with client:
+        user = UserCreateInput("Controlled", "User", email)
+        create_policy = _policy("create_user", target)
         with pytest.raises(ForbiddenError) as create_denied:
-            client.users_tokens.create_user(
-                UserCreateInput("Controlled", "User", email), PERMISSIONS, _policy("create_user", target)
-            )
+            client.users_tokens.create_user(user, PERMISSIONS, create_policy)
+        delete_policy = _policy("delete_user", "user-id", destructive=True)
         with pytest.raises(ForbiddenError) as delete_denied:
-            client.users_tokens.delete_user("user-id", PERMISSIONS, _policy("delete_user", "user-id", destructive=True))
+            client.users_tokens.delete_user("user-id", PERMISSIONS, delete_policy)
     assert router.requests == []
     create_receipt = create_denied.value.__dict__["mutation_receipt"]
     delete_receipt = delete_denied.value.__dict__["mutation_receipt"]
@@ -590,8 +590,10 @@ def test_user_admin_mutations_deny_non_admin_before_dispatch() -> None:
 def test_update_me_role_escalation_requires_admin_before_dispatch() -> None:
     router = _Router(_routes())
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    user = UserUpdateInput({"roles": ["admin"]})
+    policy = _policy("update_me", "me")
     with client, pytest.raises(ForbiddenError) as denied:
-        client.users_tokens.update_me(UserUpdateInput({"roles": ["admin"]}), PERMISSIONS, _policy("update_me", "me"))
+        client.users_tokens.update_me(user, PERMISSIONS, policy)
     assert router.requests == []
     receipt = denied.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
@@ -613,11 +615,14 @@ def test_privilege_field_escalation_requires_admin_before_dispatch(
     router = _Router(_routes())
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
     target = identifier or "me"
-    with client, pytest.raises(ForbiddenError) as denied:
+    policy = _policy(name, target)
+    with client:
         if identifier is None:
-            client.users_tokens.update_me(client_input, PERMISSIONS, _policy(name, target))
+            with pytest.raises(ForbiddenError) as denied:
+                client.users_tokens.update_me(client_input, PERMISSIONS, policy)
         else:
-            client.users_tokens.update_user(identifier, client_input, PERMISSIONS, _policy(name, target))
+            with pytest.raises(ForbiddenError) as denied:
+                client.users_tokens.update_user(identifier, client_input, PERMISSIONS, policy)
     assert router.requests == []
     receipt = denied.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
@@ -632,14 +637,14 @@ def test_async_privilege_field_escalation_requires_admin_before_dispatch() -> No
 
     async def run() -> None:
         async with client:
+            current_user = UserUpdateInput({"roles": ["admin"]})
+            current_user_policy = _policy("update_me", "me")
             with pytest.raises(ForbiddenError) as denied:
-                await client.users_tokens.update_me(
-                    UserUpdateInput({"roles": ["admin"]}), PERMISSIONS, _policy("update_me", "me")
-                )
+                await client.users_tokens.update_me(current_user, PERMISSIONS, current_user_policy)
+            user = UserUpdateInput({"active": False})
+            user_policy = _policy("update_user", "user-id")
             with pytest.raises(ForbiddenError) as user_denied:
-                await client.users_tokens.update_user(
-                    "user-id", UserUpdateInput({"active": False}), PERMISSIONS, _policy("update_user", "user-id")
-                )
+                await client.users_tokens.update_user("user-id", user, PERMISSIONS, user_policy)
         for raised, target in ((denied, "me"), (user_denied, "user-id")):
             receipt = raised.value.__dict__["mutation_receipt"]
             assert isinstance(receipt, MutationReceipt)
@@ -660,10 +665,10 @@ def test_sync_interruption_after_dispatch_retains_cancelled_target_receipt() -> 
 
     router = _InterruptedRouter(_routes())
     client = SyncUDataClient(router, declared_udata_profile(), origin=ORIGIN, credentials=CREDENTIAL)
+    token_input = ApiTokenCreateInput()
+    policy = _policy("create_api_token", "new-api-token")
     with client, pytest.raises(KeyboardInterrupt) as raised:
-        client.users_tokens.create_api_token(
-            ApiTokenCreateInput(), PERMISSIONS, _policy("create_api_token", "new-api-token")
-        )
+        client.users_tokens.create_api_token(token_input, PERMISSIONS, policy)
     receipt = raised.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
     assert receipt.outcome == "cancelled"

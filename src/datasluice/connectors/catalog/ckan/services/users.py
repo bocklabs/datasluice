@@ -33,6 +33,13 @@ if TYPE_CHECKING:
     from datasluice.domain.catalog.models import ResultEnvelope
     from datasluice.domain.catalog.safety import MutationPolicy
 
+
+def _user_params(base: dict[str, object], **optional: object) -> dict[str, object]:
+    params = dict(base)
+    params.update(drop_unset(optional))
+    return params
+
+
 _USER_GROUP = "users"
 _TOKEN_OPERATION = "ckan/action-api-v3.user-create-update-delete-token-management"
 
@@ -84,16 +91,14 @@ class SyncUsersService(_SyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create a user from documented keyword fields."""
-        params: dict[str, object] = {"name": name, "email": email}
-        params.update(drop_unset({"fullname": fullname, "about": about, "password": password}))
+        params = _user_params({"name": name, "email": email}, fullname=fullname, about=about, password=password)
         return self._invoke_mutation("user_create", params, policy)
 
     def user_invite(
         self, *, email: str, group_id: str, role: str, name: str | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Invite one new user into a group or organization with a role."""
-        params: dict[str, object] = {"email": email, "group_id": group_id, "role": role}
-        params.update(drop_unset({"name": name}))
+        params = _user_params({"email": email, "group_id": group_id, "role": role}, name=name)
         return self._invoke_mutation("user_invite", params, policy)
 
     def user_update(
@@ -107,8 +112,7 @@ class SyncUsersService(_SyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one user from documented keyword fields."""
-        params: dict[str, object] = {"id": id}
-        params.update(drop_unset({"email": email, "fullname": fullname, "about": about, "password": password}))
+        params = _user_params({"id": id}, email=email, fullname=fullname, about=about, password=password)
         return self._invoke_mutation("user_update", params, policy)
 
     def user_patch(
@@ -121,8 +125,7 @@ class SyncUsersService(_SyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Patch selected user fields without replacing the record."""
-        params: dict[str, object] = {"id": id}
-        params.update(drop_unset({"email": email, "fullname": fullname, "about": about}))
+        params = _user_params({"id": id}, email=email, fullname=fullname, about=about)
         return self._invoke_mutation("user_patch", params, policy)
 
     def user_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -193,16 +196,14 @@ class AsyncUsersService(_AsyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Create a user from documented keyword fields."""
-        params: dict[str, object] = {"name": name, "email": email}
-        params.update(drop_unset({"fullname": fullname, "about": about, "password": password}))
+        params = _user_params({"name": name, "email": email}, fullname=fullname, about=about, password=password)
         return await self._invoke_mutation("user_create", params, policy)
 
     async def user_invite(
         self, *, email: str, group_id: str, role: str, name: str | None = None, policy: MutationPolicy | None = None
     ) -> CKANMutationResult:
         """Invite one new user into a group or organization with a role."""
-        params: dict[str, object] = {"email": email, "group_id": group_id, "role": role}
-        params.update(drop_unset({"name": name}))
+        params = _user_params({"email": email, "group_id": group_id, "role": role}, name=name)
         return await self._invoke_mutation("user_invite", params, policy)
 
     async def user_update(
@@ -216,8 +217,7 @@ class AsyncUsersService(_AsyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Update one user from documented keyword fields."""
-        params: dict[str, object] = {"id": id}
-        params.update(drop_unset({"email": email, "fullname": fullname, "about": about, "password": password}))
+        params = _user_params({"id": id}, email=email, fullname=fullname, about=about, password=password)
         return await self._invoke_mutation("user_update", params, policy)
 
     async def user_patch(
@@ -230,8 +230,7 @@ class AsyncUsersService(_AsyncGroupService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Patch selected user fields without replacing the record."""
-        params: dict[str, object] = {"id": id}
-        params.update(drop_unset({"email": email, "fullname": fullname, "about": about}))
+        params = _user_params({"id": id}, email=email, fullname=fullname, about=about)
         return await self._invoke_mutation("user_patch", params, policy)
 
     async def user_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:

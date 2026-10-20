@@ -76,7 +76,8 @@ def test_cold_probe_shares_wait_deadline(
         monkeypatch.setattr(router, "send", respond)
         with sync_client(router) as client:
             result = wait(client)
-    assert result.handle.exhausted and result.handle.abandoned
+    assert result.handle.exhausted
+    assert result.handle.abandoned
     assert len(requests) == 1
     assert requests[0].url.endswith("/api/1/site/")
 
@@ -119,27 +120,30 @@ def test_deadline_settlement_preserves_dispatch_evidence(
             "transfer-1", TransferResponseInput("accept"), UDATA_PERMISSIONS, policy
         )
 
-    async def run() -> None:
+    async def run() -> BudgetExhaustedError:
         async def send(request: RuntimeRequest) -> RuntimeResponse:
             return respond(request)
 
         router = async_route_table(routes)
         monkeypatch.setattr(router, "send", send)
         async with async_client(router) as client:
-            await invoke(client)
+            coroutine = invoke(client)
+            with pytest.raises(BudgetExhaustedError) as raised:
+                await coroutine
+            return raised.value
 
-    with pytest.raises(BudgetExhaustedError) as raised:
-        if asynchronous:
-            asyncio.run(run())
-        else:
-            router = sync_route_table(routes)
-            monkeypatch.setattr(router, "send", respond)
-            with sync_client(router) as client:
-                invoke(client)
-    if phase == "read":
-        assert not hasattr(raised.value, "mutation_receipt")
+    if asynchronous:
+        error = asyncio.run(run())
     else:
-        receipt = getattr(raised.value, "mutation_receipt", None)
+        router = sync_route_table(routes)
+        monkeypatch.setattr(router, "send", respond)
+        with sync_client(router) as client, pytest.raises(BudgetExhaustedError) as raised:
+            invoke(client)
+        error = raised.value
+    if phase == "read":
+        assert not hasattr(error, "mutation_receipt")
+    else:
+        receipt = getattr(error, "mutation_receipt", None)
         assert isinstance(receipt, MutationReceipt)
         assert receipt.outcome == ("ambiguous" if phase == "mutation" else "failed")
     assert len(requests) == (1 if phase == "preflight" else 2)

@@ -91,8 +91,9 @@ def test_sync_executor_rejects_async_checkpoint_sink() -> None:
     async def sink(checkpoint: BulkCheckpoint) -> None:
         raise AssertionError("The synchronous executor must not invoke an async sink.")
 
+    outcomes = BulkExecutor(_receipt, checkpoint_sink=sink).stream(_plan("only"))
     with pytest.raises(TypeError, match="AsyncBulkExecutor"):
-        list(BulkExecutor(_receipt, checkpoint_sink=sink).stream(_plan("only")))
+        list(outcomes)
 
 
 def test_duplicate_ids_fail_before_any_dispatch() -> None:
