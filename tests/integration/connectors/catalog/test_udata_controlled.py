@@ -3808,10 +3808,6 @@ def test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up() -> N
             concurrency=ConcurrencyPolicy(overwrite=True),
         )
 
-    def dataset_subject(client: SyncUDataClient) -> dict[str, str]:
-        dataset_id = client.datasets.list(DatasetListQuery(page=1, page_size=1)).items[0].id.value
-        return {"id": dataset_id, "class": "Dataset"}
-
     with create_sync_client(UDataClientSettings(base_url=ORIGIN, credential=credential)) as client:
         subject_id = client.datasets.list(DatasetListQuery(page=1, page_size=1)).items[0].id.value
         created = client.activity_discussions.create_discussion(

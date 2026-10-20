@@ -154,10 +154,3 @@ class TelemetryPolicy:
             raise ValueError("Telemetry enabled state must be a boolean.")
         if self.enabled and self.hook is None:
             raise ValueError("Enabled telemetry requires a caller-supplied hook.")
-
-
-class AuditSink(Protocol):
-    """Persist caller-owned audit events only when explicitly supplied."""
-
-    def record(self, event: StructuredEvent) -> None:
-        """Persist one redacted structured event."""

@@ -73,11 +73,6 @@ class BulkSummary:
         """Return the terminal state name."""
         return self.state
 
-    @property
-    def dispatch_count(self) -> int:
-        """Return the number of items dispatched during this run."""
-        return self.dispatches
-
 
 BulkAggregate = BulkSummary
 

@@ -490,16 +490,6 @@ class SiteProfile:
         return cast("Mapping[str, object]", value) if value is not None else None
 
     @property
-    def configs(self) -> Mapping[str, object] | None:
-        """Return the native site configuration mapping when present."""
-        return self._mapping_values("configs")
-
-    @property
-    def themes(self) -> Mapping[str, object] | None:
-        """Return the native site theme mapping when present."""
-        return self._mapping_values("themes")
-
-    @property
     def settings(self) -> Mapping[str, object] | None:
         """Return the native site settings mapping when present."""
         return self._mapping_values("settings")
@@ -508,29 +498,6 @@ class SiteProfile:
     def metrics(self) -> Mapping[str, object] | None:
         """Return the native site metrics mapping when present."""
         return self._mapping_values("metrics")
-
-    def _block_values(self, field_name: str) -> tuple[Mapping[str, object], ...] | None:
-        value = self.payload.get(field_name)
-        return (
-            tuple(cast("list[Mapping[str, object]] | tuple[Mapping[str, object], ...]", value))
-            if value is not None
-            else None
-        )
-
-    @property
-    def datasets_blocs(self) -> tuple[Mapping[str, object], ...] | None:
-        """Return the native dataset editorial blocks when present."""
-        return self._block_values("datasets_blocs")
-
-    @property
-    def reuses_blocs(self) -> tuple[Mapping[str, object], ...] | None:
-        """Return the native reuse editorial blocks when present."""
-        return self._block_values("reuses_blocs")
-
-    @property
-    def dataservices_blocs(self) -> tuple[Mapping[str, object], ...] | None:
-        """Return the native dataservice editorial blocks when present."""
-        return self._block_values("dataservices_blocs")
 
     @property
     def catalog_id(self) -> CatalogId:

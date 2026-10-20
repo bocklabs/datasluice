@@ -155,14 +155,3 @@ class CKANClientSettings:
             raise ValueError("Capability cache TTL must be a finite non-negative number.")
         if self.max_upload_bytes is not None and (type(self.max_upload_bytes) is not int or self.max_upload_bytes < 1):
             raise ValueError("Upload byte ceilings must be positive integers when supplied.")
-
-    @property
-    def owns_sync_transport(self) -> bool:
-        """Return whether factory-constructed sync transports are client-owned."""
-        return self.sync_transport is None or _transport_role(self.sync_transport) == "factory"
-
-    @property
-    def owns_async_transport(self) -> bool:
-        """Return whether factory-constructed async transports are client-owned."""
-        role = _transport_role(self.async_transport) if self.async_transport is not None else "none"
-        return self.async_transport is None or role == "factory"

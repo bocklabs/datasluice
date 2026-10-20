@@ -1575,46 +1575,6 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._emit(owning_id, "succeeded")
         return result
 
-    def _dataset_page_request(
-        self,
-        owning_id: OperationId,
-        operation: CatalogOperationRequest,
-        effective: EffectiveCapabilityProfile,
-        credential: object | None,
-    ) -> tuple[RuntimeRequest, DeadlineMonitor]:
-        self._require_dispatchable(owning_id, effective)
-        params = self._validate_page_params(operation)
-        request = _page_request(origin=self._origin, params=params)
-        if credential is not None:
-            request = replace(request, headers=_auth_headers(credential))
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        return request, deadline
-
-    @contextmanager
-    def _trace_dispatch(self, attempt: _RequestAttempt, deadline: DeadlineMonitor) -> Generator[None]:
-        owning_id = attempt.owning_id
-        try:
-            yield
-        except BudgetExhaustedError:
-            self._emit(
-                owning_id,
-                "budget_exhausted",
-                budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-            )
-            raise
-        except Exception:
-            self._emit(owning_id, "failed", retry_count=max(0, attempt.attempts - 1))
-            raise
-        finally:
-            attempt.release_trial()
-        self._emit(
-            owning_id,
-            "succeeded",
-            retry_count=max(0, attempt.attempts - 1),
-            budget_usage=max(0.0, self._budget.total - deadline.remaining()),
-        )
-
     def _dataset_body(
         self,
         json_body: object,

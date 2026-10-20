@@ -281,11 +281,6 @@ class DatasetExtrasUpdate:
         """Encode the exact extras JSON body."""
         return {key: _thaw_json(value) for key, value in self.values.items()}
 
-    @property
-    def removal_keys(self) -> list[str]:
-        """Return the keys whose JSON null values delete the extra."""
-        return [key for key, value in self.values.items() if value is None]
-
 
 @dataclass(frozen=True, slots=True)
 class DatasetExtrasDelete:
