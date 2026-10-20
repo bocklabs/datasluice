@@ -279,6 +279,11 @@ def test_all_22_assigned_resource_routes_have_independent_exact_verbs_and_paths(
         wire.v2_resource_request("dataset", extras="DELETE")
     with pytest.raises(CatalogValidationError):
         wire.v2_resource_request("", "resource", extras="PUT")
+    for identifier in ('da"ta', "da'ta", "da\x01ta"):
+        with pytest.raises(CatalogValidationError):
+            wire.resource_request("GET", identifier, "resource")
+        with pytest.raises(CatalogValidationError):
+            wire.resource_request("GET", "dataset", identifier)
 
 
 @pytest.mark.parametrize(

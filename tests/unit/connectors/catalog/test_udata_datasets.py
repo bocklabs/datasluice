@@ -38,7 +38,6 @@ from datasluice.errors.catalog import (
     NativeCatalogError,
     UnauthenticatedError,
 )
-from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
 
 if TYPE_CHECKING:
@@ -1284,8 +1283,10 @@ def test_wr06_malformed_documented_dataset_fields_fail_with_route_identity() -> 
 def test_wr07_nested_extras_inputs_and_results_are_json_safe_and_immutable() -> None:
     update = DatasetExtrasUpdate({"nested": {"items": [1, 2]}})
     assert update.payload() == {"nested": {"items": [1, 2]}}
-    with pytest.raises(DataSluiceError, match="udata.dataset.values.not-finite"):
+    with pytest.raises(ValueError, match="udata.dataset.values"):
         DatasetExtrasUpdate({"not-finite": float("nan")})
+    with pytest.raises(ValueError, match="udata.dataset.fields"):
+        DatasetCreateInput(title="T", description="D", fields={"bad": object()})
 
     routes = _site_first(
         {("PUT", "http://127.0.0.1:5640/api/2/datasets/abc/extras/"): (200, {"nested": {"items": [1, 2]}})}

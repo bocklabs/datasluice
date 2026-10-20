@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -438,14 +438,18 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
 
 
 def _process_cas(base_uri: str, barrier: Any, results: Any, value: str) -> None:
-    store = FileStateStore(base_uri)
-    prior = store.read_version("shared")
-    barrier.wait(timeout=10)
     try:
-        store.conditional_put("shared", SyncState(cursor={"shared": f'"{value}"'}), prior)
-        results.put("committed")
-    except SyncStateConflictError:
-        results.put("conflict")
+        store = FileStateStore(base_uri)
+        prior = store.read_version("shared")
+        barrier.wait(timeout=10)
+        try:
+            store.conditional_put("shared", SyncState(cursor={"shared": f'"{value}"'}), prior)
+            results.put("committed")
+        except SyncStateConflictError:
+            results.put("conflict")
+    except Exception as exc:
+        # surface unexpected child failures instead of a parent-side queue.Empty timeout
+        results.put(f"error: {exc!r}")
 
 
 def test_local_cas_coordinates_separate_processes(tmp_path: Path) -> None:
@@ -479,3 +483,55 @@ def test_atomic_sync_refuses_a_store_without_a_transaction_lock() -> None:
 
     with pytest.raises(DataSluiceError, match="key_lock"):
         _resource_transaction(UnlockedStore(), "resource", is_atomic=True)
+
+
+def test_file_state_store_satisfies_the_key_lock_capability() -> None:
+    from datasluice.ports import KeyLockStateStore
+
+    assert isinstance(FileStateStore("file://state"), KeyLockStateStore)
+
+
+def test_per_key_lock_is_released_between_yielded_outcomes(tmp_path, csv_server, make_resource) -> None:
+    from datasluice.data import DataPlaneResourceReader
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
+    from datasluice.sync import state_store as module
+    from datasluice.sync import sync_resources
+    from datasluice.sync._identity import canonical_identity
+
+    _server, url = csv_server()
+    resource = make_resource(url, format="CSV")
+    store = FileStateStore(f"file://{tmp_path}/state")
+    generator = sync_resources(
+        [resource],
+        state_store=store,
+        reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
+        destination_uri=f"file://{tmp_path}/dest",
+    )
+    try:
+        next(generator)
+        scope = store._lock_scope(canonical_identity(resource))
+        with module._GLOBAL_LOCKS_GUARD:
+            assert scope not in module._GLOBAL_LOCKS
+            assert scope not in module._GLOBAL_LOCKS_USERS
+    finally:
+        cast("Any", generator).close()
+
+
+def test_process_cas_reports_unexpected_child_failures(tmp_path) -> None:
+    """A child-side failure lands on the queue as an error instead of a parent timeout."""
+
+    class _BrokenBarrier:
+        def wait(self, timeout: float | None = None) -> None:
+            raise RuntimeError("barrier exploded")
+
+    class _Queue:
+        def __init__(self) -> None:
+            self.items: list[str] = []
+
+        def put(self, item: str) -> None:
+            self.items.append(item)
+
+    results = _Queue()
+    _process_cas(f"file://{tmp_path}/state", _BrokenBarrier(), results, "a")
+
+    assert results.items == ["error: RuntimeError('barrier exploded')"]

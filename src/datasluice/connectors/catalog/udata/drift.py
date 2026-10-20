@@ -99,9 +99,8 @@ class UDataDriftUnavailableError(CatalogUnavailableError):
             capability_state="unavailable",
             metadata={"approved_targets": approved_targets, "version_state": "unapproved-targets"},
             safe_action=(
-                "Record a reviewed target decision in "
-                ".planning/phases/04-udata-connector/04-DRIFT-TARGETS.md and populate APPROVED_TARGETS "
-                "before enabling the scheduled drift run."
+                "After reviewing a public deployment, populate the APPROVED_TARGETS tuple in "
+                "datasluice.connectors.catalog.udata.drift before enabling the scheduled drift run."
             ),
         )
         self.approved_targets = approved_targets

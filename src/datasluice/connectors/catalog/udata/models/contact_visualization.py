@@ -115,7 +115,7 @@ def _email(value: object, label: str) -> None:
             and not any(character.isspace() for character in value)
             and len(labels) >= 2
             and all(labels)
-            and labels[-1].isalpha()
+            and all(character.isalnum() or character == "-" for character in labels[-1])
             and len(labels[-1]) >= 2
         )
     if not valid:

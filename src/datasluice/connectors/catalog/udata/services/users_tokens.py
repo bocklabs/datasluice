@@ -199,9 +199,7 @@ def _error_receipt(
     error: BaseException, name: str, target: str, policy: Policy, response: RuntimeResponse | None
 ) -> None:
     operation = wire.OPERATIONS[name]
-    outcome = (
-        "ambiguous" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
-    )
+    outcome = _mutation_outcome(error, response)
     receipt = _org_receipt(
         operation,
         target,

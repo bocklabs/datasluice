@@ -197,12 +197,16 @@ def test_undeclared_container_formats_raise_unless_declared(tmp_path) -> None:
     pq.write_table(pa.table({"id": [1, 2]}), parquet_path)
 
     reader = DataPlaneResourceReader(transport=None)
-    for path, hint in ((zip_path, "XLSX"), (parquet_path, "PARQUET")):
+    for path, hint in ((zip_path, "CSV"), (parquet_path, "PARQUET")):
         undeclared = Resource(id="r1", url=f"file://{path}", format=None, access=LocalFile(path=str(path)))
         with pytest.raises(UnsupportedAccessError) as exc_info:
             reader.open(undeclared)
         assert "Pass format=" in str(exc_info.value)
         assert hint in str(exc_info.value)
+    undeclared = Resource(id="r1", url=f"file://{zip_path}", format=None, access=LocalFile(path=str(zip_path)))
+    with pytest.raises(UnsupportedAccessError) as exc_info:
+        reader.open(undeclared)
+    assert "XLSX" not in str(exc_info.value)
 
     declared = Resource(id="r1", url=f"file://{zip_path}", format="CSV", access=LocalFile(path=str(zip_path)))
     with reader.open(declared) as bs:

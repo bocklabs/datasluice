@@ -536,3 +536,17 @@ def test_async_loopback_transport_decodes_chunked_round_trip() -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_urllib_transport_failures_retain_their_cause() -> None:
+    """Urllib causes are deliberately chained because their text carries no request context."""
+
+    class _FailingOpener:
+        def open(self, request: Request, *, timeout: float) -> _FakeResponse:
+            raise OSError("connection reset")
+
+    transport = UrllibCatalogTransport()
+    cast("Any", transport)._opener = _FailingOpener()
+    with pytest.raises(TransportError, match="could not complete") as excinfo:
+        transport.send(RuntimeRequest("GET", "https://example.test/start"))
+    assert isinstance(excinfo.value.__cause__, OSError)

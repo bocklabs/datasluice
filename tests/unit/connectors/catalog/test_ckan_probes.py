@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import threading
 from time import monotonic
 from typing import TYPE_CHECKING
 
@@ -19,6 +21,7 @@ from datasluice.connectors.catalog.ckan.probes import (
     CKANAsyncProbeRunner,
     CKANProbeRunner,
     LineState,
+    StatusSnapshotCache,
     classify_probe_response,
     map_extensions_to_operations,
     maybe_emit_line_advisory,
@@ -152,6 +155,33 @@ def test_one_shared_read_answers_the_full_optional_sweep() -> None:
     assert classes[RESOURCE_VIEWS_OPERATION_ID] is ProbeResponseClass.SUCCESS
     assert len(transport.requests) == 1
     assert transport.requests[0].url == f"{ORIGIN}/api/3/action/status_show"
+
+
+def test_concurrent_stale_snapshots_share_one_status_read() -> None:
+    """Two stale synchronous callers issue exactly one status_show read per snapshot window."""
+    entered = threading.Event()
+    release = threading.Event()
+    reads: list[RuntimeRequest] = []
+    response = RuntimeResponse(
+        status_code=200, headers={"Content-Type": "application/json"}, body=_status_body(extensions=[])
+    )
+
+    def reader(request: RuntimeRequest) -> RuntimeResponse:
+        reads.append(request)
+        entered.set()
+        release.wait(timeout=5)
+        return response
+
+    cache = StatusSnapshotCache(origin=ORIGIN, reader=reader)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(cache.snapshot) for _ in range(2)]
+        assert entered.wait(timeout=5)
+        release.set()
+        snapshots = [future.result(timeout=5) for future in futures]
+
+    assert len(reads) == 1
+    assert snapshots[0] is snapshots[1]
 
 
 def test_sql_search_maps_disabled_while_datastore_crud_resolves_independently() -> None:

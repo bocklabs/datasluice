@@ -38,7 +38,7 @@ lint:
 	uv run ruff check . --fix
 
 type-check:
-	uv run --all-extras mypy src scripts tests
+	uv run --all-extras mypy
 
 qa: format lint type-check test
 

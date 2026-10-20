@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import date
@@ -18,6 +19,7 @@ from datasluice.connectors.catalog.ckan.inventory import CKAN_ACTIONS, ActionEnt
 from datasluice.connectors.catalog.ckan.mapping import parse_action_envelope, shape_result_envelope
 from datasluice.connectors.catalog.ckan.rate_limits import resolve_rate_policy
 from datasluice.connectors.catalog.ckan.results import CKANMutationResult, require_mutation_tier
+from datasluice.connectors.catalog.ckan.services._shared import reject_deprecated
 from datasluice.connectors.catalog.ckan.settings import CKANClientSettings, normalize_origin
 from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
 from datasluice.domain.catalog.auth import CKANCredential, CredentialResolver, credential_scope
@@ -334,6 +336,7 @@ class SyncCKANClient:
             deployment_origin=settings.base_url if settings.base_url.startswith(_HTTPS_PREFIX) else None,
         )
         self._credential_scope = credential_scope(settings.credential)
+        self._scope_lock = threading.Lock()
         self._profile = self._capabilities.baseline_profile
         self._probe_runner = settings.probe_runner
         self._probe_policy = settings.probe_policy
@@ -503,16 +506,14 @@ class SyncCKANClient:
         if self._closed:
             raise RuntimeError("The synchronous CKAN client is closed.")
         _enforce_caller_guards(operation, guard)
-        from datasluice.connectors.catalog.ckan.services._shared import reject_deprecated
-
         reject_deprecated(entry.name, operation.payload)
         owning_id = _operation_id_from(entry.owning_operation_id)
         self._require_optional_evidence(owning_id)
         credential = _refreshed_credential(self._credentials)
         scope = credential_scope(credential)
-        if scope != self._credential_scope:
-            self._capabilities.invalidate()
-            self._credential_scope = scope
+        with self._scope_lock:
+            if scope != self._credential_scope:
+                self._credential_scope = scope
         effective = self._capabilities.resolve(owning_id)
         build_catalog_operation_guard(owning_id, effective).require_allowed()
         policy = require_mutation_tier(entry.mutation_class, owning_id, operation.mutation_policy)
@@ -887,15 +888,12 @@ class AsyncCKANClient:
         if self._closed:
             raise RuntimeError("The asynchronous CKAN client is closed.")
         _enforce_caller_guards(operation, guard)
-        from datasluice.connectors.catalog.ckan.services._shared import reject_deprecated
-
         reject_deprecated(entry.name, operation.payload)
         owning_id = _operation_id_from(entry.owning_operation_id)
         self._require_optional_evidence(owning_id)
         credential = await _refreshed_credential_async(self._credentials)
         scope = credential_scope(credential)
         if scope != self._credential_scope:
-            self._capabilities.invalidate()
             self._credential_scope = scope
         effective = await self._capabilities.resolve_async(owning_id)
         build_catalog_operation_guard(owning_id, effective).require_allowed()

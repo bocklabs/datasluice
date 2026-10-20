@@ -54,6 +54,6 @@ def follow_redirects[T: (RuntimeResponse, RuntimeStreamResponse)](
             raise error(f"{label} for {sanitize_uri(url)!r} exceeded its redirect limit")
         try:
             url = urljoin(url, headers["location"])
-        except ValueError:
-            raise error(f"{label} for {sanitize_uri(url)!r} returned an unusable redirect Location") from None
+        except ValueError as exc:
+            raise error(f"{label} for {sanitize_uri(url)!r} returned an unusable redirect Location ({exc})") from None
     raise AssertionError("unreachable")

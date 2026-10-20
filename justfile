@@ -20,22 +20,22 @@ alias tc := type-check
 
 # Type check the project with mypy
 type-check:
-    uv run --all-extras mypy src scripts tests
+    uv run --all-extras mypy
 
 # Re-check incrementally via mypy's daemon (repeat after changes; reuses daemon state)
 type-check-incremental:
-    uv run --all-extras dmypy run -- src scripts tests
+    uv run --all-extras dmypy run
 
 # Run all the formatting, linting, and testing commands
 qa:
     uv run ruff format .
     uv run ruff check . --fix
-    uv run --all-extras mypy src scripts tests
+    uv run --all-extras mypy
     uv run pytest
 
 # Code duplication check (jscpd)
 duplication:
-    npx --yes jscpd@4.3.0 --min-lines 10 --min-tokens 70 --threshold 1.5 --reporters consoleFull --ignore "**/node_modules/**,**/.venv/**" src tests scripts providers
+    npx --yes jscpd@4.3.0
 
 # Run all the tests for all the supported Python versions
 testall:

@@ -56,8 +56,6 @@ if TYPE_CHECKING:
         def abandoned_lease(self, *, exhausted: bool = False) -> Self: ...
 
 
-_WAIT_ACTION = "Pass a handle whose task identifier names the queued execution to watch."
-
 type Clock = Callable[[], float]
 type Sleeper = Callable[[float], None]
 type AsyncSleeper = Callable[[float], Awaitable[None]]

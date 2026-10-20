@@ -532,3 +532,46 @@ def test_contract_reconciliation_documented_as_accepted_override() -> None:
     assert "accepted override" in docstring.lower()
     assert "producer-grounded" in docstring.lower()
     assert "InMemoryStateStore" in docstring
+
+
+class _StubMsvcrt:
+    LK_NBLCK = 2
+    LK_UNLCK = 0
+
+    def __init__(self, failures_before_success: int | None) -> None:
+        self.failures_before_success = failures_before_success
+        self.calls = 0
+
+    def locking(self, _fileno: int, mode: int, _nbytes: int) -> None:
+        if mode == self.LK_UNLCK:
+            return
+        self.calls += 1
+        if self.failures_before_success is None or self.calls <= self.failures_before_success:
+            raise OSError("windows lock busy")
+
+
+def _windows_store(tmp_path: Path, stub: _StubMsvcrt, monkeypatch: pytest.MonkeyPatch) -> FileStateStore:
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "msvcrt", cast("Any", stub))
+    store = FileStateStore(f"file://{tmp_path}/state")
+    monkeypatch.setattr("datasluice.sync.state_store.time.sleep", lambda _seconds: None)
+    return store
+
+
+def test_windows_lock_retries_until_it_acquires(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubMsvcrt(failures_before_success=2)
+    store = _windows_store(tmp_path, stub, monkeypatch)
+
+    with store.key_lock("resource"):
+        assert stub.calls == 3
+
+
+def test_windows_lock_exhaustion_raises_a_store_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubMsvcrt(failures_before_success=None)
+    store = _windows_store(tmp_path, stub, monkeypatch)
+    monkeypatch.setattr("datasluice.sync.state_store._WINDOWS_LOCK_TIMEOUT_SECONDS", 0.0)
+
+    with pytest.raises(StateStoreError, match="per-key file lock"), store.key_lock("resource"):
+        pass

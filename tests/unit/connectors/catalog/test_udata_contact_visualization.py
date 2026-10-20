@@ -437,6 +437,15 @@ def test_contact_point_emails_with_multiple_at_signs_are_refused() -> None:
         ContactPointCreateInput(name="x", role="creator", email="a@b@c.com")
 
 
+def test_contact_point_emails_accept_punycode_top_level_domains() -> None:
+    """A punycode IDN top-level domain is a valid LDH TLD, matching the deployment's email validator."""
+    assert ContactPointUpdateInput(email="user@example.xn--p1ai").payload() == {"email": "user@example.xn--p1ai"}
+    assert (
+        ContactPointCreateInput(name="x", role="creator", email="user@example.xn--fiqs8s").payload()["email"]
+        == "user@example.xn--fiqs8s"
+    )
+
+
 def test_visualization_x_axis_sort_keys_are_validated_against_their_own_choices() -> None:
     """A sort key and a sort direction are not interchangeable."""
     with pytest.raises(ValueError, match="not a documented choice"):

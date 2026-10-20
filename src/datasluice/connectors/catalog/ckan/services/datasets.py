@@ -97,7 +97,7 @@ def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
         target = match.get("id") or match.get("name") if isinstance(match, Mapping) else None
         return CatalogId(PLATFORM, ResourceKind.DATASET, str(target) if target else "ckan-bulk:package-revise")
     if action in _ORG_TARGET_ACTIONS:
-        return CatalogId(PLATFORM, ResourceKind.ORGANIZATION, str(params.get("org_id", "")))
+        return CatalogId(PLATFORM, ResourceKind.ORGANIZATION, str(params["org_id"]))
     key = "name" if action == "package_create" else "id"
     return CatalogId(PLATFORM, ResourceKind.DATASET, str(params[key]))
 

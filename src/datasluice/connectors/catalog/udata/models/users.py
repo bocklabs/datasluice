@@ -17,6 +17,7 @@ from datasluice.exceptions import DataSluiceError
 
 _EMAIL = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
 _WEBSITE_REQUIRED = "uData user website must be an HTTP URL."
+_MAX_QUERY_LENGTH = 256
 _USER_FIELDS = frozenset(
     {"first_name", "last_name", "email", "website", "about", "prefered_language", "extras", "roles", "active"}
 )
@@ -127,6 +128,8 @@ class UserSuggestQuery:
 
     def __post_init__(self) -> None:
         _text(self.q, "suggest q")
+        if len(self.q) > _MAX_QUERY_LENGTH:
+            raise ValueError(f"uData user suggest q must not exceed {_MAX_QUERY_LENGTH} characters.")
         if type(self.size) is not int or not 1 <= self.size <= 20:
             raise ValueError("uData user suggestion size must be between 1 and 20.")
 

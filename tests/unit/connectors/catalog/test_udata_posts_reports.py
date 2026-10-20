@@ -24,7 +24,8 @@ from datasluice.connectors.catalog.udata.services.posts_reports import (
     SyncPostsReportsService,
 )
 from datasluice.connectors.catalog.udata.wire import posts_reports as wire
-from datasluice.domain.catalog.ids import ResourceKind
+from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.errors.catalog import CatalogNotFoundError, CatalogValidationError, ForbiddenError
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from datasluice.domain.catalog.auth import UDataCredential
     from datasluice.domain.catalog.models import MappingRecord
     from datasluice.runtime.transport.base import RuntimeRequest
+
 
 ORIGIN = UDATA_ORIGIN
 PERMISSIONS = UDATA_PERMISSIONS
@@ -526,3 +528,18 @@ def test_report_reads_require_admin_permissions_in_both_modes(method: str, args:
         assert not [request for request in async_router.requests if "/reports/" in request.url]
 
     asyncio.run(run())
+
+
+def test_post_mutation_result_requires_a_receipt_and_a_mapping_record() -> None:
+    """A mistyped receipt or record must fail at construction, not inside ``to_dict``."""
+    receipt = MutationReceipt(
+        operation=wire.CREATE_POST_OPERATION,
+        outcome="succeeded",
+        target=CatalogId(CatalogPlatform.UDATA, ResourceKind("post"), "post-1"),
+    )
+    bad_receipt = cast("MutationReceipt", "x")
+    with pytest.raises(ValueError, match="receipt and a mapping record"):
+        PostMutationResult(bad_receipt, record=cast("MappingRecord", {}))
+    record = cast("MappingRecord", {"id": "post-1"})
+    with pytest.raises(ValueError, match="receipt and a mapping record"):
+        PostMutationResult(receipt, record=record)

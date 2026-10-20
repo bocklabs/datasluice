@@ -82,7 +82,8 @@ class UrllibCatalogTransport(CatalogTransport):
     :class:`CredentialScope`. A hop whose normalized origin differs from the current one refuses to carry a request body
     whatever the scope allows, so a cross-origin 307/308 never relays a body. Note that urllib applies its timeout to
     each individual socket operation (connect and read) rather than bounding the whole request; callers needing a hard
-    deadline must enforce it themselves.
+    deadline must enforce it themselves. urllib failures keep their cause chain (``from exc``) because urllib and
+    ``OSError`` messages carry no request context.
     """
 
     def __init__(

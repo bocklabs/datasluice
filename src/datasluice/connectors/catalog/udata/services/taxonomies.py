@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from functools import partial
 from typing import TYPE_CHECKING, NoReturn, Protocol
@@ -144,11 +143,7 @@ def _failed(
     operation: str,
     kind: ResourceKind,
 ) -> NoReturn:
-    outcome = (
-        "cancelled"
-        if isinstance(error, (KeyboardInterrupt, GeneratorExit, asyncio.CancelledError))
-        else _mutation_outcome(error, response)
-    )
+    outcome = _mutation_outcome(error, response)
     _attach(error, _kind_receipt(target, policy, outcome, _error_status(error, response), mutation, operation, kind))
     raise error
 

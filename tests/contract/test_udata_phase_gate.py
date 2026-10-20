@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from scripts import check_udata_phase_gate as gate
+from scripts import extract_udata_oracle as udata_oracle
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -269,7 +270,7 @@ def test_stock_bijection_rejects_capture_tampering(independent_stock_inputs: Pat
         ("status: approved", "status: pending"),
         ("route_count: 2", "route_count: 1"),
         ("approved_by: synthetic-test", "approved_by:"),
-        ("source_commit: 0546582058d84706812a1c37387576efc4e5ad1f", f"source_commit: {'0' * 40}"),
+        (f"source_commit: {udata_oracle.PINNED_COMMIT}", f"source_commit: {'0' * 40}"),
     ],
 )
 def test_stock_bijection_rejects_invalid_approval(independent_stock_inputs: Path, old: str, new: str) -> None:
@@ -321,37 +322,6 @@ def test_stock_bijection_allows_explicit_grouped_operations(independent_stock_in
         gate.require_stock_bijection()
 
 
-@pytest.mark.parametrize(
-    "defect",
-    [
-        "missing",
-        "extra",
-        "duplicate-capability",
-        "duplicate-route",
-        "canonical-duplicate-route",
-        "wrong-route",
-        "wrong-verb",
-        "wrong-version",
-        "wrong-slash",
-        "swapped-capabilities",
-        "unknown-owner",
-        "missing-owner",
-        "invalid-owner",
-        "invalid-capability",
-        "invalid-route",
-        "unclassified-owner",
-        "undeclared-non-route",
-        "empty-reason",
-        "invalid-reason",
-        "schema",
-        "source",
-        "profile-version",
-        "bindings-not-list",
-        "non-route-not-object",
-        "binding-not-object",
-        "no-bindings",
-    ],
-)
 def _binding_defect_mutators() -> dict[str, Callable[[dict[str, Any]], None]]:
     """Return one mutator per binding defect, each editing the parsed document in place."""
 

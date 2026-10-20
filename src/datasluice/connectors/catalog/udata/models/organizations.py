@@ -98,6 +98,8 @@ class OrganizationListQuery:
         if self.sort is not None and (not isinstance(self.sort, str) or not self.sort):
             raise ValueError("uData organization sort must be a non-empty string when supplied.")
         if self.filters is not None:
+            if not isinstance(self.filters, Mapping):
+                raise ValueError("uData organization filters must be a mapping.")
             for key, value in self.filters.items():
                 if not _is_filter_value(value):
                     raise ValueError(f"uData organization filter {key!r} must be a string, boolean, or string tuple.")

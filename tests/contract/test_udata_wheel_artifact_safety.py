@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 def test_wheel_scan_distinguishes_the_fixed_safety_boundary_from_retained_origins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member: str, source: str, allowed: bool
 ) -> None:
+    # Pre-import the review gate while ROOT still points at the real repo:
+    # after the monkeypatch below, _review_gate() resolves scripts/ under
+    # tmp_path, so the later import inside require_artifact_safety only
+    # succeeds via this sys.modules warm-up.
     gate._review_gate()
     phase = tmp_path / "phase"
     reviews = tmp_path / "reviews"

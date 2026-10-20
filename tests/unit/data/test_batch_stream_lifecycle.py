@@ -25,8 +25,8 @@ class _CloseSpy:
 class _FailingFormatReader:
     def read_batches(self, source: Any, *, batch_size: int = 65536):
         def batches():
+            yield from ()
             raise RuntimeError("injected prefetch failure")
-            yield None
 
         return batches()
 

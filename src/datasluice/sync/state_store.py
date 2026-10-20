@@ -7,10 +7,11 @@ import re
 import secrets
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from datasluice._uri import sanitize_uri
 from datasluice.exceptions import StateStoreError, SyncStateConflictError
@@ -55,6 +56,36 @@ _ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 # backend (generic copy-then-remove ``mv``) CAS is detection-only — a
 # cross-process observer may briefly see no file — and a warning is logged.
 _ATOMIC_MV_BACKENDS: frozenset[str] = frozenset({"file", "local", "memory"})
+_WINDOWS_LOCK_TIMEOUT_SECONDS = 600.0
+
+
+def _acquire_windows_lock(lock_file: Any, path: str) -> None:
+    """Block on a Windows advisory lock until the deadline, then raise :class:`StateStoreError`."""
+    import msvcrt
+
+    module = cast("Any", msvcrt)
+    if lock_file.tell() == 0:
+        lock_file.write(b"0")
+        lock_file.flush()
+    deadline = time.monotonic() + _WINDOWS_LOCK_TIMEOUT_SECONDS
+    while True:
+        lock_file.seek(0)
+        try:
+            module.locking(lock_file.fileno(), module.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if time.monotonic() >= deadline:
+                raise StateStoreError(f"Timed out waiting for the per-key file lock at {sanitize_uri(path)}") from exc
+            time.sleep(0.1)
+
+
+def _release_windows_lock(lock_file: Any) -> None:
+    """Release the byte range acquired by :func:`_acquire_windows_lock`."""
+    import msvcrt
+
+    module = cast("Any", msvcrt)
+    lock_file.seek(0)
+    module.locking(lock_file.fileno(), module.LK_UNLCK, 1)
 
 
 class FileStateStore:
@@ -155,7 +186,7 @@ class FileStateStore:
     def key_lock(self, key: str) -> Iterator[threading.RLock]:
         """Serialize a resource transaction across threads and local processes.
 
-        On Windows the advisory file lock gives up after roughly ten seconds and raises
+        On Windows the advisory file lock waits up to :data:`_WINDOWS_LOCK_TIMEOUT_SECONDS`, then raises
         :class:`StateStoreError`; on POSIX it blocks until the lock is free.
         """
         if not self._is_atomic_mv:
@@ -196,18 +227,7 @@ class FileStateStore:
         path = self._fs._strip_protocol(self._state_path(key)) + ".lock"
         with open(path, "a+b") as lock_file:
             if sys.platform == "win32":
-                import msvcrt
-
-                if lock_file.tell() == 0:
-                    lock_file.write(b"0")
-                    lock_file.flush()
-                lock_file.seek(0)
-                try:
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                except OSError as exc:
-                    raise StateStoreError(
-                        f"Timed out waiting for the per-key file lock at {sanitize_uri(path)}"
-                    ) from exc
+                _acquire_windows_lock(lock_file, path)
             else:
                 import fcntl
 
@@ -218,8 +238,7 @@ class FileStateStore:
             finally:
                 _HELD_FILE_LOCKS.scopes = held
                 if sys.platform == "win32":
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    _release_windows_lock(lock_file)
                 else:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 

@@ -137,6 +137,9 @@ def _element_reference(value: object, operation: str) -> Mapping[str, str]:
     missing = {"class", "id"} - set(value)
     if missing:
         raise ValueError(f"uData topic element reference is missing documented keys: {sorted(missing)}.")
+    unknown = set(value) - {"class", "id"}
+    if unknown:
+        raise ValueError(f"uData topic element reference carries undocumented keys: {sorted(unknown)}.")
     element_class = value["class"]
     element_id = value["id"]
     if not isinstance(element_class, str) or element_class not in _ELEMENT_REFERENCE_CLASSES:
@@ -251,7 +254,7 @@ def _elements_carry_a_title_or_link(elements: tuple[TopicElementInput, ...] | No
             with a 400 on the create and replace paths.
     """
     for element in elements or ():
-        if element.title is None and element.element is None:
+        if not (element.title or "").strip() and element.element is None:
             raise ValueError("uData topic element must carry a title or a linked element.")
 
 

@@ -8,6 +8,7 @@ import pytest
 
 from datasluice.connectors.catalog.udata.clients import declared_udata_profile
 from datasluice.connectors.catalog.udata.models.jobs import (
+    CRON_FIELDS,
     PERIODS,
     WORKER_TASK_STATES,
     CrontabSchedule,
@@ -260,6 +261,27 @@ def test_malformed_job_names_and_tasks_fail_before_dispatch() -> None:
         _cron_input(description="x" * 256)
 
 
+@pytest.mark.parametrize("field", CRON_FIELDS)
+def test_malformed_crontab_fields_fail_before_dispatch(field: str) -> None:
+    with pytest.raises(ValueError, match="cron"):
+        CrontabSchedule(**{field: "abc"})
+
+
+def test_crontab_fields_accept_the_upstream_cron_grammar() -> None:
+    assert CrontabSchedule(minute="*/15", hour="0,8-17/2", day_of_week="mon-fri").payload() == {
+        "minute": "*/15",
+        "hour": "0,8-17/2",
+        "day_of_week": "mon-fri",
+        "day_of_month": "*",
+        "month_of_year": "*",
+    }
+
+
+def test_non_json_safe_job_kwargs_fail_before_dispatch() -> None:
+    with pytest.raises(ValueError, match="JSON-safe"):
+        _cron_input(kwargs={"x": object()})
+
+
 @pytest.mark.parametrize("identifier", ["..", "a/b", "a\nb", "", "a#b"])
 def test_malformed_identifiers_never_reach_a_route(identifier: str) -> None:
     """Traversal-shaped path identifiers are stopped before any dispatch."""
@@ -404,8 +426,17 @@ def test_task_status_decoding_fails_closed_on_unknown_states() -> None:
     assert frozenset({"PENDING", "RECEIVED", "STARTED", "SUCCESS", "FAILURE", "RETRY", "REVOKED"}) == WORKER_TASK_STATES
     assert wire.parse_task_status({"id": "t", "status": "SUCCESS"}, wire.GET_TASK_OPERATION) == "SUCCESS"
     for payload in ({"id": "t", "status": "finished"}, {"id": "t"}, "nope", None):
-        with pytest.raises(NativeCatalogError):
+        with pytest.raises(CatalogValidationError):
             wire.parse_task_status(payload, wire.GET_TASK_OPERATION)
+
+
+def test_task_and_job_documents_are_diagnosed_with_their_own_noun() -> None:
+    """A malformed task document is never diagnosed as a job response."""
+    for payload in ({}, {"status": "PENDING"}):
+        with pytest.raises(CatalogValidationError, match="worker task"):
+            wire.parse_record(payload, wire.GET_TASK_OPERATION)
+        with pytest.raises(CatalogValidationError, match="worker job"):
+            wire.parse_record(payload, wire.GET_JOB_OPERATION)
 
 
 def test_schedulables_decode_into_bounded_strings() -> None:

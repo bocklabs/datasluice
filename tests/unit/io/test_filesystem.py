@@ -72,3 +72,11 @@ def test_open_filesystem_does_not_import_fsspec_at_module_top() -> None:
         if re.match(r"^import fsspec|^from fsspec", line) and not line.lstrip().startswith("#")
     ]
     assert top_level == [], f"Found top-level fsspec imports: {top_level}"
+
+
+def test_strip_scheme_preserves_absolute_local_paths() -> None:
+    from fsspec.implementations.local import LocalFileSystem
+
+    fs = LocalFileSystem()
+    assert _filesystem_module.strip_scheme("file:///data/x.csv", fs) == "/data/x.csv"
+    assert _filesystem_module.strip_scheme("file:/data/x.csv", fs) == "/data/x.csv"

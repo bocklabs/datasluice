@@ -6,9 +6,10 @@ import re
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope, parse_native_page, shape_native_page
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
 from datasluice.domain.catalog.models import NativeRecord, _freeze_json
 from datasluice.errors.catalog import CatalogValidationError
@@ -47,20 +48,8 @@ V2_EXTRAS_GET_OPERATION = f"{RESOURCE_OPERATION}-v2-extras-get"
 RESOURCE_SCHEMA_SAFE_ACTION = "Verify the response against the pinned uData resource schema."
 
 
-def _id(value: object, name: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value in {".", ".."}
-        or any(character in value for character in "/?#")
-    ):
-        raise CatalogValidationError(
-            f"uData resource {name} must be one non-empty path segment.",
-            operation=RESOURCE_OPERATION,
-            platform="udata",
-            safe_action="Pass the raw uData identifier without separators.",
-        )
-    return quote(value, safe="")
+def _id(value: str, name: str) -> str:
+    return path_segment(value, RESOURCE_OPERATION, f"uData resource {name}")
 
 
 def _request(method: str, path: str, body: object | None = None) -> tuple[str, str, dict[str, str], object | None]:

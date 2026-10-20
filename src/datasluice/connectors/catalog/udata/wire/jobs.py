@@ -12,7 +12,7 @@ from datasluice.connectors.catalog.udata.models.jobs import (
     task_segment,
 )
 from datasluice.domain.catalog.models import MappingRecord
-from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
+from datasluice.errors.catalog import CatalogValidationError
 
 JOBS_PATH = "/api/1/workers/jobs/"
 SCHEDULABLES_PATH = "/api/1/workers/jobs/schedulables/"
@@ -69,16 +69,17 @@ def list_schedulables_request() -> Request:
 
 def parse_record(payload: object, operation: str) -> MappingRecord:
     """Decode one worker job or task document into a bounded mapping record."""
+    noun = "worker task" if operation == GET_TASK_OPERATION else "worker job"
     if not isinstance(payload, Mapping) or not payload:
         raise CatalogValidationError(
-            "The uData worker job response must be a non-empty JSON object.",
+            f"The uData {noun} response must be a non-empty JSON object.",
             operation=operation,
             platform=PLATFORM,
             safe_action=_PINNED_SCHEMA_ACTION,
         )
     if not isinstance(payload.get("id"), str) or not payload["id"]:
         raise CatalogValidationError(
-            "The uData worker job response must carry a non-empty string identifier.",
+            f"The uData {noun} response must carry a non-empty string identifier.",
             operation=operation,
             platform=PLATFORM,
             safe_action=_PINNED_SCHEMA_ACTION,
@@ -124,11 +125,11 @@ def parse_task_status(payload: object, operation: str) -> str:
         One member of the pinned celery state vocabulary.
 
     Raises:
-        NativeCatalogError: If the document omits a known task status.
+        CatalogValidationError: If the document omits a known task status.
     """
     status = payload.get("status") if isinstance(payload, Mapping) else None
     if not isinstance(status, str) or status not in WORKER_TASK_STATES:
-        raise NativeCatalogError(
+        raise CatalogValidationError(
             "The uData worker task response does not declare a known task status.",
             operation=operation,
             platform=PLATFORM,

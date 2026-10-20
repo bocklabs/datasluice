@@ -758,6 +758,7 @@ def test_invalid_json_params_are_rejected_before_dispatch(params: dict[str, obje
     [
         ("https://169.254.169.254", "public host"),
         ("https://10.0.0.5/ckan", "public host"),
+        ("https://ckan.example.com:99999", r"valid HTTP\(S\) target"),
         ("https://example.com/a/../b", "dot path segments"),
         ("https://example.com/a/%2e%2e/b", "dot path segments"),
         ("https://example.com/a\\..\\b", "backslash"),
@@ -801,3 +802,44 @@ def test_discovery_exposes_only_its_supported_operation_family(asynchronous: boo
     assert callable(discovery.status_show)
     assert callable(discovery.help_show)
     assert not hasattr(discovery, "query_and_record_crud")
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_credential_rotation_keeps_cached_capability_state(asynchronous: bool) -> None:
+    """A rotating credential scope never wipes the scope-partitioned capability cache."""
+    rotated = False
+
+    class RotatingCredential(CKANCredential):
+        def resolve(self) -> CKANCredential:
+            return CKANCredential("fresh" if rotated else "expired")
+
+    if asynchronous:
+        async_runner = AsyncStubProbeRunner()
+        async_settings = CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN,
+            credential=RotatingCredential("provider"),
+            probe_policy="auto",
+            async_probe_runner=async_runner,
+        )
+        async_transport = AsyncCaptureTransport(body=success_body(PACKAGE_RESULT))
+        async_client = AsyncCKANClient(async_transport, declared_ckan_profile(), async_settings)
+        assert asyncio.run(async_client.datasets.package_show(id="abc-123")).items
+        probed_after_first = len(async_runner.probed)
+        rotated = True
+        assert asyncio.run(async_client.datasets.package_show(id="abc-123")).items
+        assert len(async_runner.probed) == probed_after_first
+    else:
+        runner = StubProbeRunner()
+        sync_settings = CKANClientSettings(
+            base_url=LOOPBACK_ORIGIN,
+            credential=RotatingCredential("provider"),
+            probe_policy="auto",
+            probe_runner=runner,
+        )
+        sync_transport = SyncCaptureTransport(body=success_body(PACKAGE_RESULT))
+        sync_client = SyncCKANClient(sync_transport, declared_ckan_profile(), sync_settings)
+        assert sync_client.datasets.package_show(id="abc-123").items
+        probed_after_first = len(runner.probed)
+        rotated = True
+        assert sync_client.datasets.package_show(id="abc-123").items
+        assert len(runner.probed) == probed_after_first

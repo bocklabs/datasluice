@@ -267,11 +267,7 @@ class StatusSnapshotCache:
             current = self._snapshot
             if current is not None and self._clock() - current.fetched_at < self._ttl_seconds:
                 return current
-        snapshot = _decode_snapshot(self._reader(self._request()), fetched_at=self._clock())
-        with self._lock:
-            current = self._snapshot
-            if current is not None and self._clock() - current.fetched_at < self._ttl_seconds:
-                return current
+            snapshot = _decode_snapshot(self._reader(self._request()), fetched_at=self._clock())
             self._snapshot = snapshot
             return snapshot
 

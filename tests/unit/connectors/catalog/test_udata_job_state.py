@@ -10,7 +10,7 @@ import pytest
 from datasluice.connectors.catalog.udata.models.jobs import UDataJobHandle, WorkerTaskWaitResult
 from datasluice.connectors.catalog.udata.wire import jobs as wire
 from datasluice.domain.catalog.resilience import TimeBudget
-from datasluice.errors.catalog import NativeCatalogError
+from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
 from tests.helpers.udata_test_support import (
     UDATA_ADMIN_PERMISSIONS,
@@ -274,7 +274,10 @@ def test_async_parallel_task_reads_preserve_results() -> None:
 def test_unknown_task_status_during_a_wait_fails_typed() -> None:
     """A deployment answering an undocumented status is a typed error, never a terminal state."""
     router = PollingRouter(["WHATEVER"])
-    with sync_client(cast("SyncRouteRouter", router), UDATA_CREDENTIAL) as client, pytest.raises(NativeCatalogError):
+    with (
+        sync_client(cast("SyncRouteRouter", router), UDATA_CREDENTIAL) as client,
+        pytest.raises(CatalogValidationError),
+    ):
         client.worker_jobs.wait_for_task(_handle(max_polls=4), ADMIN)
 
 

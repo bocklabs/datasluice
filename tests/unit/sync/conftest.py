@@ -33,15 +33,21 @@ class FaultInjectingStateStore:
 
 
 class WriteCountingFS:
-    """Count destination publish renames while delegating filesystem operations."""
+    """Count destination publish renames and content reads while delegating filesystem operations."""
 
     def __init__(self, fs: Any) -> None:
         self.fs = fs
         self.mv_count = 0
+        self.read_count = 0
 
     def mv(self, source: str, destination: str) -> None:
         self.mv_count += 1
         self.fs.mv(source, destination)
+
+    def open(self, path: str, mode: str = "rb", **kwargs: Any) -> Any:
+        if "r" in mode:
+            self.read_count += 1
+        return self.fs.open(path, mode, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.fs, name)

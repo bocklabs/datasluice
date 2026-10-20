@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import (
     UDataPageEnvelope,
@@ -194,7 +194,7 @@ def organization_badge_request(
     badge = _required_id(badge_kind, operation=operation)
     path = f"/api/1/organizations/{_segment(organization_id, operation=operation)}/badges/"
     if delete:
-        path += f"{_segment(badge, operation=operation)}/"
+        path += f"{quote(badge, safe='')}/"
         return _path_request("DELETE", path)
     return _path_request("POST", path, {"kind": badge})
 
@@ -313,6 +313,13 @@ def organization_owned_request(
             operation=ORGANIZATIONS_OPERATION,
             platform=PLATFORM.value,
             safe_action="Use datasets, reuses, or discussions.",
+        )
+    if name != "datasets" and query is not None:
+        raise CatalogValidationError(
+            "The uData organization owned-object route does not accept query parameters.",
+            operation=ORGANIZATIONS_OPERATION,
+            platform=PLATFORM.value,
+            safe_action="Pass a query only for the paginated datasets route.",
         )
     query = query or OrganizationListQuery()
     params = query.query_params() if name == "datasets" else []

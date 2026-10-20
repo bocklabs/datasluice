@@ -10,6 +10,7 @@ from datasluice.connectors.catalog.udata.models._segment import paging
 from datasluice.connectors.catalog.udata.models.reuses import ReuseFollowersQuery
 from datasluice.domain.catalog.models import _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.exceptions import DataSluiceError
 
 if TYPE_CHECKING:
     from datasluice.domain.catalog.models import NativeRecord
@@ -62,6 +63,13 @@ def _optional_text(value: object, field: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"uData dataset {field} must be a string when supplied.")
     return value
+
+
+def _frozen_json(value: dict[str, object], path: str) -> object:
+    try:
+        return _freeze_json(value, path)
+    except DataSluiceError as error:
+        raise ValueError(f"uData dataset input at {path} must contain JSON-safe values only.") from error
 
 
 def _validate_sort(value: object, field: str) -> None:
@@ -164,7 +172,7 @@ class DatasetCreateInput:
             reserved = set(self.fields) & _RESERVED_CREATE_FIELDS
             if reserved:
                 raise ValueError(f"Dataset create fields cannot override typed fields: {sorted(reserved)}.")
-            object.__setattr__(self, "fields", _freeze_json(dict(self.fields), "udata.dataset.fields"))
+            object.__setattr__(self, "fields", _frozen_json(dict(self.fields), "udata.dataset.fields"))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact create JSON body."""
@@ -209,7 +217,7 @@ class DatasetUpdateInput:
             reserved = set(self.fields) & _RESERVED_UPDATE_FIELDS
             if reserved:
                 raise ValueError(f"Dataset update fields cannot override typed fields: {sorted(reserved)}.")
-            object.__setattr__(self, "fields", _freeze_json(dict(self.fields), "udata.dataset.fields"))
+            object.__setattr__(self, "fields", _frozen_json(dict(self.fields), "udata.dataset.fields"))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact update JSON body with omission semantics."""
@@ -270,7 +278,7 @@ class DatasetExtrasUpdate:
     def __post_init__(self) -> None:
         if not isinstance(self.values, Mapping):
             raise ValueError("Dataset extras update values must be a mapping.")
-        object.__setattr__(self, "values", _freeze_json(dict(self.values), "udata.dataset.values"))
+        object.__setattr__(self, "values", _frozen_json(dict(self.values), "udata.dataset.values"))
 
     def payload(self) -> dict[str, object]:
         """Encode the exact extras JSON body."""

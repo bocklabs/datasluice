@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from datasluice.connectors.catalog.udata.models._cron import CRON_FIELD, CRON_WEEKDAY_FIELD, MAX_CRON_FIELD
 from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.domain.catalog.ids import ResourceKind
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
@@ -67,7 +68,10 @@ class CrontabSchedule:
 
     def __post_init__(self) -> None:
         for field in CRON_FIELDS:
-            _validated_text(getattr(self, field), field, required=True)
+            value = _validated_text(getattr(self, field), field, required=True)
+            pattern = CRON_WEEKDAY_FIELD if field == "day_of_week" else CRON_FIELD
+            if value is None or len(value) > MAX_CRON_FIELD or pattern.fullmatch(value) is None:
+                raise ValueError(f"uData worker job crontab {field} is not a valid cron field.")
 
     def payload(self) -> dict[str, object]:
         """Return the exact five-key crontab write body."""
@@ -123,8 +127,10 @@ class JobScheduleInput:
             if len(self.args) > _MAX_ARGS:
                 raise ValueError(f"uData worker job args must hold at most {_MAX_ARGS} values.")
             _json_safe(list(self.args), "args")
-        if self.kwargs is not None and not isinstance(self.kwargs, Mapping):
-            raise ValueError("uData worker job kwargs must be a mapping when supplied.")
+        if self.kwargs is not None:
+            if not isinstance(self.kwargs, Mapping):
+                raise ValueError("uData worker job kwargs must be a mapping when supplied.")
+            _json_safe(dict(self.kwargs), "kwargs")
 
     def payload(self) -> dict[str, object]:
         """Return the exact write body, omitting every absent optional field."""

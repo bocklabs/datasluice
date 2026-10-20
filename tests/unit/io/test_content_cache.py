@@ -4,7 +4,7 @@ import concurrent.futures
 import hashlib
 import sqlite3
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import patch
 
 import pytest
@@ -179,12 +179,15 @@ def test_lazy_sweep_skips_fresh_writing(tmp_path: Path) -> None:
 
 
 def test_lazy_sweep_removes_orphaned_content_files(tmp_path: Path) -> None:
-    """Content files with no metadata row are swept."""
+    """Content files seen orphaned on two consecutive sweeps are removed."""
     cache = ContentCache(str(tmp_path / "cache"))
     orphan_sha = "a" * 64
     orphan_path = f"{cache.cache_dir}/{orphan_sha}"
     cache._fs.pipe_file(orphan_path, b"orphan")
     assert cache._fs.exists(orphan_path)
+    cache.get("any-key")
+    assert cache._fs.exists(orphan_path), "a first sighting may be an in-flight publication"
+    cache._last_sweep = 0
     cache.get("any-key")
     assert not cache._fs.exists(orphan_path)
 
@@ -197,6 +200,10 @@ def test_orphan_sweep_waits_for_the_interval(tmp_path: Path, monkeypatch: pytest
     orphan = tmp_path / "cache" / ("b" * 64)
     orphan.write_bytes(b"orphan")
 
+    cache.get("missing")
+    assert orphan.exists()
+
+    now += SWEEP_INTERVAL_SECONDS
     cache.get("missing")
     assert orphan.exists()
 
@@ -432,3 +439,83 @@ def test_lazy_sweep_removes_expired_rows_and_content(tmp_path: Path) -> None:
         conn.close()
     assert count == 0
     assert not cache._fs.exists(content_path)
+
+
+def test_content_files_are_named_by_payload_digest(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("k1", b"first")
+    cache.put("k1", b"second")
+
+    first = hashlib.sha256(b"first").hexdigest()
+    second = hashlib.sha256(b"second").hexdigest()
+    assert cache._fs.exists(cache._content_path(first))
+    assert cache._fs.exists(cache._content_path(second))
+    assert cache.get("k1") == b"second"
+    conn = sqlite3.connect(cache._db_path)
+    try:
+        content_sha = conn.execute("SELECT content_sha FROM cache WHERE sha256=?", (cache._sha("k1"),)).fetchone()[0]
+    finally:
+        conn.close()
+    assert content_sha == second
+
+
+def test_failed_commit_after_publication_preserves_the_previous_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put_with_metadata("k", b"good", etag='"old"')
+    original_connect = cache._connect
+
+    class _FailingCommit:
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self._conn = conn
+            self.in_transaction = False
+
+        def execute(self, sql: str, parameters: Any = ()) -> Any:
+            if sql == "COMMIT":
+                raise sqlite3.OperationalError("injected commit failure")
+            result = self._conn.execute(sql, parameters)
+            self.in_transaction = self._conn.in_transaction
+            return result
+
+        def rollback(self) -> None:
+            self._conn.rollback()
+
+        def close(self) -> None:
+            self._conn.close()
+
+    monkeypatch.setattr(cache, "_connect", lambda: _FailingCommit(original_connect()))
+    with pytest.raises(DownloadError, match="Failed to publish cache content"):
+        cache.put_with_metadata("k", b"bad", etag='"new"')
+    monkeypatch.setattr(cache, "_connect", original_connect)
+
+    assert cache.get("k") == b"good"
+    metadata = cache.get_metadata("k")
+    assert metadata is not None
+    assert metadata["etag"] == '"old"'
+    assert cache._fs.exists(cache._content_path(hashlib.sha256(b"bad").hexdigest()))
+
+
+def test_sweep_listing_runs_outside_the_write_transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("k", b"data")
+    cache._last_sweep = 0
+    attempts: list[str] = []
+    original_ls = cache._fs.ls
+
+    def listing_outside_the_lock(path: str, **kwargs: Any) -> list[str]:
+        conn = sqlite3.connect(cache._db_path, timeout=0, isolation_level=None)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("COMMIT")
+            attempts.append("acquired")
+        except sqlite3.OperationalError as exc:
+            attempts.append(str(exc))
+        finally:
+            conn.close()
+        return original_ls(path, **kwargs)
+
+    monkeypatch.setattr(cache._fs, "ls", listing_outside_the_lock)
+    cache.get("k")
+
+    assert attempts == ["acquired"]

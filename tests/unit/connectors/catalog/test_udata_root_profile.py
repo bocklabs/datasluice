@@ -49,6 +49,7 @@ from datasluice.errors.catalog import (
     ForbiddenError,
     NativeCatalogError,
 )
+from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.events import EventEmitter
 from datasluice.runtime.transport.base import (
     AsyncRuntimeStreamResponse,
@@ -2313,3 +2314,11 @@ def test_site_document_rejects_non_string_digests_and_formats() -> None:
         replace(_site_document(), format="")
     with pytest.raises(ValueError, match="formats"):
         replace(_site_document(), format=7)  # type: ignore[arg-type]
+
+
+def test_site_patch_validation_paths_name_the_patch_input() -> None:
+    """Patch-input errors point at udata.site_patch.*, never the site-profile path."""
+    with pytest.raises(DataSluiceError, match="udata.site_patch.configs"):
+        SitePatchInput(configs={"key": {1, 2}})
+    with pytest.raises(DataSluiceError, match="udata.site_patch.datasets_blocs"):
+        SitePatchInput(datasets_blocs=({"key": {1, 2}},))

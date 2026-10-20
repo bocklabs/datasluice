@@ -9,6 +9,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from datasluice._uri import validate_http_target
+from datasluice.connectors.catalog.udata.models._cron import CRON_FIELD, MAX_CRON_FIELD
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
 from datasluice.domain.catalog.receipts import MutationReceipt
@@ -35,7 +36,6 @@ HARVEST_BULK_ACTIONS = frozenset({"delete-source", "unschedule-source", "run-sou
 HARVEST_DESTRUCTIVE_BULK_ACTIONS = frozenset({"delete-source", "unschedule-source"})
 
 _ABSOLUTE_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
-_CRON_FIELD = re.compile(r"^[0-9*,/\-]+$")
 _MAX_PAGE = 100_000
 _MAX_BULK_TARGETS = 64
 _MAX_POLLS = 1024
@@ -233,7 +233,7 @@ class HarvestScheduleInput:
         if len(fields) != 5:
             raise ValueError("uData harvest schedule cron requires five whitespace-separated fields.")
         for field_value in fields:
-            if len(field_value) > 32 or _CRON_FIELD.fullmatch(field_value) is None:
+            if len(field_value) > MAX_CRON_FIELD or CRON_FIELD.fullmatch(field_value) is None:
                 raise ValueError("uData harvest schedule cron fields accept digits, '*', ',', '/', and '-' only.")
 
     def payload(self) -> str:

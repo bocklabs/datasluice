@@ -305,6 +305,11 @@ def test_organization_filters_reject_values_outside_the_declared_union(value: ob
         OrganizationListQuery(filters=cast("Mapping[str, str | bool | tuple[str, ...]]", {"status": value}))
 
 
+def test_organization_filters_reject_a_non_mapping_container() -> None:
+    with pytest.raises(ValueError, match="mapping"):
+        OrganizationListQuery(filters=cast("Mapping[str, str | bool | tuple[str, ...]]", [("status", "validated")]))
+
+
 def test_organization_filters_accept_the_declared_union() -> None:
     query = OrganizationListQuery(filters={"status": "validated", "featured": True, "tag": ("a", "b")})
 
@@ -727,3 +732,17 @@ def test_organization_export_redirect_rejects_userinfo_targets(monkeypatch: pyte
         )
         with pytest.raises(NativeCatalogError, match="unsafe URL components"):
             client.organizations_memberships.organization_datasets_csv("org-1")
+
+
+def test_organization_badge_delete_requotes_the_validated_kind() -> None:
+    method, path, _headers, body = wire.organization_badge_request("org-1", "certified%2Fbad", delete=True)
+    assert method == "DELETE"
+    assert path == "/api/1/organizations/org-1/badges/certified%252Fbad/"
+    assert body is None
+    _post_method, _post_path, _post_headers, post_body = wire.organization_badge_request("org-1", "certified%2Fbad")
+    assert post_body == {"kind": "certified%2Fbad"}
+
+
+def test_organization_owned_reuses_route_refuses_a_query() -> None:
+    with pytest.raises(CatalogValidationError, match="does not accept query parameters"):
+        wire.organization_owned_request("org-1", "reuses", OrganizationListQuery())

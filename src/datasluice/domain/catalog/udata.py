@@ -152,21 +152,23 @@ def _validate_text(value: object, field_name: str, *, allow_none: bool = False) 
         raise ValueError(f"uData site {field_name} must be a non-empty string.")
 
 
-def _validate_json_mapping(value: object, field_name: str, *, allow_none: bool = False) -> Mapping[str, object] | None:
+def _validate_json_mapping(
+    value: object, field_name: str, *, allow_none: bool = False, path: str | None = None
+) -> Mapping[str, object] | None:
     if allow_none and value is None:
         return None
     if not isinstance(value, Mapping):
         raise ValueError(f"uData site {field_name} must be a JSON object.")
-    return _freeze_mapping(value, f"udata.site.{field_name}")
+    return _freeze_mapping(value, path or f"udata.site.{field_name}")
 
 
-def _validate_blocks(value: object, field_name: str, *, allow_none: bool = False) -> None:
+def _validate_blocks(value: object, field_name: str, *, allow_none: bool = False, path: str | None = None) -> None:
     if allow_none and value is None:
         return
     if not isinstance(value, tuple) or not all(isinstance(item, Mapping) for item in value):
         raise ValueError(f"uData site {field_name} must be a tuple of JSON objects.")
     for item in value:
-        _freeze_mapping(item, f"udata.site.{field_name}")
+        _freeze_mapping(item, path or f"udata.site.{field_name}")
 
 
 def _validate_site_profile_payload(payload: Mapping[str, object]) -> None:
@@ -619,7 +621,7 @@ def _freeze_site_patch_mappings(patch: SitePatchInput) -> None:
     for field_name in _PATCH_MAPPING_FIELDS:
         value = getattr(patch, field_name)
         if value is not UNSET:
-            frozen = _validate_json_mapping(value, field_name, allow_none=True)
+            frozen = _validate_json_mapping(value, field_name, allow_none=True, path=f"udata.site_patch.{field_name}")
             if frozen is not None:
                 object.__setattr__(patch, field_name, frozen)
 
@@ -628,7 +630,7 @@ def _freeze_site_patch_blocks(patch: SitePatchInput) -> None:
     for field_name in _PATCH_LIST_FIELDS - {"keywords"}:
         value = getattr(patch, field_name)
         if value is not UNSET:
-            _validate_blocks(value, field_name, allow_none=True)
+            _validate_blocks(value, field_name, allow_none=True, path=f"udata.site_patch.{field_name}")
         if isinstance(value, tuple):
             object.__setattr__(
                 patch,

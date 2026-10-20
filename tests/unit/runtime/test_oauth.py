@@ -255,7 +255,7 @@ def test_transportless_authorization_code_flow_cannot_exchange() -> None:
     assert flow.authorization_url().startswith("https://auth.example.test/authorize?")
     with pytest.raises(TypeError, match="without a transport"):
         flow.exchange("authorization-code", state=flow.expected_state)
-    with pytest.raises(TypeError, match="asynchronous runtime transport"):
+    with pytest.raises(TypeError, match="without a transport"):
         asyncio.run(flow.exchange_async("authorization-code", state=flow.expected_state))
 
 

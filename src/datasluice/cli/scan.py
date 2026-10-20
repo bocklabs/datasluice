@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
-from datasluice.cli._output import diagnostic_console, render_json, result_console
+from datasluice.cli._output import diagnostic_console, render_json, result_console, validate_output
 from datasluice.cli._resolver import open_data_sluice, parse_locator, resolve_one_resource
 from datasluice.exceptions import DataSluiceError
 
@@ -62,9 +62,7 @@ def scan(
     output: Annotated[str, typer.Option("--output", help="Output format: human or json")] = "human",
 ) -> None:
     """Profile one resource with a bounded default sample."""
-    if output not in {"human", "json"}:
-        diagnostic_console.print("[red]Error:[/red] --output must be human or json")
-        raise typer.Exit(1)
+    validate_output(output)
     try:
         parsed = parse_locator(locator)
         with open_data_sluice() as data_sluice:

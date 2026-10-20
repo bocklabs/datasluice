@@ -189,6 +189,16 @@ def test_user_wire_preserves_query_omission_and_body_presence() -> None:
     assert wire.build_request("suggest_users", query=UserSuggestQuery("sam", size=3))[1] == (
         "/api/1/users/suggest/?q=sam&size=3"
     )
+    with pytest.raises(ValueError, match="Unsupported uData user query input"):
+        wire.build_request("suggest_users", query="raw-term")
+    with pytest.raises(ValueError, match="256 characters"):
+        UserSuggestQuery("x" * 257)
+
+
+@pytest.mark.parametrize("identifier", ['a"b', "a'b", "a\x00b"])
+def test_user_wire_rejects_unsafe_identifier_segments(identifier: str) -> None:
+    with pytest.raises(CatalogValidationError, match="one URL-safe path segment"):
+        wire.build_request("get_user", identifier=identifier)
     assert wire.build_request("update_user", identifier="person", body=UserUpdateInput({"website": None}))[3] == {
         "website": None
     }
@@ -488,6 +498,13 @@ def test_paginated_user_reads_redact_the_same_credential_fields_as_single_reads(
     assert "page-token-plaintext" not in repr(page.items)
 
 
+def test_user_page_decoding_requires_the_documented_name_fields() -> None:
+    payload = _user_page_payload()
+    payload["data"] = [{"id": "user-id", "last_name": "Lovelace", "slug": "user-id"}]
+    with pytest.raises(CatalogValidationError, match="omitted its name"):
+        wire.parse_user_page(payload, operation=wire.OPERATIONS["list_users"])
+
+
 def test_token_create_returns_only_allowlisted_metadata_and_reveal_once_secret() -> None:
     plaintext = secrets.token_urlsafe(36)
     router = _Router(
@@ -633,7 +650,7 @@ def test_async_privilege_field_escalation_requires_admin_before_dispatch() -> No
     assert router.requests == []
 
 
-def test_sync_interruption_after_dispatch_retains_ambiguous_target_receipt() -> None:
+def test_sync_interruption_after_dispatch_retains_cancelled_target_receipt() -> None:
     class _InterruptedRouter(_Router):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             if request.method == "POST" and request.url.endswith("/api/1/me/api_tokens/"):
@@ -649,12 +666,12 @@ def test_sync_interruption_after_dispatch_retains_ambiguous_target_receipt() -> 
         )
     receipt = raised.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
-    assert receipt.outcome == "ambiguous"
+    assert receipt.outcome == "cancelled"
     assert receipt.target.value == "new-api-token"
     assert router.requests[-1].method == "POST"
 
 
-def test_sync_generator_exit_after_dispatch_retains_ambiguous_target_receipt() -> None:
+def test_sync_generator_exit_after_dispatch_retains_cancelled_target_receipt() -> None:
     class _AbandonedRouter(_Router):
         def send(self, request: RuntimeRequest) -> RuntimeResponse:
             if request.method == "POST" and request.url.endswith("/api/1/me/api_tokens/"):
@@ -670,7 +687,7 @@ def test_sync_generator_exit_after_dispatch_retains_ambiguous_target_receipt() -
         client.users_tokens.create_api_token(token, PERMISSIONS, policy)
     receipt = raised.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
-    assert receipt.outcome == "ambiguous"
+    assert receipt.outcome == "cancelled"
     assert receipt.target.value == "new-api-token"
 
 

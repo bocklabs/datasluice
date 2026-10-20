@@ -260,3 +260,14 @@ def test_redacting_filter_survives_hostile_payloads_without_raising() -> None:
     args = cast("tuple[object, ...]", record.args)
     assert args[0] == {}
     assert isinstance(args[1], _ExplodingRepr)
+
+
+def test_record_key_predicate_is_shared_by_record_and_metadata_redaction() -> None:
+    """Both redaction paths use the one credential-key predicate."""
+    from datasluice.domain.catalog.models import redact_record_payload
+    from datasluice.domain.catalog.redaction import REDACTED, is_sensitive_record_key
+
+    assert is_sensitive_record_key("Api-Key")
+    assert is_sensitive_record_key("client-secret")
+    assert redact_mapping({"Api-Key": "live"}) == {"Api-Key": REDACTED}
+    assert redact_record_payload({"client-secret": "live"}) == {"client-secret": REDACTED}

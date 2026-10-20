@@ -30,8 +30,8 @@ from datasluice.connectors.catalog.udata.services._receipts import (
     _operation_id,
     _policy_metadata,
     _receipt_policy,
-    _run_mutation,
-    _run_mutation_async,
+    _run_receipted_mutation,
+    _run_receipted_mutation_async,
 )
 from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import datasets as wire
@@ -587,9 +587,7 @@ def _mutation_shapers(
             operation,
             target_id,
             policy,
-            "cancelled"
-            if isinstance(error, (KeyboardInterrupt, GeneratorExit))
-            else _mutation_outcome(error, response),
+            _mutation_outcome(error, response),
             status_code=_error_status(error, response),
             mutation=mutation,
             opaque_target=opaque_target,
@@ -623,7 +621,7 @@ def _mutating(
     failure_receipt, completed = _mutation_shapers(
         operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
-    return _run_mutation(dispatch, failure_receipt, completed, errors=SETTLEMENT_ERRORS)
+    return _run_receipted_mutation(dispatch, failure_receipt, completed, errors=SETTLEMENT_ERRORS)
 
 
 async def _amutating(
@@ -641,7 +639,7 @@ async def _amutating(
     failure_receipt, completed = _mutation_shapers(
         operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
-    return await _run_mutation_async(dispatch, failure_receipt, completed, errors=ASYNC_SETTLEMENT_ERRORS)
+    return await _run_receipted_mutation_async(dispatch, failure_receipt, completed, errors=ASYNC_SETTLEMENT_ERRORS)
 
 
 class SyncDatasetsService:

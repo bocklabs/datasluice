@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from datasluice._uri import validate_http_target
 from datasluice.exceptions import DataSluiceError
 from datasluice.logging import get_logger
-from datasluice.ports import ResponseAwareReader
+from datasluice.ports import KeyLockStateStore, ResponseAwareReader
 from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest
 from datasluice.sync._hashing import is_sha256
 from datasluice.sync._identity import canonical_destination_identity, canonical_identity, validate_unique_identities
@@ -38,10 +38,9 @@ class SyncOutcome:
 def _resource_transaction(state_store: Any, key: str, *, is_atomic: bool) -> Any:
     """Require atomic stores to serialize artifact publication and state CAS."""
     if is_atomic:
-        key_lock = getattr(state_store, "key_lock", None)
-        if not callable(key_lock):
+        if not isinstance(state_store, KeyLockStateStore):
             raise DataSluiceError("Atomic sync requires a key_lock spanning artifact publication and state commit")
-        return key_lock(key)
+        return state_store.key_lock(key)
     return nullcontext()
 
 
@@ -357,37 +356,63 @@ def sync_resources(
                 resource, state_store, key, destination_uri, is_atomic=is_atomic, resume=resume
             )
             if context.outcome is not None:
-                yield context.outcome
-                continue
-            materialize_reader, fresh_watermark, outcome = _conditional_reader(
-                resource, reader, transport, destination_uri, key, context
-            )
-            if outcome is not None:
-                yield outcome
-                continue
-            record, action, use_checkpointed, prior_version_box = _materialize_resource(
-                resource,
-                materialize_reader,
-                state_store,
-                destination_uri,
-                key,
-                context,
-                resume=resume,
-                is_atomic=is_atomic,
-            )
-            yield _finish_resource_sync(
-                resource,
-                record,
-                action,
-                use_checkpointed,
-                fresh_watermark,
-                state_store,
-                destination_uri,
-                key,
-                context,
-                prior_version_box,
-                is_atomic=is_atomic,
-            )
+                outcome = context.outcome
+            else:
+                outcome = _sync_transaction_outcome(
+                    resource,
+                    reader,
+                    transport,
+                    state_store,
+                    destination_uri,
+                    key,
+                    context,
+                    resume=resume,
+                    is_atomic=is_atomic,
+                )
+        yield outcome
+
+
+def _sync_transaction_outcome(
+    resource: Any,
+    reader: Any,
+    transport: Any,
+    state_store: Any,
+    destination_uri: str,
+    key: str,
+    context: _SyncContext,
+    *,
+    resume: bool,
+    is_atomic: bool,
+) -> SyncOutcome:
+    """Run the conditional-read and materialize-commit steps inside the held transaction."""
+    materialize_reader, fresh_watermark, conditional = _conditional_reader(
+        resource, reader, transport, destination_uri, key, context
+    )
+    if conditional is not None:
+        return conditional
+    record, action, use_checkpointed, prior_version_box = _materialize_resource(
+        resource,
+        materialize_reader,
+        state_store,
+        destination_uri,
+        key,
+        context,
+        resume=resume,
+        is_atomic=is_atomic,
+    )
+    return _finish_resource_sync(
+        resource,
+        record,
+        action,
+        use_checkpointed,
+        fresh_watermark,
+        state_store,
+        destination_uri,
+        key,
+        context,
+        prior_version_box,
+        is_atomic=is_atomic,
+    )
 
 
 def _completed_sync_state(

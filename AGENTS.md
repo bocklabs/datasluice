@@ -26,7 +26,7 @@ If `just` is missing, `make` works as a zero-dependency fallback (same targets).
 | Full QA (format → lint → typecheck → test) | `just qa` or `make qa` |
 | Format only | `uv run ruff format .` |
 | Lint only | `uv run ruff check . --fix` |
-| Type check | `uv run --all-extras mypy src scripts tests` |
+| Type check | `uv run --all-extras mypy` (targets come from `mypy.ini`'s `files`) |
 | Tests | `uv run pytest` |
 | Single test file | `uv run pytest tests/unit/domain/test_models.py` |
 | Pre-commit (all files) | `uv run pre-commit run --all-files` |
@@ -65,7 +65,7 @@ Built with **Zensical** (MkDocs Material wrapper). Config is `zensical.toml`, no
 
 GitHub Actions (`.github/workflows/ci.yaml`):
 - Runs on pull requests and push to `main`.
-- **type-check job** uses `uv run --all-extras mypy src scripts tests` — if you add new optional deps, the CI must install them.
+- **type-check job** uses `uv run --all-extras mypy` (targets come from `mypy.ini`'s `files`) — if you add new optional deps, the CI must install them.
 - Tests run on Python 3.13 and 3.14 matrix.
 - **build** job builds the dist, runs `twine check`, and uploads the artifact.
 - **smoke-test** job installs the built wheel in a fresh venv and imports `datasluice`.

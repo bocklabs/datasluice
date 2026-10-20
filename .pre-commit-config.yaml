@@ -1,4 +1,9 @@
 repos:
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.16
+    hooks:
+      - id: vulture
+
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.21.2
     hooks:
@@ -24,7 +29,7 @@ repos:
     hooks:
       - id: docformatter
         args: [--in-place, --wrap-summaries=120, --wrap-descriptions=120]
-        exclude: ^(src/datasluice/connectors/catalog/(ckan|udata)/drift\.py|src/datasluice/contracts/catalog/native/ckan\.py|src/datasluice/runtime/credentials/aws\.py)$  # Ruff requires two blank lines before the next module-level type alias.
+        exclude: ^(src/datasluice/connectors/catalog/(ckan|udata)/drift\.py|src/datasluice/contracts/catalog/native/ckan\.py|src/datasluice/runtime/credentials/aws\.py)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.13.2
@@ -50,17 +55,14 @@ repos:
     hooks:
       - id: jscpd
         name: code duplication
-        entry: npx --yes jscpd@4.3.0 --min-lines 10 --min-tokens 70 --threshold 1.5
-          --reporters consoleFull
-          --ignore "**/node_modules/**,**/.venv/**"
-          src tests scripts providers
+        entry: npx --yes jscpd@4.3.0
         language: system
         pass_filenames: false
-        always_run: true
+        stages: [manual]
 
       - id: mypy
         name: type check (mypy)
-        entry: uv run --frozen --all-extras mypy src scripts tests
+        entry: uv run --frozen --all-extras mypy
         language: system
         types: [python]
         pass_filenames: false

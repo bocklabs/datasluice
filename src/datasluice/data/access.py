@@ -187,7 +187,7 @@ class DataPlaneResourceReader:
         container = container_format(peekable.peek(6))
         if container is None:
             return peekable
-        hint = '"PARQUET"' if container == "parquet" else '"XLSX" or "CSV"'
+        hint = '"PARQUET"' if container == "parquet" else '"CSV"'
         raise UnsupportedAccessError(
             f"Resource {resource.id!r} has no format but its bytes are a {container} container. "
             f"Pass format= (for example {hint})"

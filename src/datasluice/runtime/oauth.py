@@ -300,6 +300,8 @@ class AuthorizationCodeFlow:
 
     async def exchange_async(self, code: str, *, state: str) -> OAuthCredential:
         """Asynchronously exchange an authorization code through the async runtime transport."""
+        if self._transport is None:
+            raise TypeError("Authorization-code flows without a transport cannot exchange codes.")
         self.validate_state(state)
         if not _is_async_transport(self._transport):
             raise TypeError("The asynchronous OAuth flow requires an asynchronous runtime transport.")

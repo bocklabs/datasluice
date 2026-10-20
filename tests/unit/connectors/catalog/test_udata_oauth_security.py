@@ -291,12 +291,13 @@ def test_code_exchange_cannot_send_to_an_unbound_catalog(async_mode: bool) -> No
     client._origin = "https://attacker.test"
     binding = begin_authorization_code(_descriptor())
     body = binding.token_request("code", state=binding.expected_state)
-    with pytest.raises(ValueError, match="endpoint"):
+    with pytest.raises(CatalogValidationError, match="endpoint") as excinfo:
         if async_mode:
             asyncio.run(AsyncAuthOAuthService(cast("AsyncUDataClient", client)).access_token(body, PERMISSIONS))
         else:
             SyncAuthOAuthService(cast("SyncUDataClient", client)).access_token(body, PERMISSIONS)
     assert client.forms == []
+    assert cast("MutationReceipt", excinfo.value.__dict__["mutation_receipt"]).outcome == "rejected"
 
 
 @pytest.mark.parametrize("async_mode", [False, True])
@@ -337,7 +338,7 @@ def test_refresh_failures_discard_form_and_preserve_caller_credential(
     receipt = cast("MutationReceipt", raised.value.__dict__["mutation_receipt"])
     assert receipt.outcome == (
         "cancelled"
-        if failure_type is asyncio.CancelledError
+        if failure_type is asyncio.CancelledError or (failure_type is KeyboardInterrupt and before_send)
         else "ambiguous"
         if not before_send and failure_type in (TransportError, BudgetExhaustedError, KeyboardInterrupt, SystemExit)
         else "failed"

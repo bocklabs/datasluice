@@ -478,6 +478,7 @@ _MALFORMED_ELEMENT_REFERENCES: tuple[object, ...] = (
     {"class": "Dataset", "id": "../secret"},
     {"class": "Dataset", "id": ""},
     {"class": "Dataset", "id": 4},
+    {"class": "Dataset", "id": "dataset-1", "extra": "x"},
     "Dataset",
     ["Dataset", "dataset-1"],
 )
@@ -492,10 +493,11 @@ def test_malformed_topic_element_references_never_reach_a_route(reference: objec
 
 def test_topic_element_requires_a_title_or_a_linked_element() -> None:
     """A create or replace payload rejects an element with neither a title nor a link, as the pinned model does."""
-    with pytest.raises(ValueError, match="title or a linked element"):
-        TopicCreateInput(name="Health", elements=(TopicElementInput(description="orphan"),))
-    with pytest.raises(ValueError, match="title or a linked element"):
-        TopicUpdateInput(elements=(TopicElementInput(description="orphan"),))
+    for element in (TopicElementInput(description="orphan"), TopicElementInput(title=""), TopicElementInput(title=" ")):
+        with pytest.raises(ValueError, match="title or a linked element"):
+            TopicCreateInput(name="Health", elements=(element,))
+        with pytest.raises(ValueError, match="title or a linked element"):
+            TopicUpdateInput(elements=(element,))
 
 
 def test_topic_update_rejects_elements_that_are_not_topic_element_inputs() -> None:

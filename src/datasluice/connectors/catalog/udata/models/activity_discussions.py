@@ -159,18 +159,6 @@ def _optional_bool(value: object, field_name: str) -> None:
         raise ValueError(f"uData discussion search {field_name} must be a boolean when supplied.")
 
 
-def _optional_non_empty_text(value: object, field_name: str) -> None:
-    """Reject a supplied search value that is not a non-empty string."""
-    if value is not None and (not isinstance(value, str) or not value):
-        raise ValueError(f"uData discussion search {field_name} must be a non-empty string when supplied.")
-
-
-def _string_tuple(value: object, field_name: str) -> None:
-    """Reject a search value that is not a tuple of non-empty strings."""
-    if not isinstance(value, tuple) or not all(isinstance(item, str) and item for item in value):
-        raise ValueError(f"uData discussion search {field_name} must be a tuple of non-empty strings.")
-
-
 @dataclass(frozen=True, slots=True)
 class DiscussionSearchQuery:
     """Stock v2 discussion search query; every optional key is omitted unless supplied."""

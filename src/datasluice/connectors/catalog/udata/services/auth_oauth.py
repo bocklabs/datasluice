@@ -77,7 +77,14 @@ def _validate_exchange_endpoint(body: object, origin: str) -> None:
         and body.authorization is not None
         and body.authorization._descriptor.token_url != origin + "/oauth/token"
     ):
-        raise ValueError("The uData token endpoint must match its authorization binding.")
+        raise CatalogValidationError(
+            "The uData token endpoint must match its authorization binding.",
+            operation=wire.OPERATIONS["access_token"],
+            platform=wire.PLATFORM.value,
+            safe_action=(
+                "Bind the authorization flow to this deployment's /oauth/token endpoint before exchanging grants."
+            ),
+        )
 
 
 def _validate_consent_redirect(body: object, response: RuntimeResponse) -> None:

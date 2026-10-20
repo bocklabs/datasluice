@@ -50,8 +50,7 @@ PYTHON
 }
 
 issued_json="$(issue_tokens)"
-readarray -t issued_lines <<<"$issued_json"
-if [ -z "$issued_json" ] || [ "${#issued_lines[@]}" -ne 1 ]; then
+if [ -z "$issued_json" ] || [[ "$issued_json" == *$'\n'* ]]; then
   echo "token issuance did not return a single JSON record" >&2
   exit 1
 fi

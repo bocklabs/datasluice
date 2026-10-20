@@ -115,10 +115,13 @@ def materialize(
                 content_digest = _write_parquet(fs, tmp_uri, stream.schema, stream.iter_batches())
         else:
             content_digest = _write_raw(fs, tmp_uri, resource, reader)
-        existing = _existing_record(fs, final_uri, tmp_uri, media_type, content_digest, stored_checksum)
+        staged_digest = content_digest if mode == "raw" else None
+        existing, published_digest = _existing_record(
+            fs, final_uri, tmp_uri, media_type, content_digest, stored_checksum, staged_digest=staged_digest
+        )
         uri = final_uri if existing else tmp_uri
         size = int(fs.info(uri)["size"])
-        blob_digest = content_digest if mode == "raw" and not existing else _blob_digest_from_fs(fs, uri)
+        blob_digest = _published_blob_digest(fs, uri, mode, content_digest, existing, published_digest)
         current = _stored_artifact_if_current(
             stored_artifact,
             uri=final_uri,
@@ -373,6 +376,17 @@ def _atomic_pipe(fs: Any, final_uri: str, payload: bytes) -> None:
         raise DownloadError(f"Failed to atomically publish {sanitize_uri(final_uri)!r}: {exc}") from exc
 
 
+def _published_blob_digest(
+    fs: Any, uri: str, mode: str, content_digest: str, existing: bool, published_digest: str | None
+) -> str:
+    """Return the digest of the bytes the artifact will reference, reusing computed digests."""
+    if mode == "raw" and not existing:
+        return content_digest
+    if published_digest is not None:
+        return published_digest
+    return _blob_digest_from_fs(fs, uri)
+
+
 def _existing_record(
     fs: Any,
     final_uri: str,
@@ -380,21 +394,26 @@ def _existing_record(
     media_type: str,
     checksum: str,
     stored_checksum: str | None,
-) -> bool:
-    """Return whether the published file already matches what was just staged."""
+    *,
+    staged_digest: str | None = None,
+) -> tuple[bool, str | None]:
+    """Return whether the published file matches the staged bytes, plus its digest when read."""
     if stored_checksum != checksum or not fs.exists(final_uri):
-        return False
+        return False, None
     try:
-        if int(fs.info(final_uri)["size"]) == int(fs.info(tmp_uri)["size"]) and _blob_digest_from_fs(
-            fs, final_uri
-        ) == _blob_digest_from_fs(fs, tmp_uri):
-            return True
-        return _destination_checksum(fs, final_uri, media_type) == checksum
+        if int(fs.info(final_uri)["size"]) == int(fs.info(tmp_uri)["size"]):
+            published = _blob_digest_from_fs(fs, final_uri)
+            staged = staged_digest if staged_digest is not None else _blob_digest_from_fs(fs, tmp_uri)
+            if published == staged:
+                return True, published
+        if _destination_checksum(fs, final_uri, media_type) == checksum:
+            return True, _blob_digest_from_fs(fs, final_uri)
+        return False, None
     except Exception:
         logger.debug(
             "Existing-materialization probe failed for %r (treating as stale)", sanitize_uri(final_uri), exc_info=True
         )
-        return False
+        return False, None
 
 
 def _destination_checksum(fs: Any, final_uri: str, media_type: str) -> str:

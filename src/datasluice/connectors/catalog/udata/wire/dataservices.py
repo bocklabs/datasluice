@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 from urllib.parse import urlencode
 
@@ -16,7 +15,7 @@ from datasluice.connectors.catalog.udata.models.dataservices import (
     DataserviceUpdateInput,
     segment,
 )
-from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES
+from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES, validate_format_extension
 from datasluice.connectors.catalog.udata.wire._text_document import APPROVED_TEXT_MEDIA_TYPES, bound_text_document
 from datasluice.domain.catalog.models import MappingRecord
 from datasluice.errors.catalog import CatalogValidationError
@@ -56,22 +55,7 @@ def _query(pairs: Iterable[tuple[str, str]]) -> str:
 
 def _format_extension(value: str) -> str:
     """Validate one stock RDF format extension and return its lowercased form."""
-    if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,16}", value) is None:
-        raise CatalogValidationError(
-            "The uData RDF format is invalid.",
-            operation=RDF_DATASERVICE_FORMAT_OPERATION,
-            platform=PLATFORM,
-            safe_action="Use a short ASCII uData RDF extension.",
-        )
-    extension = value.lower()
-    if extension not in RDF_FORMAT_MEDIA_TYPES:
-        raise CatalogValidationError(
-            "The uData RDF format is unsupported.",
-            operation=RDF_DATASERVICE_FORMAT_OPERATION,
-            platform=PLATFORM,
-            safe_action="Use a stock uData RDF extension.",
-        )
-    return extension
+    return validate_format_extension(value, operation=RDF_DATASERVICE_FORMAT_OPERATION, platform=PLATFORM)
 
 
 def media_type_for_format(extension: str) -> str:

@@ -216,7 +216,7 @@ def test_interruption_after_token_response_redacts_traceback_locals(
             traceback = traceback.tb_next
         receipt = raised.value.__dict__["mutation_receipt"]
         assert isinstance(receipt, MutationReceipt)
-        assert receipt.outcome == "ambiguous"
+        assert receipt.outcome == ("cancelled" if exception_type is KeyboardInterrupt else "ambiguous")
         assert receipt.target.value == "token-id"
         revoked = client.users_tokens.revoke_api_token(
             receipt.target.value,
@@ -281,7 +281,7 @@ def test_async_interruption_after_token_response_redacts_traceback_locals(
             )
             receipt = raised.value.__dict__["mutation_receipt"]
             assert isinstance(receipt, MutationReceipt)
-            assert receipt.outcome == "ambiguous"
+            assert receipt.outcome == ("cancelled" if exception_type is KeyboardInterrupt else "ambiguous")
             assert receipt.target.value == "token-id"
             revoked = await client.users_tokens.revoke_api_token(
                 receipt.target.value,
@@ -333,7 +333,7 @@ def test_interruption_after_token_decode_discards_reveal_once_result(monkeypatch
         shaped_results[0].secret.reveal_once()
     receipt = raised.value.__dict__["mutation_receipt"]
     assert isinstance(receipt, MutationReceipt)
-    assert receipt.outcome == "ambiguous"
+    assert receipt.outcome == "cancelled"
     assert receipt.target.value == "token-id"
     traceback = raised.value.__traceback__
     while traceback is not None:

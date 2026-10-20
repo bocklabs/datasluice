@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.udata.models._segment import paging, path_segment
 from datasluice.domain.catalog.models import MappingRecord, _freeze_json, _thaw_json
+from datasluice.domain.catalog.receipts import MutationReceipt
 from datasluice.exceptions import DataSluiceError
 from datasluice.runtime.transport.base import UploadPart
-
-if TYPE_CHECKING:
-    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _POST_SORTS = ("created_at", "modified", "published", "name", "headline", "content")
 _POST_SEARCH_SORTS = ("created", "last_modified", "published")
@@ -438,6 +435,12 @@ class PostMutationResult:
 
     receipt: MutationReceipt
     record: MappingRecord | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.receipt, MutationReceipt) or (
+            self.record is not None and not isinstance(self.record, MappingRecord)
+        ):
+            raise ValueError("uData post mutation results require a receipt and a mapping record.")
 
     def to_dict(self) -> dict[str, object]:
         return {

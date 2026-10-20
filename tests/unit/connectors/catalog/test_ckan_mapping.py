@@ -197,7 +197,7 @@ def test_status_show_shapes_to_a_single_lossless_mapping_record() -> None:
 
     item = envelope.items[0]
     assert isinstance(item, MappingRecord)
-    assert item.to_dict() == {"schema_version": 1, "kind": "mapping_record", "payload": payload}
+    assert item.to_dict() == {"schema_version": 2, "kind": "mapping_record", "payload": payload}
 
 
 @pytest.mark.parametrize(

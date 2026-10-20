@@ -59,6 +59,20 @@ def test_serialization_bounds_fields_sequences_keys_and_total_output_without_cha
 
 
 @pytest.mark.parametrize("factory", [MappingRecord, _native])
+def test_serialization_bounds_fields_and_keys_without_deep_payloads(
+    factory: Callable[[Mapping[str, object]], NativeRecord | MappingRecord],
+) -> None:
+    """A flat payload reaches the field-count and key-length bounds the deep-rows payload cannot."""
+    payload = {"k" * 4096: "retained", **{f"field_{index}": index for index in range(64)}}
+    record = factory(payload)
+
+    projected = cast("dict[str, object]", record.to_dict()["payload"])
+    assert len(projected) == MAX_METADATA_ENTRIES
+    assert all(len(key) <= MAX_TEXT_LENGTH for key in projected)
+    assert record.payload["k" * 4096] == "retained"
+
+
+@pytest.mark.parametrize("factory", [MappingRecord, _native])
 def test_serialization_excludes_private_fields_and_sanitizes_field_names(
     factory: Callable[[Mapping[str, object]], NativeRecord | MappingRecord],
 ) -> None:

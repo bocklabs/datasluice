@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from urllib.parse import urlencode
 
+from datasluice.connectors.catalog.udata.models._segment import safe_segment
 from datasluice.connectors.catalog.udata.models.reuses import (
     ReuseCreateInput,
     ReuseFollowersQuery,
@@ -107,6 +108,13 @@ def available_reuse_badges_request() -> Request:
 
 
 def add_reuse_badge_request(reuse_id: str, badge_kind: str) -> Request:
+    if not safe_segment(badge_kind):
+        raise CatalogValidationError(
+            "The uData reuse badge kind must be one non-empty URL-safe segment.",
+            operation=ADD_REUSE_BADGE_OPERATION,
+            platform=PLATFORM,
+            safe_action="Pass a badge kind from available_reuse_badges().",
+        )
     return _request(
         "POST",
         f"{_REUSE_PATH}{segment(reuse_id, ADD_REUSE_BADGE_OPERATION)}/badges/",

@@ -149,6 +149,8 @@ def test_umbrella_payload_with_fields_key_raises_validation_error_before_dispatc
 
     assert transport.requests == []
     assert "fields" in str(excinfo.value)
+    assert "Use q and vocabulary_id instead of fields." in excinfo.value.safe_action
+    assert "offset" not in excinfo.value.safe_action
 
 
 def test_vocabulary_crud_decodes_vocabulary_kind_records() -> None:

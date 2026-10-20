@@ -109,7 +109,8 @@ class SyncStateConflictError(StateStoreError):
 class UnsupportedAccessError(DownloadError):
     """Raised when a resource's access kind has no reader implementation.
 
-    implements HttpDownload, ObjectStorage, and LocalFile readers. QueryAccess raises this error; adds query readers.
+    The bundled readers implement the HttpDownload, ObjectStorage, and LocalFile access kinds. QueryAccess and
+    StreamAccess raise this error: query readers are not yet implemented, and live streaming is out of scope.
     """
 
 

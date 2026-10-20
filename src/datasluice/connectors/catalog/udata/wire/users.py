@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import cast
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 from datasluice.connectors.catalog.udata.mapping import UDataPageEnvelope
+from datasluice.connectors.catalog.udata.models._segment import path_segment
 from datasluice.connectors.catalog.udata.models.users import (
     ApiTokenCreateInput,
     ApiTokenMetadata,
@@ -117,14 +118,14 @@ _BODY_INPUTS = {
 
 
 def _segment(value: object, operation: str) -> str:
-    if not isinstance(value, str) or not value or value in {".", ".."} or any(c in value for c in "/?#"):
+    if not isinstance(value, str):
         raise CatalogValidationError(
-            "A uData user or token identifier must be one non-dot path segment.",
+            "The uData user or token identifier must be a non-empty string.",
             operation=operation,
             platform=PLATFORM.value,
             safe_action="Use the identifier from a prior typed read.",
         )
-    return quote(value, safe="")
+    return path_segment(value, operation, "uData user or token")
 
 
 def _query(params: list[tuple[str, str]]) -> str:
@@ -161,8 +162,6 @@ def build_request(name: str, *, identifier: str | None = None, query: object = N
         method = "PUT"
     if isinstance(query, (UserListQuery, UserSuggestQuery)):
         path += _query(query.query_params())
-    elif isinstance(query, str):
-        path += _query([("q", query)])
     elif isinstance(query, UserDeleteOptions):
         path += _query(
             [
@@ -282,6 +281,14 @@ def parse_token_list(payload: object, *, operation: str) -> tuple[ApiTokenMetada
 def parse_user_page(payload: object, *, operation: str) -> UDataPageEnvelope:
     """Decode one user page, redacting the same credential fields as parse_user."""
     envelope = parse_page(payload, operation=operation, kind=_USER)
+    for item in envelope.items:
+        if not isinstance(item.payload.get("first_name"), str) or not isinstance(item.payload.get("last_name"), str):
+            raise CatalogValidationError(
+                "The uData user response omitted its name.",
+                operation=operation,
+                platform=PLATFORM.value,
+                safe_action="Verify the response against the pinned user schema.",
+            )
     return UDataPageEnvelope(
         items=tuple(replace(item, payload=_redacted_user_payload(item.payload)) for item in envelope.items),
         page=envelope.page,

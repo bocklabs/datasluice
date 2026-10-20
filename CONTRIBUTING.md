@@ -89,6 +89,10 @@ ci: add wheel smoke test to CI
 
    If `just` is missing, `make` works as a zero-dependency fallback (same targets).
 
+5. **Node.js** is required only for the duplication gate (`just duplication` locally; the CI
+   `duplication` job runs the same `jscpd` scan). Ordinary commits and pre-commit hooks do not
+   need it.
+
 ---
 
 ## Quality Checks

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote, urlencode
 
 from datasluice.connectors.catalog.udata.mapping import _DATASETS_OPERATION_ID, PLATFORM, parse_native_page
 from datasluice.connectors.catalog.udata.models._segment import path_segment
-from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES
+from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES, validate_format_extension
 from datasluice.connectors.catalog.udata.wire._text_document import (
     APPROVED_TEXT_MEDIA_TYPES,
     bound_text_document,
@@ -367,7 +366,6 @@ def rdf_request(
     if fmt is None:
         return "GET", f"{_DATASET_PATH}{identifier}/rdf", {}, None
     extension = _format_extension(fmt, operation=operation)
-    media_type_for_format(extension, operation=operation)
     return "GET", f"{_DATASET_PATH}{identifier}/rdf.{_path_segment(extension)}", {}, None
 
 
@@ -502,27 +500,11 @@ def parse_extras(payload: object, *, operation: str = _DATASETS_OPERATION_ID) ->
 
 def media_type_for_format(fmt: str, *, operation: str = _DATASETS_OPERATION_ID) -> str:
     """Return the stock media type for one RDF format extension."""
-    extension = _format_extension(fmt, operation=operation)
-    media_type = RDF_FORMAT_MEDIA_TYPES.get(extension)
-    if media_type is None:
-        raise CatalogValidationError(
-            "The uData RDF format is unsupported.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action="Use a stock uData RDF extension.",
-        )
-    return media_type
+    return RDF_FORMAT_MEDIA_TYPES[validate_format_extension(fmt, operation=operation, platform=PLATFORM.value)]
 
 
 def _format_extension(fmt: object, *, operation: str = _DATASETS_OPERATION_ID) -> str:
-    if not isinstance(fmt, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,16}", fmt) is None:
-        raise CatalogValidationError(
-            "The uData RDF format is invalid.",
-            operation=operation,
-            platform=PLATFORM.value,
-            safe_action="Use a short ASCII uData RDF extension.",
-        )
-    return fmt.lower()
+    return validate_format_extension(fmt, operation=operation, platform=PLATFORM.value)
 
 
 def parse_text_document(

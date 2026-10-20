@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from datasluice.domain.catalog.ids import CatalogId
 from datasluice.domain.catalog.models import _contract_error, _freeze_json, _object_dict, _thaw_json
-from datasluice.domain.catalog.redaction import SENSITIVE_PARTS, contains_credential_content, redact_string
+from datasluice.domain.catalog.redaction import contains_credential_content, is_sensitive_record_key, redact_string
 
 _MUTATION_RECEIPT_AUDIT_METADATA_PATH = "mutation_receipt.audit_metadata"
 _MUTATION_RECEIPT_ATOMICITY_PATH = "mutation_receipt.atomicity"
@@ -34,7 +34,7 @@ def _require_unaudited_key(key: object, path: str) -> None:
     """Reject an audit-metadata key that is not a non-sensitive string."""
     if not isinstance(key, str):
         raise _contract_error(path)
-    if any(part in key.lower().replace("-", "_") for part in SENSITIVE_PARTS):
+    if is_sensitive_record_key(key):
         raise _contract_error(path)
 
 

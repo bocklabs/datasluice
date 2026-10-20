@@ -10,9 +10,10 @@ if TYPE_CHECKING:
 
 type WireParams = dict[str, object]
 
-_SAFE_ACTION_BY_PARAM = {
-    "page": "Use offset instead of page.",
-    "fields": "Use q and vocabulary_id instead of fields.",
+_DEPRECATED_PARAMETERS: Mapping[str, Mapping[str, str]] = {
+    "current_package_list_with_resources": {"page": "Use offset instead of page."},
+    "tag_search": {"fields": "Use q and vocabulary_id instead of fields."},
+    "tag_autocomplete": {"fields": "Use q and vocabulary_id instead of fields."},
 }
 
 
@@ -56,16 +57,12 @@ def fields_params(
 
 def reject_deprecated(action: str, payload: Mapping[str, object]) -> None:
     """Reject parameters removed from the canonical CKAN Action API surface."""
-    banned = {
-        "current_package_list_with_resources": {"page"},
-        "tag_search": {"fields"},
-        "tag_autocomplete": {"fields"},
-    }.get(action, set())
-    clash = sorted(banned.intersection(payload))
+    banned = _DEPRECATED_PARAMETERS.get(action, {})
+    clash = sorted(banned.keys() & payload.keys())
     if clash:
         raise CatalogValidationError(
             f"The parameter(s) {clash} are officially deprecated for {action} and are not accepted.",
             operation=f"{PLATFORM.value}/{action}",
             platform=PLATFORM.value,
-            safe_action=" ".join(_SAFE_ACTION_BY_PARAM[param] for param in clash),
+            safe_action=" ".join(banned[param] for param in clash),
         )

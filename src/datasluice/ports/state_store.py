@@ -13,6 +13,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from datasluice.domain import SyncState
 
 
@@ -41,10 +43,11 @@ class AtomicStateStore(Protocol):
     indivisible within a single process (per-key lock) and declare which fsspec
     backends provide a true atomic rename.
 
-    Sync additionally requires a ``key_lock(key)`` context manager spanning
-    artifact publication and conditional state writes. It must coordinate every
-    writer sharing that state and destination; sync refuses an atomic store
-    without this transaction lock before publishing artifacts.
+    Sync additionally requires a :class:`KeyLockStateStore` implementation: a
+    ``key_lock(key)`` context manager spanning artifact publication and
+    conditional state writes. It must coordinate every writer sharing that
+    state and destination; sync refuses an atomic store without this
+    transaction lock before publishing artifacts.
 
     This is a separate Protocol from :class:`StateStore` so stores that do not
     need CAS remain valid without it — following the established capability-
@@ -92,4 +95,17 @@ class AtomicStateStore(Protocol):
             SyncStateConflictError: if the current on-disk version does not match
                 ``expected_prior`` (CAS lost a race).
         """
+        ...
+
+
+@runtime_checkable
+class KeyLockStateStore(Protocol):
+    """Additive capability Protocol for the per-key transaction lock atomic sync needs.
+
+    Sync refuses an :class:`AtomicStateStore` that does not also satisfy this Protocol, before it publishes any
+    artifact.
+    """
+
+    def key_lock(self, key: str) -> AbstractContextManager[object]:
+        """Return a context manager serializing every writer of *key*."""
         ...

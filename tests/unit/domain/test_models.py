@@ -117,7 +117,8 @@ def test_mapping_record_round_trips_an_arbitrary_json_object_losslessly() -> Non
     record = MappingRecord(payload=payload)
 
     assert MappingRecord.from_dict(record.to_dict()) == record
-    assert record.to_dict() == {"schema_version": 1, "kind": "mapping_record", "payload": payload}
+    assert record.to_dict() == {"schema_version": 2, "kind": "mapping_record", "payload": payload}
+    assert MappingRecord.from_dict({"schema_version": 1, "kind": "mapping_record", "payload": payload}) == record
 
 
 def test_mapping_record_freezes_its_interior_and_rejects_non_object_payloads() -> None:

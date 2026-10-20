@@ -242,3 +242,16 @@ def test_new_command_options_use_annotated_parameters() -> None:
         source = inspect.getsource(command)
         assert "Annotated[" in source
         assert "= typer.Option" not in source
+
+
+@pytest.mark.parametrize("command", ["scan", "open", "materialize"])
+def test_invalid_output_format_exits_two_on_every_direct_command(command: str) -> None:
+    """Invalid --output values fail as usage errors with one shared exit code."""
+    result = runner.invoke(app, [command, "https://data.example.test/records.csv", "--output", "yaml"])
+    assert result.exit_code == 2, result.output
+
+
+def test_open_still_accepts_jsonl_output() -> None:
+    result = runner.invoke(app, ["open", "https://data.example.test/records.csv", "--output", "jsonl"])
+    assert result.exit_code != 2, result.output
+    assert "must be one of" not in result.output

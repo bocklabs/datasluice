@@ -13,8 +13,8 @@ from datasluice.domain.catalog.redaction import (
     MAX_METADATA_ENTRIES,
     MAX_TEXT_LENGTH,
     REDACTED,
-    SENSITIVE_PARTS,
     TRUNCATED,
+    is_sensitive_record_key,
     redact_string,
 )
 from datasluice.exceptions import DataSluiceError
@@ -73,19 +73,6 @@ def _thaw_json(value: object) -> object:
     if isinstance(value, tuple):
         return [_thaw_json(nested) for nested in value]
     return value
-
-
-def is_sensitive_record_key(key: str) -> bool:
-    """Return whether one record key names a credential-bearing or raw-body field.
-
-    Args:
-        key: The record key as the platform sent it.
-
-    Returns:
-        Whether the normalized key contains a shared sensitive part.
-    """
-    normalized = key.lower().replace("-", "_")
-    return any(part in normalized for part in SENSITIVE_PARTS)
 
 
 def _redacted_record_value(value: object, *, _depth: int) -> object:
@@ -181,7 +168,10 @@ def _mark_truncation(output: dict[str, object] | list[object], *, source_size: i
     if len(output) >= source_size:
         return
     if len(output) == MAX_METADATA_ENTRIES:
-        output.popitem() if isinstance(output, dict) else output.pop()
+        if isinstance(output, dict):
+            output.popitem()
+        else:
+            output.pop()
     if isinstance(output, dict):
         output[TRUNCATED] = TRUNCATED
     else:
@@ -226,9 +216,11 @@ def _freeze_extensions(value: object) -> Mapping[str, object]:
     return MappingProxyType(frozen)
 
 
-def _strict_envelope(value: object, path: str, kind: str, keys: frozenset[str]) -> dict[str, object]:
+def _strict_envelope(
+    value: object, path: str, kind: str, keys: frozenset[str], *, versions: frozenset[int] = frozenset({1})
+) -> dict[str, object]:
     data = _object_dict(value, path)
-    if set(data) != keys or data["schema_version"] != 1 or type(data["schema_version"]) is not int:
+    if set(data) != keys or data["schema_version"] not in versions or type(data["schema_version"]) is not int:
         raise _contract_error(path)
     if data["kind"] != kind:
         raise _contract_error(path)
@@ -488,7 +480,7 @@ class NativeRecord:
     def to_dict(self) -> dict[str, object]:
         """Return a bounded, redacted copy, not a lossless or value-free evidence export."""
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "native_record",
             "platform": redact_string(self.platform.value),
             "resource_kind": redact_string(self.resource_kind.value),
@@ -503,12 +495,13 @@ class NativeRecord:
 
     @classmethod
     def from_dict(cls, value: object) -> NativeRecord:
-        """Decode one strict schema-v1 native record envelope."""
+        """Decode one strict native record envelope; the lossless wire form is v1 and the bounded artifact is v2."""
         data = _strict_envelope(
             value,
             "native_record",
             "native_record",
             frozenset({"schema_version", "kind", "platform", "resource_kind", "id", "payload", "extensions"}),
+            versions=frozenset({1, 2}),
         )
         platform = data["platform"]
         resource_kind = data["resource_kind"]
@@ -577,7 +570,7 @@ class MappingRecord:
 
     def to_dict(self) -> dict[str, object]:
         """Return a bounded, redacted copy, not a lossless or value-free evidence export."""
-        return {"schema_version": 1, "kind": "mapping_record", "payload": _serialized_record_payload(self.payload)}
+        return {"schema_version": 2, "kind": "mapping_record", "payload": _serialized_record_payload(self.payload)}
 
     def to_evidence_dict(self) -> dict[str, object]:
         """Return bounded structure without field names or scalar values."""
@@ -585,9 +578,13 @@ class MappingRecord:
 
     @classmethod
     def from_dict(cls, value: object) -> MappingRecord:
-        """Decode one strict schema-v1 mapping record envelope."""
+        """Decode one strict mapping record envelope; the lossless wire form is v1 and the bounded artifact is v2."""
         data = _strict_envelope(
-            value, "mapping_record", "mapping_record", frozenset({"schema_version", "kind", "payload"})
+            value,
+            "mapping_record",
+            "mapping_record",
+            frozenset({"schema_version", "kind", "payload"}),
+            versions=frozenset({1, 2}),
         )
         return cls(payload=_object_dict(data["payload"], _MAPPING_RECORD_PAYLOAD_PATH))
 
@@ -678,14 +675,14 @@ class PlatformMetadata:
         object.__setattr__(self, "extensions", _freeze_extensions(self.extensions))
 
     def to_dict(self) -> dict[str, object]:
-        """Return a fresh JSON-safe platform metadata envelope."""
+        """Return a fresh JSON-safe platform metadata envelope with redacted extensions."""
         return {
             "schema_version": 1,
             "kind": "platform_metadata",
             "platform": self.platform.value,
             "api_version": self.api_version,
             "deployment": self.deployment,
-            "extensions": _thaw_json(self.extensions),
+            "extensions": redact_record_payload(cast("Mapping[str, object]", _thaw_json(self.extensions))),
         }
 
     @classmethod

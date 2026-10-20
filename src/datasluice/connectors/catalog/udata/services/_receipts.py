@@ -93,7 +93,7 @@ def _error_status(error: BaseException, response: object | None = None) -> int:
 
 
 def _mutation_outcome(error: BaseException, response: object | None = None, *, dispatched: bool = True) -> str:
-    if isinstance(error, asyncio.CancelledError):
+    if isinstance(error, (asyncio.CancelledError, KeyboardInterrupt, GeneratorExit)):
         return "cancelled"
     metadata = getattr(error, "metadata", None)
     if isinstance(metadata, Mapping) and metadata.get("ambiguous") is True:
@@ -144,7 +144,7 @@ type FailureReceipt = Callable[[BaseException, object | None], MutationReceipt]
 type ResultShaper[T] = Callable[[int, object, object], T]
 
 
-def _run_mutation[T](
+def _run_receipted_mutation[T](
     dispatch: Callable[[], tuple[int, object, object]],
     failure_receipt: FailureReceipt,
     completed: ResultShaper[T],
@@ -166,7 +166,7 @@ def _run_mutation[T](
         _raise_with_receipt(error, failure_receipt(error, response))
 
 
-async def _run_mutation_async[T](
+async def _run_receipted_mutation_async[T](
     dispatch: Callable[[], Awaitable[tuple[int, object, object]]],
     failure_receipt: FailureReceipt,
     completed: ResultShaper[T],

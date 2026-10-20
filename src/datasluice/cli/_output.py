@@ -29,7 +29,7 @@ def render_jsonl_rows(rows: Iterable[Mapping[str, Any]]) -> None:
         sys.stdout.write("\n")
 
 
-def validate_output(output: str) -> None:
-    """Reject unsupported human or JSON output before processing input."""
-    if output not in {"human", "json"}:
-        raise typer.BadParameter("--output must be human or json")
+def validate_output(output: str, *, allowed: frozenset[str] = frozenset({"human", "json"})) -> None:
+    """Reject unsupported output formats before processing input."""
+    if output not in allowed:
+        raise typer.BadParameter(f"--output must be one of: {', '.join(sorted(allowed))}")

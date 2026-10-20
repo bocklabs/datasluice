@@ -1,4 +1,8 @@
-"""Optional httpx transports with a common runtime response shape."""
+"""Optional httpx transports with a common runtime response shape.
+
+Vendor failures (``httpx.HTTPError``) are re-raised with ``from None`` so an httpx message that embeds request context
+can never chain credentials into a traceback; the transport label in the message is the diagnostic surface.
+"""
 
 from __future__ import annotations
 
@@ -76,10 +80,10 @@ def _redirect_request(
     try:
         next_url = urljoin(request.url, location)
         _require_plain_http_target(next_url)
-    except ValueError:
+    except ValueError as exc:
         raise TransportError(
             f"httpx received an unusable redirect target {_redacted_redirect_url(location)!r}."
-        ) from None
+        ) from exc
     return _next_redirect_request(request, status, next_url, credential_scope, "httpx")
 
 

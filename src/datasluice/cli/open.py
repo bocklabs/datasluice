@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
-from datasluice.cli._output import diagnostic_console, render_json, render_jsonl_rows, result_console
+from datasluice.cli._output import diagnostic_console, render_json, render_jsonl_rows, result_console, validate_output
 from datasluice.cli._resolver import open_data_sluice, parse_locator, resolve_one_resource
 from datasluice.exceptions import DataSluiceError
 
@@ -41,9 +41,7 @@ def open(
     output: Annotated[str, typer.Option("--output", help="Output format: human, json, or jsonl")] = "human",
 ) -> None:
     """Preview one resource or incrementally stream it as JSON Lines."""
-    if output not in {"human", "json", "jsonl"}:
-        diagnostic_console.print("[red]Error:[/red] --output must be human, json, or jsonl")
-        raise typer.Exit(1)
+    validate_output(output, allowed=frozenset({"human", "json", "jsonl"}))
     if all_rows and output != "jsonl":
         diagnostic_console.print("[red]Error:[/red] --all requires --output jsonl")
         raise typer.Exit(1)

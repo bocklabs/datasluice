@@ -175,6 +175,21 @@ def test_redirect_userinfo_is_rejected_before_a_second_request() -> None:
     assert len(probe.requests) == 1
 
 
+def test_async_redirect_userinfo_is_rejected_before_a_second_request() -> None:
+    probe = AsyncProbe(redirect_to("https://user:fixture-password@example.test/next", 302, at_path("/start")))
+
+    async def send() -> None:
+        async with probe:
+            with pytest.raises(TransportError, match="embedded credentials") as excinfo:
+                await probe.send(
+                    RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer secret"})
+                )
+            assert "fixture-password" not in str(excinfo.value)
+
+    asyncio.run(send())
+    assert len(probe.requests) == 1
+
+
 @pytest.mark.parametrize("status", [301, 302, 303])
 def test_httpx_redirect_rewrites_post_to_bodyless_get(status: int) -> None:
     with SyncProbe(redirect_to("https://example.test/next", status, at_path("/start"))) as probe:
@@ -333,7 +348,9 @@ def test_httpx_refuses_non_http_redirect_target_and_redacts_failure_surface() ->
         probe.send(RuntimeRequest("GET", "https://example.test/start", {"Authorization": "Bearer s"}))
 
     assert "topsecret" not in str(excinfo.value)
+    assert "topsecret" not in str(excinfo.value.__cause__)
     assert "keep=value" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, ValueError)
 
 
 def test_httpx_malformed_redirect_location_closes_response_before_failing() -> None:

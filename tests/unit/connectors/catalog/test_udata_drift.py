@@ -194,6 +194,8 @@ def test_t01_reviewed_allowlist_is_empty_so_both_runners_fail_closed_before_disp
     assert raised.value.approved_targets == 0
     assert raised.value.capability_state == "unavailable"
     assert raised.value.metadata["version_state"] == "unapproved-targets"
+    assert ".planning" not in raised.value.safe_action
+    assert "APPROVED_TARGETS" in raised.value.safe_action
     assert transport.requests == []
 
 

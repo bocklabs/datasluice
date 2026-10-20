@@ -57,9 +57,11 @@ def normalize_origin(value: str) -> str:
     try:
         validate_http_target(value, allow_private=parsed.hostname in LOOPBACK_HOSTS)
     except ValueError as error:
-        raise ValueError(
-            "CKAN base URLs must target a public host; only plain-text loopback deployments may be private."
-        ) from error
+        if str(error) == "locality":
+            raise ValueError(
+                "CKAN base URLs must target a public host; only plain-text loopback deployments may be private."
+            ) from error
+        raise ValueError(f"CKAN base URLs must be a valid HTTP(S) target ({error}).") from error
     decoded_path = unquote(parsed.path)
     if "\\" in decoded_path or any(segment in {".", ".."} for segment in decoded_path.split("/")):
         raise ValueError("CKAN base URLs cannot carry backslash or dot path segments.")

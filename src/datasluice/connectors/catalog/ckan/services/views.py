@@ -1,3 +1,11 @@
+"""Both-mode CKAN resource-view projections under the optional views v2 id.
+
+Resource views exist only when the deployment registers a view plugin, so the whole family rides the optional
+``resource-views`` id and resolves capability evidence independently per deployment (the D-06 correction from 03-02).
+Typed methods pass documented CKAN 2.11 parameters verbatim (D-04) and view payloads stay lossless mapping records;
+mutations return CKANMutationResult through the shared receipt seam.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

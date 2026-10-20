@@ -31,8 +31,8 @@ from ._receipts import (
     _mutation_outcome,
     _operation_id,
     _receipt_policy,
-    _run_mutation,
-    _run_mutation_async,
+    _run_receipted_mutation,
+    _run_receipted_mutation_async,
 )
 from ._receipts import (
     _attach_receipt as _attach,
@@ -157,9 +157,7 @@ def _resource_mutation_shapers(
     resource_kind: ResourceKind,
 ) -> tuple[FailureReceipt, ResultShaper[Result]]:
     def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
-        outcome = (
-            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
-        )
+        outcome = _mutation_outcome(error, response)
         if mutation == "uploaded" and isinstance(error, OSError):
             outcome = "ambiguous"
         return _receipt(
@@ -196,7 +194,7 @@ def _resource_mutation(
     failure_receipt, completed = _resource_mutation_shapers(
         target, policy, mutation, routed, resource_kind=resource_kind
     )
-    return _run_mutation(
+    return _run_receipted_mutation(
         dispatch,
         failure_receipt,
         completed,
@@ -219,7 +217,7 @@ async def _async_resource_mutation(
     failure_receipt, completed = _resource_mutation_shapers(
         target, policy, mutation, routed, resource_kind=resource_kind
     )
-    return await _run_mutation_async(
+    return await _run_receipted_mutation_async(
         dispatch,
         failure_receipt,
         completed,

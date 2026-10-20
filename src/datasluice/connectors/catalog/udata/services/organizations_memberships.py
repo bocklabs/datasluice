@@ -38,8 +38,8 @@ from ._receipts import (
     _mutation_outcome,
     _operation_id,
     _receipt_policy,
-    _run_mutation,
-    _run_mutation_async,
+    _run_receipted_mutation,
+    _run_receipted_mutation_async,
 )
 from ._receipts import _close_input as _close_logo
 from .datasets import (
@@ -109,9 +109,7 @@ def _organization_mutation_shapers(
     kind: ResourceKind,
 ) -> tuple[FailureReceipt, ResultShaper[OrganizationMutationResult]]:
     def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
-        outcome = (
-            "cancelled" if isinstance(error, (KeyboardInterrupt, GeneratorExit)) else _mutation_outcome(error, response)
-        )
+        outcome = _mutation_outcome(error, response)
         return _org_receipt(
             operation,
             target,
@@ -144,7 +142,7 @@ def _mutation(
     kind: ResourceKind = ResourceKind.ORGANIZATION,
 ) -> OrganizationMutationResult:
     failure_receipt, completed = _organization_mutation_shapers(operation, target, policy, mutation, kind)
-    return _run_mutation(
+    return _run_receipted_mutation(
         dispatch,
         failure_receipt,
         completed,
@@ -166,7 +164,7 @@ async def _async_mutation(
     kind: ResourceKind = ResourceKind.ORGANIZATION,
 ) -> OrganizationMutationResult:
     failure_receipt, completed = _organization_mutation_shapers(operation, target, policy, mutation, kind)
-    return await _run_mutation_async(
+    return await _run_receipted_mutation_async(
         dispatch,
         failure_receipt,
         completed,

@@ -64,14 +64,11 @@ class SyncOrganizationsService(_SyncOrganizationService):
         limit: int | None = None,
         offset: int | None = None,
         capacity: str | None = None,
-        all_fields: bool = True,
     ) -> ResultEnvelope[CKANResultItem]:
         """List public organization records with native sort and offset paging."""
         return self._invoke_read(
             "organization_list",
-            drop_unset(
-                {"sort": sort, "limit": limit, "offset": offset, "capacity": capacity, "all_fields": all_fields}
-            ),
+            drop_unset({"sort": sort, "limit": limit, "offset": offset, "capacity": capacity, "all_fields": True}),
         )
 
     def organization_list_for_user(self, *, permission: str | None = None) -> ResultEnvelope[CKANResultItem]:
@@ -214,14 +211,11 @@ class AsyncOrganizationsService(_AsyncOrganizationService):
         limit: int | None = None,
         offset: int | None = None,
         capacity: str | None = None,
-        all_fields: bool = True,
     ) -> ResultEnvelope[CKANResultItem]:
         """List public organization records with native sort and offset paging."""
         return await self._invoke_read(
             "organization_list",
-            drop_unset(
-                {"sort": sort, "limit": limit, "offset": offset, "capacity": capacity, "all_fields": all_fields}
-            ),
+            drop_unset({"sort": sort, "limit": limit, "offset": offset, "capacity": capacity, "all_fields": True}),
         )
 
     async def organization_list_for_user(self, *, permission: str | None = None) -> ResultEnvelope[CKANResultItem]:

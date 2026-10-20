@@ -22,6 +22,7 @@ ALL_PORT_NAMES = frozenset(
         "CachePort",
         "CatalogPort",
         "CheckpointableResourceReader",
+        "KeyLockStateStore",
         "OrganizationCatalog",
         "PortalDetector",
         "ResourceReader",

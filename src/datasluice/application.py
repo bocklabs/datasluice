@@ -291,7 +291,7 @@ class _ApplicationServices:
         """Raw bulk-copy multiple resources into a destination directory."""
         from datasluice.io.downloader import Downloader
 
-        downloader = Downloader(self._session._transport, cache=self._session._cache, storage=self._session.storage)
+        downloader = Downloader(self._session._transport, cache=self._session._cache)
         paths = downloader.download_many(resources, destination)
         if len(paths) != len(resources):
             raise DownloadError("Bulk download was incomplete; no resource manifest was produced")

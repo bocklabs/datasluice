@@ -136,7 +136,7 @@ def test_downloader_reports_unusable_redirect_location(tmp_path: Path) -> None:
     resource = _resource()
     with SyncProbe(responder) as transport:
         downloader = Downloader(transport)
-        with pytest.raises(DownloadError, match="unusable redirect Location"):
+        with pytest.raises(DownloadError, match=r"unusable redirect Location \(Invalid IPv6 URL\)"):
             downloader.download(resource, tmp_path)
     assert len(transport.requests) == 1
 

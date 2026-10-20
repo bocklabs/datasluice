@@ -248,3 +248,30 @@ def test_empty_parquet_resource_syncs_with_schema(tmp_path) -> None:
         published_table = pq.read_table(published)
     assert published_table.num_rows == 0
     assert published_table.schema == schema
+
+
+def test_idempotent_skip_reuses_the_existing_record_digest(tmp_path, csv_server, make_resource, inmemory_state) -> None:
+    server, url = csv_server()
+    resource = make_resource(url)
+    transport = HttpxCatalogTransport()
+    destination = f"file://{tmp_path}/dest"
+    counting_fs = write_counting_fs(open_filesystem(destination))
+    original = materialize_module._blob_digest_from_fs
+    callers: list[str] = []
+
+    def tracking_blob_digest(fs: Any, uri: str) -> str:
+        import sys
+
+        callers.append(sys._getframe(1).f_code.co_name)
+        return original(fs, uri)
+
+    with (
+        patch("datasluice.io.filesystem.open_filesystem", return_value=counting_fs),
+        patch.object(materialize_module, "_blob_digest_from_fs", tracking_blob_digest),
+    ):
+        _sync(tmp_path, resource, inmemory_state, transport)
+        callers.clear()
+        second = _sync(tmp_path, resource, inmemory_state, transport)
+
+    assert second[0].action == "skipped-unchanged"
+    assert "materialize" not in callers, callers

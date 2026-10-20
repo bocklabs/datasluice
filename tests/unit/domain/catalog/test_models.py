@@ -272,3 +272,14 @@ def test_result_envelope_serialization_redacts_record_payloads_recursively() -> 
     for plaintext in ("live-token-plaintext", "live-client-secret", "live-bearer-plaintext"):
         assert plaintext not in serialized
     assert REDACTED in serialized
+
+
+def test_result_envelope_serialization_redacts_platform_extensions() -> None:
+    envelope = ResultEnvelope(
+        items=(_credential_record(),),
+        platform=PlatformMetadata(CatalogPlatform.UDATA, extensions={"udata.facets": {"token": "live"}}),
+    )
+
+    platform = cast("dict[str, object]", envelope.to_dict()["platform"])
+    extensions = cast("dict[str, object]", platform["extensions"])
+    assert extensions["udata.facets"] == {"token": REDACTED}
