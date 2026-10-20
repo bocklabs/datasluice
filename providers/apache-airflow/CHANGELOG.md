@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/bocklabs/datasluice/compare/apache-airflow-providers-datasluice-v0.2.1...apache-airflow-providers-datasluice-v0.3.0) (2026-10-20)
+
+
+### Features
+
+* udata connector ([#85](https://github.com/bocklabs/datasluice/issues/85)) ([8376a46](https://github.com/bocklabs/datasluice/commit/8376a46125a4694a7b91b165f45d6587fadd5316))
+
 ## [0.2.1](https://github.com/bocklabs/datasluice/compare/apache-airflow-providers-datasluice-v0.2.0...apache-airflow-providers-datasluice-v0.2.1) (2026-09-14)
 
 
