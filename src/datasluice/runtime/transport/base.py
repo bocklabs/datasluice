@@ -7,12 +7,15 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mappin
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from datasluice.domain.catalog.redaction import redact_string
 
-SENSITIVE_REDIRECT_HEADERS = frozenset(
-    {"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token", "x-app-token"}
+if TYPE_CHECKING:
+    from datasluice.runtime.resilience import DeadlineMonitor
+
+_SAFE_REDIRECT_HEADERS = frozenset(
+    {"accept", "content-type", "user-agent", "range", "if-none-match", "if-modified-since"}
 )
 
 _HOP_BODYLESS_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding"})
@@ -26,9 +29,17 @@ class RedirectPolicy(StrEnum):
     NO_FOLLOW = "no-follow"
 
 
+class UploadStream(Protocol):
+    """A closeable byte stream used for one multipart part."""
+
+    def read(self, size: int = -1) -> bytes: ...
+
+    def close(self) -> None: ...
+
+
 def strip_sensitive_redirect_headers(headers: Mapping[str, str]) -> dict[str, str]:
-    """Return a copy without credential-bearing headers."""
-    return {key: value for key, value in headers.items() if key.lower() not in SENSITIVE_REDIRECT_HEADERS}
+    """Retain only standard content headers when credential forwarding is forbidden."""
+    return {key: value for key, value in headers.items() if key.lower() in _SAFE_REDIRECT_HEADERS}
 
 
 def drop_body_transfer_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -38,32 +49,36 @@ def drop_body_transfer_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class UploadPart:
-    """One immutable multipart form part buffered for upload.
+    """One immutable multipart form part.
 
-    Part data is excluded from ``repr`` so debugging or logging a part can
-    never surface uploaded file contents; only field name, file name,
-    content type, and the data byte length render.
+    ``data`` is either fully buffered ``bytes`` or a one-shot closeable stream, which the request consumes in place
+    exactly once instead of buffering; the caller owns that stream's read position and must close it, because transports
+    never close it. Part data is excluded from ``repr`` so debugging or logging a part can never surface uploaded file
+    contents; only field name, file name, content type, and the data byte length render.
     """
 
     field_name: str
-    data: bytes = field(repr=False)
+    data: bytes | UploadStream = field(repr=False)
     file_name: str | None = None
     content_type: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.field_name, str) or not self.field_name:
             raise ValueError("Upload part field names must be non-empty strings.")
-        if not isinstance(self.data, bytes):
-            raise ValueError("Upload part data must be bytes.")
+        if not isinstance(self.data, bytes) and not (
+            callable(getattr(self.data, "read", None)) and callable(getattr(self.data, "close", None))
+        ):
+            raise ValueError("Upload part data must be bytes or a closeable byte stream.")
         if self.file_name is not None and (not isinstance(self.file_name, str) or not self.file_name):
             raise ValueError("Upload part file names must be non-empty strings when supplied.")
         if self.content_type is not None and (not isinstance(self.content_type, str) or not self.content_type):
             raise ValueError("Upload part content types must be non-empty strings when supplied.")
 
     def __repr__(self) -> str:
+        size = len(self.data) if isinstance(self.data, bytes) else "stream"
         return (
             f"{type(self).__name__}(field_name={self.field_name!r}, file_name={self.file_name!r}, "
-            f"content_type={self.content_type!r}, data=<{len(self.data)} masked bytes>)"
+            f"content_type={self.content_type!r}, data=<{size} masked bytes>)"
         )
 
 
@@ -75,10 +90,8 @@ def redirect_method_and_body(
 ) -> tuple[str, bytes | None, tuple[UploadPart, ...]]:
     """Rewrite the request method, body, and multipart parts for one redirect hop per RFC 9110.
 
-    A ``303`` always downgrades to a bodyless, fileless ``GET``; a
-    ``301``/``302`` historically converts ``POST`` to a bodyless, fileless
-    ``GET``; ``307`` and ``308`` preserve the original method, body, and parts
-    untouched.
+    A ``303`` always downgrades to a bodyless, fileless ``GET``; a ``301``/``302`` historically converts ``POST`` to a
+    bodyless, fileless ``GET``; ``307`` and ``308`` preserve the original method, body, and parts untouched.
     """
     if status == 303:
         return "GET", None, ()
@@ -116,12 +129,11 @@ def _freeze_request_headers(headers: Mapping[str, str]) -> Mapping[str, str]:
 class RuntimeRequest:
     """Immutable HTTP request supplied by a catalog client.
 
-    Headers, bodies, and multipart parts are excluded from ``repr`` so
-    accidental logging or debugging of requests cannot expose credentials or
-    uploaded file contents, and the URL renders through the shared redaction
-    helper. ``__hash__`` projects over the hashable ``method`` and ``url``
-    fields only; equality remains full-field via the generated ``eq`` and
-    still compares headers, body, and parts.
+    Headers, bodies, and multipart parts are excluded from ``repr`` so accidental logging or debugging of requests
+    cannot expose credentials or uploaded file contents, and the URL renders through the shared redaction helper.
+    ``__hash__`` projects over the hashable ``method`` and ``url`` fields only; equality remains full-field via the
+    generated ``eq`` and still compares headers, body, and parts. Transports check a supplied deadline before dispatch
+    and during response consumption.
     """
 
     method: str
@@ -131,6 +143,7 @@ class RuntimeRequest:
     files: tuple[UploadPart, ...] = field(default=(), repr=False)
     redirect_policy: RedirectPolicy = RedirectPolicy.FOLLOW
     max_response_bytes: int | None = None
+    deadline: DeadlineMonitor | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.method, str) or not self.method:
@@ -140,7 +153,16 @@ class RuntimeRequest:
         _validate_request_payload(self.body, self.files)
         if not isinstance(self.redirect_policy, RedirectPolicy):
             raise ValueError("Runtime request redirect policies must use RedirectPolicy.")
+        if self.redirect_policy is RedirectPolicy.FOLLOW and any(
+            not isinstance(part.data, bytes) for part in self.files
+        ):
+            raise ValueError("Multipart parts carrying one-shot streams require RedirectPolicy.NO_FOLLOW.")
         _validate_response_limit(self.max_response_bytes)
+        if self.deadline is not None:
+            from datasluice.runtime.resilience import DeadlineMonitor
+
+            if not isinstance(self.deadline, DeadlineMonitor):
+                raise TypeError("Runtime request deadlines must use DeadlineMonitor.")
         object.__setattr__(self, "headers", _freeze_request_headers(self.headers))
         object.__setattr__(self, "files", tuple(self.files))
 
@@ -155,11 +177,9 @@ class RuntimeRequest:
 class RuntimeResponse:
     """Fully buffered HTTP response returned by a catalog transport.
 
-    The custom ``repr`` masks the body (rendering only its byte length) and
-    omits headers, so debugging cannot expose credential-bearing payloads.
-    ``__hash__`` projects over the hashable ``status_code`` and ``retry_after``
-    fields; equality remains full-field via the generated ``eq`` and still
-    compares headers and body.
+    The custom ``repr`` masks the body (rendering only its byte length) and omits headers, so debugging cannot expose
+    credential-bearing payloads. ``__hash__`` projects over the hashable ``status_code`` and ``retry_after`` fields;
+    equality remains full-field via the generated ``eq`` and still compares headers and body.
     """
 
     status_code: int
@@ -199,7 +219,7 @@ class RuntimeStreamResponse:
     """One closeable synchronous response whose bytes are yielded incrementally."""
 
     status_code: int
-    headers: Mapping[str, str]
+    headers: Mapping[str, str] = field(repr=False)
     chunks: Iterator[bytes] = field(repr=False)
     close_callback: Callable[[], None] = field(repr=False)
     retry_after: float | None = None
@@ -228,7 +248,7 @@ class RuntimeStreamResponse:
     def __iter__(self) -> Iterator[bytes]:
         for chunk in self.chunks:
             if not isinstance(chunk, bytes):
-                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+                raise TransportError("The catalog transport yielded a non-byte stream chunk.")
             if chunk:
                 yield chunk
 
@@ -254,7 +274,7 @@ class AsyncRuntimeStreamResponse:
     """One closeable asynchronous response whose bytes are yielded incrementally."""
 
     status_code: int
-    headers: Mapping[str, str]
+    headers: Mapping[str, str] = field(repr=False)
     chunks: AsyncIterator[bytes] = field(repr=False)
     close_callback: Callable[[], Awaitable[None] | None] = field(repr=False)
     retry_after: float | None = None
@@ -287,7 +307,7 @@ class AsyncRuntimeStreamResponse:
     async def __aiter__(self) -> AsyncIterator[bytes]:
         async for chunk in self.chunks:
             if not isinstance(chunk, bytes):
-                raise TransportFailure("The catalog transport yielded a non-byte stream chunk.")
+                raise TransportError("The catalog transport yielded a non-byte stream chunk.")
             if chunk:
                 yield chunk
 
@@ -314,7 +334,7 @@ class AsyncRuntimeStreamResponse:
                 await result
 
 
-class TransportFailure(RuntimeError):
+class TransportError(RuntimeError):
     """A connectivity failure distinct from an HTTP status outcome."""
 
 
@@ -332,4 +352,8 @@ class StreamingCatalogTransport(CatalogTransport, Protocol):
     """Synchronous transport port that can expose a response body incrementally."""
 
     def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
-        """Send one request without pre-buffering its response body."""
+        """Send one request without pre-buffering its response body.
+
+        Streaming requests must disable redirect following; both in-tree transports enforce ``max_response_bytes``
+        chunk-wise as the stream is consumed.
+        """

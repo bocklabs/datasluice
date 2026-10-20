@@ -1,5 +1,3 @@
-"""Capability probing engine and cache tests."""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +21,7 @@ from datasluice.domain.catalog.operations import (
 from datasluice.domain.catalog.profiles import (
     CredentialClassification,
     DeclaredCapabilityProfile,
+    EffectiveCapabilityProfile,
     EffectiveCapabilityState,
     ProbeEvidence,
     ProbeResponseClass,
@@ -125,6 +124,20 @@ class _AsyncCountingRunner:
         return self.evidence
 
 
+def test_deployment_origin_must_be_https() -> None:
+    operation = _operation()
+    with pytest.raises(ValueError, match="sanitized HTTPS origins"):
+        EffectiveCapabilityCache(_profile(operation), deployment_origin="http://catalog.example.test")
+
+
+def test_deployment_origin_strips_the_mount_path_but_rejects_credentials() -> None:
+    operation = _operation()
+    cache = EffectiveCapabilityCache(_profile(operation), deployment_origin="https://catalog.example.test/mount")
+    assert cache._deployment_origin == "https://catalog.example.test"
+    with pytest.raises(ValueError, match="sanitized HTTPS origins"):
+        EffectiveCapabilityCache(_profile(operation), deployment_origin="https://user:secret@catalog.example.test")
+
+
 def test_first_resolve_probes_once_and_caches_the_effective_state() -> None:
     operation = _operation()
     runner = _CountingRunner(_evidence(operation))
@@ -146,6 +159,22 @@ def test_nan_ttl_is_rejected() -> None:
     numeric_value = float("nan")
     with pytest.raises(ValueError, match="finite non-negative"):
         EffectiveCapabilityCache(profile, ttl_seconds=numeric_value)
+
+
+def test_cache_evicts_oldest_scope_when_many_fresh_credentials_rotate() -> None:
+    operation = _operation()
+    cache = EffectiveCapabilityCache(_profile(operation))
+    for index in range(1025):
+        cache.record_response(operation.id, ProbeResponseClass.UNAUTHORIZED, credential_scope=f"scope-{index}")
+
+    assert (
+        cache.peek(operation.id, credential_scope="scope-0").for_operation(operation.id).state
+        is EffectiveCapabilityState.CORE
+    )
+    assert (
+        cache.peek(operation.id, credential_scope="scope-1024").for_operation(operation.id).state
+        is EffectiveCapabilityState.UNAUTHORIZED
+    )
 
 
 def test_ttl_expiry_reprobes_using_an_injected_clock() -> None:
@@ -227,6 +256,54 @@ def test_async_tasks_share_one_in_flight_probe_and_result() -> None:
         ] * 8
 
     asyncio.run(exercise())
+
+
+class _CrossThreadAsyncRunner:
+    def __init__(self, evidence: ProbeEvidence) -> None:
+        self.evidence = evidence
+        self.calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    async def probe(self, operation_id: OperationId) -> ProbeEvidence:
+        self.calls += 1
+        self.entered.set()
+        await asyncio.get_running_loop().run_in_executor(None, self.release.wait)
+        return self.evidence
+
+
+def test_async_invalidation_from_another_thread_fails_the_flight_without_stale_recache() -> None:
+    operation = _operation()
+    runner = _CrossThreadAsyncRunner(_evidence(operation))
+    cache = EffectiveCapabilityCache(_profile(operation), async_probe_runner=runner)
+    outcomes: list[BaseException | EffectiveCapabilityProfile] = []
+    following = threading.Event()
+
+    async def scenario() -> None:
+        leader = asyncio.create_task(cache.resolve_async(operation.id))
+        follower = asyncio.create_task(cache.resolve_async(operation.id))
+        await asyncio.sleep(0)
+        following.set()
+        outcomes.extend(await asyncio.gather(leader, follower, return_exceptions=True))
+
+    thread = threading.Thread(target=lambda: asyncio.run(scenario()))
+    thread.start()
+    try:
+        assert runner.entered.wait(timeout=5.0)
+        assert following.wait(timeout=5.0)
+        cache.invalidate()
+        runner.release.set()
+    finally:
+        runner.release.set()
+        thread.join(timeout=5.0)
+
+    assert not thread.is_alive()
+    assert [type(outcome) for outcome in outcomes] == [CatalogUnavailableError, CatalogUnavailableError]
+    assert all("invalidated" in str(outcome) for outcome in outcomes)
+
+    fresh = asyncio.run(cache.resolve_async(operation.id))
+    assert runner.calls == 2
+    assert fresh.for_operation(operation.id).state is EffectiveCapabilityState.CORE
 
 
 @pytest.mark.parametrize(

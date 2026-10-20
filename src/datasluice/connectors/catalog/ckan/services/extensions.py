@@ -1,57 +1,43 @@
-"""Both-mode CKAN background-job, task-status, and config-option projections.
-
-Background jobs and task status ride the core ``jobs-and-task-status`` id
-while the sysadmin-only config options own their admin ``config-options`` id
-with server authorization responses as the runtime evidence (D-09):
-forbidden envelopes map to ForbiddenError, never synthesized privilege.
-``job_clear`` and ``task_status_delete`` are destructive-family and refuse
-pre-dispatch without a confirmed destructive policy through the single 03-03
-gate. ``config_option_update`` passes its key-value mapping verbatim so no
-server-side option name or value is translated or dropped.
-"""
-
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
     _async_typed_read,
-    _AsyncNativeService,
+    _AsyncGroupService,
     _sync_typed_mutation,
     _sync_typed_read,
-    _SyncNativeService,
+    _SyncGroupService,
 )
 from datasluice.connectors.catalog.ckan.mapping import JOB, PLATFORM, TASK
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
+from datasluice.connectors.catalog.ckan.services._shared import drop_unset
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from datasluice.connectors.catalog.ckan.clients import AsyncCKANClient, SyncCKANClient
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _GROUP = "extensions"
 _CONFIG_OPTION = ResourceKind("config-option")
-
-
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}
 
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "job_clear":
         return CatalogId(PLATFORM, JOB, "background-jobs")
     if action.startswith("job_"):
-        return CatalogId(PLATFORM, JOB, str(params["id"]))
+        return CatalogId(PLATFORM, JOB, str(params.get("id", "")))
     if action.startswith("config_option"):
         return CatalogId(PLATFORM, _CONFIG_OPTION, "site-config")
     return CatalogId(PLATFORM, TASK, str(params["id"] if "id" in params else params.get("entity_id", "task")))
 
 
-class SyncExtensionsService(_SyncNativeService):
+class SyncExtensionsService(_SyncGroupService):
     """Synchronous extension projection carrying eleven typed actions."""
 
     __slots__ = ()
@@ -61,7 +47,7 @@ class SyncExtensionsService(_SyncNativeService):
 
     def job_list(self, *, queues: list[str] | None = None) -> ResultEnvelope[CKANResultItem]:
         """List registered background jobs as job-kind records."""
-        return self._invoke_read("job_list", _drop_unset({"queues": queues}))
+        return self._invoke_read("job_list", drop_unset({"queues": queues}))
 
     def job_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
         """Show one background job by its identifier."""
@@ -74,7 +60,7 @@ class SyncExtensionsService(_SyncNativeService):
     def job_clear(self, *, queues: list[str] | None = None, policy: MutationPolicy | None = None) -> CKANMutationResult:
         """Clear queued background jobs on the destructive tier."""
         params: dict[str, object] = {}
-        params.update(_drop_unset({"queues": queues}))
+        params.update(drop_unset({"queues": queues}))
         return self._invoke_mutation("job_clear", params, policy)
 
     def task_status_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
@@ -94,7 +80,7 @@ class SyncExtensionsService(_SyncNativeService):
     ) -> CKANMutationResult:
         """Update one task-status record on the standard tier."""
         params: dict[str, object] = {"entity_id": entity_id, "task_type": task_type, "key": key, "value": value}
-        params.update(_drop_unset({"state": state, "error": error}))
+        params.update(drop_unset({"state": state, "error": error}))
         return self._invoke_mutation("task_status_update", params, policy)
 
     def task_status_update_many(
@@ -130,7 +116,7 @@ class SyncExtensionsService(_SyncNativeService):
         return _sync_typed_mutation(self._client, _GROUP, action, params, policy, _mutation_target)
 
 
-class AsyncExtensionsService(_AsyncNativeService):
+class AsyncExtensionsService(_AsyncGroupService):
     """Asynchronous extension projection carrying eleven typed actions."""
 
     __slots__ = ()
@@ -140,7 +126,7 @@ class AsyncExtensionsService(_AsyncNativeService):
 
     async def job_list(self, *, queues: list[str] | None = None) -> ResultEnvelope[CKANResultItem]:
         """List registered background jobs as job-kind records."""
-        return await self._invoke_read("job_list", _drop_unset({"queues": queues}))
+        return await self._invoke_read("job_list", drop_unset({"queues": queues}))
 
     async def job_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
         """Show one background job by its identifier."""
@@ -155,7 +141,7 @@ class AsyncExtensionsService(_AsyncNativeService):
     ) -> CKANMutationResult:
         """Clear queued background jobs on the destructive tier."""
         params: dict[str, object] = {}
-        params.update(_drop_unset({"queues": queues}))
+        params.update(drop_unset({"queues": queues}))
         return await self._invoke_mutation("job_clear", params, policy)
 
     async def task_status_show(self, *, id: str) -> ResultEnvelope[CKANResultItem]:
@@ -175,7 +161,7 @@ class AsyncExtensionsService(_AsyncNativeService):
     ) -> CKANMutationResult:
         """Update one task-status record on the standard tier."""
         params: dict[str, object] = {"entity_id": entity_id, "task_type": task_type, "key": key, "value": value}
-        params.update(_drop_unset({"state": state, "error": error}))
+        params.update(drop_unset({"state": state, "error": error}))
         return await self._invoke_mutation("task_status_update", params, policy)
 
     async def task_status_update_many(

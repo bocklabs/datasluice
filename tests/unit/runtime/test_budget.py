@@ -1,5 +1,3 @@
-"""Tests for finite runtime operation deadlines."""
-
 from __future__ import annotations
 
 import pytest

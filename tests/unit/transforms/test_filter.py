@@ -1,10 +1,3 @@
-"""Unit tests for the Filter transform.
-
-Verifies ``Filter`` delegates row filtering to ``RecordBatch.filter`` via a
-pyarrow compute ``Expression``: single-expression, compound (``&``), and the
-zero-row edge case.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

@@ -1,11 +1,3 @@
-"""Shared fixtures for transform unit tests.
-
-Provides a synthetic :class:`~datasluice.data.batch_stream.BatchStream` fixture
-. Mirrors ``tests/unit/data/conftest.py``. The
-deliberate ``None`` in the ``name`` column surfaces null-handling divergence
-for the later work.
-"""
-
 from __future__ import annotations
 
 from typing import Any

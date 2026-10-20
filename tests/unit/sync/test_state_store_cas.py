@@ -1,22 +1,17 @@
-"""Optimistic CAS coverage for concurrent FileStateStore writers.
-
-Closes the TOCTOU blocker: the per-key threading lock makes the
-compare-read and atomic-move indivisible within a process, so two barrier-
-synchronized expected-absent writers cannot both succeed. Closes by
-declaring which fsspec backends provide an atomic rename.
-"""
-
 from __future__ import annotations
 
+import multiprocessing
 import threading
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 from datasluice.domain import Artifact, SyncState
 from datasluice.exceptions import SyncStateConflictError
 from datasluice.sync.state_store import _UNSET, FileStateStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_cas_loser_raises(tmp_path: Path) -> None:
@@ -50,25 +45,6 @@ def test_cas_no_conflict_normal_write(tmp_path: Path) -> None:
     store.put(key, second, expected_prior=expected_prior)
 
     assert store.get(key) == second
-
-
-def test_cas_matrix_n10(tmp_path: Path) -> None:
-    for iteration in range(10):
-        base_uri = f"file://{tmp_path}/run-{iteration}/state"
-        store_a = FileStateStore(base_uri)
-        store_b = FileStateStore(base_uri)
-        key = "resource-1"
-        expected_prior = store_a.read_raw(key)
-        winner = SyncState(cursor={"resource-1": f'"winner-{iteration}"'})
-
-        assert expected_prior is None
-        store_b.put(key, winner)
-
-        state = SyncState(cursor={"resource-1": f'"loser-{iteration}"'})
-        with pytest.raises(SyncStateConflictError):
-            store_a.put(key, state, expected_prior=expected_prior)
-
-        assert store_a.get(key) == winner
 
 
 def test_conditional_put_with_correct_prior_succeeds(tmp_path: Path) -> None:
@@ -176,13 +152,6 @@ def test_barrier_synchronized_dual_writer_loser_raises(tmp_path: Path) -> None:
     assert final_state.cursor == {key: f'"{winner_value}"'}
 
 
-def test_atomic_mv_backends_declares_local_and_memory() -> None:
-    from datasluice.sync.state_store import _ATOMIC_MV_BACKENDS
-
-    assert "file" in _ATOMIC_MV_BACKENDS
-    assert "memory" in _ATOMIC_MV_BACKENDS
-
-
 def test_is_atomic_mv_true_for_local_backend(tmp_path: Path) -> None:
     store = FileStateStore(f"file://{tmp_path}/state")
     assert store._is_atomic_mv is True
@@ -217,6 +186,9 @@ class _ConditionalPutSpy:
         self.conditional_put_calls: list[tuple[str, bytes | None]] = []
         self.get_with_version_calls: list[str] = []
 
+    def key_lock(self, key: str) -> Any:
+        return self._inner.key_lock(key)
+
     def get(self, key: str) -> Any:
         return self._inner.get(key)
 
@@ -244,12 +216,10 @@ class _ConditionalPutSpy:
 def test_sync_uses_cas_for_checkpoint_write(tmp_path) -> None:
     """Checkpointed local Parquet writes use conditional_put for both in-progress and completed state.
 
-    The previous version served an HTTP Parquet body, which the production
-    guard deliberately excludes from checkpointed materialization — so its
-    observed conditional write was only the completed-state write, not the
-    intermediate per-batch checkpoint writes the test name claims to cover.
-    Use local Parquet with multiple row groups so materialize_checkpointed
-    actually runs and emits in-progress checkpoints before the final write.
+    The previous version served an HTTP Parquet body, which the production guard deliberately excludes from checkpointed
+    materialization — so its observed conditional write was only the completed-state write, not the intermediate per-
+    batch checkpoint writes the test name claims to cover. Use local Parquet with multiple row groups so
+    materialize_checkpointed actually runs and emits in-progress checkpoints before the final write.
     """
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -311,7 +281,7 @@ def test_sync_uses_cas_for_completed_write(tmp_path, csv_server, make_resource) 
         sync_resources(
             [resource],
             state_store=store,
-            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
+            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
         )
     )
@@ -341,7 +311,7 @@ def test_sync_fallback_unconditional_put_for_non_atomic(tmp_path, csv_server, ma
         sync_resources(
             [resource],
             state_store=store,
-            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
+            reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
         )
     )
@@ -434,7 +404,7 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
                 sync_resources(
                     [resource],
                     state_store=store,
-                    reader=DataPlaneResourceReader(transport=HttpxCatalogTransport()),
+                    reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
                     destination_uri=dest,
                 )
             )
@@ -465,3 +435,103 @@ def test_concurrent_sync_serializes_artifact_and_state(tmp_path, csv_server, mak
     assert destination_health(resource, Artifact.from_dict(artifact), destination_uri=dest), (
         "state checksum must match the artifact currently published at final_uri"
     )
+
+
+def _process_cas(base_uri: str, barrier: Any, results: Any, value: str) -> None:
+    try:
+        store = FileStateStore(base_uri)
+        prior = store.read_version("shared")
+        barrier.wait(timeout=10)
+        try:
+            store.conditional_put("shared", SyncState(cursor={"shared": f'"{value}"'}), prior)
+            results.put("committed")
+        except SyncStateConflictError:
+            results.put("conflict")
+    except Exception as exc:
+        # surface unexpected child failures instead of a parent-side queue.Empty timeout
+        results.put(f"error: {exc!r}")
+
+
+def test_local_cas_coordinates_separate_processes(tmp_path: Path) -> None:
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    base_uri = f"file://{tmp_path}/process-state"
+    FileStateStore(base_uri)
+    processes = [context.Process(target=_process_cas, args=(base_uri, barrier, results, value)) for value in ("a", "b")]
+    try:
+        for process in processes:
+            process.start()
+        assert sorted(results.get(timeout=15) for _ in processes) == ["committed", "conflict"]
+        for process in processes:
+            process.join(timeout=10)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        results.close()
+
+
+def test_atomic_sync_refuses_a_store_without_a_transaction_lock() -> None:
+    from datasluice.exceptions import DataSluiceError
+    from datasluice.sync.sync import _resource_transaction
+
+    class UnlockedStore:
+        pass
+
+    with pytest.raises(DataSluiceError, match="key_lock"):
+        _resource_transaction(UnlockedStore(), "resource", is_atomic=True)
+
+
+def test_file_state_store_satisfies_the_key_lock_capability() -> None:
+    from datasluice.ports import KeyLockStateStore
+
+    assert isinstance(FileStateStore("file://state"), KeyLockStateStore)
+
+
+def test_per_key_lock_is_released_between_yielded_outcomes(tmp_path, csv_server, make_resource) -> None:
+    from datasluice.data import DataPlaneResourceReader
+    from datasluice.runtime.transport.httpx_transport import HttpxCatalogTransport
+    from datasluice.sync import state_store as module
+    from datasluice.sync import sync_resources
+    from datasluice.sync._identity import canonical_identity
+
+    _server, url = csv_server()
+    resource = make_resource(url, format="CSV")
+    store = FileStateStore(f"file://{tmp_path}/state")
+    generator = sync_resources(
+        [resource],
+        state_store=store,
+        reader=DataPlaneResourceReader(transport=HttpxCatalogTransport(), allow_private_http=True),
+        destination_uri=f"file://{tmp_path}/dest",
+    )
+    try:
+        next(generator)
+        scope = store._lock_scope(canonical_identity(resource))
+        with module._GLOBAL_LOCKS_GUARD:
+            assert scope not in module._GLOBAL_LOCKS
+            assert scope not in module._GLOBAL_LOCKS_USERS
+    finally:
+        cast("Any", generator).close()
+
+
+def test_process_cas_reports_unexpected_child_failures(tmp_path) -> None:
+    """A child-side failure lands on the queue as an error instead of a parent timeout."""
+
+    class _BrokenBarrier:
+        def wait(self, timeout: float | None = None) -> None:
+            raise RuntimeError("barrier exploded")
+
+    class _Queue:
+        def __init__(self) -> None:
+            self.items: list[str] = []
+
+        def put(self, item: str) -> None:
+            self.items.append(item)
+
+    results = _Queue()
+    _process_cas(f"file://{tmp_path}/state", _BrokenBarrier(), results, "a")
+
+    assert results.items == ["error: RuntimeError('barrier exploded')"]

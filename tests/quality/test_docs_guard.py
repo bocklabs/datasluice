@@ -1,18 +1,3 @@
-"""Documentation guard for the canonical connector clean break.
-
-The published documentation must teach only the canonical explicit
-connector contract: platform packages under
-``datasluice.connectors.catalog``, the public contract suite in
-``datasluice.contracts.catalog``, and the retained direct-resource data
-plane. Any documented route to removed modules, symbols, portal types,
-URL-driven facade construction, or deleted CLI commands fails this gate.
-Removed identifiers stay legal only inside this file, which defines the
-negative audit, and inside the explicit per-file allowlist below.
-
-Any detected violation fails module collection, so a documentation
-regression can never surface as a green CI run with skipped gates.
-"""
-
 from __future__ import annotations
 
 import re
@@ -178,17 +163,35 @@ def _bash_fence_violations(pages: list[_Page]) -> list[str]:
     return violations
 
 
+def _symbol_home_violations(page: _Page) -> list[str]:
+    """Return canonical symbols a page names without their platform import home."""
+    return [
+        f"{page.rel}: {symbol!r} without its {package} import home"
+        for symbol, package in CANONICAL_PLATFORM_SYMBOLS.items()
+        if symbol in page.text and package not in page.text
+    ]
+
+
+def _fence_import_home_violations(page: _Page, body: str) -> list[str]:
+    """Return canonical symbols a python fence imports from a non-canonical package."""
+    violations: list[str] = []
+    for match in _IMPORT_RE.finditer(body):
+        module = match.group("module")
+        names = match.group("names")
+        violations += [
+            f"{page.rel}: {symbol!r} imported from {module!r}"
+            for symbol, package in CANONICAL_PLATFORM_SYMBOLS.items()
+            if symbol in names and module != package
+        ]
+    return violations
+
+
 def _canonical_import_violations(pages: list[_Page]) -> list[str]:
-    violations = []
+    violations: list[str] = []
     for page in pages:
-        for symbol, package in CANONICAL_PLATFORM_SYMBOLS.items():
-            if symbol in page.text and package not in page.text:
-                violations.append(f"{page.rel}: {symbol!r} without its {package} import home")
+        violations += _symbol_home_violations(page)
         for body in page.fences("python"):
-            for match in _IMPORT_RE.finditer(body):
-                for symbol, package in CANONICAL_PLATFORM_SYMBOLS.items():
-                    if symbol in match.group("names") and match.group("module") != package:
-                        violations.append(f"{page.rel}: {symbol!r} imported from {match.group('module')!r}")
+            violations += _fence_import_home_violations(page, body)
     return violations
 
 
@@ -231,7 +234,7 @@ def _page_text(relative: str) -> str:
 
 def _install_boundary_violations() -> list[str]:
     text = _page_text("docs/install.md")
-    violations = []
+    violations: list[str] = []
     if not text:
         return violations
     if "apache-airflow-providers-datasluice" not in text:

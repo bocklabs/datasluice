@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from datasluice.domain.catalog.redaction import redact_mapping, redact_value
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _NO_REDACT_ENV_VAR = "DATASLUICE_NO_REDACT"
 

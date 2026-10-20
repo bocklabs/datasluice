@@ -93,6 +93,7 @@ jobs:
     needs: [release-please, publish-core-build]
     if: needs.publish-core-build.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: test-pypi
       url: https://test.pypi.org/p/datasluice
@@ -114,6 +115,7 @@ jobs:
     needs: [release-please, publish-core-build, publish-core-testpypi]
     if: needs.publish-core-testpypi.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -130,7 +132,7 @@ jobs:
         env:
           PACKAGE_VERSION: ${{ needs.release-please.outputs.core--version }}
         run: |
-          uv venv --python 3.12 "$SMOKE_VENV"
+          uv venv --python 3.13 "$SMOKE_VENV"
           uv pip install --python "$SMOKE_VENV/bin/python" --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "datasluice==$PACKAGE_VERSION"
       - run: |
           "$SMOKE_VENV/bin/python" -c "import datasluice"
@@ -140,6 +142,7 @@ jobs:
     needs: [release-please, publish-core-build, publish-core-testpypi, publish-core-smoke]
     if: needs.publish-core-smoke.result == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/p/datasluice
@@ -190,6 +193,7 @@ jobs:
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: ${{ matrix.provider.testpypi_env }}
       url: https://test.pypi.org/p/${{ matrix.provider.package_name }}
@@ -217,6 +221,7 @@ jobs:
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -234,7 +239,7 @@ jobs:
           PACKAGE_NAME: ${{ matrix.provider.package_name }}
           PACKAGE_VERSION: ${{ matrix.provider.version }}
         run: |
-          uv venv --python 3.12 "$SMOKE_VENV"
+          uv venv --python 3.13 "$SMOKE_VENV"
           uv pip install --python "$SMOKE_VENV/bin/python" --index-strategy unsafe-best-match --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "$PACKAGE_NAME==$PACKAGE_VERSION"
       - name: Run provider smoke test
         working-directory: ${{ matrix.provider.path }}
@@ -250,6 +255,7 @@ jobs:
       matrix:
         provider: ${{ fromJson(needs.release-please.outputs.provider-releases) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: ${{ matrix.provider.pypi_env }}
       url: https://pypi.org/p/${{ matrix.provider.package_name }}

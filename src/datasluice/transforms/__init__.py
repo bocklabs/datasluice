@@ -1,10 +1,8 @@
 """Composable transform pipeline package.
 
-Re-exports are resolved lazily via PEP 562 ``__getattr__`` so that importing
-``datasluice.transforms`` does not trigger a pyarrow import on bare installs.
-This mirrors the discipline in :mod:`datasluice.data` — every symbol here
-depends on lazy pyarrow (the pipeline wraps Arrow ``RecordBatch`` iterators),
-so ``__getattr__`` keeps the bare import light.
+Re-exports are resolved lazily via PEP 562 ``__getattr__`` so that importing ``datasluice.transforms`` does not trigger
+a pyarrow import on bare installs. This mirrors the discipline in :mod:`datasluice.data` — every symbol here depends on
+lazy pyarrow (the pipeline wraps Arrow ``RecordBatch`` iterators), so ``__getattr__`` keeps the bare import light.
 """
 
 __all__ = [
@@ -24,8 +22,8 @@ __all__ = [
 def __getattr__(name: str):  # PEP 562
     """Lazily export transform symbols (mirrors datasluice.data.__getattr__).
 
-    Importing any of these eagerly would pull pyarrow at package import time
-    and break bare installs. Each symbol is resolved on first attribute access.
+    Importing any of these eagerly would pull pyarrow at package import time and break bare installs. Each symbol is
+    resolved on first attribute access.
     """
     if name == "TransformStep":
         from datasluice.transforms.protocol import TransformStep

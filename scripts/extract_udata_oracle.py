@@ -8,9 +8,11 @@ import hashlib
 import json
 import re
 import subprocess
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 PINNED_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
 ALLOWED_METHODS = frozenset({"DELETE", "GET", "PATCH", "POST", "PUT"})
@@ -36,7 +38,7 @@ def digest_file(path: Path) -> str:
 
 
 def _source_commit(source_root: Path) -> str:
-    """Read the exact commit checked out in an upstream source tree."""
+    """Read the exact commit checked out in a clean upstream source tree."""
     completed = subprocess.run(
         ["git", "-C", str(source_root), "rev-parse", "HEAD"],
         check=False,
@@ -45,6 +47,12 @@ def _source_commit(source_root: Path) -> str:
     )
     if completed.returncode != 0:
         raise PinnedSourceError("source root must be a git checkout with an exact pinned commit")
+    dirty = subprocess.run(
+        ["git", "-C", str(source_root), "diff-index", "--quiet", "HEAD", "--"],
+        check=False,
+    )
+    if dirty.returncode != 0:
+        raise PinnedSourceError("source root working tree must be unmodified at the pinned commit")
     return completed.stdout.strip()
 
 
@@ -495,9 +503,8 @@ def _frontmatter(path: Path) -> dict[str, str]:
     return values
 
 
-def verify_preflight(path: Path) -> dict[str, bool | int | str]:
-    """Verify a human-approved record and report its narrowly authorized scopes."""
-    values = _frontmatter(path)
+def _approved_frontmatter(values: dict[str, str]) -> tuple[str, int, bool]:
+    """Validate the approval frontmatter and return its decision, route count, and target scope."""
     if values.get("status") != "approved":
         raise PreflightError(f"preflight status is {values.get('status', 'missing')}, not approved")
     decision = values.get("decision")
@@ -519,6 +526,40 @@ def verify_preflight(path: Path) -> dict[str, bool | int | str]:
     targets_approved = values.get("targets_approved") == "true"
     if decision == "approve-baseline-and-targets" and not targets_approved:
         raise PreflightError("target approval decision requires targets_approved: true")
+    if decision == "approve-baseline-defer-targets" and targets_approved:
+        raise PreflightError("defer-targets decision is incompatible with targets_approved: true")
+    return decision, route_count, targets_approved
+
+
+def _verify_reconciled_candidate(values: dict[str, str], candidate: Path, route_count: int) -> None:
+    """Fail unless the reconciled candidate matches the approved frontmatter facts."""
+    try:
+        reconciled = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise PreflightError("preflight verification requires a valid reconciled candidate") from error
+    if not isinstance(reconciled, dict):
+        raise PreflightError("the reconciled candidate must be a JSON object")
+    input_digests = reconciled.get("input_digests")
+    if not isinstance(input_digests, dict):
+        raise PreflightError("the reconciled candidate has no input digest mapping")
+    for recorded, bound in (
+        ("source_digest", "source"),
+        ("swagger_digest", "swagger"),
+        ("url_map_digest", "url_map"),
+    ):
+        if values[recorded] != input_digests.get(bound):
+            raise PreflightError(f"preflight {recorded} does not match the reconciled candidate")
+    if route_count != reconciled.get("route_count"):
+        raise PreflightError("preflight route_count does not match the reconciled candidate")
+    if values.get("source_commit") != reconciled.get("source_commit"):
+        raise PreflightError("preflight source_commit does not match the reconciled candidate")
+
+
+def verify_preflight(path: Path, candidate: Path) -> dict[str, bool | int | str]:
+    """Verify a human-approved record against its reconciled candidate and report its scopes."""
+    values = _frontmatter(path)
+    decision, route_count, targets_approved = _approved_frontmatter(values)
+    _verify_reconciled_candidate(values, candidate, route_count)
     return {
         "production_approved": True,
         "drift_approved": targets_approved,
@@ -542,43 +583,74 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run the bounded local-only reconciliation or verification operation."""
-    args = build_parser().parse_args(argv)
-    if args.exclude_namespace and any((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
-        raise SystemExit("namespace exclusion only applies to source extraction")
-    if args.verify_preflight:
-        print(json.dumps(verify_preflight(args.verify_preflight), sort_keys=True))
-        return 0
-    if args.source_root or args.source_output:
-        if not args.source_root or not args.source_output:
-            raise SystemExit("--source-root and --source-output are required together")
-        if any((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
-            raise SystemExit("source extraction cannot be combined with route reconciliation arguments")
-        document = extract_source_document(args.source_root)
-        if args.exclude_namespace:
-            document = {
-                **document,
-                "routes": [
-                    route
-                    for route in document["routes"]
-                    if not any(
-                        route["path"] == namespace or route["path"].startswith(namespace + "/")
-                        for namespace in args.exclude_namespace
-                    )
-                ],
-                "excluded_namespaces": sorted(args.exclude_namespace),
-            }
-        write_source_document(args.source_output, document)
-        print(json.dumps({key: value for key, value in document.items() if key != "routes"}, sort_keys=True))
-        return 0
-    if not all((args.source, args.swagger, args.url_map, args.candidate, args.preflight)):
+def _reconciliation_arguments(args: argparse.Namespace) -> tuple[Any, ...]:
+    """Return the route reconciliation arguments exactly as the caller supplied them."""
+    return (args.source, args.swagger, args.url_map, args.candidate, args.preflight)
+
+
+def _source_extraction_requested(args: argparse.Namespace) -> bool:
+    """Report whether the caller asked for a source-only route document."""
+    return bool(args.source_root or args.source_output)
+
+
+def _excluded_route(route: Mapping[str, Any], namespaces: Sequence[str]) -> bool:
+    """Report whether a route sits at or beneath one of the excluded namespaces."""
+    path = route["path"]
+    return any(path == namespace or path.startswith(f"{namespace}/") for namespace in namespaces)
+
+
+def _without_namespaces(document: dict[str, Any], namespaces: Sequence[str]) -> dict[str, Any]:
+    """Return a source document with every excluded namespace removed from its routes."""
+    return {
+        **document,
+        "routes": [route for route in document["routes"] if not _excluded_route(route, namespaces)],
+        "excluded_namespaces": sorted(namespaces),
+    }
+
+
+def _summary_json(document: Mapping[str, Any]) -> str:
+    """Render a document without its bulk route list."""
+    return json.dumps({key: value for key, value in document.items() if key != "routes"}, sort_keys=True)
+
+
+def _run_source_extraction(args: argparse.Namespace) -> int:
+    """Extract a source-only route document from the pinned upstream checkout."""
+    if not args.source_root or not args.source_output:
+        raise SystemExit("--source-root and --source-output are required together")
+    if any(_reconciliation_arguments(args)):
+        raise SystemExit("source extraction cannot be combined with route reconciliation arguments")
+    document = extract_source_document(args.source_root)
+    if args.exclude_namespace:
+        document = _without_namespaces(document, args.exclude_namespace)
+    write_source_document(args.source_output, document)
+    print(_summary_json(document))
+    return 0
+
+
+def _run_reconciliation(args: argparse.Namespace) -> int:
+    """Reconcile the three independent route captures and write the decision-pending preflight record."""
+    if not all(_reconciliation_arguments(args)):
         raise SystemExit("--source, --swagger, --url-map, --candidate, and --preflight are required together")
     result = reconcile_route_documents(args.source, args.swagger, args.url_map)
     write_candidate(args.candidate, result)
     write_preflight(args.preflight, result)
-    print(json.dumps({key: value for key, value in result.items() if key != "routes"}, sort_keys=True))
+    print(_summary_json(result))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the bounded local-only reconciliation or verification operation."""
+    args = build_parser().parse_args(argv)
+    if args.exclude_namespace and any(_reconciliation_arguments(args)):
+        raise SystemExit("namespace exclusion only applies to source extraction")
+    if args.verify_preflight:
+        if not args.candidate:
+            raise SystemExit("--verify-preflight requires --candidate")
+        print(json.dumps(verify_preflight(args.verify_preflight, args.candidate), sort_keys=True))
+        return 0
+    if _source_extraction_requested(args):
+        return _run_source_extraction(args)
+    return _run_reconciliation(args)
 
 
 if __name__ == "__main__":

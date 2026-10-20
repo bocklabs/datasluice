@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from datasluice.contracts.catalog.fixtures import ReferenceFixtureSet
 from datasluice.contracts.catalog.report import ComplianceReport
-from datasluice.contracts.catalog.runner import CatalogContractCase
-from datasluice.domain.catalog.extensions import ConnectorId, ConnectorManifest
-from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from datasluice.contracts.catalog.fixtures import ReferenceFixtureSet
+    from datasluice.contracts.catalog.runner import CatalogContractCase
+    from datasluice.domain.catalog.extensions import ConnectorId, ConnectorManifest
+    from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 
 
 @dataclass(frozen=True, slots=True)

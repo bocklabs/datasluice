@@ -1,10 +1,3 @@
-"""Unit tests for the streaming Parquet reader.
-
-Covers both seekable (BytesIO) and non-seekable (IterableBytesIO) paths —
-the latter exercises the spool-to-BytesIO landmine mitigation (RESEARCH
-: Parquet footers live at EOF and require a seek).
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -48,7 +41,13 @@ def test_read_batches_non_seekable_spools() -> None:
     buf = io.BytesIO()
     pq.write_table(_sample_table(), buf)
     raw = buf.getvalue()
-    src = IterableBytesIO([raw[:10], raw[10:50], raw[50:]])
+
+    class BoundedSource(IterableBytesIO):
+        def read(self, n: int = -1) -> bytes:
+            assert 0 < n <= 65536
+            return super().read(n)
+
+    src = BoundedSource([raw[:10], raw[10:50], raw[50:]])
     assert src.seekable() is False
     reader = ParquetReader()
     batches = list(reader.read_batches(src))

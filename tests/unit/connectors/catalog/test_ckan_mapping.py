@@ -1,9 +1,7 @@
-"""Unit coverage for CKAN wire envelope decoding and result shaping."""
-
 from __future__ import annotations
 
 import json
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -37,6 +35,9 @@ from datasluice.errors.catalog import (
     UnauthenticatedError,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
 
 _OPERATION = "ckan/action-api-v3.dataset-list-show-search"
 _UNIQUE_PAYLOAD_TOKEN = "raw-envelope-secret-9f8e7d6c5b4a"
@@ -196,7 +197,7 @@ def test_status_show_shapes_to_a_single_lossless_mapping_record() -> None:
 
     item = envelope.items[0]
     assert isinstance(item, MappingRecord)
-    assert item.to_dict() == {"schema_version": 1, "kind": "mapping_record", "payload": payload}
+    assert item.to_dict() == {"schema_version": 2, "kind": "mapping_record", "payload": payload}
 
 
 @pytest.mark.parametrize(
@@ -347,8 +348,6 @@ def test_read_entries_never_engage_the_gate() -> None:
 
 
 def test_mutation_result_serialization_carries_no_credentials() -> None:
-    from datasluice.contracts.catalog.native.ckan import CKANResultItem
-
     envelope = cast(
         "ResultEnvelope[CKANResultItem]",
         ResultEnvelope(items=(CKANTokenResult.from_token_result({"token": _TOKEN_LITERAL}),)),

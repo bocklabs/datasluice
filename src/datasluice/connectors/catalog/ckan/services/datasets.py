@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import NotRequired, TypedDict, Unpack
+from typing import TYPE_CHECKING, NotRequired, TypedDict, Unpack
 
 from datasluice.connectors.catalog.ckan.clients import (
     _async_typed_mutation,
@@ -12,13 +12,14 @@ from datasluice.connectors.catalog.ckan.clients import (
     _SyncDatasetService,
 )
 from datasluice.connectors.catalog.ckan.mapping import PLATFORM
-from datasluice.connectors.catalog.ckan.results import CKANMutationResult
-from datasluice.contracts.catalog.native.ckan import CKANResultItem
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+from datasluice.connectors.catalog.ckan.services._shared import drop_unset
 from datasluice.domain.catalog.ids import CatalogId, ResourceKind
-from datasluice.domain.catalog.models import DatasetRecord, ResultEnvelope
-from datasluice.domain.catalog.safety import MutationPolicy
-from datasluice.errors.catalog import CatalogValidationError
+
+if TYPE_CHECKING:
+    from datasluice.connectors.catalog.ckan.results import CKANMutationResult
+    from datasluice.contracts.catalog.native.ckan import CKANResultItem
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.safety import MutationPolicy
 
 _DATASET_GROUP = "datasets"
 
@@ -54,10 +55,6 @@ class _PackageUpdateFields(_PackageFields):
     name: NotRequired[str | None]
 
 
-_DEPRECATED_PARAMETERS: Mapping[str, frozenset[str]] = {
-    "current_package_list_with_resources": frozenset({"page"}),
-}
-
 _ORG_TARGET_ACTIONS = frozenset({"bulk_update_private", "bulk_update_public", "bulk_update_delete"})
 
 _UPDATE_FIELDS = (
@@ -82,41 +79,23 @@ _PACKAGE_CREATE_FIELDS = frozenset(_UPDATE_FIELDS)
 _PACKAGE_UPDATE_FIELDS = _PACKAGE_CREATE_FIELDS | {"id"}
 
 
-def _drop_unset(params: dict[str, object | None]) -> dict[str, object]:
-    return {key: value for key, value in params.items() if value is not None}
-
-
 def _package_mutation_params(
     fields: Mapping[str, object | None], *, target: str, action: str, allowed: frozenset[str]
 ) -> dict[str, object]:
     unexpected = fields.keys() - allowed
     if unexpected:
         raise TypeError(f"{action}() got an unexpected keyword argument {min(unexpected)!r}")
-    params = _drop_unset({key: value for key, value in fields.items() if key != target})
+    params = drop_unset({key: value for key, value in fields.items() if key != target})
     if target == "name" or fields[target] is not None:
         params[target] = fields[target]
     return params
-
-
-def _reject_deprecated(action: str, payload: Mapping[str, object]) -> None:
-    banned = _DEPRECATED_PARAMETERS.get(action)
-    if not banned:
-        return
-    clash = banned.intersection(payload)
-    if clash:
-        raise CatalogValidationError(
-            f"The parameter(s) {sorted(clash)} are officially deprecated for {action} and are not accepted.",
-            operation=f"{PLATFORM.value}/{action}",
-            platform=PLATFORM.value,
-            safe_action="Use the canonical CKAN 2.11 pagination parameters; offset replaces page.",
-        )
 
 
 def _mutation_target(action: str, params: Mapping[str, object]) -> CatalogId:
     if action == "package_revise":
         match = params.get("match")
         target = match.get("id") or match.get("name") if isinstance(match, Mapping) else None
-        return CatalogId(PLATFORM, ResourceKind.DATASET, str(target) if target else "package-revise")
+        return CatalogId(PLATFORM, ResourceKind.DATASET, str(target) if target else "ckan-bulk:package-revise")
     if action in _ORG_TARGET_ACTIONS:
         return CatalogId(PLATFORM, ResourceKind.ORGANIZATION, str(params["org_id"]))
     key = "name" if action == "package_create" else "id"
@@ -128,30 +107,6 @@ class SyncDatasetsService(_SyncDatasetService):
 
     __slots__ = ()
 
-    def get(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
-        """Dispatch a normalized get with deprecation discipline enforced."""
-        _reject_deprecated(self._backing("get").name, operation.payload)
-        return super().get(operation, guard)
-
-    def list(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[DatasetRecord]:
-        """Dispatch a normalized list with deprecation discipline enforced."""
-        _reject_deprecated(self._backing("list").name, operation.payload)
-        return super().list(operation, guard)
-
-    def list_show_search(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        """List, show, or search datasets with deprecation discipline enforced."""
-        self._reject_deprecated_in(operation)
-        return super().list_show_search(operation, guard)
-
-    def create_update_patch_delete_purge(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        """Mutate or purge a dataset with deprecation discipline enforced."""
-        self._reject_deprecated_in(operation)
-        return super().create_update_patch_delete_purge(operation, guard)
-
     def package_list(self) -> ResultEnvelope[CKANResultItem]:
         """List dataset names verbatim as the deployment returns them."""
         return self._invoke_read("package_list", {})
@@ -160,7 +115,7 @@ class SyncDatasetsService(_SyncDatasetService):
         self, *, limit: int | None = None, offset: int | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List datasets with resources using native limit/offset paging."""
-        return self._invoke_read("current_package_list_with_resources", _drop_unset({"limit": limit, "offset": offset}))
+        return self._invoke_read("current_package_list_with_resources", drop_unset({"limit": limit, "offset": offset}))
 
     def package_show(
         self,
@@ -171,7 +126,7 @@ class SyncDatasetsService(_SyncDatasetService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Show one dataset by id or name."""
         params: dict[str, object] = {"id": id}
-        params.update(_drop_unset({"use_default_schema": use_default_schema, "include_tracking": include_tracking}))
+        params.update(drop_unset({"use_default_schema": use_default_schema, "include_tracking": include_tracking}))
         return self._invoke_read("package_show", params)
 
     def package_search(
@@ -186,12 +141,12 @@ class SyncDatasetsService(_SyncDatasetService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Search datasets with Solr-style rows/start sent verbatim."""
         return self._invoke_read(
-            "package_search", _drop_unset({"q": q, "fq": fq, "rows": rows, "start": start, "sort": sort, "fl": fl})
+            "package_search", drop_unset({"q": q, "fq": fq, "rows": rows, "start": start, "sort": sort, "fl": fl})
         )
 
     def package_autocomplete(self, *, q: str, limit: int | None = None) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete dataset names or titles."""
-        return self._invoke_read("package_autocomplete", _drop_unset({"q": q, "limit": limit}))
+        return self._invoke_read("package_autocomplete", drop_unset({"q": q, "limit": limit}))
 
     def package_create(
         self,
@@ -235,7 +190,7 @@ class SyncDatasetsService(_SyncDatasetService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Revise datasets matched declaratively per the documented revise grammar."""
-        params = _drop_unset({"match": match, "update": update, "include": include, "filter": filter})
+        params = drop_unset({"match": match, "update": update, "include": include, "filter": filter})
         return self._invoke_mutation("package_revise", params, policy)
 
     def package_resource_reorder(
@@ -249,7 +204,7 @@ class SyncDatasetsService(_SyncDatasetService):
     ) -> CKANMutationResult:
         """Move one dataset to another owning organization."""
         params: dict[str, object] = {"id": id, "organization_id": organization_id}
-        params.update(_drop_unset({"force": force}))
+        params.update(drop_unset({"force": force}))
         return self._invoke_mutation("package_owner_org_update", params, policy)
 
     def package_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -293,29 +248,22 @@ class SyncDatasetsService(_SyncDatasetService):
 
     def package_collaborator_list(self, *, id: str, capacity: str | None = None) -> ResultEnvelope[CKANResultItem]:
         """List collaborators of one dataset."""
-        return self._invoke_read("package_collaborator_list", _drop_unset({"id": id, "capacity": capacity}))
+        return self._invoke_read("package_collaborator_list", drop_unset({"id": id, "capacity": capacity}))
 
     def package_collaborator_list_for_user(
         self, *, user_id: str, capacity: str | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List dataset collaborations of one user."""
         return self._invoke_read(
-            "package_collaborator_list_for_user", _drop_unset({"user_id": user_id, "capacity": capacity})
+            "package_collaborator_list_for_user", drop_unset({"user_id": user_id, "capacity": capacity})
         )
 
-    def _reject_deprecated_in(self, operation: CatalogOperationRequest) -> None:
-        action = operation.payload.get("action")
-        if isinstance(action, str):
-            _reject_deprecated(action, operation.payload)
-
     def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
-        _reject_deprecated(action, params)
         return _sync_typed_read(self._client, _DATASET_GROUP, action, params)
 
     def _invoke_mutation(
         self, action: str, params: dict[str, object], policy: MutationPolicy | None
     ) -> CKANMutationResult:
-        _reject_deprecated(action, params)
         return _sync_typed_mutation(self._client, _DATASET_GROUP, action, params, policy, _mutation_target)
 
 
@@ -323,34 +271,6 @@ class AsyncDatasetsService(_AsyncDatasetService):
     """Asynchronous dataset projection carrying umbrella plus twenty typed actions."""
 
     __slots__ = ()
-
-    async def get(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[DatasetRecord]:
-        """Dispatch a normalized get with deprecation discipline enforced."""
-        _reject_deprecated(self._backing("get").name, operation.payload)
-        return await super().get(operation, guard)
-
-    async def list(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[DatasetRecord]:
-        """Dispatch a normalized list with deprecation discipline enforced."""
-        _reject_deprecated(self._backing("list").name, operation.payload)
-        return await super().list(operation, guard)
-
-    async def list_show_search(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        """List, show, or search datasets with deprecation discipline enforced."""
-        self._reject_deprecated_in(operation)
-        return await super().list_show_search(operation, guard)
-
-    async def create_update_patch_delete_purge(
-        self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
-    ) -> ResultEnvelope[CKANResultItem]:
-        """Mutate or purge a dataset with deprecation discipline enforced."""
-        self._reject_deprecated_in(operation)
-        return await super().create_update_patch_delete_purge(operation, guard)
 
     async def package_list(self) -> ResultEnvelope[CKANResultItem]:
         """List dataset names verbatim as the deployment returns them."""
@@ -361,7 +281,7 @@ class AsyncDatasetsService(_AsyncDatasetService):
     ) -> ResultEnvelope[CKANResultItem]:
         """List datasets with resources using native limit/offset paging."""
         return await self._invoke_read(
-            "current_package_list_with_resources", _drop_unset({"limit": limit, "offset": offset})
+            "current_package_list_with_resources", drop_unset({"limit": limit, "offset": offset})
         )
 
     async def package_show(
@@ -373,7 +293,7 @@ class AsyncDatasetsService(_AsyncDatasetService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Show one dataset by id or name."""
         params: dict[str, object] = {"id": id}
-        params.update(_drop_unset({"use_default_schema": use_default_schema, "include_tracking": include_tracking}))
+        params.update(drop_unset({"use_default_schema": use_default_schema, "include_tracking": include_tracking}))
         return await self._invoke_read("package_show", params)
 
     async def package_search(
@@ -388,12 +308,12 @@ class AsyncDatasetsService(_AsyncDatasetService):
     ) -> ResultEnvelope[CKANResultItem]:
         """Search datasets with Solr-style rows/start sent verbatim."""
         return await self._invoke_read(
-            "package_search", _drop_unset({"q": q, "fq": fq, "rows": rows, "start": start, "sort": sort, "fl": fl})
+            "package_search", drop_unset({"q": q, "fq": fq, "rows": rows, "start": start, "sort": sort, "fl": fl})
         )
 
     async def package_autocomplete(self, *, q: str, limit: int | None = None) -> ResultEnvelope[CKANResultItem]:
         """Autocomplete dataset names or titles."""
-        return await self._invoke_read("package_autocomplete", _drop_unset({"q": q, "limit": limit}))
+        return await self._invoke_read("package_autocomplete", drop_unset({"q": q, "limit": limit}))
 
     async def package_create(
         self,
@@ -437,7 +357,7 @@ class AsyncDatasetsService(_AsyncDatasetService):
         policy: MutationPolicy | None = None,
     ) -> CKANMutationResult:
         """Revise datasets matched declaratively per the documented revise grammar."""
-        params = _drop_unset({"match": match, "update": update, "include": include, "filter": filter})
+        params = drop_unset({"match": match, "update": update, "include": include, "filter": filter})
         return await self._invoke_mutation("package_revise", params, policy)
 
     async def package_resource_reorder(
@@ -451,7 +371,7 @@ class AsyncDatasetsService(_AsyncDatasetService):
     ) -> CKANMutationResult:
         """Move one dataset to another owning organization."""
         params: dict[str, object] = {"id": id, "organization_id": organization_id}
-        params.update(_drop_unset({"force": force}))
+        params.update(drop_unset({"force": force}))
         return await self._invoke_mutation("package_owner_org_update", params, policy)
 
     async def package_delete(self, *, id: str, policy: MutationPolicy | None = None) -> CKANMutationResult:
@@ -497,27 +417,20 @@ class AsyncDatasetsService(_AsyncDatasetService):
         self, *, id: str, capacity: str | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List collaborators of one dataset."""
-        return await self._invoke_read("package_collaborator_list", _drop_unset({"id": id, "capacity": capacity}))
+        return await self._invoke_read("package_collaborator_list", drop_unset({"id": id, "capacity": capacity}))
 
     async def package_collaborator_list_for_user(
         self, *, user_id: str, capacity: str | None = None
     ) -> ResultEnvelope[CKANResultItem]:
         """List dataset collaborations of one user."""
         return await self._invoke_read(
-            "package_collaborator_list_for_user", _drop_unset({"user_id": user_id, "capacity": capacity})
+            "package_collaborator_list_for_user", drop_unset({"user_id": user_id, "capacity": capacity})
         )
 
-    def _reject_deprecated_in(self, operation: CatalogOperationRequest) -> None:
-        action = operation.payload.get("action")
-        if isinstance(action, str):
-            _reject_deprecated(action, operation.payload)
-
     async def _invoke_read(self, action: str, params: dict[str, object]) -> ResultEnvelope[CKANResultItem]:
-        _reject_deprecated(action, params)
         return await _async_typed_read(self._client, _DATASET_GROUP, action, params)
 
     async def _invoke_mutation(
         self, action: str, params: dict[str, object], policy: MutationPolicy | None
     ) -> CKANMutationResult:
-        _reject_deprecated(action, params)
         return await _async_typed_mutation(self._client, _DATASET_GROUP, action, params, policy, _mutation_target)

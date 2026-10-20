@@ -164,7 +164,7 @@ class EventEmitter:
         for sink in self._sinks:
             try:
                 if callable(sink):
-                    hook = cast(Callable[[EventEnvelope], None], sink)
+                    hook = cast("Callable[[EventEnvelope], None]", sink)
                     hook(envelope)
                 else:
                     sink.record(envelope)

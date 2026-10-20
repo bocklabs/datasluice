@@ -1,5 +1,3 @@
-"""Runtime cutover tests for explicit catalog construction."""
-
 from __future__ import annotations
 
 import inspect
@@ -57,8 +55,8 @@ class _Transport:
 def test_session_uses_only_explicit_catalog_factory_and_context() -> None:
     """A caller-selected factory receives the exact canonical context once."""
     context = CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, _SyncExecutor()),
-        async_executor=cast(AsyncCatalogOperationExecutor, _AsyncExecutor()),
+        sync_executor=cast("SyncCatalogOperationExecutor", _SyncExecutor()),
+        async_executor=cast("AsyncCatalogOperationExecutor", _AsyncExecutor()),
     )
     result = object()
     calls: list[CatalogConnectorContext] = []

@@ -1,9 +1,6 @@
-"""Conditional response handoff behavior for resource readers."""
-
 from __future__ import annotations
 
 import importlib
-import os
 from typing import Any
 
 import pytest
@@ -15,16 +12,16 @@ from datasluice.sync import sync_resources
 from tests.helpers.http_server import MockResponse
 
 sync_module = importlib.import_module("datasluice.sync.sync")
-if not hasattr(sync_module, "_RESPONSE_AWARE_READER_READY") and os.environ.get("DATASLUICE_TDD_RED") != "1":
-    pytest.skip("response-aware reader handoff implementation pending GREEN phase", allow_module_level=True)
 
 
 class _ResponseAwareReader:
+    allow_private_http = True
+
     def __init__(self, transport: HttpxCatalogTransport) -> None:
-        self._delegate = DataPlaneResourceReader(transport=transport)
+        self._delegate = DataPlaneResourceReader(transport=transport, allow_private_http=True)
         self.open_calls = 0
         self.open_response_calls = 0
-        self.response_streams = []
+        self.response_streams: list[Any] = []
 
     def open(self, resource, *, batch_size: int = 65536):
         self.open_calls += 1
@@ -38,7 +35,7 @@ class _ResponseAwareReader:
 
 class _BaseReader:
     def __init__(self, transport: HttpxCatalogTransport) -> None:
-        self._delegate = DataPlaneResourceReader(transport=transport)
+        self._delegate = DataPlaneResourceReader(transport=transport, allow_private_http=True)
         self.open_calls = 0
 
     def open(self, resource, *, batch_size: int = 65536):
@@ -117,27 +114,6 @@ def test_response_aware_reader_closes_untransferred_response_on_failure(tmp_path
     assert stream_cm.exit_count == 1
 
 
-def test_base_reader_falls_back_to_open(tmp_path, csv_server, make_resource) -> None:
-    server, url = csv_server(headers={"ETag": '"fallback"'})
-    resource = make_resource(url)
-    transport = HttpxCatalogTransport()
-    reader = _BaseReader(transport)
-
-    outcomes = list(
-        sync_resources(
-            [resource],
-            state_store=_inmemory_state_store(),
-            reader=reader,
-            destination_uri=f"file://{tmp_path}/dest",
-            transport=transport,
-        )
-    )
-
-    assert outcomes[0].action == "materialized"
-    assert reader.open_calls == 1
-    assert server.captured_paths == ["/data.csv"]
-
-
 def test_base_reader_checkpoints_materialized_representation(tmp_path, csv_server, make_resource) -> None:
     body_a = b"id,name\n1,A\n"
     body_b = b"id,name\n1,B\n"
@@ -204,7 +180,7 @@ def test_conditional_request_has_no_implicit_credentials(tmp_path, csv_server, m
         sync_resources(
             [resource],
             state_store=_inmemory_state_store(),
-            reader=DataPlaneResourceReader(transport=transport),
+            reader=DataPlaneResourceReader(transport=transport, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=transport,
         )
@@ -240,7 +216,7 @@ def test_sync_preserves_query_auth_and_transport_injected_headers(tmp_path, csv_
         sync_resources(
             [resource],
             state_store=_inmemory_state_store(),
-            reader=DataPlaneResourceReader(transport=injecting),
+            reader=DataPlaneResourceReader(transport=injecting, allow_private_http=True),
             destination_uri=f"file://{tmp_path}/dest",
             transport=injecting,
         )

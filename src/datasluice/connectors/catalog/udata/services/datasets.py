@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import re
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Never, cast
 from urllib.parse import unquote, urlsplit
 
@@ -15,32 +15,41 @@ from datasluice.connectors.catalog.udata.models.datasets import (
     DatasetDeleteOptions,
     DatasetExtrasDelete,
     DatasetExtrasUpdate,
+    DatasetFollowersQuery,
     DatasetListQuery,
     DatasetMutationResult,
     DatasetSearchQuery,
     DatasetSuggestQuery,
     DatasetUpdateInput,
 )
+from datasluice.connectors.catalog.udata.services._receipts import (
+    FailureReceipt,
+    ResultShaper,
+    _error_status,
+    _mutation_outcome,
+    _operation_id,
+    _policy_metadata,
+    _receipt_policy,
+    _run_receipted_mutation,
+    _run_receipted_mutation_async,
+)
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
 from datasluice.connectors.catalog.udata.wire import datasets as wire
 from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential, credential_scope
 from datasluice.domain.catalog.ids import CatalogId, CatalogPlatform, ResourceKind
-from datasluice.domain.catalog.models import NativeRecord, PlatformMetadata
-from datasluice.domain.catalog.operations import OperationId
-from datasluice.domain.catalog.receipts import MutationReceipt
+from datasluice.domain.catalog.models import MappingRecord, NativeRecord, PlatformMetadata, redact_record_payload
 from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
-from datasluice.domain.catalog.safety import ConcurrencyPolicy, IdempotencyPolicy, MutationPolicy
+from datasluice.domain.catalog.safety import MutationPolicy
 from datasluice.errors.catalog import (
-    CatalogValidationError,
     ForbiddenError,
     NativeCatalogError,
     UnauthenticatedError,
-    attach_catalog_metadata,
 )
 from datasluice.runtime.mutation import build_mutation_receipt
-from datasluice.runtime.transport.base import TransportFailure
 
 if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.clients import AsyncUDataClient, SyncUDataClient
+    from datasluice.domain.catalog.receipts import MutationReceipt
 
 _CREATE_OPERATION = "<create>"
 
@@ -53,7 +62,6 @@ def _require_mutation_permission(
     admin: bool = False,
 ) -> UDataCredential:
     """Require a resolved uData credential plus permission evidence before dispatch."""
-
     if not isinstance(resolved, UDataCredential):
         raise UnauthenticatedError(
             "Dataset mutations require an explicitly resolved uData API credential.",
@@ -99,13 +107,6 @@ def _require_mutation_permission(
     return resolved
 
 
-def _operation_id(operation: str) -> OperationId:
-    """Convert one profile operation string into its typed identity."""
-    platform, _, tail = operation.partition("/")
-    service, _, method = tail.partition(".")
-    return OperationId(platform=platform, service=service or "native", method=method or tail)
-
-
 def _safe_target_value(target_id: object, *, opaque: bool = False) -> str:
     """Return a bounded receipt target without retaining credential-shaped input."""
     raw = target_id if isinstance(target_id, str) else type(target_id).__name__
@@ -125,39 +126,6 @@ def _receipt_target(target_id: object, *, opaque: bool = False) -> CatalogId:
         resource_kind=ResourceKind.DATASET,
         value=_safe_target_value(target_id, opaque=opaque),
     )
-
-
-def _receipt_policy(policy: MutationPolicy | None) -> MutationPolicy:
-    """Create a receipt-only policy that never retains unsupported tokens."""
-    if policy is None:
-        return MutationPolicy(concurrency=ConcurrencyPolicy(overwrite=True))
-    return MutationPolicy(
-        destructive=policy.destructive,
-        concurrency=ConcurrencyPolicy(overwrite=True),
-        idempotency=IdempotencyPolicy(
-            safe=policy.idempotency.safe,
-            explicit_retry_opt_in=policy.idempotency.explicit_retry_opt_in,
-        ),
-        dry_run=policy.dry_run,
-    )
-
-
-def _policy_metadata(policy: MutationPolicy | None) -> dict[str, object]:
-    if policy is None:
-        return {"provided": False}
-    confirmation = policy.confirmation
-    concurrency = policy.concurrency
-    return {
-        "provided": True,
-        "destructive": policy.destructive,
-        "confirmed": confirmation is not None and confirmation.confirmed,
-        "overwrite": concurrency is not None and concurrency.overwrite,
-        "concurrency_provided": concurrency is not None,
-        "retry_safe": policy.idempotency.safe,
-        "retry_opt_in": policy.idempotency.explicit_retry_opt_in,
-        "idempotency_provided": policy.idempotency.key is not None,
-        "dry_run": policy.dry_run.requested,
-    }
 
 
 def _build_receipt(
@@ -183,48 +151,6 @@ def _build_receipt(
     )
 
 
-def _attach_receipt(error: BaseException, receipt: MutationReceipt) -> BaseException:
-    """Attach a shared receipt while preserving the original exception type."""
-    attach_catalog_metadata(error, {"receipt": receipt.to_dict()})
-    error_dict = getattr(error, "__dict__", None)
-    if isinstance(error_dict, dict):
-        error_dict["mutation_receipt"] = receipt
-    return error
-
-
-def _raise_with_receipt(error: Exception | asyncio.CancelledError, receipt: MutationReceipt) -> Never:
-    _attach_receipt(error, receipt)
-    raise error
-
-
-def _error_status(error: BaseException, response: object | None = None) -> int:
-    status = getattr(error, "status_code", None)
-    if isinstance(status, int):
-        return status
-    metadata = getattr(error, "metadata", None)
-    if isinstance(metadata, Mapping) and isinstance(metadata.get("status_code"), int):
-        return cast(int, metadata["status_code"])
-    response_status = getattr(response, "status_code", None)
-    return response_status if isinstance(response_status, int) else 0
-
-
-def _mutation_outcome(error: BaseException, response: object | None = None) -> str:
-    if isinstance(error, asyncio.CancelledError):
-        return "cancelled"
-    metadata = getattr(error, "metadata", None)
-    if isinstance(metadata, Mapping) and metadata.get("ambiguous") is True:
-        return "ambiguous"
-    response_status = getattr(response, "status_code", None)
-    if isinstance(response_status, int) and 200 <= response_status < 300:
-        return "ambiguous"
-    if isinstance(error, TransportFailure):
-        return "ambiguous"
-    error_status = _error_status(error, response)
-    if error_status == 0 and isinstance(error, (UnauthenticatedError, ForbiddenError, CatalogValidationError)):
-        return "rejected"
-    return "failed"
-
-
 def _header(headers: Mapping[str, str], name: str) -> str | None:
     """Read one response header without depending on its casing."""
     wanted = name.lower()
@@ -234,14 +160,16 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
     return None
 
 
-def _redirect_receipt(
+def _rdf_redirect_receipt(
     operation: str,
     requested_id: str,
     headers: Mapping[str, str],
     status_code: int,
     origin: str,
+    path_pattern: str,
+    subject: str,
 ) -> MutationReceipt:
-    """Validate a native RDF redirect and retain a shared redacted receipt."""
+    """Validate a native RDF redirect for one record kind and retain a redacted receipt."""
     location = _header(headers, "location")
     if not location:
         raise NativeCatalogError(
@@ -266,32 +194,52 @@ def _redirect_receipt(
             platform="udata",
             status_code=status_code,
         )
-    match = re.fullmatch(r"/api/1/datasets/([^/]+)/rdf(?:\.([A-Za-z0-9_-]+))?", parsed.path)
+    match = re.fullmatch(path_pattern, parsed.path)
     if match is None:
         raise NativeCatalogError(
-            "The uData RDF redirect target is not a dataset RDF document.",
+            f"The uData RDF redirect target is not a {subject} RDF document.",
             operation=operation,
             platform="udata",
             status_code=status_code,
         )
-    dataset_id = unquote(match.group(1))
-    if dataset_id != requested_id or any(character in dataset_id for character in "/?#"):
+    record_id = unquote(match.group(1))
+    if record_id != requested_id or any(character in record_id for character in "/?#"):
         raise NativeCatalogError(
-            "The uData RDF redirect target does not identify the requested dataset.",
+            f"The uData RDF redirect target does not identify the requested {subject}.",
             operation=operation,
             platform="udata",
             status_code=status_code,
         )
     extension = match.group(2)
     if extension is not None:
-        wire.media_type_for_format(extension)
-    return _build_receipt(
+        wire.media_type_for_format(extension, operation=operation)
+    receipt = _build_receipt(
         operation,
         requested_id,
         None,
         "skipped",
         status_code=status_code,
         mutation="rdf_redirect",
+    )
+    return replace(receipt, target=replace(receipt.target, resource_kind=ResourceKind(subject)))
+
+
+def _redirect_receipt(
+    operation: str,
+    requested_id: str,
+    headers: Mapping[str, str],
+    status_code: int,
+    origin: str,
+) -> MutationReceipt:
+    """Validate a native dataset RDF redirect and retain a shared redacted receipt."""
+    return _rdf_redirect_receipt(
+        operation,
+        requested_id,
+        headers,
+        status_code,
+        origin,
+        r"/api/1/datasets/([^/]+)/rdf(?:\.([A-Za-z0-9_-]+))?",
+        "dataset",
     )
 
 
@@ -380,6 +328,30 @@ def _sync_feature_dispatch(
         path=path,
         owning_operation=operation,
         json_body=body,
+        permissions=permissions,
+        credential=resolved,
+        idempotency_policy=mutation_policy.idempotency if mutation_policy is not None else None,
+    )
+
+
+def _sync_follower_dispatch(
+    client: SyncUDataClient,
+    dataset_id: str,
+    operation: str,
+    permissions: EffectivePermissions,
+    mutation_policy: MutationPolicy | None,
+    *,
+    following: bool,
+) -> tuple[int, object, object]:
+    method, path, _, _ = (
+        wire.follow_dataset_request(dataset_id) if following else wire.unfollow_dataset_request(dataset_id)
+    )
+    resolved = _require_mutation_permission(client._resolved_credential(), operation, permissions)
+    _enforce_mutation_policy(operation, dataset_id, mutation_policy, destructive=not following)
+    return client._dataset_call(
+        method=method,
+        path=path,
+        owning_operation=operation,
         permissions=permissions,
         credential=resolved,
         idempotency_policy=mutation_policy.idempotency if mutation_policy is not None else None,
@@ -527,6 +499,31 @@ async def _async_feature_dispatch(
     )
 
 
+async def _async_follower_dispatch(
+    client: AsyncUDataClient,
+    dataset_id: str,
+    operation: str,
+    permissions: EffectivePermissions,
+    mutation_policy: MutationPolicy | None,
+    *,
+    following: bool,
+) -> tuple[int, object, object]:
+    method, path, _, _ = (
+        wire.follow_dataset_request(dataset_id) if following else wire.unfollow_dataset_request(dataset_id)
+    )
+    resolved = await client._resolved_credential_async()
+    _require_mutation_permission(resolved, operation, permissions)
+    _enforce_mutation_policy(operation, dataset_id, mutation_policy, destructive=not following)
+    return await client._dataset_call_async(
+        method=method,
+        path=path,
+        owning_operation=operation,
+        permissions=permissions,
+        credential=resolved,
+        idempotency_policy=mutation_policy.idempotency if mutation_policy is not None else None,
+    )
+
+
 async def _async_extras_update_dispatch(
     client: AsyncUDataClient,
     dataset_id: str,
@@ -575,6 +572,40 @@ async def _async_extras_delete_dispatch(
     )
 
 
+def _mutation_shapers(
+    operation: str,
+    target_id: object,
+    policy: MutationPolicy | None,
+    decode: Callable[[object], object],
+    mutation: str,
+    *,
+    opaque_target: bool,
+    success_target: Callable[[object], object] | None,
+) -> tuple[FailureReceipt, ResultShaper[DatasetMutationResult]]:
+    def failure_receipt(error: BaseException, response: object | None) -> MutationReceipt:
+        return _build_receipt(
+            operation,
+            target_id,
+            policy,
+            _mutation_outcome(error, response),
+            status_code=_error_status(error, response),
+            mutation=mutation,
+            opaque_target=opaque_target,
+        )
+
+    def completed(status: int, payload: object, response: object | None) -> DatasetMutationResult:
+        value = decode(payload)
+        receipt_target = success_target(value) if success_target is not None else target_id
+        receipt = _build_receipt(operation, receipt_target, policy, "succeeded", status_code=status, mutation=mutation)
+        return DatasetMutationResult(
+            receipt=receipt,
+            record=value if isinstance(value, NativeRecord) else None,
+            extras=value if isinstance(value, Mapping) else None,
+        )
+
+    return failure_receipt, completed
+
+
 def _mutating(
     operation: str,
     target_id: object,
@@ -587,35 +618,17 @@ def _mutating(
     success_target: Callable[[object], object] | None = None,
 ) -> DatasetMutationResult:
     """Run one mutation with a receipt for every rejected, failed, and successful path."""
-    response: object | None = None
-    try:
-        status, payload, response = dispatch()
-        value = decode(payload)
-    except Exception as error:
-        receipt = _build_receipt(
-            operation,
-            target_id,
-            policy,
-            _mutation_outcome(error, response),
-            status_code=_error_status(error, response),
-            mutation=mutation,
-            opaque_target=opaque_target,
-        )
-        _raise_with_receipt(error, receipt)
-    receipt_target = success_target(value) if success_target is not None else target_id
-    receipt = _build_receipt(operation, receipt_target, policy, "succeeded", status_code=status, mutation=mutation)
-    return DatasetMutationResult(
-        receipt=receipt,
-        record=value if isinstance(value, NativeRecord) else None,
-        extras=value if isinstance(value, Mapping) else None,
+    failure_receipt, completed = _mutation_shapers(
+        operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
+    return _run_receipted_mutation(dispatch, failure_receipt, completed, errors=SETTLEMENT_ERRORS)
 
 
 async def _amutating(
     operation: str,
     target_id: object,
     policy: MutationPolicy | None,
-    dispatch: Callable[[], object],
+    dispatch: Callable[[], Awaitable[tuple[int, object, object]]],
     decode: Callable[[object], object],
     mutation: str,
     *,
@@ -623,28 +636,10 @@ async def _amutating(
     success_target: Callable[[object], object] | None = None,
 ) -> DatasetMutationResult:
     """Run one async mutation with the same receipt seam as the sync path."""
-    response: object | None = None
-    try:
-        status, payload, response = await cast("Awaitable[tuple[int, object, object]]", dispatch())
-        value = decode(payload)
-    except (Exception, asyncio.CancelledError) as error:
-        receipt = _build_receipt(
-            operation,
-            target_id,
-            policy,
-            _mutation_outcome(error, response),
-            status_code=_error_status(error, response),
-            mutation=mutation,
-            opaque_target=opaque_target,
-        )
-        _raise_with_receipt(error, receipt)
-    receipt_target = success_target(value) if success_target is not None else target_id
-    receipt = _build_receipt(operation, receipt_target, policy, "succeeded", status_code=status, mutation=mutation)
-    return DatasetMutationResult(
-        receipt=receipt,
-        record=value if isinstance(value, NativeRecord) else None,
-        extras=value if isinstance(value, Mapping) else None,
+    failure_receipt, completed = _mutation_shapers(
+        operation, target_id, policy, decode, mutation, opaque_target=opaque_target, success_target=success_target
     )
+    return await _run_receipted_mutation_async(dispatch, failure_receipt, completed, errors=ASYNC_SETTLEMENT_ERRORS)
 
 
 class SyncDatasetsService:
@@ -653,6 +648,48 @@ class SyncDatasetsService:
     def __init__(self, client: SyncUDataClient) -> None:
         """Bind the service to one strict sync client."""
         self._client = client
+
+    def list_dataset_followers(self, dataset_id: str, query: DatasetFollowersQuery | None = None) -> MappingRecord:
+        operation = wire.DATASET_OPERATIONS["list_followers"]
+        method, path, _, _ = wire.list_dataset_followers_request(dataset_id, query or DatasetFollowersQuery())
+        _, payload, _ = self._client._dataset_call(method=method, path=path, owning_operation=operation)
+        return wire.parse_dataset_followers(payload)
+
+    def follow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["follow"]
+        return _mutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _sync_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=True
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "followed",
+        )
+
+    def unfollow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["unfollow"]
+        return _mutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _sync_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=False
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "unfollowed",
+        )
 
     def list(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope:
         """GET /api/1/datasets/ (row 39)."""
@@ -689,7 +726,7 @@ class SyncDatasetsService:
         )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, text), "application/atom+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", text), "application/atom+xml", response_media_type=negotiated, operation=operation
         )
 
     def get(self, dataset_id: str) -> NativeRecord:
@@ -738,7 +775,7 @@ class SyncDatasetsService:
             lambda: _sync_delete_dispatch(
                 self._client, dataset_id, permissions, options or DatasetDeleteOptions(), mutation_policy, operation
             ),
-            lambda payload: payload,
+            lambda payload: _decode_mutation_extras(payload, operation),
             "deleted",
         )
 
@@ -783,7 +820,7 @@ class SyncDatasetsService:
     def rdf(self, dataset_id: str) -> NativeRecord | MutationReceipt:
         """GET /api/1/datasets/<id>/rdf (row 47)."""
         operation = wire.DATASET_OPERATIONS["rdf"]
-        method, path, _, _ = wire.rdf_request(dataset_id, None)
+        method, path, _, _ = wire.rdf_request(dataset_id, None, operation=operation)
         status, text_or_headers, response = self._client._dataset_call(
             method=method, path=path, owning_operation=operation, raw_text=True, redirect_mode=True
         )
@@ -791,25 +828,28 @@ class SyncDatasetsService:
             return _redirect_receipt(
                 operation,
                 dataset_id,
-                cast(Mapping[str, str], text_or_headers),
+                cast("Mapping[str, str]", text_or_headers),
                 status,
                 self._client._origin,
             )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
         )
 
     def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord:
         """GET /api/1/datasets/<id>/rdf.<format> (row 48)."""
         operation = wire.DATASET_OPERATIONS["rdf_format"]
-        method, path, _, _ = wire.rdf_request(dataset_id, fmt)
+        method, path, _, _ = wire.rdf_request(dataset_id, fmt, operation=operation)
         _, body, response = self._client._dataset_call(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
-        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
+        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt, operation=operation)
         return wire.parse_text_document(
-            cast(bytes, body), wire.media_type_for_format(fmt), response_media_type=negotiated, operation=operation
+            cast("bytes", body),
+            wire.media_type_for_format(fmt, operation=operation),
+            response_media_type=negotiated,
+            operation=operation,
         )
 
     def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]:
@@ -903,12 +943,10 @@ def _enforce_mutation_policy(
 ) -> None:
     """Enforce the shared mutation policy contract for any mutating dispatch.
 
-    Every mutation requires an explicit confirmed policy. Destructive
-    transitions additionally require the destructive flag, an explicit
-    overwrite concurrency instruction, and no unsupported dry-run request
-    or concurrency token (the stock uData API supports neither).
-    Idempotency keys alone never authorize retries because the stock uData
-    API has no idempotency-key header support.
+    Every mutation requires an explicit confirmed policy. Destructive transitions additionally require the destructive
+    flag, an explicit overwrite concurrency instruction, and no unsupported dry-run request or concurrency token (the
+    stock uData API supports neither). Idempotency keys alone never authorize retries because the stock uData API has no
+    idempotency-key header support.
     """
 
     def _reject(message: str, safe_action: str) -> Never:
@@ -983,7 +1021,11 @@ def _shape_page(payload: object, *, operation: str) -> UDataPageEnvelope:
     extensions = dict(envelope.platform.extensions) if envelope.platform is not None else {}
     extensions.update({"udata.nextpage": page.next_page, "udata.previouspage": page.previous_page})
     if isinstance(payload, Mapping) and "facets" in payload:
-        extensions["udata.facets"] = payload["facets"]
+        facets = payload["facets"]
+        if not isinstance(facets, Mapping):
+            raise wire._invalid_field("facets", operation, "a JSON object")
+        wire._validate_json_value(facets, operation=operation, path="facets")
+        extensions["udata.facets"] = redact_record_payload(facets)
     metadata = PlatformMetadata(platform=CatalogPlatform.UDATA, extensions=extensions)
     return UDataPageEnvelope(
         items=envelope.items,
@@ -999,6 +1041,50 @@ class AsyncDatasetsService:
     def __init__(self, client: AsyncUDataClient) -> None:
         """Bind the service to one strict async client."""
         self._client = client
+
+    async def list_dataset_followers(
+        self, dataset_id: str, query: DatasetFollowersQuery | None = None
+    ) -> MappingRecord:
+        operation = wire.DATASET_OPERATIONS["list_followers"]
+        method, path, _, _ = wire.list_dataset_followers_request(dataset_id, query or DatasetFollowersQuery())
+        _, payload, _ = await self._client._dataset_call_async(method=method, path=path, owning_operation=operation)
+        return wire.parse_dataset_followers(payload)
+
+    async def follow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["follow"]
+        return await _amutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _async_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=True
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "followed",
+        )
+
+    async def unfollow_dataset(
+        self,
+        dataset_id: str,
+        permissions: EffectivePermissions,
+        mutation_policy: MutationPolicy | None = None,
+    ) -> DatasetMutationResult:
+        operation = wire.DATASET_OPERATIONS["unfollow"]
+        return await _amutating(
+            operation,
+            dataset_id,
+            mutation_policy,
+            lambda: _async_follower_dispatch(
+                self._client, dataset_id, operation, permissions, mutation_policy, following=False
+            ),
+            lambda payload: wire.parse_dataset_follower_count(payload, operation=operation),
+            "unfollowed",
+        )
 
     async def list(self, query: DatasetListQuery | None = None) -> UDataPageEnvelope:
         """GET /api/1/datasets/ (row 39)."""
@@ -1035,7 +1121,7 @@ class AsyncDatasetsService:
         )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, body), "application/atom+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", body), "application/atom+xml", response_media_type=negotiated, operation=operation
         )
 
     async def get(self, dataset_id: str) -> NativeRecord:
@@ -1083,7 +1169,7 @@ class AsyncDatasetsService:
             lambda: _async_delete_dispatch(
                 self._client, dataset_id, permissions, options or DatasetDeleteOptions(), mutation_policy, operation
             ),
-            lambda payload: payload,
+            lambda payload: _decode_mutation_extras(payload, operation),
             "deleted",
         )
 
@@ -1128,7 +1214,7 @@ class AsyncDatasetsService:
     async def rdf(self, dataset_id: str) -> NativeRecord | MutationReceipt:
         """GET /api/1/datasets/<id>/rdf (row 47); see the sync variant."""
         operation = wire.DATASET_OPERATIONS["rdf"]
-        method, path, _, _ = wire.rdf_request(dataset_id, None)
+        method, path, _, _ = wire.rdf_request(dataset_id, None, operation=operation)
         status, text_or_headers, response = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=operation, raw_text=True, redirect_mode=True
         )
@@ -1136,25 +1222,28 @@ class AsyncDatasetsService:
             return _redirect_receipt(
                 operation,
                 dataset_id,
-                cast(Mapping[str, str], text_or_headers),
+                cast("Mapping[str, str]", text_or_headers),
                 status,
                 self._client._origin,
             )
         negotiated = _header(response.headers, "content-type")
         return wire.parse_text_document(
-            cast(bytes, text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
+            cast("bytes", text_or_headers), "application/rdf+xml", response_media_type=negotiated, operation=operation
         )
 
     async def rdf_format(self, dataset_id: str, fmt: str) -> NativeRecord:
         """GET /api/1/datasets/<id>/rdf.<format> (row 48)."""
         operation = wire.DATASET_OPERATIONS["rdf_format"]
-        method, path, _, _ = wire.rdf_request(dataset_id, fmt)
+        method, path, _, _ = wire.rdf_request(dataset_id, fmt, operation=operation)
         _, body, response = await self._client._dataset_call_async(
             method=method, path=path, owning_operation=operation, raw_text=True
         )
-        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt)
+        negotiated = _header(response.headers, "content-type") or wire.media_type_for_format(fmt, operation=operation)
         return wire.parse_text_document(
-            cast(bytes, body), negotiated.split(";")[0].strip(), response_media_type=negotiated, operation=operation
+            cast("bytes", body),
+            wire.media_type_for_format(fmt, operation=operation),
+            response_media_type=negotiated,
+            operation=operation,
         )
 
     async def suggest(self, query: DatasetSuggestQuery) -> tuple[NativeRecord, ...]:

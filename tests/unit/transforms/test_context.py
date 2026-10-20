@@ -1,10 +1,3 @@
-"""Unit tests for TransformContext.
-
-Verifies the context is frozen (``FrozenInstanceError`` on mutation), defaults
-are ``None`` for the optional provenance fields, the field set is exactly the
-locked four, and all fields round-trip through attribute access.
-"""
-
 from __future__ import annotations
 
 import dataclasses

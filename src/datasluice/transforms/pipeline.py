@@ -15,7 +15,7 @@ from datasluice.data.batch_stream import BatchStream
 from datasluice.transforms.protocol import TransformContext, TransformStep
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterator
 
 
 class Pipeline:
@@ -55,7 +55,7 @@ class Pipeline:
                     A NEW :class:`BatchStream` over the transformed batches.
         """
         context = TransformContext(arrow_schema=stream.schema)
-        batches: Iterable[Any] = stream.iter_batches()
+        batches: Iterator[Any] = stream.iter_batches()
         for step in self.steps:
             batches = step.apply(batches, context)
         return _build_batch_stream(batches)

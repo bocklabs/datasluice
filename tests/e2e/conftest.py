@@ -1,5 +1,3 @@
-"""Shared installed-wheel fixtures for end-to-end tests."""
-
 from __future__ import annotations
 
 import subprocess

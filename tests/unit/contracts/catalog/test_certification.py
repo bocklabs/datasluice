@@ -1,18 +1,15 @@
-"""Tests for public catalog connector certification."""
-
 from __future__ import annotations
 
 import importlib
 from dataclasses import replace
 from datetime import date
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 import datasluice.contracts.catalog as catalog
 from datasluice.contracts.catalog.fakes import AsyncReferenceConnector, SyncReferenceConnector
 from datasluice.contracts.catalog.fixtures import ReferenceFixtureSet, load_reference_fixture_set
-from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 from datasluice.contracts.catalog.runner import catalog_contract_cases, run_catalog_contract
 from datasluice.domain.catalog.extensions import (
     ActivationPolicy,
@@ -33,6 +30,9 @@ from datasluice.domain.catalog.operations import (
     OperationTier,
 )
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 
 
 def _profile(fixture_set: ReferenceFixtureSet) -> DeclaredCapabilityProfile:
@@ -91,8 +91,8 @@ def _manifest(
 def _report(fixture_set: ReferenceFixtureSet):
     return run_catalog_contract(
         catalog_contract_cases(fixture_set),
-        sync_client=cast(SyncCatalogClient, SyncReferenceConnector(fixture_set)),
-        async_client=cast(AsyncCatalogClient, AsyncReferenceConnector(fixture_set)),
+        sync_client=cast("SyncCatalogClient", SyncReferenceConnector(fixture_set)),
+        async_client=cast("AsyncCatalogClient", AsyncReferenceConnector(fixture_set)),
         fixture_set=fixture_set,
     )
 
@@ -166,7 +166,7 @@ def test_certification_rejects_implicit_activation_mismatched_bindings_and_incom
             report=report,
             selected_connector_id=connector_id,
         )
-    updated_value_2 = replace(report, expected_case_ids=report.expected_case_ids[:-1])
+    updated_value_2 = replace(report, outcomes=report.outcomes[:-1])
     with pytest.raises(ValueError, match="complete case evidence"):
         catalog.certify_catalog_report(
             manifest=manifest,
@@ -183,6 +183,7 @@ def test_catalog_exports_only_the_documented_contract_surface_without_optional_i
     assert catalog.__all__ == [
         "catalog_contract_cases",
         "run_catalog_contract",
+        "run_catalog_contract_async",
         "certify_catalog_report",
         "CatalogContractCase",
         "CaseOutcome",

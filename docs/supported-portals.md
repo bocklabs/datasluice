@@ -22,7 +22,7 @@ from datasluice.connectors.catalog.ckan import CKANConnector, create_ckan_connec
 ## uData
 
 - **Package:** `datasluice.connectors.catalog.udata`
-- **Pinned profile:** uData `17.3.0`, API v1 (`udata-17.3.json`)
+- **Pinned profile:** uData `17.6.0`, API v1 (`udata-17.6.json`)
 - **Coverage:** the pinned profile encodes the uData v1 operation
   inventory across datasets, reuse, organizations, and community
   features, with the same per-operation capability classification.

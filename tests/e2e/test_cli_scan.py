@@ -1,10 +1,7 @@
-"""End-to-end contracts for the bounded ``datasluice scan`` workflow."""
-
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pyarrow as pa
 import pyarrow.csv as pacsv
@@ -17,54 +14,13 @@ from datasluice.cli import scan as scan_command
 from datasluice.cli._resolver import parse_locator
 from datasluice.domain import HttpDownload, Resource
 from datasluice.exceptions import DataSluiceError
+from tests.e2e._facades import Facade as _Facade
+from tests.e2e._facades import Opened as _Opened
 
 scan_app = typer.Typer()
 scan_app.command()(scan_command.scan)
 
 runner = CliRunner()
-
-
-class _Opened:
-    def __init__(self, batches: list[pa.RecordBatch]) -> None:
-        self._batches = batches
-        self.closed = False
-        self.yielded_rows = 0
-
-    def __enter__(self) -> _Opened:
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
-
-    def iter_batches(self):
-        for batch in self._batches:
-            self.yielded_rows += batch.num_rows
-            yield batch
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class _Facade:
-    def __init__(self, resource: Resource, opened: _Opened) -> None:
-        self._resource = resource
-        self._opened = opened
-        self.resolved: list[object] = []
-        self.opened: list[Resource] = []
-
-    def __enter__(self) -> _Facade:
-        return self
-
-    def __exit__(self, *exc: Any) -> None:
-        return None
-
-    def resolve(self, locator: object) -> Resource:
-        self.resolved.append(locator)
-        return self._resource
-
-    def open(self, resource: Resource) -> _Opened:
-        self.opened.append(resource)
-        return self._opened
 
 
 def _resource(resource_id: str = "observations") -> Resource:
@@ -120,7 +76,7 @@ def test_scan_reads_at_most_default_bound_from_local_inputs(tmp_path: Path, suff
 def test_scan_default_bound_does_not_process_more_than_one_thousand_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     """The bounded mode slices the final batch and stops at exactly 1,000 rows."""
     opened = _Opened(_batches(1_250))
-    facade = _Facade(_resource(), opened)
+    facade = _Facade(opened, resource=_resource())
     _patch_facade(monkeypatch, facade)
 
     outcome = runner.invoke(scan_app, ["https://data.example.test/observations.csv", "--output", "json"])
@@ -134,7 +90,7 @@ def test_scan_default_bound_does_not_process_more_than_one_thousand_rows(monkeyp
 def test_scan_full_computes_exact_statistics(monkeypatch: pytest.MonkeyPatch) -> None:
     """The explicit full mode consumes every row while keeping only the sample."""
     opened = _Opened(_batches(1_250))
-    facade = _Facade(_resource(), opened)
+    facade = _Facade(opened, resource=_resource())
     _patch_facade(monkeypatch, facade)
 
     outcome = runner.invoke(
@@ -153,7 +109,7 @@ def test_scan_full_computes_exact_statistics(monkeypatch: pytest.MonkeyPatch) ->
 def test_machine_result_and_error_diagnostics_use_separate_streams(monkeypatch: pytest.MonkeyPatch) -> None:
     """JSON stdout remains parseable while progress and failures use stderr."""
     opened = _Opened(_batches(2))
-    facade = _Facade(_resource(), opened)
+    facade = _Facade(opened, resource=_resource())
     _patch_facade(monkeypatch, facade)
 
     success = runner.invoke(scan_app, ["https://data.example.test/observations.csv", "--output", "json"])

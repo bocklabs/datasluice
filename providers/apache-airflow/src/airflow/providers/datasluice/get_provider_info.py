@@ -1,8 +1,7 @@
 """Native Airflow provider discovery callable for DataSluice.
 
-Returns declarative metadata consumed by Airflow's ``ProviderManager`` via the
-``apache_airflow_provider`` entry point. The callable performs no Connection
-lookup or network I/O. Platform actions await the canonical executors of later
+Returns declarative metadata consumed by Airflow's ``ProviderManager`` via the ``apache_airflow_provider`` entry point.
+The callable performs no Connection lookup or network I/O. Platform actions await the canonical executors of later
 phases.
 """
 

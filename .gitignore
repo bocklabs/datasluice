@@ -24,6 +24,7 @@ htmlcov/
 coverage.xml
 .hypothesis/
 .pytest_cache/
+.complexipy_cache/
 
 # Environments
 .env
@@ -37,7 +38,7 @@ coverage.xml
 
 # GSD Code reviews
 dev/*/reviews
-
+dev/*/data/
 # uv
 #   Generally recommended to include uv.lock in version control for
 #   reproducibility. Uncomment for libraries where you want consumers
@@ -69,9 +70,4 @@ site/
 demo/**/data/
 
 # Graphify
-graphify-out/*
-!graphify-out/.graphify_labels.json
-!graphify-out/GRAPH_REPORT.md
-!graphify-out/graph.html
-!graphify-out/graph.json
-!graphify-out/manifest.json
+graphify-out/

@@ -50,6 +50,8 @@ def normalize_origin(value: str) -> str:
         raise ValueError("uData base URLs cannot carry userinfo credentials.")
     if parsed.query or parsed.fragment:
         raise ValueError("uData base URLs cannot carry query strings or fragments.")
+    if parsed.path not in ("", "/"):
+        raise ValueError("uData base URLs cannot carry a mount path; supply the scheme and host only.")
     if parsed.scheme == "http" and parsed.hostname not in LOOPBACK_HOSTS:
         raise ValueError("Plain-text HTTP origins are restricted to loopback uData deployments.")
     return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), "", "", ""))
@@ -143,14 +145,3 @@ class UDataClientSettings:
             raise ValueError("Capability cache TTL must be a finite non-negative number.")
         if type(self.root_export_max_bytes) is not int or self.root_export_max_bytes < 1:
             raise ValueError("uData root export byte limits must be positive integers.")
-
-    @property
-    def owns_sync_transport(self) -> bool:
-        """Return whether factory-constructed sync transports are client-owned."""
-        return self.sync_transport is None or _transport_role(self.sync_transport) == "factory"
-
-    @property
-    def owns_async_transport(self) -> bool:
-        """Return whether factory-constructed async transports are client-owned."""
-        role = _transport_role(self.async_transport) if self.async_transport is not None else "none"
-        return self.async_transport is None or role == "factory"

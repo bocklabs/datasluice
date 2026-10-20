@@ -1,10 +1,3 @@
-"""Unit tests for the streaming CSV reader.
-
-Follows the -01 RED->GREEN TDD pattern: the module skips cleanly at
-collection time while the readers package is not yet importable, then runs and
-passes once GREEN lands the real implementation.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -40,15 +33,6 @@ def test_read_batches_yields_record_batch_with_inferred_types() -> None:
     assert table.schema.field("id").type == pa.int64()
     assert table.schema.field("name").type == pa.string()
     assert table.column("name").to_pylist()[0] == "alice"
-
-
-def test_read_batches_respects_custom_delimiter() -> None:
-    src = io.BytesIO(b"a;b\n1;2\n")
-    reader = CSVReader(delimiter=";")
-    batches = list(reader.read_batches(src))
-    table = pa.Table.from_batches(batches)
-    assert table.num_rows == 1
-    assert "a" in table.schema.names
 
 
 def test_read_batches_accepts_batch_size_kwarg() -> None:

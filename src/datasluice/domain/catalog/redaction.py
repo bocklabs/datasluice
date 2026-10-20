@@ -1,5 +1,3 @@
-"""Pure bounded redaction primitives for catalog output values."""
-
 from __future__ import annotations
 
 import re
@@ -31,6 +29,14 @@ SENSITIVE_PARTS = frozenset(
         "header",
     }
 )
+
+
+def is_sensitive_record_key(key: str) -> bool:
+    """Return whether one record key names a credential-bearing or raw-body field."""
+    normalized = key.lower().replace("-", "_")
+    return any(part in normalized for part in SENSITIVE_PARTS)
+
+
 SENSITIVE_QUERY_KEYS = frozenset(
     {
         "access-key",
@@ -110,8 +116,7 @@ def redact_mapping(value: Mapping[str, object], *, _depth: int = 0) -> dict[str,
     for key, nested in tuple(value.items())[:MAX_METADATA_ENTRIES]:
         if not isinstance(key, str) or not key:
             continue
-        normalized = key.lower().replace("-", "_")
-        if any(part in normalized for part in SENSITIVE_PARTS):
+        if is_sensitive_record_key(key):
             redacted[key] = REDACTED
         else:
             redacted[key] = _bounded_entry(nested, _depth=_depth + 1)

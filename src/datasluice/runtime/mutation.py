@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import monotonic
 from time import sleep as default_sleep
+from typing import TYPE_CHECKING
 
 from datasluice.domain.catalog.ids import CatalogId
 from datasluice.domain.catalog.operations import OperationId
@@ -22,7 +22,11 @@ from datasluice.runtime.constants import (
 )
 from datasluice.runtime.redaction import redact_event_metadata
 from datasluice.runtime.resilience import DeadlineMonitor, RetryLoop
-from datasluice.runtime.transport.base import RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from datasluice.runtime.transport.base import RuntimeResponse
 
 logger = get_logger("runtime.mutation")
 

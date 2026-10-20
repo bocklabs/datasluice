@@ -1,11 +1,3 @@
-"""Unit tests for the ``open_filesystem`` factory.
-
-The implementation module is resolved via ``importlib.import_module`` (rather
-than a static ``import``) so the RED commit can land under this repo's
-full-suite pre-commit hook: until the GREEN step ships, the whole module
-skips cleanly instead of erroring at collection.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -43,7 +35,7 @@ def test_open_filesystem_dispatches_memory() -> None:
 
 
 def test_open_filesystem_passes_credentials_as_storage_options() -> None:
-    """credentials= dict is forwarded to url_to_fs as **storage_options."""
+    """Credentials= dict is forwarded to url_to_fs as **storage_options."""
     with patch("fsspec.core.url_to_fs") as mocked:
         mocked.return_value = (MagicMock(), "path")
         open_filesystem("s3://bucket/key", credentials={"key": "AKIA", "secret": "shh"})
@@ -52,7 +44,7 @@ def test_open_filesystem_passes_credentials_as_storage_options() -> None:
 
 
 def test_open_filesystem_passes_empty_credentials_when_none() -> None:
-    """credentials=None forwards an empty dict so fsspec uses backend defaults."""
+    """Credentials=None forwards an empty dict so fsspec uses backend defaults."""
     with patch("fsspec.core.url_to_fs") as mocked:
         mocked.return_value = (MagicMock(), "path")
         open_filesystem("file:///tmp/x", credentials=None)
@@ -80,3 +72,11 @@ def test_open_filesystem_does_not_import_fsspec_at_module_top() -> None:
         if re.match(r"^import fsspec|^from fsspec", line) and not line.lstrip().startswith("#")
     ]
     assert top_level == [], f"Found top-level fsspec imports: {top_level}"
+
+
+def test_strip_scheme_preserves_absolute_local_paths() -> None:
+    from fsspec.implementations.local import LocalFileSystem
+
+    fs = LocalFileSystem()
+    assert _filesystem_module.strip_scheme("file:///data/x.csv", fs) == "/data/x.csv"
+    assert _filesystem_module.strip_scheme("file:/data/x.csv", fs) == "/data/x.csv"

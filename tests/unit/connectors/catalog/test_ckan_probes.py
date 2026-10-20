@@ -1,11 +1,10 @@
-"""Deterministic loopback coverage for the concrete CKAN capability probe runners."""
-
 from __future__ import annotations
 
 import asyncio
-import json
-from collections.abc import Callable
+import concurrent.futures
+import threading
 from time import monotonic
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +21,7 @@ from datasluice.connectors.catalog.ckan.probes import (
     CKANAsyncProbeRunner,
     CKANProbeRunner,
     LineState,
+    StatusSnapshotCache,
     classify_probe_response,
     map_extensions_to_operations,
     maybe_emit_line_advisory,
@@ -34,26 +34,22 @@ from datasluice.domain.catalog.profiles import EvidenceProvenance, ProbeEvidence
 from datasluice.errors.catalog import CatalogValidationError
 from datasluice.runtime.capability import AsyncProbeRunner, EffectiveCapabilityCache, ProbeRunner
 from datasluice.runtime.events import EventEmitter, ListSink
-from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportFailure
+from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse, TransportError
+from tests.helpers.capture_transport import failure_body, success_body
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 ORIGIN = "https://127.0.0.1:8443"
 DISCOVERY_OPERATION_ID = OperationId("ckan", "action-api-v3", "discovery-help-and-status")
 FILESTORE_OPERATION_ID = OperationId("ckan", "filestore", "upload-and-resource-file-replacement")
 
 
-def _success_body(result: dict[str, object]) -> bytes:
-    return json.dumps({"success": True, "result": result}).encode("utf-8")
-
-
-def _failure_body(error: dict[str, object]) -> bytes:
-    return json.dumps({"success": False, "error": error}).encode("utf-8")
-
-
 def _status_body(*, extensions: list[str], version: str | None = "2.11.5") -> bytes:
     result: dict[str, object] = {"site_title": "Loopback CKAN", "extensions": extensions}
     if version is not None:
         result["ckan_version"] = version
-    return _success_body(result)
+    return success_body(result)
 
 
 class _CannedTransport:
@@ -161,6 +157,33 @@ def test_one_shared_read_answers_the_full_optional_sweep() -> None:
     assert transport.requests[0].url == f"{ORIGIN}/api/3/action/status_show"
 
 
+def test_concurrent_stale_snapshots_share_one_status_read() -> None:
+    """Two stale synchronous callers issue exactly one status_show read per snapshot window."""
+    entered = threading.Event()
+    release = threading.Event()
+    reads: list[RuntimeRequest] = []
+    response = RuntimeResponse(
+        status_code=200, headers={"Content-Type": "application/json"}, body=_status_body(extensions=[])
+    )
+
+    def reader(request: RuntimeRequest) -> RuntimeResponse:
+        reads.append(request)
+        entered.set()
+        release.wait(timeout=5)
+        return response
+
+    cache = StatusSnapshotCache(origin=ORIGIN, reader=reader)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(cache.snapshot) for _ in range(2)]
+        assert entered.wait(timeout=5)
+        release.set()
+        snapshots = [future.result(timeout=5) for future in futures]
+
+    assert len(reads) == 1
+    assert snapshots[0] is snapshots[1]
+
+
 def test_sql_search_maps_disabled_while_datastore_crud_resolves_independently() -> None:
     """The v2 split keeps the sql-search gate scoped to exactly that OperationId."""
     transport = _CannedTransport(_status_body(extensions=["datastore"]))
@@ -239,8 +262,8 @@ def test_extension_probe_classification_uses_operation_id_value_equality() -> No
 
 def test_authorization_and_forbidden_envelopes_classify_through_the_shared_core() -> None:
     """Envelope-level authorization failures keep their bounded response classes."""
-    unauthenticated = _CannedTransport(_failure_body({"__type": "Authorization Error", "message": "bad token"}))
-    forbidden = _CannedTransport(_failure_body({"__type": "Authorization Error", "message": "unauthorized to edit"}))
+    unauthenticated = _CannedTransport(failure_body({"__type": "Authorization Error", "message": "bad token"}))
+    forbidden = _CannedTransport(failure_body({"__type": "Authorization Error", "message": "unauthorized to edit"}))
     denied_status = _CannedTransport(b"{}", status_code=401)
 
     assert (
@@ -503,7 +526,7 @@ def test_transport_failure_mid_sweep_is_contained_as_a_missed_row() -> None:
 
         def probe(self, operation_id: OperationId) -> ProbeEvidence:
             if operation_id == failing:
-                raise TransportFailure("loopback connection reset")
+                raise TransportError("loopback connection reset")
             return self._delegate.probe(operation_id)
 
     transport = _CannedTransport(_status_body(extensions=[]))

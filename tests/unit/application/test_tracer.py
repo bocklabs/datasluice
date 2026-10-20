@@ -1,5 +1,3 @@
-"""Public facade tracer from a direct locator to a materialized Artifact."""
-
 from __future__ import annotations
 
 import json

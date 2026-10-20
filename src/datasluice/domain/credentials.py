@@ -1,5 +1,3 @@
-"""Credential scoping model for host-bound credential policy."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

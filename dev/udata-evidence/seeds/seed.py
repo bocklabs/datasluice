@@ -1,4 +1,4 @@
-"""Validate the bounded local seed target without storing credentials."""
+"""Seed bounded local uData evidence data without storing credentials."""
 
 from __future__ import annotations
 
@@ -92,8 +92,8 @@ def validate_origin(origin: str) -> str:
     return origin
 
 
-def seed_roles(origin: str, compose_file: Path) -> None:
-    """Seed deterministic disposable roles through the local uData container only."""
+def seed_stack(origin: str, compose_file: Path) -> None:
+    """Seed disposable users, roles, an organization, and datasets in the local uData container only."""
     validate_origin(origin)
     if not compose_file.is_file():
         raise ValueError("controlled evidence compose file is missing")
@@ -102,17 +102,17 @@ def seed_roles(origin: str, compose_file: Path) -> None:
         check=False,
     )
     if completed.returncode != 0:
-        raise RuntimeError("controlled evidence role seeding failed")
+        raise RuntimeError("controlled evidence seeding failed")
 
 
 def main() -> int:
-    """Validate a local-only seed operation before its controlled implementation."""
+    """Seed the deterministic disposable evidence data into the local uData container."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--origin", required=True)
     parser.add_argument("--compose-file", type=Path, default=Path(__file__).parents[1] / "compose.yaml")
     args = parser.parse_args()
-    seed_roles(args.origin, args.compose_file)
-    print("seeded deterministic local roles")
+    seed_stack(args.origin, args.compose_file)
+    print("seeded deterministic local evidence data")
     return 0
 
 

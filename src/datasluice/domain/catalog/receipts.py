@@ -1,5 +1,3 @@
-"""Immutable mutation and bulk execution receipts for catalog contracts."""
-
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -7,32 +5,13 @@ from dataclasses import dataclass, field
 
 from datasluice.domain.catalog.ids import CatalogId
 from datasluice.domain.catalog.models import _contract_error, _freeze_json, _object_dict, _thaw_json
-from datasluice.domain.catalog.redaction import contains_credential_content, redact_string
+from datasluice.domain.catalog.redaction import contains_credential_content, is_sensitive_record_key, redact_string
 
 _MUTATION_RECEIPT_AUDIT_METADATA_PATH = "mutation_receipt.audit_metadata"
 _MUTATION_RECEIPT_ATOMICITY_PATH = "mutation_receipt.atomicity"
 
 _ATOMICITIES = frozenset({"atomic", "independent"})
 _OUTCOMES = frozenset({"succeeded", "rejected", "failed", "cancelled", "ambiguous", "skipped"})
-_SENSITIVE_KEY_PARTS = (
-    "authorization",
-    "credential",
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "pwd",
-    "cookie",
-    "api_key",
-    "apikey",
-    "private_key",
-    "access_key",
-    "consumer_key",
-    "client_key",
-    "signature",
-    "header",
-    "body",
-)
 
 
 def _contains_credential_value(value: str) -> bool:
@@ -51,16 +30,20 @@ def _optional_text(value: object, path: str) -> str | None:
     return value
 
 
+def _require_unaudited_key(key: object, path: str) -> None:
+    """Reject an audit-metadata key that is not a non-sensitive string."""
+    if not isinstance(key, str):
+        raise _contract_error(path)
+    if is_sensitive_record_key(key):
+        raise _contract_error(path)
+
+
 def _validate_redacted_metadata(value: object, path: str) -> object:
     if isinstance(value, str) and _contains_credential_value(value) and redact_string(value) != value:
         raise _contract_error(path)
     if isinstance(value, Mapping):
         for key, nested in value.items():
-            if not isinstance(key, str):
-                raise _contract_error(path)
-            normalized_key = key.lower().replace("-", "_")
-            if any(part in normalized_key for part in _SENSITIVE_KEY_PARTS):
-                raise _contract_error(path)
+            _require_unaudited_key(key, path)
             _validate_redacted_metadata(nested, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for nested in value:

@@ -1,8 +1,6 @@
-"""Tests for the optional OpenTelemetry bridge."""
-
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 import pytest
 from opentelemetry import trace
@@ -13,6 +11,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from datasluice.runtime.events import OtelBridge
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 Telemetry = tuple[OtelBridge, InMemorySpanExporter, InMemoryMetricReader]
 

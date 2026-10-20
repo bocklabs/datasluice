@@ -1,5 +1,3 @@
-"""Opaque identities for catalog contract records."""
-
 from __future__ import annotations
 
 import re

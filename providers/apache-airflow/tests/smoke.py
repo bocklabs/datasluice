@@ -1,10 +1,3 @@
-"""Provider smoke convention module.
-
-Validates the installed provider package, its discovery metadata, the runtime
-hook/operator declarations, and the absence of connection declarations.
-Run from the provider package root: ``python tests/smoke.py``.
-"""
-
 from __future__ import annotations
 
 import sys

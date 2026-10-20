@@ -1,10 +1,3 @@
-"""Reusable local HTTP test server for transport and integration tests.
-
-Spawns a :class:`ThreadingHTTPServer` on an ephemeral port with a scriptable
-request handler, so tests can exercise redirect/retry/auth behaviour over real
-sockets without hitting the network.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -18,18 +11,18 @@ from typing import Any, cast
 class MockResponse:
     """Configurable HTTP response.
 
-        Attributes:
-            status: HTTP status code.
+    Attributes:
+        status: HTTP status code.
         headers: Response headers (e.g. ``{"Location": ...}``).
-            extra_headers: Additional raw header pairs, including duplicate names.
-            body: Raw response bytes.
-            chunk_size: When set, the handler emits the body using HTTP/1.1
-                ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
-                each ``chunk_size``-byte slice is written as ``<hex-size> CRLF
-                <bytes> CRLF`` followed by the terminating ``0 CRLF CRLF`` frame.
-                This simulates a real streaming HTTP server for tests
-    . Mutually exclusive with a pre-set ``Content-Length``
-                header (the spec forbids both).
+        extra_headers: Additional raw header pairs, including duplicate names.
+        body: Raw response bytes.
+        chunk_size: When set, the handler emits the body using HTTP/1.1
+            ``Transfer-Encoding: chunked`` instead of ``Content-Length`` —
+            each ``chunk_size``-byte slice is written as ``<hex-size> CRLF
+            <bytes> CRLF`` followed by the terminating ``0 CRLF CRLF`` frame.
+            This simulates a real streaming HTTP server for tests. Mutually
+            exclusive with a pre-set ``Content-Length`` header (the spec
+            forbids both).
     """
 
     status: int = 200
@@ -42,9 +35,8 @@ class MockResponse:
 class _CapturingServer(ThreadingHTTPServer):
     """ThreadingHTTPServer that records received requests and exposes the script.
 
-    ``captured`` holds per-request lowercased header dicts; ``captured_paths``
-    holds the raw request target (path + query string) so tests can assert the
-    serialized wire format (e.g. repeated keys for list-valued params).
+    ``captured`` holds per-request lowercased header dicts; ``captured_paths`` holds the raw request target (path +
+    query string) so tests can assert the serialized wire format (e.g. repeated keys for list-valued params).
     """
 
     captured: list[dict[str, str]]
@@ -54,7 +46,7 @@ class _CapturingServer(ThreadingHTTPServer):
 
 class _ScriptableHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        server = cast(_CapturingServer, self.server)
+        server = cast("_CapturingServer", self.server)
         path = urllib.parse.urlparse(self.path).path
         entry = server.responses.get(path)
         resp: MockResponse
@@ -100,7 +92,6 @@ class _ScriptableHandler(BaseHTTPRequestHandler):
 
     def _write_chunked(self, body: bytes, chunk_size: int) -> None:
         """Emit *body* using HTTP/1.1 chunked transfer-encoding."""
-
         if chunk_size <= 0:
             chunk_size = 1
         offset = 0

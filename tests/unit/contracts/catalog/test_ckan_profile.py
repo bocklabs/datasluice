@@ -1,5 +1,3 @@
-"""Contract tests for the pinned CKAN capability profile."""
-
 from __future__ import annotations
 
 import hashlib

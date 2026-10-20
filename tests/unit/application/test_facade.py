@@ -1,14 +1,7 @@
-"""Application facade tests for direct data-plane work and explicit catalog composition.
-
-The facade exposes direct resource access through caller-owned readers and
-canonical catalog construction through an explicit
-``Callable[[CatalogConnectorContext], T]`` factory handoff only.
-"""
-
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from typing import cast
+import socket
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -19,12 +12,17 @@ from datasluice.contracts.catalog.protocols import (
     CatalogConnectorContext,
     SyncCatalogOperationExecutor,
 )
+from datasluice.domain import Resource
 from datasluice.domain.catalog.auth import CredentialResolver
-from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 from datasluice.exceptions import StreamClosedError
 from datasluice.runtime.clients import AsyncCatalogClient, SyncCatalogClient
 from datasluice.runtime.session import DataSluiceSession
 from datasluice.runtime.transport.base import RuntimeRequest, RuntimeResponse
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+
+    from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 
 
 class _Transport:
@@ -60,8 +58,8 @@ class _AsyncExecutor:
 def _catalog_context() -> CatalogConnectorContext:
     """Build one canonical context from structural executor doubles."""
     return CatalogConnectorContext(
-        sync_executor=cast(SyncCatalogOperationExecutor, _SyncExecutor()),
-        async_executor=cast(AsyncCatalogOperationExecutor, _AsyncExecutor()),
+        sync_executor=cast("SyncCatalogOperationExecutor", _SyncExecutor()),
+        async_executor=cast("AsyncCatalogOperationExecutor", _AsyncExecutor()),
     )
 
 
@@ -70,8 +68,8 @@ class _MinimalSession:
 
     _transport = object()
 
-    def open_catalog[T](self, factory: object, context: CatalogConnectorContext) -> T:
-        return cast("T", cast("Callable[[CatalogConnectorContext], object]", factory)(context))
+    def open_catalog[T](self, factory: Callable[[CatalogConnectorContext], T], context: CatalogConnectorContext) -> T:
+        return factory(context)
 
 
 class _BatchStream:
@@ -159,7 +157,7 @@ def test_facade_rejects_portal_shaped_catalog_contexts() -> None:
         base_url = "https://data.example.gov"
 
     data_sluice = DataSluice(session=DataSluiceSession(transport=_Transport()))
-    portal_context = cast(CatalogConnectorContext, _PortalShapedContext())
+    portal_context = cast("CatalogConnectorContext", _PortalShapedContext())
     with pytest.raises(TypeError, match="CatalogConnectorContext"):
         data_sluice.open_catalog(lambda received: received, portal_context)
 
@@ -186,7 +184,9 @@ def test_facade_opens_direct_locator_through_the_injected_reader() -> None:
 
     assert batches == [b"batch-one"]
     assert len(reader.opened) == 1
-    assert reader.opened[0].url == "file:///data/example.csv"  # ty: ignore[unresolved-attribute]
+    opened_resource = reader.opened[0]
+    assert isinstance(opened_resource, Resource)
+    assert opened_resource.url == "file:///data/example.csv"
 
 
 def test_facade_open_returns_lazy_single_use_resource_wrapper() -> None:
@@ -227,7 +227,7 @@ def test_closed_facade_rejects_catalog_and_data_plane_work(monkeypatch: pytest.M
 def test_closed_facade_rejects_credential_and_client_surfaces() -> None:
     """Closed-state guards raise the same typed error on credentials and both clients."""
     data_sluice = DataSluice(session=_MinimalSession())
-    profile = cast(DeclaredCapabilityProfile, object())
+    profile = cast("DeclaredCapabilityProfile", object())
     data_sluice.close()
 
     with pytest.raises(StreamClosedError, match="DataSluice is closed"):
@@ -376,3 +376,38 @@ def test_facade_materialize_delegates_once_and_closes_owned_dependencies(
     assert session.storage.close_calls == 1
     assert session.state_store.close_calls == 1
     assert session.plugins.close_calls == 1
+
+
+def test_partial_bulk_download_does_not_misattribute_resources(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datasluice.exceptions import DownloadError
+
+    class PartialTransport(_Transport):
+        def send(self, request: RuntimeRequest) -> RuntimeResponse:
+            if request.url.endswith("/b.csv"):
+                return RuntimeResponse(404, {}, b"missing")
+            return RuntimeResponse(200, {}, request.url.encode())
+
+    answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: answers)
+    resources = [Resource(id=name, name=f"{name}.csv", url=f"https://catalog.test/{name}.csv") for name in "abc"]
+    with (
+        DataSluice(session=DataSluiceSession(transport=PartialTransport())) as facade,
+        pytest.raises(DownloadError, match="incomplete"),
+    ):
+        facade.download_many(resources, str(tmp_path))
+    assert (tmp_path / "a.csv").read_bytes() == b"https://catalog.test/a.csv"
+    assert (tmp_path / "c.csv").read_bytes() == b"https://catalog.test/c.csv"
+    assert not (tmp_path / "b.csv").exists()
+
+
+def test_bulk_download_uses_the_session_cache(tmp_path) -> None:
+    from datasluice.io.content_cache import ContentCache
+
+    resource = Resource(id="cached", name="cached.csv", url="https://catalog.example.test/data.csv")
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put(resource.url or "", b"cached bytes")
+    with DataSluice(session=DataSluiceSession(transport=_Transport(), cache=cache)) as facade:
+        manifest = facade.download_many([resource], str(tmp_path / "downloads"))
+
+    assert (tmp_path / "downloads" / "cached.csv").read_bytes() == b"cached bytes"
+    assert manifest[0]["size"] == 12

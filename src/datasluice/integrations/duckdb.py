@@ -1,13 +1,11 @@
 """DuckDB integration.
 
-The v0.1.0 ``resource_to_relation`` and ``query_resource`` helpers relied on
-DuckDB's Python relation API to bind a resource URL as a virtual table.
-rebuilds them over the shared :class:`datasluice.data.BatchStream`,
-registering batches as DuckDB tables via Arrow zero-copy interop.
+The v0.1.0 ``resource_to_relation`` and ``query_resource`` helpers relied on DuckDB's Python relation API to bind a
+resource URL as a virtual table. rebuilds them over the shared :class:`datasluice.data.BatchStream`, registering batches
+as DuckDB tables via Arrow zero-copy interop.
 
-The standalone :func:`_validate_table_name` SQL-identifier guard is
-preserved because it is the regression boundary
-and continues to protect whatever relation-registering API ships.
+The standalone :func:`_validate_table_name` SQL-identifier guard is preserved because it is the regression boundary and
+continues to protect whatever relation-registering API ships.
 """
 
 from __future__ import annotations

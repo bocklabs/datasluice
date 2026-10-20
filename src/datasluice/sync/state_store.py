@@ -1,10 +1,3 @@
-"""Incremental sync state stores: file-backed and in-memory ``StateStore`` impls.
-
-The :class:`datasluice.ports.state_store.StateStore` Protocol is the
-contract; this module provides its two concrete implementations. Both stores
-are dep-free at import time (stdlib + fsspec); pyarrow/dlt are never imported here.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -12,19 +5,23 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
-from collections.abc import Iterator
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from datasluice._uri import sanitize_uri
 from datasluice.exceptions import StateStoreError, SyncStateConflictError
 from datasluice.io.filesystem import safe_remove
 from datasluice.logging import get_logger
+from datasluice.sync._hashing import is_sha256
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from datasluice.domain import SyncState
 
 _INVALID_DURABLE_SYNC_STATE_CURSOR = "Invalid durable SyncState at state.cursor"
@@ -36,25 +33,21 @@ _INVALID_DURABLE_SYNC_STATE_CHECKPOINT_POSITION = (
 _INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT = (
     "Invalid durable SyncState at state.extra.datasluice_completed_artifact"
 )
+_INVALID_DURABLE_SYNC_STATE_SOURCE_VERSION = "Invalid durable SyncState at state.extra.datasluice_source_version"
 
 logger = get_logger("sync.state_store")
 
 _GLOBAL_LOCKS: dict[str, threading.RLock] = {}
 _GLOBAL_LOCKS_USERS: dict[str, int] = {}
 _GLOBAL_LOCKS_GUARD = threading.Lock()
+_HELD_FILE_LOCKS = threading.local()
 
 _UNSET = object()
-_SECRET_FREE_STATE_READY = True
-_ADVERSARIAL_VALIDATOR_READY = True
 _COMPLETED_WATERMARK_SCHEMA = "datasluice_completed_watermark_v1"
 _COMPLETED_WATERMARK_KEYS = {"schema", "watermark"}
-_COMPLETED_ARTIFACT_KEYS = {"destination_identity", "destination_size", "destination_checksum"}
-_LEGACY_COMPLETED_ARTIFACT_KEYS = {"destination_uri", "destination_size", "destination_checksum"}
-_CHECKPOINT_KEYS = {"version", "status", "next_batch_index", "position"}
 _CHECKPOINT_POSITION_KEYS = {"kind", "row_group_index"}
 _MAX_TIMESTAMP_LENGTH = 128
 _MAX_WATERMARK_LENGTH = 256
-_MAX_DESTINATION_URI_LENGTH = 4096
 _ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 
 # fsspec backends whose ``mv`` is a true atomic rename. On these
@@ -63,33 +56,63 @@ _ETAG_PATTERN = re.compile(r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"\Z')
 # backend (generic copy-then-remove ``mv``) CAS is detection-only — a
 # cross-process observer may briefly see no file — and a warning is logged.
 _ATOMIC_MV_BACKENDS: frozenset[str] = frozenset({"file", "local", "memory"})
+_WINDOWS_LOCK_TIMEOUT_SECONDS = 600.0
+
+
+def _acquire_windows_lock(lock_file: Any, path: str) -> None:
+    """Block on a Windows advisory lock until the deadline, then raise :class:`StateStoreError`."""
+    import msvcrt
+
+    module = cast("Any", msvcrt)
+    if lock_file.tell() == 0:
+        lock_file.write(b"0")
+        lock_file.flush()
+    deadline = time.monotonic() + _WINDOWS_LOCK_TIMEOUT_SECONDS
+    while True:
+        lock_file.seek(0)
+        try:
+            module.locking(lock_file.fileno(), module.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if time.monotonic() >= deadline:
+                raise StateStoreError(f"Timed out waiting for the per-key file lock at {sanitize_uri(path)}") from exc
+            time.sleep(0.1)
+
+
+def _release_windows_lock(lock_file: Any) -> None:
+    """Release the byte range acquired by :func:`_acquire_windows_lock`."""
+    import msvcrt
+
+    module = cast("Any", msvcrt)
+    lock_file.seek(0)
+    module.locking(lock_file.fileno(), module.LK_UNLCK, 1)
 
 
 class FileStateStore:
     """Durable :class:`StateStore` persisting :class:`SyncState` as versioned JSON files.
 
-        State is written to one SHA-256-hexdigest-named JSON file per key. New
-        envelopes contain only ``schema_version`` and ``state``; completed
+        State is written to one SHA-256-hexdigest-named JSON file per key.
+        Envelopes contain only ``schema_version`` and ``state``; completed
         watermarks use a fixed keyless representation and are reconstructed from
         the lookup key on read. New writes validate every :class:`SyncState` field
         against the completed-watermark or ``datasluice_checkpoint`` schemas before
-        publishing bytes. Historical schema-version-1 envelopes containing a raw
-        ``key`` and unconstrained state mappings remain readable.
+        publishing bytes.
 
         Writes are atomic (temp file + ``fs.mv`` rename, mirroring the content-cache
         discipline). Compare-and-swap (CAS) is provided through the additive
         :class:`datasluice.ports.state_store.AtomicStateStore` capability Protocol:
         :meth:`read_version` returns the raw envelope bytes for CAS comparison and
         :meth:`conditional_put` writes only when the on-disk version matches a
-        caller-supplied ``expected_prior``. A per-key :class:`threading.Lock`
-        (``_locks``) serializes the compare-read and the atomic-move so they are
-        indivisible within a single process — two barrier-synchronized
+        caller-supplied ``expected_prior``. Re-entrant thread locks and local
+        advisory file locks serialize compare-read and atomic-move across
+        local processes — two barrier-synchronized
         expected-absent writers cannot both succeed; the loser raises
         :class:`SyncStateConflictError`.
 
         Backend atomicity is declared via :data:`_ATOMIC_MV_BACKENDS`. On backends
         whose ``mv`` is a true atomic rename (local ``file``/, ``memory``) the
-        per-key lock makes CAS *preventive* same-process. On non-atomic backends
+        per-key lock makes CAS preventive across local processes and within
+        in-process memory storage. On non-atomic backends
         (generic copy-then-remove ``mv`` on remote object stores) CAS is
         *detection-only* — a cross-process observer may briefly see no file — and a
         warning is logged; the per-key lock still provides same-process safety
@@ -107,17 +130,17 @@ class FileStateStore:
             The general model permits arbitrary cursor mappings,
             partitions, and extra fields. Durable writes restrict to: one-entry
             cursor (keyed by the canonical identity), empty partitions, and the
-            recognized ``datasluice_checkpoint`` extra. This restriction is an
-            accepted override because it is the only shape this producer emits —
-            no producer-legal state shape is silently rejected.
+            recognized ``datasluice_checkpoint`` or completed-artifact extra.
+            This restriction is an accepted override because it is the only shape
+            this producer emits — no producer-legal state shape is silently
+            rejected.
 
             :class:`InMemoryStateStore` accepts the full :class:`SyncState` model
-            without restriction because it produces no durable bytes. Historical
-            schema-version-1 envelopes remain readable through their unconstrained
-            legacy shape. The durable write validation rejects adversarial
-            validator values (signed URLs, bearer tokens, credentials, control
-            bytes, oversized opaque strings) before serialization, naming only the
-            structural field path in error messages — never the rejected value.
+            without restriction because it produces no durable bytes. The durable
+            write validation rejects adversarial validator values (signed URLs,
+            bearer tokens, credentials, control bytes, oversized opaque strings)
+            before serialization, naming only the structural field path in error
+            messages — never the rejected value.
 
         Attributes:
             base_uri: URI (``file://``, ``s3://``, …) of the directory holding the
@@ -156,24 +179,18 @@ class FileStateStore:
         scope.
         """
         protocol = self._fs.protocol
-        if isinstance(protocol, str):
-            protocol_str = protocol
-        else:
-            protocol_str = "+".join(sorted(protocol))
+        protocol_str = protocol if isinstance(protocol, str) else "+".join(sorted(protocol))
         return f"{protocol_str}::{self._base}::{self._state_path(key)}"
 
     @contextmanager
     def key_lock(self, key: str) -> Iterator[threading.RLock]:
-        """Hold the per-key lock for *key* so callers serialize a multi-step transaction.
+        """Serialize a resource transaction across threads and local processes.
 
-        Returns a re-entrant lock scoped by backend+base URI+state path, so a
-        caller that holds this lock around (materialize artifact + CAS state)
-        serializes publication end-to-end against any other writer for the same
-        key, including writers using a separate :class:`FileStateStore`
-        instance. Re-entrancy lets the same thread call
-        :meth:`conditional_put` (which acquires the same lock) inside this
-        context without deadlock.
+        On Windows the advisory file lock waits up to :data:`_WINDOWS_LOCK_TIMEOUT_SECONDS`, then raises
+        :class:`StateStoreError`; on POSIX it blocks until the lock is free.
         """
+        if not self._is_atomic_mv:
+            raise StateStoreError("Sync transactions require local storage or a backend with a distributed key lock")
         with self._key_lock_held(key) as lock:
             yield lock
 
@@ -188,7 +205,7 @@ class FileStateStore:
                 _GLOBAL_LOCKS[scope] = lock
             _GLOBAL_LOCKS_USERS[scope] = _GLOBAL_LOCKS_USERS.get(scope, 0) + 1
         try:
-            with lock:
+            with lock, self._file_lock(key, scope):
                 yield lock
         finally:
             with _GLOBAL_LOCKS_GUARD:
@@ -198,6 +215,32 @@ class FileStateStore:
                 else:
                     _GLOBAL_LOCKS_USERS.pop(scope, None)
                     _GLOBAL_LOCKS.pop(scope, None)
+
+    @contextmanager
+    def _file_lock(self, key: str, scope: str) -> Iterator[None]:
+        protocol = self._fs.protocol
+        protocols = {protocol} if isinstance(protocol, str) else set(protocol)
+        held: set[str] = getattr(_HELD_FILE_LOCKS, "scopes", set())
+        if not protocols.intersection({"file", "local"}) or scope in held:
+            yield
+            return
+        path = self._fs._strip_protocol(self._state_path(key)) + ".lock"
+        with open(path, "a+b") as lock_file:
+            if sys.platform == "win32":
+                _acquire_windows_lock(lock_file, path)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            _HELD_FILE_LOCKS.scopes = held | {scope}
+            try:
+                yield
+            finally:
+                _HELD_FILE_LOCKS.scopes = held
+                if sys.platform == "win32":
+                    _release_windows_lock(lock_file)
+                else:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _state_path(self, key: str) -> str:
         """Return the SHA-256-hexdigest (.json) path for *key*."""
@@ -248,10 +291,6 @@ class FileStateStore:
             raise StateStoreError("Corrupt state envelope at state")
         from datasluice.domain import SyncState
 
-        if "key" in envelope:
-            if envelope["key"] != key:
-                raise StateStoreError("Legacy state envelope key does not match lookup key")
-            return _decode_legacy_state(s)
         if set(envelope) != {"schema_version", "state"}:
             raise StateStoreError("Corrupt state envelope at top level")
         state = SyncState(
@@ -281,9 +320,8 @@ class FileStateStore:
     def read_version(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key*, or ``None`` if absent (:class:`AtomicStateStore`).
 
-        Alias for :meth:`read_raw`. Callers pass the returned bytes back into
-        :meth:`conditional_put` as ``expected_prior`` so a concurrent writer's
-        intervening commit is detected instead of silently overwritten.
+        Alias for :meth:`read_raw`. Callers pass the returned bytes back into :meth:`conditional_put` as
+        ``expected_prior`` so a concurrent writer's intervening commit is detected instead of silently overwritten.
         """
         return self.read_raw(key)
 
@@ -301,11 +339,6 @@ class FileStateStore:
         fsspec backends expose no portable conditional-write/etag (RESEARCH
         ). Omit *expected_prior* for an unconditional write.
 
-        Note: the compare-read and rename in this method are NOT guarded by the
-        per-key lock — callers needing same-process indivisibility between two
-        writers must use :meth:`conditional_put` instead. This method remains
-        for unconditional writes and backward compatibility.
-
         Args:
             key: The sync-state key (resource-id-scoped, per Area 1).
             state: The :class:`SyncState` to persist (watermark strings, never
@@ -318,26 +351,19 @@ class FileStateStore:
                 *expected_prior* (CAS lost a race).
             StateStoreError: on any write I/O failure.
         """
-        _validate_state_for_write(key, state)
-        payload = _serialize_state(state)
-
         if expected_prior is not _UNSET:
-            actual_prior = self.read_raw(key)
-            expected_bytes = expected_prior if isinstance(expected_prior, bytes) else b""
-            actual_bytes = actual_prior if actual_prior is not None else b""
-            expected_sha = hashlib.sha256(expected_bytes).hexdigest()
-            actual_sha = hashlib.sha256(actual_bytes).hexdigest()
-            if actual_sha != expected_sha:
-                raise SyncStateConflictError("State changed since last read (CAS mismatch); re-read and re-apply")
-
-        self._publish(key, payload)
+            if expected_prior is not None and not isinstance(expected_prior, bytes):
+                raise TypeError("expected_prior must be bytes or None")
+            self.conditional_put(key, state, expected_prior)
+            return
+        _validate_state_for_write(key, state)
+        self._publish(key, _serialize_state(state))
 
     def conditional_put(self, key: str, state: SyncState, expected_prior: bytes | None) -> bytes:
         """Persist *state* under *key* only if the current version matches ``expected_prior``.
 
-        The per-key threading lock (``_locks``) is held across the version check
-        and the atomic write, making them indivisible within a single process.
-        Two same-process writers that both pass the version check cannot both
+        Thread and local file locks span the version check and atomic write.
+        Two local writers that both pass the version check cannot both
         commit; the loser raises :class:`SyncStateConflictError`.
 
         On non-atomic-``mv`` backends (see :data:`_ATOMIC_MV_BACKENDS`) a
@@ -411,17 +437,6 @@ class FileStateStore:
     @staticmethod
     def _sha256_bytes(data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
-
-
-def _decode_legacy_state(state: dict[str, Any]) -> SyncState:
-    from datasluice.domain import SyncState
-
-    return SyncState(
-        cursor=_mapping_field(state, "cursor"),
-        partitions=_mapping_field(state, "partitions"),
-        last_synced_at=state.get("last_synced_at"),
-        extra=_mapping_field(state, "extra"),
-    )
 
 
 def _mapping_field(state: dict[str, Any], field: str) -> dict[str, Any]:
@@ -551,44 +566,25 @@ def _validate_extra(extra: Any) -> None:
         raise StateStoreError("Invalid durable SyncState at state.extra")
     if not extra:
         return
-    if set(extra) == {"datasluice_completed_artifact"}:
+    completed_keys = {"datasluice_completed_artifact", "datasluice_source_version"}
+    if "datasluice_completed_artifact" in extra and set(extra) <= completed_keys:
         _validate_completed_artifact(extra["datasluice_completed_artifact"])
+        source_version = extra.get("datasluice_source_version")
+        if source_version is not None and not is_sha256(source_version):
+            raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_SOURCE_VERSION)
         return
     if set(extra) != {"datasluice_checkpoint"}:
         raise StateStoreError("Invalid durable SyncState at state.extra")
     checkpoint = extra["datasluice_checkpoint"]
     if not isinstance(checkpoint, dict):
         raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
-    version = checkpoint.get("version")
-    if version == 2:
-        _validate_checkpoint_v2(checkpoint)
-    elif version == 3:
-        _validate_checkpoint_v3(checkpoint)
-    elif version == 1:
-        _validate_checkpoint_v1(checkpoint)
-    else:
+    if checkpoint.get("version") != 3:
         raise StateStoreError("Invalid durable SyncState at state.extra.datasluice_checkpoint.version")
+    _validate_checkpoint_v3(checkpoint)
 
 
-def _validate_checkpoint_v2(checkpoint: dict[str, Any]) -> None:
-    if set(checkpoint) != {"version", "status", "next_batch_index", "position", "source_version"}:
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
-    position = checkpoint["position"]
-    if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT_POSITION)
-    next_batch_index = checkpoint["next_batch_index"]
-    row_group_index = position["row_group_index"]
-    source_version = checkpoint["source_version"]
-    if (
-        type(next_batch_index) is not int
-        or type(row_group_index) is not int
-        or next_batch_index < 0
-        or row_group_index < 0
-        or position["kind"] != "parquet_row_group"
-        or checkpoint["status"] != "in_progress"
-        or not _is_source_version(source_version)
-    ):
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
+def _is_source_version(value: Any) -> bool:
+    return value is None or is_sha256(value)
 
 
 def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
@@ -614,94 +610,25 @@ def _validate_checkpoint_v3(checkpoint: dict[str, Any]) -> None:
         or position["kind"] != "parquet_row_group"
         or checkpoint["status"] != "in_progress"
         or not _is_source_version(checkpoint["source_version"])
-        or not _is_sha256(checkpoint["destination_identity"])
+        or not is_sha256(checkpoint["destination_identity"])
     ):
         raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
 
 
 def _validate_completed_artifact(artifact: Any) -> None:
-    if not isinstance(artifact, dict):
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT)
-    if set(artifact) not in (_COMPLETED_ARTIFACT_KEYS, _LEGACY_COMPLETED_ARTIFACT_KEYS):
-        try:
-            from datasluice.domain import Artifact
-
-            Artifact.from_dict(artifact)
-        except Exception as exc:
-            raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT) from exc
-        return
-    destination_size = artifact["destination_size"]
-    destination_checksum = artifact["destination_checksum"]
-    if set(artifact) == _COMPLETED_ARTIFACT_KEYS:
-        destination_identity = artifact["destination_identity"]
-        valid_destination = _is_sha256(destination_identity)
-    else:
-        destination_uri = artifact["destination_uri"]
-        valid_destination = _is_safe_destination_uri(destination_uri)
-    if (
-        not valid_destination
-        or type(destination_size) is not int
-        or destination_size < 0
-        or not isinstance(destination_checksum, str)
-        or not _is_source_version(destination_checksum)
-    ):
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT)
-
-
-def _is_safe_destination_uri(value: Any) -> bool:
-    if not isinstance(value, str) or not value or len(value) > _MAX_DESTINATION_URI_LENGTH:
-        return False
-    if any(ord(character) < 0x20 for character in value):
-        return False
     try:
-        from urllib.parse import urlsplit
+        from datasluice.domain import Artifact
 
-        parts = urlsplit(value)
-        if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
-            return False
-    except ValueError:
-        return False
-    return True
-
-
-def _is_source_version(value: Any) -> bool:
-    return value is None or _is_sha256(value)
-
-
-def _is_sha256(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdefABCDEF" for character in value)
-    )
-
-
-def _validate_checkpoint_v1(checkpoint: dict[str, Any]) -> None:
-    if set(checkpoint) != _CHECKPOINT_KEYS:
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
-    position = checkpoint["position"]
-    if not isinstance(position, dict) or set(position) != _CHECKPOINT_POSITION_KEYS:
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT_POSITION)
-    next_batch_index = checkpoint["next_batch_index"]
-    row_group_index = position["row_group_index"]
-    if (
-        type(next_batch_index) is not int
-        or type(row_group_index) is not int
-        or next_batch_index < 0
-        or row_group_index < 0
-        or next_batch_index != row_group_index
-        or position["kind"] != "parquet_row_group"
-        or checkpoint["status"] != "in_progress"
-    ):
-        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_CHECKPOINT)
+        Artifact.from_dict(artifact)
+    except Exception as exc:
+        raise StateStoreError(_INVALID_DURABLE_SYNC_STATE_COMPLETED_ARTIFACT) from exc
 
 
 class InMemoryStateStore:
     """Ephemeral in-process :class:`StateStore` backed by a plain dict.
 
-    State dies with the process — the canonical default for tests and
-    dry-runs. Implements the Protocol exactly (get/put/delete) with no
-    persistence obligation.
+    State dies with the process — the canonical default for tests and dry-runs. Implements the Protocol exactly
+    (get/put/delete) with no persistence obligation.
     """
 
     def __init__(self) -> None:

@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      provenance: false
+      sbom: false
       args:
         UDATA_COMMIT: 0546582058d84706812a1c37387576efc4e5ad1f
     platform: linux/amd64
@@ -16,6 +18,7 @@ services:
       UDATA_SECRET_KEY: ${UDATA_SECRET_KEY:?set a disposable local secret in .env}
       UDATA_API_TOKEN_SECRET: ${UDATA_API_TOKEN_SECRET:?set a disposable local secret in .env}
       UDATA_EVIDENCE_STACK_NONCE: ${UDATA_EVIDENCE_STACK_NONCE:?set a disposable stack nonce in .env}
+      PYTHONWARNINGS: "ignore:invalid escape sequence:SyntaxWarning,ignore:pkg_resources is deprecated as an API:UserWarning"
     healthcheck:
       test:
         - CMD-SHELL
@@ -38,6 +41,7 @@ services:
     tmpfs:
       - /tmp
       - /var/lib/udata
+      - /usr/local/var
     restart: "no"
 
   mongo:
@@ -84,13 +88,20 @@ services:
     restart: "no"
 
   storage:
-    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image: quay.io/minio/aistor/minio@sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e
     platform: linux/amd64
     pull_policy: never
     environment:
       MINIO_ROOT_USER: evidence
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set a disposable local secret in .env}
-    command: server /data
+    command: server /data --license /run/secrets/minio.license
+    volumes:
+      - type: bind
+        source: ${MINIO_LICENSE_FILE:?set MINIO_LICENSE_FILE in .env}
+        target: /run/secrets/minio.license
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /data
     restart: "no"

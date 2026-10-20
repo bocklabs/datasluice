@@ -1,22 +1,3 @@
-"""Unit tests for the RedactingFilter log filter.
-
-Exercises the targeted redaction of KNOWN sensitive keys
-(``SENSITIVE_HEADERS`` plus auth-secret field names) from ``record.__dict__``
-and ``record.args`` dicts, the ``DATASLUICE_NO_REDACT=1`` escape hatch, and the
-automatic attachment to the datasluice handler in ``configure_logging``.
-
-The ``RedactingFilter`` is resolved via ``importlib.import_module`` + ``getattr``
-so the RED commit can land under this repo's full-suite pre-commit hook: ty
-cannot statically resolve the not-yet-existing attribute, and the whole module
-skips cleanly until the implementation lands (same pattern as plan 03-01 /
-03-04 RED commits).
-
-Assertions read via ``record.__dict__[key]`` rather than ``record.<attr>``: the
-filter mutates ``record.__dict__`` directly, so dict access tests the exact
-contract, and it sidesteps the ty ``unresolved-attribute`` diagnostic for
-dynamic LogRecord attributes that ruff B009 would otherwise reintroduce.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -36,7 +17,6 @@ configure_logging = _logging_module.configure_logging
 
 def _make_record(**attrs) -> logging.LogRecord:
     """Build a LogRecord pre-populated with the given attributes."""
-
     record = logging.LogRecord(
         name="test",
         level=logging.INFO,

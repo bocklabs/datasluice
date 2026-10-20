@@ -1,9 +1,8 @@
 """to_arrow terminal: materialize a BatchStream into a pa.Table.
 
-The shared substrate the other terminals (to_pandas/to_polars/to_duckdb)
-delegate through for single-substrate consistency. pyarrow is
-lazy-imported inside the function body to keep ``import datasluice.integrations``
-light on bare installs (AGENTS.md lazy-dep discipline).
+The shared substrate the other terminals (to_pandas/to_polars/to_duckdb) delegate through for single-substrate
+consistency. pyarrow is lazy-imported inside the function body to keep ``import datasluice.integrations`` light on bare
+installs (AGENTS.md lazy-dep discipline).
 """
 
 from __future__ import annotations

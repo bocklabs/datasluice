@@ -12,6 +12,25 @@ from types import MappingProxyType
 _PROFILES = Path(__file__).parents[1] / "profiles"
 _FIXTURES = Path(__file__).parent
 
+_OUTCOMES = frozenset(
+    {
+        "core",
+        "optional",
+        "authenticated-success",
+        "missing-credentials",
+        "invalid-credentials",
+        "forbidden",
+        "deployment-disabled",
+        "unavailable",
+        "async-pending",
+        "rate-limited",
+    }
+)
+_SUCCESS_OUTCOMES = frozenset({"core", "optional", "authenticated-success", "async-pending"})
+
+DECLARED_OUTCOMES = _OUTCOMES
+SUCCESS_OUTCOMES = _SUCCESS_OUTCOMES
+
 
 @dataclass(frozen=True, slots=True)
 class ReferenceCase:
@@ -36,11 +55,7 @@ class ReferenceFixtureSet:
     @property
     def success_cases(self) -> tuple[ReferenceCase, ...]:
         """Return cases that deterministically reach the reference executor."""
-        return tuple(
-            case
-            for case in self.cases
-            if case.outcome in {"core", "optional", "authenticated-success", "async-pending"}
-        )
+        return tuple(case for case in self.cases if case.outcome in _SUCCESS_OUTCOMES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,20 +130,8 @@ def _case(value: object, platform: str, declared: frozenset[ReferenceOperationId
     operation_id = _operation_id(data)
     if operation_id.platform != platform or operation_id not in declared:
         raise ValueError("Reference case references an undeclared operation ID.")
-    outcomes = {
-        "core",
-        "optional",
-        "authenticated-success",
-        "missing-credentials",
-        "invalid-credentials",
-        "forbidden",
-        "deployment-disabled",
-        "unavailable",
-        "async-pending",
-        "rate-limited",
-    }
     outcome = data["outcome"]
-    if not isinstance(outcome, str) or outcome not in outcomes:
+    if not isinstance(outcome, str) or outcome not in _OUTCOMES:
         raise ValueError("Reference case has an undeclared outcome.")
     credential_class = data.get("credential_class")
     if credential_class is not None and not isinstance(credential_class, str):
@@ -138,10 +141,9 @@ def _case(value: object, platform: str, declared: frozenset[ReferenceOperationId
 
 def _operation_id(value: object) -> ReferenceOperationId:
     """Parse one portable operation identity from a checked-in object."""
+    operation = None
     if isinstance(value, Mapping):
         operation = value.get("id") if "id" in value else value.get("operation")
-    else:
-        operation = None
     if not isinstance(operation, str) or "/" not in operation:
         raise ValueError("Reference fixture operation IDs must be portable identifiers.")
     platform, name = operation.split("/", 1)

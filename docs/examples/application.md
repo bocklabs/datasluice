@@ -81,9 +81,9 @@ opens exactly one caller-selected connector:
 
 The context supplies the injected sync and async executors, normalized
 and native service projections, and the pinned effective capability
-profile. In Phase 1 the executors are caller-supplied; deterministic
-reference fakes satisfy every projection, and live CKAN, uData, and
-Socrata endpoint clients arrive in Phases 3–5.
+profile. Executors are caller-supplied and deterministic reference fakes
+satisfy every projection; the live CKAN and uData endpoint clients ship
+today, and the Socrata live client arrives in Phase 5.
 
 ## Verifying contracts with reference fakes
 
@@ -125,3 +125,5 @@ datasluice materialize ./source.csv --destination ./out.parquet --output json
 Apache Airflow users install the separate
 `apache-airflow-providers-datasluice` distribution and import from the
 `airflow.providers.datasluice` namespace. See [Apache Airflow](airflow.md).
+
+HTTP resources and redirect targets reject literal private, loopback, and link-local addresses and known internal hostnames by default. To read a trusted private deployment, inject `DataPlaneResourceReader(transport=transport, allow_private_http=True)` into `DataSluice`. Raw `Downloader` and the dlt `datasluice_source` integration accept the same explicit option. This validates URL syntax and static host locality; it does not resolve or pin DNS addresses. Compressed streams have a 512 MiB expanded-byte limit.

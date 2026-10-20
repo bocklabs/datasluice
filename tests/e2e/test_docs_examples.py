@@ -1,33 +1,17 @@
-"""Executable canonical documentation examples gate.
-
-Every Python fence in the canonical documentation must run against the
-installed package using deterministic fixtures only: canonical platform
-imports, pinned-profile fixture inspection, the reference-fake compliance
-run, and the retained direct-resource data plane. The former local-CKAN
-endpoint and removed-command execution is gone with the surfaces it
-documented.
-
-Data-plane example URLs are rebound to a fixture-owned local file before
-execution, and a socket guard proves the examples never contact external
-hosts or require credentials: reference fakes, pinned fixtures, and local
-files are the only inputs. ``docs/examples/dlt.md`` shows the Phase 3+
-caller-owned client pattern with an unbound placeholder, so it is scanned
-statically but not executed; ``tests/helpers/http_server.py`` remains the
-pattern for transport and lifecycle boundary tests, which this gate does
-not exercise.
-"""
-
 from __future__ import annotations
 
 import importlib
 import re
 import socket
-from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -78,22 +62,17 @@ def _rebind_to_local_fixture(body: str, source: Path, destination: Path) -> str:
 
 @contextmanager
 def _no_external_sockets() -> Iterator[None]:
-    real_connect = socket.socket.connect
-    real_create = socket.create_connection
-
     def blocked_connect(sock: socket.socket, address: Any) -> None:
         raise AssertionError(f"documented example contacted {address!r}")
 
     def blocked_create(address: Any, *args: Any, **kwargs: Any) -> socket.socket:
         raise AssertionError(f"documented example contacted {address!r}")
 
-    socket.socket.connect = blocked_connect  # ty: ignore[invalid-assignment]
-    socket.create_connection = blocked_create  # ty: ignore[invalid-assignment]
-    try:
+    with (
+        patch.object(socket.socket, "connect", blocked_connect),
+        patch.object(socket, "create_connection", blocked_create),
+    ):
         yield
-    finally:
-        socket.socket.connect = real_connect
-        socket.create_connection = real_create
 
 
 def _execute_page(page: Path, tmp_path: Path) -> None:

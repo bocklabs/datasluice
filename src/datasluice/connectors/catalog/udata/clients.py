@@ -1,25 +1,18 @@
-"""Transport-backed strict-version sync and async uData clients."""
-
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import json
-import os
-import re
-import select
-import signal
+import math
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date
-from functools import lru_cache, partial
+from functools import cached_property, lru_cache, partial
 from importlib import resources
-from pathlib import Path
 from time import monotonic, sleep
-from types import TracebackType
 from typing import TYPE_CHECKING, Self, TypedDict, Unpack, cast
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import urlsplit
 
 from datasluice.connectors.catalog.udata.mapping import (
     _DATASETS_OPERATION_ID,
@@ -34,13 +27,10 @@ from datasluice.connectors.catalog.udata.probes import (
     SiteVersion,
     SiteVersionGate,
 )
-from datasluice.connectors.catalog.udata.settings import UDataClientSettings
-from datasluice.contracts.catalog.native.udata import UDataResultItem
-from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
-from datasluice.domain.catalog.auth import EffectivePermissions, SecretValue, UDataCredential
+from datasluice.connectors.catalog.udata.settings import LOOPBACK_HOSTS, UDataClientSettings
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.domain.catalog.auth import EffectivePermissions, UDataCredential
 from datasluice.domain.catalog.auth import credential_scope as _credential_scope
-from datasluice.domain.catalog.models import ResultEnvelope
-from datasluice.domain.catalog.observability import TLSPolicy
 from datasluice.domain.catalog.operations import (
     Atomicity,
     AuthClass,
@@ -66,6 +56,7 @@ from datasluice.errors.catalog import (
     CatalogUnavailableError,
     CatalogValidationError,
     NativeCatalogError,
+    attach_catalog_metadata,
     map_catalog_error,
 )
 from datasluice.runtime.capability import (
@@ -97,16 +88,85 @@ from datasluice.runtime.transport.base import (
     RuntimeRequest,
     RuntimeResponse,
     RuntimeStreamResponse,
-    TransportFailure,
+    TransportError,
+    UploadPart,
 )
 from datasluice.runtime.transport.httpx_transport import AsyncHttpxCatalogTransport, HttpxCatalogTransport
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
+    from datasluice.connectors.catalog.udata.services.activity_discussions import (
+        AsyncActivityDiscussionsService as _AsyncActivityDiscussionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.activity_discussions import (
+        SyncActivityDiscussionsService as _SyncActivityDiscussionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.auth_oauth import (
+        AsyncAuthOAuthService as _AsyncAuthOAuthService,
+    )
+    from datasluice.connectors.catalog.udata.services.auth_oauth import (
+        SyncAuthOAuthService as _SyncAuthOAuthService,
+    )
+    from datasluice.connectors.catalog.udata.services.contact_visualization import (
+        AsyncContactVisualizationService as _AsyncContactVisualizationService,
+    )
+    from datasluice.connectors.catalog.udata.services.contact_visualization import (
+        SyncContactVisualizationService as _SyncContactVisualizationService,
+    )
+    from datasluice.connectors.catalog.udata.services.dataservices import (
+        AsyncDataservicesService as _AsyncDataservicesService,
+    )
+    from datasluice.connectors.catalog.udata.services.dataservices import (
+        SyncDataservicesService as _SyncDataservicesService,
+    )
     from datasluice.connectors.catalog.udata.services.datasets import (
         AsyncDatasetsService as _AsyncDatasetsService,
     )
     from datasluice.connectors.catalog.udata.services.datasets import (
         SyncDatasetsService as _SyncDatasetsService,
+    )
+    from datasluice.connectors.catalog.udata.services.extensions import (
+        AsyncExtensionsService as _AsyncExtensionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.extensions import (
+        SyncExtensionsService as _SyncExtensionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.harvest import (
+        AsyncHarvestService as _AsyncHarvestService,
+    )
+    from datasluice.connectors.catalog.udata.services.harvest import (
+        SyncHarvestService as _SyncHarvestService,
+    )
+    from datasluice.connectors.catalog.udata.services.jobs import (
+        AsyncWorkerJobsService as _AsyncWorkerJobsService,
+    )
+    from datasluice.connectors.catalog.udata.services.jobs import (
+        SyncWorkerJobsService as _SyncWorkerJobsService,
+    )
+    from datasluice.connectors.catalog.udata.services.organizations_memberships import (
+        AsyncOrganizationsMembershipsService as _AsyncOrganizationsMembershipsService,
+    )
+    from datasluice.connectors.catalog.udata.services.organizations_memberships import (
+        SyncOrganizationsMembershipsService as _SyncOrganizationsMembershipsService,
+    )
+    from datasluice.connectors.catalog.udata.services.posts_reports import (
+        AsyncPostsReportsService as _AsyncPostsReportsService,
+    )
+    from datasluice.connectors.catalog.udata.services.posts_reports import (
+        SyncPostsReportsService as _SyncPostsReportsService,
+    )
+    from datasluice.connectors.catalog.udata.services.resources import (
+        AsyncResourcesService as _AsyncResourcesService,
+    )
+    from datasluice.connectors.catalog.udata.services.resources import (
+        SyncResourcesService as _SyncResourcesService,
+    )
+    from datasluice.connectors.catalog.udata.services.reuses import (
+        AsyncReusesService as _AsyncReusesService,
+    )
+    from datasluice.connectors.catalog.udata.services.reuses import (
+        SyncReusesService as _SyncReusesService,
     )
     from datasluice.connectors.catalog.udata.services.root_profile import (
         AsyncRootProfileService as _AsyncRootProfileService,
@@ -114,14 +174,41 @@ if TYPE_CHECKING:
     from datasluice.connectors.catalog.udata.services.root_profile import (
         SyncRootProfileService as _SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.spatial import (
+        AsyncSpatialService as _AsyncSpatialService,
+    )
+    from datasluice.connectors.catalog.udata.services.spatial import (
+        SyncSpatialService as _SyncSpatialService,
+    )
+    from datasluice.connectors.catalog.udata.services.taxonomies import (
+        AsyncTaxonomiesService as _AsyncTaxonomiesService,
+    )
+    from datasluice.connectors.catalog.udata.services.taxonomies import (
+        SyncTaxonomiesService as _SyncTaxonomiesService,
+    )
+    from datasluice.connectors.catalog.udata.services.topics import (
+        AsyncTopicsService as _AsyncTopicsService,
+    )
+    from datasluice.connectors.catalog.udata.services.topics import (
+        SyncTopicsService as _SyncTopicsService,
+    )
+    from datasluice.connectors.catalog.udata.services.transfers import (
+        AsyncTransfersService as _AsyncTransfersService,
+    )
+    from datasluice.connectors.catalog.udata.services.transfers import (
+        SyncTransfersService as _SyncTransfersService,
+    )
+    from datasluice.connectors.catalog.udata.services.users_tokens import (
+        AsyncUsersTokensService as _AsyncUsersTokensService,
+    )
+    from datasluice.connectors.catalog.udata.services.users_tokens import (
+        SyncUsersTokensService as _SyncUsersTokensService,
+    )
+    from datasluice.contracts.catalog.native.udata import UDataResultItem
+    from datasluice.contracts.catalog.protocols import CatalogOperationGuard, CatalogOperationRequest
+    from datasluice.domain.catalog.models import ResultEnvelope
+    from datasluice.domain.catalog.observability import TLSPolicy
 
-_CONTROLLED_UDATA_LOCAL_DOCKER_CONTEXT = "Controlled uData evidence requires a local Unix Docker context."
-_CONTROLLED_STACK_IDENTITY_TIMEOUT = "The controlled uData stack identity check timed out."
-_CONTROLLED_STACK_IDENTITY_TOO_MUCH_OUTPUT = "The controlled uData stack identity check returned too much output."
-_CONTROLLED_STACK_IDENTITY_FAILED = "The controlled uData stack identity check failed."
-_CONTROLLED_SITE_PATCH_TOO_MUCH_OUTPUT = "The controlled uData site PATCH returned too much output."
-_CONTROLLED_SITE_PATCH_INVALID_OUTPUT = "The controlled uData site PATCH returned invalid output."
-_CONTROLLED_SERVICE_IMAGE_NOT_APPROVED = "The controlled uData service image is not the approved build."
 _JSON_MEDIA_TYPE = "application/json"
 _CONTROLLED_DISPATCH_AUTHORIZATION_IMMUTABLE = "Controlled dispatch authorization is immutable."
 _CONTROLLED_DISPATCH_AUTHORIZATION_FACTORY_OWNED = "Controlled dispatch authorization is factory-owned."
@@ -134,18 +221,26 @@ _CATALOG_ORIGIN_CIRCUIT_OPEN = "The catalog origin circuit is open after consecu
 _CATALOG_CIRCUIT_RETRY_ACTION = "Wait for the circuit cool-down or explicitly reset the circuit before retrying."
 _ASYNC_UDATA_CLIENT_CLOSED = "The asynchronous uData client is closed."
 
+
+def _reject_nonfinite_json(_: str) -> None:
+    raise ValueError("Non-finite JSON constant.")
+
+
+def _finite_json_float(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        _reject_nonfinite_json(value)
+    return result
+
+
 _PROFILE_RESOURCE = "udata-17.6.json"
 _PAGER_PARAMS = frozenset({"page", "page_size"})
+_DATASET_PAGE_MAX_BYTES = 8 * 1024 * 1024
 _CONTROLLED_ORIGIN = "http://127.0.0.1:5640"
 _CONTROLLED_SOURCE_COMMIT = "0546582058d84706812a1c37387576efc4e5ad1f"
-_CONTROLLED_COMPOSE_SHA256 = "f7acbcd1ea2f88f7b9361cbfadbd46e62be82bd707538f22f0615796e8bf09a3"
-_CONTROLLED_DOCKERFILE_SHA256 = "6c21f02c3a287f1c1a2b42db392e767a484792bb763827a65bce5fcdd0d97e3b"
-_CONTROLLED_UDATA_IMAGE_REPOSITORY = "udata-evidence-udata"
-_CONTROLLED_UDATA_IMAGE_SPEC = (
-    "udata-evidence-udata",
-    "sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
-    "udata-evidence-udata@sha256:b04bac4f89d3eb828192579cd5e235202ae03e244d70ac6b8380c2898d033937",
-)
+_CONTROLLED_COMPOSE_SHA256 = "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39"
+_CONTROLLED_DOCKERFILE_SHA256 = "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28"
+_CONTROLLED_UDATA_LAYERS_SHA256 = "sha256:a91b7779e1225837c720078fff0fe151cfc2ca5da3c5a84d7c7563e819002bc6"
 _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
     (
         "mongo",
@@ -167,9 +262,9 @@ _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
     ),
     (
         "storage",
-        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-        "sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "quay.io/minio/aistor/minio@sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
+        "sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
+        "quay.io/minio/aistor/minio@sha256:a94e1fe399bd050fe6d6148839597a4995350c0e62c9e83f0cec8b5630ed0a1e",
     ),
     (
         "mailpit",
@@ -181,86 +276,106 @@ _CONTROLLED_DEPENDENCY_IMAGE_SPECS = (
 _CONTROLLED_IMAGE_DIGESTS = tuple(
     repository_digest for _, _, _, repository_digest in _CONTROLLED_DEPENDENCY_IMAGE_SPECS
 )
-_CONTROLLED_SERVICE_NAMES = ("udata", "mongo", "redis", "search", "storage", "mailpit")
-_CONTROLLED_EVIDENCE_ROOT = Path(__file__).resolve().parents[5] / "dev" / "udata-evidence"
-_CONTROLLED_COMPOSE_FILE = _CONTROLLED_EVIDENCE_ROOT / "compose.yaml"
-_CONTROLLED_ENV_FILE = _CONTROLLED_EVIDENCE_ROOT / ".env"
 _CONTROLLED_AUTHORITY_TTL_SECONDS = 60.0
-_CONTROLLED_COMMAND_TIMEOUT_SECONDS = 15.0
-_CONTROLLED_REAP_TIMEOUT_SECONDS = 1.0
-_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES = 65536
-_CONTROLLED_DOCKER_EXECUTABLES = (
-    Path("/usr/local/bin/docker"),
-    Path("/opt/homebrew/bin/docker"),
-    Path("/usr/bin/docker"),
-)
-_CONTROLLED_PATCH_PROGRAM = """
-import json
-import sys
-import urllib.error
-import urllib.request
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None
-
-def emit(response):
-    body = response.read(8193)
-    print(json.dumps({
-        "status": getattr(response, "status", getattr(response, "code", 0)),
-        "content_type": response.headers.get("Content-Type", ""),
-        "location": response.headers.get("Location", ""),
-        "body": body.decode("utf-8", "replace"),
-    }, separators=(",", ":")))
-
-request_data = json.loads(sys.stdin.read())
-request = urllib.request.Request(
-    "http://127.0.0.1:7000/api/1/site/",
-    data=json.dumps(request_data["body"], separators=(",", ":")).encode(),
-    headers={"Content-Type": "application/json", "X-API-KEY": request_data["token"]},
-    method="PATCH",
-)
-try:
-    response = urllib.request.build_opener(NoRedirect()).open(request, timeout=10)
-except urllib.error.HTTPError as error:
-    emit(error)
-else:
-    try:
-        emit(response)
-    finally:
-        response.close()
-""".strip()
-_CONTROLLED_SITE_PROBE_PROGRAM = """
-import json
-import urllib.error
-import urllib.request
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None
-
-request = urllib.request.Request("http://127.0.0.1:7000/api/1/site/")
-try:
-    response = urllib.request.build_opener(NoRedirect()).open(request, timeout=10)
-except urllib.error.HTTPError as error:
-    response = error
-try:
-    body = response.read(8193)
-    print(json.dumps({
-        "status": getattr(response, "status", getattr(response, "code", 0)),
-        "content_type": response.headers.get("Content-Type", ""),
-        "location": response.headers.get("Location", ""),
-        "body": body.decode("utf-8", "replace"),
-    }, separators=(",", ":")))
-finally:
-    response.close()
-""".strip()
 
 _STATUS_RESPONSE_CLASSES = {
     401: ProbeResponseClass.UNAUTHORIZED,
     403: ProbeResponseClass.FORBIDDEN,
     423: ProbeResponseClass.DEPLOYMENT_DISABLED,
 }
+_AUTH_FAILURES = {
+    "Invalid API token": "invalid",
+    "Revoked API token": "revoked",
+    "Expired API token": "expired",
+    "Inactive user": "inactive-user",
+}
+
+
+def _auth_failure_reason(body: bytes) -> str | None:
+    if len(body) > 512:
+        return None
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("message"), str):
+        return None
+    return _AUTH_FAILURES.get(payload["message"])
+
+
+def _settle_dataset_budget_error(
+    error: BudgetExhaustedError, request: RuntimeRequest, response: RuntimeResponse | None
+) -> None:
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        attach_catalog_metadata(
+            error, {"ambiguous": True, "status_code": response.status_code if response is not None else 0}
+        )
+
+
+def _dataset_idempotency(
+    policy: IdempotencyPolicy | None, method: str, files: tuple[UploadPart, ...]
+) -> IdempotencyPolicy:
+    """Return the retry policy for one request, never repeating a one-shot stream part."""
+    if any(not isinstance(part.data, bytes) for part in files):
+        return IdempotencyPolicy(safe=False)
+    return policy or IdempotencyPolicy(safe=method == "GET")
+
+
+def _dataset_retry_idempotency(
+    form_body: bytes | Callable[[], bytes] | None,
+    policy: IdempotencyPolicy | None,
+    method: str,
+    files: tuple[UploadPart, ...],
+) -> IdempotencyPolicy:
+    """Return the dataset retry policy, never repeating a streamed form body."""
+    if callable(form_body):
+        return IdempotencyPolicy(safe=False)
+    return _dataset_idempotency(policy, method, files)
+
+
+def _dataset_redirect_policy(redirect_mode: bool, files: tuple[UploadPart, ...]) -> RedirectPolicy:
+    """Return the dataset redirect policy, never following redirects for uploads."""
+    return RedirectPolicy.NO_FOLLOW if redirect_mode or files else RedirectPolicy.FOLLOW
+
+
+def _stream_failure_outcome(error: BaseException) -> str:
+    if isinstance(error, asyncio.CancelledError):
+        return "cancelled"
+    return "failed"
+
+
+def _build_stream_request(
+    *,
+    owning_id: OperationId,
+    origin: str,
+    path: str,
+    headers: Mapping[str, str] | None,
+    resolved_credential: object,
+    budget: TimeBudget,
+    clock: Callable[[], float],
+    transport: object,
+) -> tuple[RuntimeRequest, DeadlineMonitor, object]:
+    """Build the no-follow stream request and prove the transport can stream it."""
+    request_headers = dict(headers or {})
+    request_headers.update(_auth_headers(resolved_credential))
+    deadline = DeadlineMonitor(budget, clock=clock)
+    deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+    request = RuntimeRequest(
+        method="GET",
+        url=origin + path,
+        headers=request_headers,
+        redirect_policy=RedirectPolicy.NO_FOLLOW,
+        deadline=deadline,
+    )
+    send_stream = getattr(transport, "send_stream", None)
+    if not callable(send_stream):
+        raise CatalogValidationError(
+            "The uData export requires a streaming catalog transport.",
+            operation=str(owning_id),
+            platform=PLATFORM.value,
+            safe_action="Use the default transport or inject one implementing send_stream.",
+        )
+    return request, deadline, send_stream
 
 
 def _operation_id_from(value: str) -> OperationId:
@@ -386,7 +501,13 @@ def _page_request(
     """Build one anonymous-safe paged dataset request; credentials attach later."""
     query = "&".join(f"{key}={value}" for key, value in sorted(params.items()))
     url = f"{origin}{_PAGED_PATH}" + (f"?{query}" if query else "")
-    return RuntimeRequest(method="GET", url=url, headers={}, body=None)
+    return RuntimeRequest(
+        method="GET",
+        url=url,
+        headers={},
+        body=None,
+        max_response_bytes=_DATASET_PAGE_MAX_BYTES,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,1453 +561,6 @@ def _controlled_error(message: str) -> CatalogValidationError:
         platform=PLATFORM.value,
         safe_action="Use the verified disposable uData evidence stack.",
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _ControlledCommandSpecBinding:
-    compose_file: Path
-    env_file: Path
-    compose_file_exists: Callable[[], bool]
-    env_file_exists: Callable[[], bool]
-    executable_candidates: tuple[tuple[str, Callable[[], bool], Callable[[str, int], bool]], ...]
-    environment_get: Callable[[str], str | None]
-    url_split: Callable[[str], SplitResult]
-    error: Callable[[str], CatalogValidationError]
-    input_limit: int
-    executable_flag: int
-    path_value: str
-
-
-def _controlled_command_spec_binding() -> _ControlledCommandSpecBinding:
-    compose_file = _CONTROLLED_COMPOSE_FILE
-    env_file = _CONTROLLED_ENV_FILE
-    environment_get = os.environ.get
-    return _ControlledCommandSpecBinding(
-        compose_file=compose_file,
-        env_file=env_file,
-        compose_file_exists=compose_file.is_file,
-        env_file_exists=env_file.is_file,
-        executable_candidates=tuple((str(path), path.is_file, os.access) for path in _CONTROLLED_DOCKER_EXECUTABLES),
-        environment_get=environment_get,
-        url_split=urlsplit,
-        error=_controlled_error,
-        input_limit=_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES,
-        executable_flag=os.X_OK,
-        path_value=environment_get("PATH", "/usr/bin:/bin"),
-    )
-
-
-def _validate_bound_command_input(
-    binding: _ControlledCommandSpecBinding, input_data: bytes | None, docker_endpoint: str | None
-) -> None:
-    if not binding.compose_file_exists() or not binding.env_file_exists():
-        raise binding.error("The controlled uData evidence configuration is unavailable.")
-    if input_data is not None and len(input_data) > binding.input_limit:
-        raise binding.error("The controlled uData command input is too large.")
-    if docker_endpoint is not None:
-        endpoint = binding.url_split(docker_endpoint)
-        if (
-            endpoint.scheme != "unix"
-            or endpoint.netloc
-            or not endpoint.path.startswith("/")
-            or endpoint.query
-            or endpoint.fragment
-        ):
-            raise binding.error(_CONTROLLED_UDATA_LOCAL_DOCKER_CONTEXT)
-
-
-def _bound_docker_executable(binding: _ControlledCommandSpecBinding) -> str:
-    executable = next(
-        (
-            path
-            for path, is_file, access in binding.executable_candidates
-            if is_file() and access(path, binding.executable_flag)
-        ),
-        None,
-    )
-    if executable is None:
-        raise binding.error("The trusted Docker executable is unavailable.")
-    return executable
-
-
-def _bound_command(
-    binding: _ControlledCommandSpecBinding,
-    executable: str,
-    args: tuple[str, ...],
-    docker_endpoint: str | None,
-    direct: bool,
-) -> tuple[tuple[str, ...], dict[str, str]]:
-    prefix = (executable,) if docker_endpoint is None else (executable, "--host", docker_endpoint)
-    if direct or args[:2] == ("context", "inspect"):
-        command = (*prefix, *args)
-    else:
-        command = (
-            *prefix,
-            "compose",
-            "--env-file",
-            str(binding.env_file),
-            "-f",
-            str(binding.compose_file),
-            *args,
-        )
-    return command, {"PATH": binding.path_value}
-
-
-def _call_bound_command_spec(
-    binding: _ControlledCommandSpecBinding,
-    args: tuple[str, ...],
-    input_data: bytes | None,
-    docker_endpoint: str | None,
-    direct: bool,
-) -> tuple[tuple[str, ...], dict[str, str]]:
-    _validate_bound_command_input(binding, input_data, docker_endpoint)
-    executable = _bound_docker_executable(binding)
-    if binding.environment_get("DOCKER_HOST") or binding.environment_get("DOCKER_CONTEXT"):
-        raise binding.error("Controlled uData evidence cannot use Docker environment overrides.")
-    return _bound_command(binding, executable, args, docker_endpoint, direct)
-
-
-def _controlled_command_spec(
-    args: tuple[str, ...],
-    *,
-    input_data: bytes | None = None,
-    docker_endpoint: str | None = None,
-    direct: bool = False,
-) -> tuple[tuple[str, ...], dict[str, str]]:
-    return _call_bound_command_spec(_controlled_command_spec_binding(), args, input_data, docker_endpoint, direct)
-
-
-def _make_bound_controlled_command_spec() -> Callable[..., tuple[tuple[str, ...], dict[str, str]]]:
-    binding = _controlled_command_spec_binding()
-
-    def command_spec(
-        args: tuple[str, ...],
-        *,
-        input_data: bytes | None = None,
-        docker_endpoint: str | None = None,
-        direct: bool = False,
-    ) -> tuple[tuple[str, ...], dict[str, str]]:
-        return _call_bound_command_spec(binding, args, input_data, docker_endpoint, direct)
-
-    return command_spec
-
-
-@dataclass(frozen=True, slots=True)
-class _ControlledSyncRuntime:
-    command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]]
-    error: Callable[[str], CatalogValidationError]
-    pipe: Callable[[], tuple[int, int]]
-    posix_spawnp: Callable[..., int]
-    close: Callable[[int], None]
-    set_blocking: Callable[[int, bool], None]
-    read: Callable[[int, int], bytes]
-    write: Callable[[int, bytes], int]
-    kill: Callable[[int, int], None]
-    waitpid: Callable[..., tuple[int, int]]
-    waitstatus_to_exitcode: Callable[[int], int]
-    select: Callable[..., tuple[list[int], list[int], list[int]]]
-    monotonic: Callable[[], float]
-    posix_spawn_dup2: int
-    posix_spawn_close: int
-    wnohang: int
-    sigkill: int
-    timeout_seconds: float
-    reap_timeout_seconds: float
-    max_output_bytes: int
-
-
-def _current_controlled_sync_runtime(
-    *, command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]] | None = None
-) -> _ControlledSyncRuntime:
-    return _ControlledSyncRuntime(
-        command_spec=_controlled_command_spec if command_spec is None else command_spec,
-        error=_controlled_error,
-        pipe=os.pipe,
-        posix_spawnp=os.posix_spawnp,
-        close=os.close,
-        set_blocking=os.set_blocking,
-        read=os.read,
-        write=os.write,
-        kill=os.kill,
-        waitpid=os.waitpid,
-        waitstatus_to_exitcode=os.waitstatus_to_exitcode,
-        select=select.select,
-        monotonic=monotonic,
-        posix_spawn_dup2=os.POSIX_SPAWN_DUP2,
-        posix_spawn_close=os.POSIX_SPAWN_CLOSE,
-        wnohang=os.WNOHANG,
-        sigkill=signal.SIGKILL,
-        timeout_seconds=_CONTROLLED_COMMAND_TIMEOUT_SECONDS,
-        reap_timeout_seconds=_CONTROLLED_REAP_TIMEOUT_SECONDS,
-        max_output_bytes=_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES,
-    )
-
-
-def _terminate_controlled_process_sync(process_id: int, runtime: _ControlledSyncRuntime) -> None:
-    try:
-        runtime.kill(process_id, runtime.sigkill)
-    except OSError:
-        pass
-    reap_deadline = runtime.monotonic() + runtime.reap_timeout_seconds
-    while True:
-        try:
-            completed_pid, _ = runtime.waitpid(process_id, runtime.wnohang)
-        except OSError:
-            return
-        if completed_pid == process_id:
-            return
-        remaining = reap_deadline - runtime.monotonic()
-        if remaining <= 0:
-            return
-        runtime.select([], [], [], min(remaining, 0.05))
-
-
-def _close_controlled_descriptor(fd: int, runtime: _ControlledSyncRuntime) -> Exception | None:
-    if fd < 0:
-        return None
-    try:
-        runtime.close(fd)
-    except Exception as error:
-        return error
-    return None
-
-
-def _close_controlled_descriptors(descriptors: tuple[int, ...], runtime: _ControlledSyncRuntime) -> list[Exception]:
-    errors = []
-    for fd in descriptors:
-        error = _close_controlled_descriptor(fd, runtime)
-        if error is not None:
-            errors.append(error)
-    return errors
-
-
-def _write_controlled_input(
-    process_id: int,
-    fd: int,
-    input_data: bytes,
-    deadline: float,
-    timeout_message: str,
-    runtime: _ControlledSyncRuntime,
-) -> None:
-    runtime.set_blocking(fd, False)
-    offset = 0
-    while offset < len(input_data):
-        remaining = deadline - runtime.monotonic()
-        if remaining <= 0 or not runtime.select([], [fd], [], remaining)[1]:
-            _terminate_controlled_process_sync(process_id, runtime)
-            raise runtime.error(timeout_message)
-        try:
-            offset += runtime.write(fd, input_data[offset:])
-        except BlockingIOError:
-            continue
-
-
-def _read_controlled_output(
-    process_id: int,
-    fd: int,
-    deadline: float,
-    timeout_message: str,
-    output_message: str,
-    runtime: _ControlledSyncRuntime,
-) -> list[bytes]:
-    chunks: list[bytes] = []
-    output_size = 0
-    while True:
-        remaining = deadline - runtime.monotonic()
-        if remaining <= 0 or not runtime.select([fd], [], [], remaining)[0]:
-            _terminate_controlled_process_sync(process_id, runtime)
-            raise runtime.error(timeout_message)
-        chunk = runtime.read(fd, 65536)
-        if not chunk:
-            return chunks
-        output_size += len(chunk)
-        if output_size > runtime.max_output_bytes:
-            _terminate_controlled_process_sync(process_id, runtime)
-            raise runtime.error(output_message)
-        chunks.append(chunk)
-
-
-def _wait_controlled_process(
-    process_id: int, deadline: float, timeout_message: str, runtime: _ControlledSyncRuntime
-) -> int:
-    while True:
-        completed_pid, wait_status = runtime.waitpid(process_id, runtime.wnohang)
-        if completed_pid == process_id:
-            return wait_status
-        remaining = deadline - runtime.monotonic()
-        if remaining <= 0:
-            _terminate_controlled_process_sync(process_id, runtime)
-            raise runtime.error(timeout_message)
-        runtime.select([], [], [], min(remaining, 0.05))
-
-
-def _controlled_file_actions(
-    read_fd: int, write_fd: int, input_read_fd: int, input_write_fd: int, runtime: _ControlledSyncRuntime
-) -> tuple[tuple[int, int, int] | tuple[int, int], ...]:
-    actions: list[tuple[int, int, int] | tuple[int, int]] = [
-        (runtime.posix_spawn_dup2, write_fd, 1),
-        (runtime.posix_spawn_dup2, write_fd, 2),
-        (runtime.posix_spawn_close, read_fd),
-        (runtime.posix_spawn_close, write_fd),
-    ]
-    if input_read_fd >= 0:
-        actions.extend(
-            (
-                (runtime.posix_spawn_dup2, input_read_fd, 0),
-                (runtime.posix_spawn_close, input_read_fd),
-                (runtime.posix_spawn_close, input_write_fd),
-            )
-        )
-    return tuple(actions)
-
-
-def _close_controlled_descriptor_or_raise(fd: int, runtime: _ControlledSyncRuntime) -> None:
-    error = _close_controlled_descriptor(fd, runtime)
-    if error is not None:
-        raise error
-
-
-def _decode_controlled_output(
-    chunks: list[bytes],
-    wait_status: int | None,
-    failure_message: str,
-    output_message: str,
-    runtime: _ControlledSyncRuntime,
-) -> str:
-    if wait_status is None or runtime.waitstatus_to_exitcode(wait_status) != 0:
-        raise runtime.error(failure_message)
-    invalid_output = False
-    try:
-        output = b"".join(chunks).decode().strip()
-    except UnicodeDecodeError:
-        invalid_output = True
-        output = ""
-    if invalid_output:
-        raise runtime.error(output_message)
-    return output
-
-
-def _open_controlled_pipes(input_data: bytes | None, runtime: _ControlledSyncRuntime) -> tuple[int, int, int, int]:
-    read_fd, write_fd = runtime.pipe()
-    try:
-        input_read_fd, input_write_fd = runtime.pipe() if input_data is not None else (-1, -1)
-    except BaseException as error:
-        cleanup_errors = _close_controlled_descriptors((read_fd, write_fd), runtime)
-        if cleanup_errors:
-            raise error from cleanup_errors[0]
-        raise
-    return read_fd, write_fd, input_read_fd, input_write_fd
-
-
-def _controlled_process_error(
-    error: Exception, failure_message: str, runtime: _ControlledSyncRuntime
-) -> CatalogValidationError:
-    try:
-        raise runtime.error(failure_message) from error
-    except CatalogValidationError as sanitized:
-        return sanitized
-
-
-def _run_controlled_command(
-    args: tuple[str, ...],
-    *,
-    input_data: bytes | None = None,
-    docker_endpoint: str | None = None,
-    direct: bool = False,
-    timeout_message: str,
-    output_message: str,
-    failure_message: str,
-    runtime: _ControlledSyncRuntime,
-) -> str:
-    command, environment = runtime.command_spec(
-        args,
-        input_data=input_data,
-        docker_endpoint=docker_endpoint,
-        direct=direct,
-    )
-    read_fd = write_fd = input_read_fd = input_write_fd = -1
-    process_id: int | None = None
-    wait_status: int | None = None
-    chunks: list[bytes] = []
-    primary_error: Exception | None = None
-    cleanup_errors: list[Exception] = []
-    try:
-        read_fd, write_fd, input_read_fd, input_write_fd = _open_controlled_pipes(input_data, runtime)
-        deadline = runtime.monotonic() + runtime.timeout_seconds
-        file_actions = _controlled_file_actions(read_fd, write_fd, input_read_fd, input_write_fd, runtime)
-        process_id = runtime.posix_spawnp(command[0], command, environment, file_actions=file_actions)
-        _close_controlled_descriptor_or_raise(write_fd, runtime)
-        write_fd = -1
-        if input_read_fd >= 0:
-            _close_controlled_descriptor_or_raise(input_read_fd, runtime)
-            input_read_fd = -1
-        if input_write_fd >= 0:
-            _write_controlled_input(process_id, input_write_fd, input_data or b"", deadline, timeout_message, runtime)
-            _close_controlled_descriptor_or_raise(input_write_fd, runtime)
-            input_write_fd = -1
-        chunks = _read_controlled_output(process_id, read_fd, deadline, timeout_message, output_message, runtime)
-        wait_status = _wait_controlled_process(process_id, deadline, timeout_message, runtime)
-    except (AttributeError, OSError) as error:
-        if process_id is not None:
-            _terminate_controlled_process_sync(process_id, runtime)
-        primary_error = _controlled_process_error(error, failure_message, runtime)
-    except (KeyboardInterrupt, SystemExit):
-        if process_id is not None:
-            _terminate_controlled_process_sync(process_id, runtime)
-        raise
-    except Exception as error:
-        primary_error = error
-    finally:
-        cleanup_errors = _close_controlled_descriptors((read_fd, write_fd, input_read_fd, input_write_fd), runtime)
-    if primary_error is not None:
-        if cleanup_errors:
-            raise primary_error from cleanup_errors[0]
-        raise primary_error
-    if cleanup_errors:
-        raise runtime.error(failure_message) from cleanup_errors[0]
-    return _decode_controlled_output(chunks, wait_status, failure_message, output_message, runtime)
-
-
-def _controlled_command(
-    args: tuple[str, ...],
-    *,
-    input_data: bytes | None = None,
-    docker_endpoint: str | None = None,
-    direct: bool = False,
-    timeout_message: str,
-    output_message: str,
-    failure_message: str,
-) -> str:
-    return _run_controlled_command(
-        args,
-        input_data=input_data,
-        docker_endpoint=docker_endpoint,
-        direct=direct,
-        timeout_message=timeout_message,
-        output_message=output_message,
-        failure_message=failure_message,
-        runtime=_current_controlled_sync_runtime(),
-    )
-
-
-def _make_bound_controlled_command(runtime: _ControlledSyncRuntime) -> Callable[..., str]:
-    run_command = _run_controlled_command
-
-    def command(
-        args: tuple[str, ...],
-        *,
-        input_data: bytes | None = None,
-        docker_endpoint: str | None = None,
-        direct: bool = False,
-        timeout_message: str,
-        output_message: str,
-        failure_message: str,
-    ) -> str:
-        return run_command(
-            args,
-            input_data=input_data,
-            docker_endpoint=docker_endpoint,
-            direct=direct,
-            timeout_message=timeout_message,
-            output_message=output_message,
-            failure_message=failure_message,
-            runtime=runtime,
-        )
-
-    return command
-
-
-def _compose_read(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
-    return _controlled_command(
-        args,
-        docker_endpoint=docker_endpoint,
-        direct=direct,
-        timeout_message=_CONTROLLED_STACK_IDENTITY_TIMEOUT,
-        output_message=_CONTROLLED_STACK_IDENTITY_TOO_MUCH_OUTPUT,
-        failure_message=_CONTROLLED_STACK_IDENTITY_FAILED,
-    )
-
-
-async def _terminate_controlled_process(
-    process: asyncio.subprocess.Process | None,
-    *,
-    wait_for: Callable[..., Awaitable[object]] = asyncio.wait_for,
-    clock: Callable[[], float] = monotonic,
-    reap_timeout: float = _CONTROLLED_REAP_TIMEOUT_SECONDS,
-) -> None:
-    if process is None or process.returncode is not None:
-        return
-    try:
-        process.kill()
-    except OSError:
-        pass
-    reap_deadline = clock() + reap_timeout
-    remaining = reap_deadline - clock()
-    if remaining <= 0:
-        return
-    try:
-        await wait_for(process.wait(), timeout=remaining)
-    except OSError:
-        return
-
-
-@dataclass(frozen=True, slots=True)
-class _ControlledAsyncRuntime:
-    command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]]
-    error: Callable[[str], CatalogValidationError]
-    create_subprocess_exec: Callable[..., Awaitable[asyncio.subprocess.Process]]
-    wait_for: Callable[..., Awaitable[object]]
-    terminate: Callable[[asyncio.subprocess.Process | None], Awaitable[None]]
-    pipe: int
-    devnull: int
-    stdout: int
-    stderr: int
-    monotonic: Callable[[], float]
-    timeout_seconds: float
-    max_output_bytes: int
-
-
-def _current_controlled_async_runtime(
-    *, command_spec: Callable[..., tuple[tuple[str, ...], dict[str, str]]] | None = None
-) -> _ControlledAsyncRuntime:
-    return _ControlledAsyncRuntime(
-        command_spec=_controlled_command_spec if command_spec is None else command_spec,
-        error=_controlled_error,
-        create_subprocess_exec=asyncio.create_subprocess_exec,
-        wait_for=asyncio.wait_for,
-        terminate=_terminate_controlled_process,
-        pipe=asyncio.subprocess.PIPE,
-        devnull=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        monotonic=monotonic,
-        timeout_seconds=_CONTROLLED_COMMAND_TIMEOUT_SECONDS,
-        max_output_bytes=_CONTROLLED_COMMAND_MAX_OUTPUT_BYTES,
-    )
-
-
-async def _write_controlled_input_async(
-    process: asyncio.subprocess.Process,
-    input_data: bytes,
-    deadline: float,
-    timeout_message: str,
-    runtime: _ControlledAsyncRuntime,
-) -> None:
-    if process.stdin is None:
-        raise OSError("controlled command stdin was unavailable")
-    remaining = deadline - runtime.monotonic()
-    if remaining <= 0:
-        await runtime.terminate(process)
-        raise runtime.error(timeout_message)
-    process.stdin.write(input_data)
-    try:
-        await runtime.wait_for(process.stdin.drain(), timeout=remaining)
-    except TimeoutError:
-        await runtime.terminate(process)
-        raise runtime.error(timeout_message) from None
-    process.stdin.close()
-
-
-async def _read_controlled_output_async(
-    process: asyncio.subprocess.Process,
-    deadline: float,
-    timeout_message: str,
-    output_message: str,
-    runtime: _ControlledAsyncRuntime,
-) -> list[bytes]:
-    if process.stdout is None:
-        raise OSError("controlled command stdout was unavailable")
-    chunks: list[bytes] = []
-    output_size = 0
-    while True:
-        remaining = deadline - runtime.monotonic()
-        if remaining <= 0:
-            await runtime.terminate(process)
-            raise runtime.error(timeout_message)
-        try:
-            chunk = cast(bytes, await runtime.wait_for(process.stdout.read(65536), timeout=remaining))
-        except TimeoutError:
-            await runtime.terminate(process)
-            raise runtime.error(timeout_message) from None
-        if not chunk:
-            return chunks
-        output_size += len(chunk)
-        if output_size > runtime.max_output_bytes:
-            await runtime.terminate(process)
-            raise runtime.error(output_message)
-        chunks.append(chunk)
-
-
-async def _wait_controlled_process_async(
-    process: asyncio.subprocess.Process, deadline: float, timeout_message: str, runtime: _ControlledAsyncRuntime
-) -> None:
-    remaining = deadline - runtime.monotonic()
-    if remaining <= 0:
-        await runtime.terminate(process)
-        raise runtime.error(timeout_message)
-    try:
-        await runtime.wait_for(process.wait(), timeout=remaining)
-    except TimeoutError:
-        await runtime.terminate(process)
-        raise runtime.error(timeout_message) from None
-
-
-async def _run_controlled_command_async(
-    args: tuple[str, ...],
-    *,
-    input_data: bytes | None = None,
-    docker_endpoint: str | None = None,
-    direct: bool = False,
-    timeout_message: str,
-    output_message: str,
-    failure_message: str,
-    runtime: _ControlledAsyncRuntime,
-) -> str:
-    command, environment = runtime.command_spec(
-        args,
-        input_data=input_data,
-        docker_endpoint=docker_endpoint,
-        direct=direct,
-    )
-    process: asyncio.subprocess.Process | None = None
-    deadline = runtime.monotonic() + runtime.timeout_seconds
-    try:
-        remaining = deadline - runtime.monotonic()
-        if remaining <= 0:
-            raise runtime.error(timeout_message)
-        try:
-            process = cast(
-                asyncio.subprocess.Process,
-                await runtime.wait_for(
-                    runtime.create_subprocess_exec(
-                        *command,
-                        stdin=runtime.pipe if input_data is not None else runtime.devnull,
-                        stdout=runtime.stdout,
-                        stderr=runtime.stderr,
-                        env=environment,
-                    ),
-                    timeout=remaining,
-                ),
-            )
-        except TimeoutError:
-            raise runtime.error(timeout_message) from None
-        if input_data is not None:
-            await _write_controlled_input_async(process, input_data, deadline, timeout_message, runtime)
-        chunks = await _read_controlled_output_async(process, deadline, timeout_message, output_message, runtime)
-        await _wait_controlled_process_async(process, deadline, timeout_message, runtime)
-    except OSError as error:
-        await runtime.terminate(process)
-        raise runtime.error(failure_message) from error
-    finally:
-        await runtime.terminate(process)
-    if process is None or process.returncode != 0:
-        raise runtime.error(failure_message)
-    try:
-        return b"".join(chunks).decode().strip()
-    except UnicodeDecodeError:
-        raise runtime.error(output_message) from None
-
-
-async def _controlled_command_async(
-    args: tuple[str, ...],
-    *,
-    input_data: bytes | None = None,
-    docker_endpoint: str | None = None,
-    direct: bool = False,
-    timeout_message: str,
-    output_message: str,
-    failure_message: str,
-) -> str:
-    return await _run_controlled_command_async(
-        args,
-        input_data=input_data,
-        docker_endpoint=docker_endpoint,
-        direct=direct,
-        timeout_message=timeout_message,
-        output_message=output_message,
-        failure_message=failure_message,
-        runtime=_current_controlled_async_runtime(),
-    )
-
-
-def _make_bound_controlled_command_async(runtime: _ControlledAsyncRuntime) -> Callable[..., Awaitable[str]]:
-    run_command = _run_controlled_command_async
-
-    async def command(
-        args: tuple[str, ...],
-        *,
-        input_data: bytes | None = None,
-        docker_endpoint: str | None = None,
-        direct: bool = False,
-        timeout_message: str,
-        output_message: str,
-        failure_message: str,
-    ) -> str:
-        return await run_command(
-            args,
-            input_data=input_data,
-            docker_endpoint=docker_endpoint,
-            direct=direct,
-            timeout_message=timeout_message,
-            output_message=output_message,
-            failure_message=failure_message,
-            runtime=runtime,
-        )
-
-    return command
-
-
-async def _compose_read_async(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
-    return await _controlled_command_async(
-        args,
-        docker_endpoint=docker_endpoint,
-        direct=direct,
-        timeout_message=_CONTROLLED_STACK_IDENTITY_TIMEOUT,
-        output_message=_CONTROLLED_STACK_IDENTITY_TOO_MUCH_OUTPUT,
-        failure_message=_CONTROLLED_STACK_IDENTITY_FAILED,
-    )
-
-
-def _controlled_patch_response(
-    credential: UDataCredential,
-    body: Mapping[str, object],
-    *,
-    command: Callable[..., str] | None = None,
-    source_verifier: Callable[..., _ControlledSourceIdentity] | None = None,
-    response_parser: Callable[[str], RuntimeResponse] | None = None,
-    patch_program: str | None = None,
-    source_identity: _ControlledSourceIdentity | None = None,
-) -> RuntimeResponse:
-    runner = _controlled_command if command is None else command
-    verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
-    parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
-    program = _CONTROLLED_PATCH_PROGRAM if patch_program is None else patch_program
-    identity = source_identity if source_identity is not None else verify_source()
-    token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
-    input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
-    output = runner(
-        ("exec", "-i", identity.udata_container_id, "python", "-c", program),
-        input_data=input_data,
-        docker_endpoint=identity.docker_endpoint,
-        direct=True,
-        timeout_message="The controlled uData site PATCH timed out.",
-        output_message=_CONTROLLED_SITE_PATCH_TOO_MUCH_OUTPUT,
-        failure_message="The controlled uData site PATCH process failed.",
-    )
-    return parse_response(output)
-
-
-def _parse_controlled_patch_output(
-    output: str, error_factory: Callable[[str], CatalogValidationError] = _controlled_error
-) -> RuntimeResponse:
-    try:
-        result = json.loads(output)
-    except (TypeError, ValueError):
-        raise error_factory(_CONTROLLED_SITE_PATCH_INVALID_OUTPUT) from None
-    if not isinstance(result, Mapping):
-        raise error_factory(_CONTROLLED_SITE_PATCH_INVALID_OUTPUT)
-    status = result.get("status")
-    content_type = result.get("content_type")
-    location = result.get("location")
-    response_body = result.get("body")
-    if (
-        type(status) is not int
-        or not 100 <= status <= 599
-        or not isinstance(content_type, str)
-        or not isinstance(location, str)
-        or not isinstance(response_body, str)
-    ):
-        raise error_factory(_CONTROLLED_SITE_PATCH_INVALID_OUTPUT)
-    headers: dict[str, str] = {"Content-Type": content_type}
-    if location:
-        headers["Location"] = location
-    encoded_body = response_body.encode()
-    if len(encoded_body) > 8192:
-        raise error_factory(_CONTROLLED_SITE_PATCH_TOO_MUCH_OUTPUT)
-    return RuntimeResponse(status, headers, encoded_body)
-
-
-async def _controlled_patch_response_async(
-    credential: UDataCredential,
-    body: Mapping[str, object],
-    *,
-    command: Callable[..., Awaitable[str]] | None = None,
-    source_verifier: Callable[..., Awaitable[_ControlledSourceIdentity]] | None = None,
-    response_parser: Callable[[str], RuntimeResponse] | None = None,
-    patch_program: str | None = None,
-    source_identity: _ControlledSourceIdentity | None = None,
-) -> RuntimeResponse:
-    runner = _controlled_command_async if command is None else command
-    verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
-    parse_response = _parse_controlled_patch_output if response_parser is None else response_parser
-    program = _CONTROLLED_PATCH_PROGRAM if patch_program is None else patch_program
-    identity = source_identity if source_identity is not None else await verify_source()
-    token = credential.api_key.reveal() if isinstance(credential.api_key, SecretValue) else credential.api_key
-    input_data = json.dumps({"token": token, "body": dict(body)}, separators=(",", ":"), allow_nan=False).encode()
-    output = await runner(
-        ("exec", "-i", identity.udata_container_id, "python", "-c", program),
-        input_data=input_data,
-        docker_endpoint=identity.docker_endpoint,
-        direct=True,
-        timeout_message="The controlled uData site PATCH timed out.",
-        output_message=_CONTROLLED_SITE_PATCH_TOO_MUCH_OUTPUT,
-        failure_message="The controlled uData site PATCH process failed.",
-    )
-    return parse_response(output)
-
-
-def _controlled_source_nonce(
-    *,
-    nonce_getter: Callable[..., str | None] = os.environ.get,
-    compose_file: Path = _CONTROLLED_COMPOSE_FILE,
-    evidence_root: Path = _CONTROLLED_EVIDENCE_ROOT,
-    compose_sha256: str = _CONTROLLED_COMPOSE_SHA256,
-    dockerfile_sha256: str = _CONTROLLED_DOCKERFILE_SHA256,
-    error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
-) -> str:
-    nonce = nonce_getter("UDATA_EVIDENCE_STACK_NONCE")
-    if not nonce:
-        raise error_factory("The controlled uData stack nonce is unavailable.")
-    try:
-        compose_text = compose_file.read_text(encoding="utf-8")
-        dockerfile_text = evidence_root.joinpath("Dockerfile").read_text(encoding="utf-8")
-    except OSError as error:
-        raise error_factory("The controlled uData source identity is unavailable.") from error
-    if hashlib.sha256(compose_text.encode()).hexdigest() != compose_sha256:
-        raise error_factory("The controlled uData compose identity does not match the approved source.")
-    if hashlib.sha256(dockerfile_text.encode()).hexdigest() != dockerfile_sha256:
-        raise error_factory("The controlled uData image identity does not match the approved source.")
-    return nonce
-
-
-def _validate_controlled_context_endpoint(
-    context_endpoint: str, error_factory: Callable[[str], CatalogValidationError] = _controlled_error
-) -> str:
-    try:
-        endpoint = json.loads(context_endpoint)
-    except (TypeError, ValueError):
-        raise error_factory("The active Docker context identity is invalid.") from None
-    parsed_endpoint = urlsplit(endpoint) if isinstance(endpoint, str) else None
-    if (
-        parsed_endpoint is None
-        or parsed_endpoint.scheme != "unix"
-        or bool(parsed_endpoint.netloc)
-        or not parsed_endpoint.path.startswith("/")
-        or bool(parsed_endpoint.query)
-        or bool(parsed_endpoint.fragment)
-    ):
-        raise error_factory(_CONTROLLED_UDATA_LOCAL_DOCKER_CONTEXT)
-    return endpoint
-
-
-def _parse_controlled_json_fields(
-    output: str, field_count: int, error_factory: Callable[[str], CatalogValidationError]
-) -> tuple[object, ...]:
-    fields = output.split(" ", field_count - 1)
-    if len(fields) != field_count:
-        raise error_factory("The controlled uData image identity output is invalid.")
-    try:
-        return tuple(json.loads(field) for field in fields)
-    except (TypeError, ValueError):
-        raise error_factory("The controlled uData image identity output is invalid.") from None
-
-
-def _controlled_container_id(output: str, error_factory: Callable[[str], CatalogValidationError]) -> str:
-    container_ids = [value for value in output.splitlines() if value]
-    if len(container_ids) != 1 or re.fullmatch(r"[0-9a-f]{64}", container_ids[0]) is None:
-        raise error_factory("The controlled uData service container identity is invalid.")
-    return container_ids[0]
-
-
-def _validate_controlled_container_image(
-    fields: tuple[object, ...],
-    container_id: str,
-    service: str,
-    expected_image: tuple[str, str, str] | None,
-    udata_image_repository: str,
-    udata_image_spec: tuple[str, str, str],
-    error_factory: Callable[[str], CatalogValidationError],
-) -> tuple[str, str, str]:
-    inspected_container_id, image_id, config_image = fields
-    if (
-        inspected_container_id != container_id
-        or not isinstance(image_id, str)
-        or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
-        or not isinstance(config_image, str)
-    ):
-        raise error_factory("The controlled uData container image identity is invalid.")
-    if (
-        not isinstance(expected_image, tuple)
-        or len(expected_image) != 3
-        or not all(isinstance(value, str) for value in expected_image)
-    ):
-        raise error_factory("The controlled uData image allowlist is invalid.")
-    expected_config_image, expected_image_id, expected_repository_digest = expected_image
-    if service == "udata" and (
-        expected_image != udata_image_spec
-        or expected_config_image != udata_image_repository
-        or config_image != expected_config_image
-    ):
-        raise error_factory(_CONTROLLED_SERVICE_IMAGE_NOT_APPROVED)
-    if service != "udata" and config_image != expected_config_image:
-        raise error_factory("A controlled uData dependency image is not approved.")
-    if image_id != expected_image_id:
-        message = (
-            _CONTROLLED_SERVICE_IMAGE_NOT_APPROVED
-            if service == "udata"
-            else "The controlled uData dependency image ID is not approved."
-        )
-        raise error_factory(message)
-    return config_image, image_id, expected_repository_digest
-
-
-def _validate_controlled_image_digest(
-    fields: tuple[object, ...],
-    image_id: str,
-    expected_repository_digest: str,
-    error_factory: Callable[[str], CatalogValidationError],
-) -> None:
-    inspected_image_id, repository_digests = fields
-    if not isinstance(repository_digests, list) or not all(isinstance(value, str) for value in repository_digests):
-        raise error_factory("The controlled uData image digest output is invalid.")
-    if inspected_image_id != image_id:
-        raise error_factory("The controlled uData image ID does not match its container.")
-    if expected_repository_digest not in repository_digests:
-        raise error_factory("The controlled uData image repository digest is not approved.")
-
-
-def _controlled_service_image_identity(
-    read: Callable[..., str],
-    service: str,
-    docker_endpoint: str,
-    expected_image: tuple[str, str, str] | None,
-    udata_image_repository: str,
-    udata_image_spec: tuple[str, str, str],
-    error_factory: Callable[[str], CatalogValidationError],
-) -> tuple[str, str]:
-    container_id = _controlled_container_id(read("ps", "-q", service, docker_endpoint=docker_endpoint), error_factory)
-    container_fields = _parse_controlled_json_fields(
-        read(
-            "inspect",
-            "--format",
-            "{{json .Id}} {{json .Image}} {{json .Config.Image}}",
-            container_id,
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        ),
-        3,
-        error_factory,
-    )
-    config_image, image_id, expected_repository_digest = _validate_controlled_container_image(
-        container_fields,
-        container_id,
-        service,
-        expected_image,
-        udata_image_repository,
-        udata_image_spec,
-        error_factory,
-    )
-    image_fields = _parse_controlled_json_fields(
-        read(
-            "image",
-            "inspect",
-            "--format",
-            "{{json .Id}} {{json .RepoDigests}}",
-            image_id,
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        ),
-        2,
-        error_factory,
-    )
-    _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
-    return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
-
-
-async def _controlled_service_image_identity_async(
-    read: Callable[..., Awaitable[str]],
-    service: str,
-    docker_endpoint: str,
-    expected_image: tuple[str, str, str] | None,
-    udata_image_repository: str,
-    udata_image_spec: tuple[str, str, str],
-    error_factory: Callable[[str], CatalogValidationError],
-) -> tuple[str, str]:
-    container_id = _controlled_container_id(
-        await read("ps", "-q", service, docker_endpoint=docker_endpoint), error_factory
-    )
-    container_fields = _parse_controlled_json_fields(
-        await read(
-            "inspect",
-            "--format",
-            "{{json .Id}} {{json .Image}} {{json .Config.Image}}",
-            container_id,
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        ),
-        3,
-        error_factory,
-    )
-    config_image, image_id, expected_repository_digest = _validate_controlled_container_image(
-        container_fields,
-        container_id,
-        service,
-        expected_image,
-        udata_image_repository,
-        udata_image_spec,
-        error_factory,
-    )
-    image_fields = _parse_controlled_json_fields(
-        await read(
-            "image",
-            "inspect",
-            "--format",
-            "{{json .Id}} {{json .RepoDigests}}",
-            image_id,
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        ),
-        2,
-        error_factory,
-    )
-    _validate_controlled_image_digest(image_fields, image_id, expected_repository_digest, error_factory)
-    return container_id, f"{service}|{config_image}|{image_id}|{expected_repository_digest}"
-
-
-def _verify_controlled_source_and_nonce(
-    *,
-    compose_read: Callable[..., str] | None = None,
-    source_nonce: Callable[[], str] | None = None,
-    context_validator: Callable[[str], str] | None = None,
-    source_commit: str = _CONTROLLED_SOURCE_COMMIT,
-    service_names: tuple[str, ...] = _CONTROLLED_SERVICE_NAMES,
-    expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
-    dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
-    udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
-    udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
-    expected_port: str = "127.0.0.1:5640",
-    error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
-    docker_endpoint: str | None = None,
-) -> _ControlledSourceIdentity:
-    read = _compose_read if compose_read is None else compose_read
-    nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
-    validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
-    nonce = nonce_reader()
-    if docker_endpoint is None:
-        context_endpoint = read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-        docker_endpoint = validate_context(context_endpoint)
-    else:
-        validate_context(json.dumps(docker_endpoint))
-    services = read("ps", "--status", "running", "--services", docker_endpoint=docker_endpoint).splitlines()
-    if len(services) != len(expected_services) or set(services) != expected_services:
-        raise error_factory("The running services do not match the controlled uData stack.")
-    if read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
-        raise error_factory("The controlled uData service is not bound to the approved loopback port.")
-    dependency_images = {
-        service: (config_image, image_id, repository_digest)
-        for service, config_image, image_id, repository_digest in dependency_image_specs
-    }
-    image_identities: list[str] = []
-    udata_container_id = ""
-    for service in service_names:
-        container_id, image_identity = _controlled_service_image_identity(
-            read,
-            service,
-            docker_endpoint,
-            udata_image_spec if service == "udata" else dependency_images.get(service),
-            udata_image_repository,
-            udata_image_spec,
-            error_factory,
-        )
-        image_identities.append(image_identity)
-        if service == "udata":
-            udata_container_id = container_id
-    if (
-        read(
-            "exec",
-            udata_container_id,
-            "git",
-            "-C",
-            "/opt/udata",
-            "rev-parse",
-            "HEAD",
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        )
-        != source_commit
-    ):
-        raise error_factory("The controlled uData service source does not match the approved commit.")
-    if (
-        read(
-            "exec",
-            udata_container_id,
-            "printenv",
-            "UDATA_EVIDENCE_STACK_NONCE",
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        )
-        != nonce
-    ):
-        raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
-    return _ControlledSourceIdentity(
-        nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
-        docker_endpoint=docker_endpoint,
-        udata_container_id=udata_container_id,
-        image_identities=tuple(image_identities),
-    )
-
-
-async def _verify_controlled_source_and_nonce_async(
-    *,
-    compose_read: Callable[..., Awaitable[str]] | None = None,
-    source_nonce: Callable[[], str] | None = None,
-    context_validator: Callable[[str], str] | None = None,
-    source_commit: str = _CONTROLLED_SOURCE_COMMIT,
-    service_names: tuple[str, ...] = _CONTROLLED_SERVICE_NAMES,
-    expected_services: frozenset[str] = frozenset(_CONTROLLED_SERVICE_NAMES),
-    dependency_image_specs: tuple[tuple[str, str, str, str], ...] = _CONTROLLED_DEPENDENCY_IMAGE_SPECS,
-    udata_image_repository: str = _CONTROLLED_UDATA_IMAGE_REPOSITORY,
-    udata_image_spec: tuple[str, str, str] = _CONTROLLED_UDATA_IMAGE_SPEC,
-    expected_port: str = "127.0.0.1:5640",
-    error_factory: Callable[[str], CatalogValidationError] = _controlled_error,
-    docker_endpoint: str | None = None,
-) -> _ControlledSourceIdentity:
-    read = _compose_read_async if compose_read is None else compose_read
-    nonce_reader = _controlled_source_nonce if source_nonce is None else source_nonce
-    validate_context = _validate_controlled_context_endpoint if context_validator is None else context_validator
-    nonce = nonce_reader()
-    if docker_endpoint is None:
-        context_endpoint = await read("context", "inspect", "--format", "{{json .Endpoints.docker.Host}}")
-        docker_endpoint = validate_context(context_endpoint)
-    else:
-        validate_context(json.dumps(docker_endpoint))
-    services = (await read("ps", "--status", "running", "--services", docker_endpoint=docker_endpoint)).splitlines()
-    if len(services) != len(expected_services) or set(services) != expected_services:
-        raise error_factory("The running services do not match the controlled uData stack.")
-    if await read("port", "udata", "7000", docker_endpoint=docker_endpoint) != expected_port:
-        raise error_factory("The controlled uData service is not bound to the approved loopback port.")
-    dependency_images = {
-        service: (config_image, image_id, repository_digest)
-        for service, config_image, image_id, repository_digest in dependency_image_specs
-    }
-    image_identities: list[str] = []
-    udata_container_id = ""
-    for service in service_names:
-        container_id, image_identity = await _controlled_service_image_identity_async(
-            read,
-            service,
-            docker_endpoint,
-            udata_image_spec if service == "udata" else dependency_images.get(service),
-            udata_image_repository,
-            udata_image_spec,
-            error_factory,
-        )
-        image_identities.append(image_identity)
-        if service == "udata":
-            udata_container_id = container_id
-    if (
-        await read(
-            "exec",
-            udata_container_id,
-            "git",
-            "-C",
-            "/opt/udata",
-            "rev-parse",
-            "HEAD",
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        )
-        != source_commit
-    ):
-        raise error_factory("The controlled uData service source does not match the approved commit.")
-    if (
-        await read(
-            "exec",
-            udata_container_id,
-            "printenv",
-            "UDATA_EVIDENCE_STACK_NONCE",
-            docker_endpoint=docker_endpoint,
-            direct=True,
-        )
-        != nonce
-    ):
-        raise error_factory("The controlled uData service nonce does not match the local evidence nonce.")
-    return _ControlledSourceIdentity(
-        nonce_sha256=hashlib.sha256(nonce.encode()).hexdigest(),
-        docker_endpoint=docker_endpoint,
-        udata_container_id=udata_container_id,
-        image_identities=tuple(image_identities),
-    )
-
-
-def _controlled_peer_evidence(
-    response: RuntimeResponse, error_factory: Callable[[str], CatalogValidationError] = _controlled_error
-) -> str:
-    content_type = _response_header(response, "content-type")
-    if (
-        not 200 <= response.status_code < 300
-        or content_type is None
-        or content_type.split(";", 1)[0] != _JSON_MEDIA_TYPE
-    ):
-        raise error_factory("The controlled uData peer did not return its expected site identity.")
-    invalid_payload = False
-    try:
-        payload = json.loads(response.body)
-    except (TypeError, ValueError):
-        invalid_payload = True
-        payload = None
-    if invalid_payload:
-        raise error_factory("The controlled uData peer returned an invalid site identity.")
-    if (
-        not isinstance(payload, Mapping)
-        or not isinstance(payload.get("id"), str)
-        or not payload["id"]
-        or payload.get("version") != "17.6.0"
-    ):
-        raise error_factory("The controlled uData peer did not match the seeded site identity.")
-    return payload["id"]
-
-
-def _verify_controlled_sync_stack(
-    transport: CatalogTransport,
-    *,
-    source_verifier: Callable[..., _ControlledSourceIdentity] | None = None,
-    peer_evidence: Callable[[RuntimeResponse], str] | None = None,
-    site_probe: Callable[[str, str], RuntimeResponse] | None = None,
-    controlled_origin: str = _CONTROLLED_ORIGIN,
-    docker_endpoint: str | None = None,
-) -> _ControlledVerification:
-    verify_source = _verify_controlled_source_and_nonce if source_verifier is None else source_verifier
-    decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
-    identity = verify_source(docker_endpoint=docker_endpoint)
-    response = (
-        transport.send(
-            RuntimeRequest(
-                method="GET",
-                url=f"{controlled_origin}/api/1/site/",
-                headers={},
-                redirect_policy=RedirectPolicy.NO_FOLLOW,
-                max_response_bytes=8192,
-            )
-        )
-        if site_probe is None
-        else site_probe(identity.docker_endpoint, identity.udata_container_id)
-    )
-    evidence = _ControlledStackEvidence(
-        nonce_sha256=identity.nonce_sha256,
-        site_id=decode_peer(response),
-        docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
-        image_digests=identity.image_identities,
-    )
-    return _ControlledVerification(identity=identity, evidence=evidence)
-
-
-async def _verify_controlled_async_stack(
-    transport: AsyncCatalogTransport,
-    *,
-    source_verifier: Callable[..., Awaitable[_ControlledSourceIdentity]] | None = None,
-    peer_evidence: Callable[[RuntimeResponse], str] | None = None,
-    site_probe: Callable[[str, str], Awaitable[RuntimeResponse]] | None = None,
-    controlled_origin: str = _CONTROLLED_ORIGIN,
-    docker_endpoint: str | None = None,
-) -> _ControlledVerification:
-    verify_source = _verify_controlled_source_and_nonce_async if source_verifier is None else source_verifier
-    decode_peer = _controlled_peer_evidence if peer_evidence is None else peer_evidence
-    identity = await verify_source(docker_endpoint=docker_endpoint)
-    response = (
-        await transport.send(
-            RuntimeRequest(
-                method="GET",
-                url=f"{controlled_origin}/api/1/site/",
-                headers={},
-                redirect_policy=RedirectPolicy.NO_FOLLOW,
-                max_response_bytes=8192,
-            )
-        )
-        if site_probe is None
-        else await site_probe(identity.docker_endpoint, identity.udata_container_id)
-    )
-    evidence = _ControlledStackEvidence(
-        nonce_sha256=identity.nonce_sha256,
-        site_id=decode_peer(response),
-        docker_endpoint_sha256=hashlib.sha256(identity.docker_endpoint.encode()).hexdigest(),
-        image_digests=identity.image_identities,
-    )
-    return _ControlledVerification(identity=identity, evidence=evidence)
-
-
-@dataclass(frozen=True, slots=True)
-class _ControlledSyncOperations:
-    verify: Callable[..., _ControlledVerification]
-    dispatch: Callable[..., RuntimeResponse]
-
-
-@dataclass(frozen=True, slots=True)
-class _ControlledAsyncOperations:
-    verify: Callable[..., Awaitable[_ControlledVerification]]
-    dispatch: Callable[..., Awaitable[RuntimeResponse]]
-
-
-def _make_controlled_compose_read(command: Callable[..., str]) -> Callable[..., str]:
-    def compose_read(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
-        return command(
-            args,
-            docker_endpoint=docker_endpoint,
-            direct=direct,
-            timeout_message=_CONTROLLED_STACK_IDENTITY_TIMEOUT,
-            output_message=_CONTROLLED_STACK_IDENTITY_TOO_MUCH_OUTPUT,
-            failure_message=_CONTROLLED_STACK_IDENTITY_FAILED,
-        )
-
-    return compose_read
-
-
-def _make_controlled_compose_read_async(command: Callable[..., Awaitable[str]]) -> Callable[..., Awaitable[str]]:
-    async def compose_read(*args: str, docker_endpoint: str | None = None, direct: bool = False) -> str:
-        return await command(
-            args,
-            docker_endpoint=docker_endpoint,
-            direct=direct,
-            timeout_message=_CONTROLLED_STACK_IDENTITY_TIMEOUT,
-            output_message=_CONTROLLED_STACK_IDENTITY_TOO_MUCH_OUTPUT,
-            failure_message=_CONTROLLED_STACK_IDENTITY_FAILED,
-        )
-
-    return compose_read
-
-
-def _make_controlled_site_probe(
-    command: Callable[..., str], response_parser: Callable[[str], RuntimeResponse], program: str
-) -> Callable[[str, str], RuntimeResponse]:
-    def probe(docker_endpoint: str, container_id: str) -> RuntimeResponse:
-        output = command(
-            ("exec", "-i", container_id, "python", "-c", program),
-            docker_endpoint=docker_endpoint,
-            direct=True,
-            timeout_message=_CONTROLLED_STACK_IDENTITY_TIMEOUT,
-            output_message=_CONTROLLED_STACK_IDENTITY_TOO_MUCH_OUTPUT,
-            failure_message=_CONTROLLED_STACK_IDENTITY_FAILED,
-        )
-        return response_parser(output)
-
-    return probe
-
-
-def _make_controlled_site_probe_async(
-    command: Callable[..., Awaitable[str]], response_parser: Callable[[str], RuntimeResponse], program: str
-) -> Callable[[str, str], Awaitable[RuntimeResponse]]:
-    async def probe(docker_endpoint: str, container_id: str) -> RuntimeResponse:
-        output = await command(
-            ("exec", "-i", container_id, "python", "-c", program),
-            docker_endpoint=docker_endpoint,
-            direct=True,
-            timeout_message=_CONTROLLED_STACK_IDENTITY_TIMEOUT,
-            output_message=_CONTROLLED_STACK_IDENTITY_TOO_MUCH_OUTPUT,
-            failure_message=_CONTROLLED_STACK_IDENTITY_FAILED,
-        )
-        return response_parser(output)
-
-    return probe
-
-
-def _make_controlled_sync_operations(command: Callable[..., str]) -> _ControlledSyncOperations:
-    compose_read = _make_controlled_compose_read(command)
-    source_checker = _verify_controlled_source_and_nonce
-    source_nonce = _controlled_source_nonce
-    context_validator = _validate_controlled_context_endpoint
-    stack_verifier = _verify_controlled_sync_stack
-    peer_evidence = _controlled_peer_evidence
-    patch_response = _controlled_patch_response
-    response_parser = _parse_controlled_patch_output
-    site_probe = _make_controlled_site_probe(command, response_parser, _CONTROLLED_SITE_PROBE_PROGRAM)
-    patch_program = _CONTROLLED_PATCH_PROGRAM
-
-    def verify_source(*, docker_endpoint: str | None = None) -> _ControlledSourceIdentity:
-        return source_checker(
-            compose_read=compose_read,
-            source_nonce=source_nonce,
-            context_validator=context_validator,
-            docker_endpoint=docker_endpoint,
-        )
-
-    def verify(transport: CatalogTransport, *, docker_endpoint: str | None = None) -> _ControlledVerification:
-        return stack_verifier(
-            transport,
-            source_verifier=verify_source,
-            peer_evidence=peer_evidence,
-            site_probe=site_probe,
-            docker_endpoint=docker_endpoint,
-        )
-
-    def dispatch(
-        transport: CatalogTransport,
-        credential: UDataCredential,
-        body: Mapping[str, object],
-        *,
-        docker_endpoint: str,
-    ) -> RuntimeResponse:
-        verification = verify(transport, docker_endpoint=docker_endpoint)
-        return patch_response(
-            credential,
-            body,
-            command=command,
-            response_parser=response_parser,
-            patch_program=patch_program,
-            source_identity=verification.identity,
-        )
-
-    return _ControlledSyncOperations(verify=verify, dispatch=dispatch)
-
-
-def _make_controlled_async_operations(command: Callable[..., Awaitable[str]]) -> _ControlledAsyncOperations:
-    compose_read = _make_controlled_compose_read_async(command)
-    source_checker = _verify_controlled_source_and_nonce_async
-    source_nonce = _controlled_source_nonce
-    context_validator = _validate_controlled_context_endpoint
-    stack_verifier = _verify_controlled_async_stack
-    peer_evidence = _controlled_peer_evidence
-    patch_response = _controlled_patch_response_async
-    response_parser = _parse_controlled_patch_output
-    site_probe = _make_controlled_site_probe_async(command, response_parser, _CONTROLLED_SITE_PROBE_PROGRAM)
-    patch_program = _CONTROLLED_PATCH_PROGRAM
-
-    async def verify_source(*, docker_endpoint: str | None = None) -> _ControlledSourceIdentity:
-        return await source_checker(
-            compose_read=compose_read,
-            source_nonce=source_nonce,
-            context_validator=context_validator,
-            docker_endpoint=docker_endpoint,
-        )
-
-    async def verify(
-        transport: AsyncCatalogTransport, *, docker_endpoint: str | None = None
-    ) -> _ControlledVerification:
-        return await stack_verifier(
-            transport,
-            source_verifier=verify_source,
-            peer_evidence=peer_evidence,
-            site_probe=site_probe,
-            docker_endpoint=docker_endpoint,
-        )
-
-    async def dispatch(
-        transport: AsyncCatalogTransport,
-        credential: UDataCredential,
-        body: Mapping[str, object],
-        *,
-        docker_endpoint: str,
-    ) -> RuntimeResponse:
-        verification = await verify(transport, docker_endpoint=docker_endpoint)
-        return await patch_response(
-            credential,
-            body,
-            command=command,
-            response_parser=response_parser,
-            patch_program=patch_program,
-            source_identity=verification.identity,
-        )
-
-    return _ControlledAsyncOperations(verify=verify, dispatch=dispatch)
 
 
 class _ImmutableDispatchGateType(type):
@@ -2064,6 +738,18 @@ class _IdentityRegistry[T]:
             self._entries.pop(id(key), None)
 
 
+@dataclass(frozen=True, slots=True)
+class _ControlledSyncOperations:
+    verify: Callable[..., _ControlledVerification]
+    dispatch: Callable[..., RuntimeResponse]
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledAsyncOperations:
+    verify: Callable[..., Awaitable[_ControlledVerification]]
+    dispatch: Callable[..., Awaitable[RuntimeResponse]]
+
+
 type _ControlledSyncState = tuple[CatalogTransport, _ControlledStackEvidence, float, _ControlledSyncOperations, str]
 type _ControlledAsyncState = tuple[
     AsyncCatalogTransport, _ControlledStackEvidence | None, float, _ControlledAsyncOperations, str | None
@@ -2094,10 +780,10 @@ def _build_controlled_sync_transport(
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
             transport = object.__new__(transport_type)
             try:
-                cast(Callable[..., None], initializer)(transport, tls_policy=tls_policy, budget=budget)
+                cast("Callable[..., None]", initializer)(transport, tls_policy=tls_policy, budget=budget)
                 verification = trusted_sync_operations.verify(transport)
-            except BaseException:
-                cast(Callable[[HttpxCatalogTransport], None], close)(transport)
+            except SETTLEMENT_ERRORS:
+                cast("Callable[[HttpxCatalogTransport], None]", close)(transport)
                 raise
             registry.set(
                 self,
@@ -2114,22 +800,22 @@ def _build_controlled_sync_transport(
             state = _registry_state(registry, self)
             if state is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
-            return cast(Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeResponse], send)(
-                cast(HttpxCatalogTransport, state[0]), request
+            return cast("Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeResponse]", send)(
+                cast("HttpxCatalogTransport", state[0]), request
             )
 
         def send_stream(self, request: RuntimeRequest) -> RuntimeStreamResponse:
             state = _registry_state(registry, self)
             if state is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
-            return cast(Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeStreamResponse], send_stream)(
-                cast(HttpxCatalogTransport, state[0]), request
+            return cast("Callable[[HttpxCatalogTransport, RuntimeRequest], RuntimeStreamResponse]", send_stream)(
+                cast("HttpxCatalogTransport", state[0]), request
             )
 
         def close(self) -> None:
             state = _registry_state(registry, self)
             if state is not None:
-                cast(Callable[[HttpxCatalogTransport], None], close)(cast(HttpxCatalogTransport, state[0]))
+                cast("Callable[[HttpxCatalogTransport], None]", close)(cast("HttpxCatalogTransport", state[0]))
 
     return _ControlledSyncTransport
 
@@ -2150,7 +836,7 @@ def _build_controlled_async_transport(
 
         def __init__(self, *, tls_policy: TLSPolicy | None = None, budget: TimeBudget | None = None) -> None:
             transport = object.__new__(transport_type)
-            cast(Callable[..., None], initializer)(transport, tls_policy=tls_policy, budget=budget)
+            cast("Callable[..., None]", initializer)(transport, tls_policy=tls_policy, budget=budget)
             registry.set(self, (transport, None, 0.0, trusted_async_operations, None))
 
         async def verify(self) -> None:
@@ -2159,9 +845,9 @@ def _build_controlled_async_transport(
                 return
             try:
                 verification = await state[3].verify(state[0])
-            except BaseException:
-                await cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], close)(
-                    cast(AsyncHttpxCatalogTransport, state[0])
+            except ASYNC_SETTLEMENT_ERRORS:
+                await cast("Callable[[AsyncHttpxCatalogTransport], Awaitable[None]]", close)(
+                    cast("AsyncHttpxCatalogTransport", state[0])
                 )
                 registry.discard(self)
                 raise
@@ -2174,24 +860,24 @@ def _build_controlled_async_transport(
             state = _registry_state(registry, self)
             if state is None or state[1] is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
-            return await cast(Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[RuntimeResponse]], send)(
-                cast(AsyncHttpxCatalogTransport, state[0]), request
-            )
+            return await cast(
+                "Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[RuntimeResponse]]", send
+            )(cast("AsyncHttpxCatalogTransport", state[0]), request)
 
         async def send_stream(self, request: RuntimeRequest) -> AsyncRuntimeStreamResponse:
             state = _registry_state(registry, self)
             if state is None or state[1] is None:
                 raise _controlled_error(_CONTROLLED_UDATA_TRANSPORT_NOT_FACTORY_BOUND)
             return await cast(
-                Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]],
+                "Callable[[AsyncHttpxCatalogTransport, RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]]",
                 send_stream,
-            )(cast(AsyncHttpxCatalogTransport, state[0]), request)
+            )(cast("AsyncHttpxCatalogTransport", state[0]), request)
 
         async def aclose(self) -> None:
             state = _registry_state(registry, self)
             if state is not None:
-                await cast(Callable[[AsyncHttpxCatalogTransport], Awaitable[None]], close)(
-                    cast(AsyncHttpxCatalogTransport, state[0])
+                await cast("Callable[[AsyncHttpxCatalogTransport], Awaitable[None]]", close)(
+                    cast("AsyncHttpxCatalogTransport", state[0])
                 )
 
     return _ControlledAsyncTransport
@@ -2415,31 +1101,22 @@ def _build_controlled_dispatch_gate(
     return _ControlledDispatchGate()
 
 
-def _build_controlled_transport_types():
+def _build_controlled_types():
     clock = monotonic
-    trusted_command_spec = _make_bound_controlled_command_spec()
-    trusted_sync_operations = _make_controlled_sync_operations(
-        _make_bound_controlled_command(_current_controlled_sync_runtime(command_spec=trusted_command_spec))
-    )
-    trusted_async_operations = _make_controlled_async_operations(
-        _make_bound_controlled_command_async(_current_controlled_async_runtime(command_spec=trusted_command_spec))
-    )
     sync_registry: _IdentityRegistry[_ControlledSyncState] = _IdentityRegistry()
     async_registry: _IdentityRegistry[_ControlledAsyncState] = _IdentityRegistry()
     sync_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
     async_client_registry: _IdentityRegistry[object] = _IdentityRegistry()
-    sync_transport = _build_controlled_sync_transport(sync_registry, trusted_sync_operations, clock)
-    async_transport = _build_controlled_async_transport(async_registry, trusted_async_operations, clock)
     accessors = _build_controlled_accessors(sync_registry, async_registry, clock)
     gate = _build_controlled_dispatch_gate(
         sync_registry, async_registry, sync_client_registry, async_client_registry, clock
     )
-    return sync_transport, async_transport, *accessors, gate
+    return sync_registry, async_registry, *accessors, gate
 
 
 (
-    _ControlledSyncTransport,
-    _ControlledAsyncTransport,
+    _controlled_sync_registry,
+    _controlled_async_registry,
     _controlled_sync_site_id,
     _controlled_sync_evidence_digest,
     _controlled_sync_revalidate,
@@ -2447,7 +1124,7 @@ def _build_controlled_transport_types():
     _controlled_async_evidence_digest,
     _controlled_async_revalidate,
     _controlled_dispatch_gate,
-) = _build_controlled_transport_types()
+) = _build_controlled_types()
 
 
 @dataclass(slots=True)
@@ -2459,13 +1136,13 @@ class _SyncStreamGuard:
     deadline: DeadlineMonitor
     settled: bool = False
     consumed: bool = False
-    stream_chunks: Generator[bytes, None, None] | None = None
+    stream_chunks: Generator[bytes] | None = None
 
     def settle_failure(self, error: BaseException) -> None:
         if self.settled:
             return
         self.settled = True
-        if isinstance(error, TransportFailure):
+        if isinstance(error, TransportError):
             before = self.client._breakers.inspect(self.key)
             after = self.client._breakers.record_transport_failure(self.key)
             self.client._emit_breaker_change(self.owning_id, before.open, after.open)
@@ -2482,7 +1159,7 @@ class _SyncStreamGuard:
             return
         try:
             self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
-        except BaseException as error:
+        except SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         self.settled = True
@@ -2491,14 +1168,14 @@ class _SyncStreamGuard:
         self.client._emit_breaker_change(self.owning_id, before.open, after.open)
         self.client._emit(self.owning_id, "succeeded")
 
-    def chunks(self) -> Generator[bytes, None, None]:
+    def chunks(self) -> Generator[bytes]:
         try:
             for chunk in self.response:
                 self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
                 yield chunk
         except GeneratorExit:
             raise
-        except BaseException as error:
+        except SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         else:
@@ -2547,13 +1224,13 @@ class _AsyncStreamGuard:
     deadline: DeadlineMonitor
     settled: bool = False
     consumed: bool = False
-    stream_chunks: AsyncGenerator[bytes, None] | None = None
+    stream_chunks: AsyncGenerator[bytes] | None = None
 
     def settle_failure(self, error: BaseException) -> None:
         if self.settled:
             return
         self.settled = True
-        if isinstance(error, TransportFailure):
+        if isinstance(error, TransportError):
             before = self.client._breakers.inspect(self.key)
             after = self.client._breakers.record_transport_failure(self.key)
             self.client._emit_breaker_change(self.owning_id, before.open, after.open)
@@ -2570,7 +1247,7 @@ class _AsyncStreamGuard:
             return
         try:
             self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
-        except BaseException as error:
+        except ASYNC_SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         self.settled = True
@@ -2579,12 +1256,12 @@ class _AsyncStreamGuard:
         self.client._emit_breaker_change(self.owning_id, before.open, after.open)
         self.client._emit(self.owning_id, "succeeded")
 
-    async def chunks(self) -> AsyncGenerator[bytes, None]:
+    async def chunks(self) -> AsyncGenerator[bytes]:
         try:
             async for chunk in self.response:
                 self.deadline.assert_dispatchable(str(self.owning_id), PLATFORM.value)
                 yield chunk
-        except BaseException as error:
+        except ASYNC_SETTLEMENT_ERRORS as error:
             self.settle_failure(error)
             raise
         else:
@@ -2630,6 +1307,15 @@ class _UDataClientOptions(TypedDict, total=False):
     max_attempts: int
     capability_cache_ttl: float
     root_export_max_bytes: int
+
+
+class _DatasetCallOverrides(TypedDict, total=False):
+    raw_text: bool
+    redirect_mode: bool
+    emit_success: bool
+    accept_status: Callable[[int], bool] | None
+    omit_credential: bool
+    deadline: DeadlineMonitor | None
 
 
 class _SyncUDataClientOptions(_UDataClientOptions, total=False):
@@ -2684,7 +1370,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._site_gate = SiteVersionGate(
                 pinned_version=pinned,
                 origin=self._origin,
-                transport=cast(CatalogTransport, transport),
+                transport=cast("CatalogTransport", transport),
                 ttl_seconds=settings.capability_cache_ttl,
                 clock=clock,
             )
@@ -2692,7 +1378,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._site_gate = AsyncSiteVersionGate(
                 pinned_version=pinned,
                 origin=self._origin,
-                transport=cast(AsyncCatalogTransport, transport),
+                transport=cast("AsyncCatalogTransport", transport),
                 ttl_seconds=settings.capability_cache_ttl,
                 clock=clock,
             )
@@ -2722,12 +1408,50 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         """Resolve the current credential asynchronously for pre-dispatch validation."""
         return await _refreshed_credential_async(self._credentials)
 
+    def _require_dispatchable(
+        self,
+        owning_id: OperationId,
+        effective: EffectiveCapabilityProfile,
+        permissions: EffectivePermissions | None = None,
+    ) -> None:
+        """Refuse a public origin for a non-read route, then run the capability guard.
+
+        PROHIB-04-01 keeps mutations, administration, token changes, and uploads inside
+        a controlled deployment. The pinned profile's declared mutation class is the
+        only discriminator, so no route list is hand-maintained here.
+
+        Args:
+            owning_id: The pinned profile identity of the route being dispatched.
+            effective: The effective capability profile resolved for the credential.
+            permissions: Optional effective permissions required by the caller.
+
+        Raises:
+            CatalogValidationError: If the origin is public and the route is not a read.
+        """
+        if not self._controlled_origin() and self._declared_mutation_class(owning_id) is not MutationClass.READ:
+            raise CatalogValidationError(
+                "uData mutations, administration, and uploads require a controlled local deployment.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+                safe_action="Point the client at a loopback uData deployment before dispatching this route.",
+            )
+        build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
+
+    def _controlled_origin(self) -> bool:
+        """Return whether the configured origin addresses a loopback deployment."""
+        return urlsplit(self._origin).hostname in LOOPBACK_HOSTS
+
+    def _declared_mutation_class(self, owning_id: OperationId) -> MutationClass | None:
+        """Return the pinned profile mutation class, or None when the route is undeclared."""
+        operation = self._profile.declared_profile.operations.get(owning_id)
+        return operation.mutation_class if operation is not None else None
+
     @property
     def credentials(self) -> object | None:
         """Expose the injected caller-owned credential resolver or provider."""
         return self._credentials
 
-    def _emit(self, owning_id: OperationId, outcome: str, **metadata: object) -> None:
+    def _emit(self, owning_id: OperationId | str, outcome: str, **metadata: object) -> None:
         self._emitter.record(
             operation_id=str(owning_id),
             platform=PLATFORM.value,
@@ -2746,6 +1470,31 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._site_gate.invalidate()
             self._credential_scope = scope
         return scope
+
+    def _dataset_body(
+        self,
+        json_body: object,
+        form_body: bytes | Callable[[], bytes] | None,
+        files: tuple[UploadPart, ...],
+        owning_id: OperationId,
+    ) -> bytes | None:
+        if form_body is not None and (json_body is not None or files):
+            raise NativeCatalogError(
+                "Catalog requests cannot combine a form body with a JSON body or multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
+        if json_body is not None and files:
+            raise NativeCatalogError(
+                "Catalog dataset requests cannot combine a JSON body with multipart parts.",
+                operation=str(owning_id),
+                platform=PLATFORM.value,
+            )
+        if files:
+            return None
+        if callable(form_body):
+            return None
+        return form_body if form_body is not None else self._json_body(json_body, owning_id)
 
     @staticmethod
     def _json_body(json_body: object, owning_id: OperationId) -> bytes | None:
@@ -2767,13 +1516,18 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         credential: object | None,
         idempotency_policy: IdempotencyPolicy | None,
         body: bytes | None,
+        json_media_fallback: bool = False,
     ) -> dict[str, str]:
         request_headers = dict(headers or {})
         request_headers.update(_auth_headers(credential))
         if idempotency_policy is not None and idempotency_policy.key is not None:
             request_headers["Idempotency-Key"] = idempotency_policy.key
-        if body is not None:
-            request_headers = {"Content-Type": _JSON_MEDIA_TYPE, **request_headers}
+        if (
+            body is not None
+            and json_media_fallback
+            and not any(key.lower() == "content-type" for key in request_headers)
+        ):
+            request_headers["Content-Type"] = _JSON_MEDIA_TYPE
         return request_headers
 
     def _admit_request(self, owning_id: OperationId, request: RuntimeRequest) -> CircuitKey:
@@ -2797,11 +1551,17 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         redirect_mode: bool,
         raw_text: bool,
         max_response_bytes: int | None,
-        json_body: object,
         method: str,
         credential_scope: str,
+        accept_status: Callable[[int], bool] | None = None,
     ) -> tuple[int, object, RuntimeResponse]:
-        self._validate_status(owning_id, response, redirect_mode=redirect_mode, credential_scope=credential_scope)
+        self._validate_status(
+            owning_id,
+            response,
+            redirect_mode=redirect_mode,
+            credential_scope=credential_scope,
+            accept_status=accept_status,
+        )
         if max_response_bytes is not None and len(response.body) > max_response_bytes:
             raise NativeCatalogError(
                 "Catalog operation returned a response larger than its configured byte limit.",
@@ -2818,7 +1578,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             return response.status_code, None, response
         invalid_payload = False
         try:
-            payload = json.loads(response.body)
+            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json, parse_float=_finite_json_float)
         except (TypeError, ValueError):
             invalid_payload = True
             payload = None
@@ -2828,7 +1588,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                 operation=str(owning_id),
                 platform=PLATFORM.value,
                 status_code=response.status_code,
-                metadata={"ambiguous": json_body is not None and method != "GET"},
+                metadata={"ambiguous": method != "GET"},
             )
         return response.status_code, payload, response
 
@@ -2880,8 +1640,11 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
         *,
         redirect_mode: bool = False,
         credential_scope: str = "anonymous",
+        accept_status: Callable[[int], bool] | None = None,
     ) -> None:
         if redirect_mode and response.status_code in {301, 302, 303, 307, 308}:
+            return
+        if accept_status is not None and accept_status(response.status_code):
             return
         if 200 <= response.status_code < 300:
             return
@@ -2889,6 +1652,11 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             self._capabilities.record_response(
                 owning_id, _STATUS_RESPONSE_CLASSES[response.status_code], credential_scope=credential_scope
             )
+        metadata = None
+        if response.status_code == 401 and isinstance(response, RuntimeResponse):
+            reason = _auth_failure_reason(response.body)
+            if reason is not None:
+                metadata = {"reason_code": reason}
         raise map_catalog_error(
             NativeCatalogError(
                 "Catalog operation returned an unsuccessful HTTP status.",
@@ -2896,6 +1664,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
                 platform=PLATFORM.value,
                 status_code=response.status_code,
                 retry_after=response.retry_after,
+                metadata=metadata,
             )
         )
 
@@ -2918,7 +1687,7 @@ class _UDataClientCore(metaclass=_ImmutableClientType):
             )
         invalid_payload = False
         try:
-            payload = json.loads(response.body)
+            payload = json.loads(response.body, parse_constant=_reject_nonfinite_json, parse_float=_finite_json_float)
         except (TypeError, ValueError):
             invalid_payload = True
             payload = None
@@ -3002,20 +1771,100 @@ class SyncUDataClient(_UDataClientCore):
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         return self._require_site_version()
 
-    @property
+    @cached_property
     def datasets(self) -> _SyncDatasetsService:
         """Expose the complete typed dataset service."""
         return SyncDatasetsService(self)
 
-    @property
+    @cached_property
     def root_profile(self) -> _SyncRootProfileService:
         """Expose the complete typed root-profile service."""
         return SyncRootProfileService(self)
 
-    def _require_site_version(self) -> SiteVersion:
+    @cached_property
+    def resources(self) -> _SyncResourcesService:
+        """Expose the complete typed resource service."""
+        return SyncResourcesService(self)
+
+    @cached_property
+    def dataservices(self) -> _SyncDataservicesService:
+        """Expose the complete typed dataservice and dataservice-follower service."""
+        return SyncDataservicesService(self)
+
+    @cached_property
+    def reuses(self) -> _SyncReusesService:
+        """Expose the complete typed reuse and reuse-follower service."""
+        return SyncReusesService(self)
+
+    @cached_property
+    def posts_reports(self) -> _SyncPostsReportsService:
+        """Expose the complete typed post, report, and notification service."""
+        return SyncPostsReportsService(self)
+
+    @cached_property
+    def spatial(self) -> _SyncSpatialService:
+        """Expose the complete typed spatial zone and coverage service."""
+        return SyncSpatialService(self)
+
+    @cached_property
+    def taxonomies(self) -> _SyncTaxonomiesService:
+        """Expose the complete typed taxonomy service."""
+        return SyncTaxonomiesService(self)
+
+    @cached_property
+    def topics(self) -> _SyncTopicsService:
+        """Expose the complete typed topic and topic-element service."""
+        return SyncTopicsService(self)
+
+    @cached_property
+    def transfers(self) -> _SyncTransfersService:
+        """Expose the complete typed dataset ownership-transfer service."""
+        return SyncTransfersService(self)
+
+    @cached_property
+    def activity_discussions(self) -> _SyncActivityDiscussionsService:
+        """Expose the complete typed activity and discussion service."""
+        return SyncActivityDiscussionsService(self)
+
+    @cached_property
+    def organizations_memberships(self) -> _SyncOrganizationsMembershipsService:
+        """Expose the complete typed organization and membership service."""
+        return SyncOrganizationsMembershipsService(self)
+
+    @cached_property
+    def users_tokens(self) -> _SyncUsersTokensService:
+        """Expose the typed user, invitation, and API-token service."""
+        return SyncUsersTokensService(self)
+
+    @cached_property
+    def auth_oauth(self) -> _SyncAuthOAuthService:
+        """Expose the typed OAuth and authentication service."""
+        return SyncAuthOAuthService(self)
+
+    @cached_property
+    def harvest_moderation_admin(self) -> _SyncHarvestService:
+        """Expose the typed harvest source, job, and bounded admin bulk service."""
+        return SyncHarvestService(self)
+
+    @cached_property
+    def contact_visualization(self) -> _SyncContactVisualizationService:
+        """Expose the typed contact-point and visualization service."""
+        return SyncContactVisualizationService(self)
+
+    @cached_property
+    def worker_jobs(self) -> _SyncWorkerJobsService:
+        """Expose the typed worker job, task, and budgeted task-wait service."""
+        return SyncWorkerJobsService(self)
+
+    @cached_property
+    def extensions(self) -> _SyncExtensionsService:
+        """Expose the typed stock extension and deployment-probe service."""
+        return SyncExtensionsService(self)
+
+    def _require_site_version(self, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         gate = self._site_gate
         if isinstance(gate, SiteVersionGate):
-            return gate.require_current(self._credentials)
+            return gate.require_current(self._credentials, deadline=deadline)
         raise RuntimeError("The synchronous uData client requires a synchronous site gate.")
 
     def datasets_list(
@@ -3034,16 +1883,27 @@ class SyncUDataClient(_UDataClientCore):
         json_body: object,
         controlled: bool,
         recorded: list[bool],
+        form_body: Callable[[], bytes] | None = None,
         _dispatch_sync: Callable[..., RuntimeResponse] = _controlled_dispatch_gate.dispatch_sync,
     ) -> RuntimeResponse:
         recorded[0] = False
         before = self._breakers.inspect(key)
+        if form_body is not None:
+            request = replace(request, body=form_body())
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+        response = None
         try:
             if controlled:
                 response = _dispatch_sync(self, self._transport, request, credential, json_body, origin=self._origin)
             else:
-                response = cast(CatalogTransport, self._transport).send(request)
-        except TransportFailure:
+                response = cast("CatalogTransport", self._transport).send(request)
+            if request.deadline is not None:
+                request.deadline.assert_dispatchable()
+        except BudgetExhaustedError as error:
+            _settle_dataset_budget_error(error, request, response)
+            raise
+        except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
             self._emit_breaker_change(owning_id, before.open, after.open)
@@ -3061,35 +1921,58 @@ class SyncUDataClient(_UDataClientCore):
         owning_operation: str,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
-        raw_text: bool = False,
-        redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
-        max_response_bytes: int | None = None,
-        emit_success: bool = True,
+        max_response_bytes: int | None = 1_048_576,
+        files: tuple[UploadPart, ...] = (),
+        form_body: bytes | Callable[[], bytes] | None = None,
+        **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded dataset request scoped to its owning route operation."""
+        unknown = set(overrides) - set(_DatasetCallOverrides.__annotations__)
+        if unknown:
+            raise TypeError(f"Unknown dataset call overrides: {sorted(unknown)}.")
+        raw_text = overrides.get("raw_text", False)
+        redirect_mode = overrides.get("redirect_mode", False)
+        emit_success = overrides.get("emit_success", True)
+        accept_status = overrides.get("accept_status")
+        omit_credential = overrides.get("omit_credential", False)
+        if max_response_bytes is None:
+            max_response_bytes = 1_048_576
         if self._closed:
             raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        self._require_site_version()
-        resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
+        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        self._require_site_version(deadline=deadline)
+        if omit_credential:
+            resolved_credential = None
+        elif credential is not None:
+            resolved_credential = credential
+        else:
+            resolved_credential = _refreshed_credential(self._credentials)
         scope = self._refresh_credential_scope(resolved_credential)
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
-        body = self._json_body(json_body, owning_id)
+        self._require_dispatchable(owning_id, effective, permissions)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
-            headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
+            headers=self._request_headers(
+                headers,
+                resolved_credential,
+                idempotency_policy,
+                body,
+                json_media_fallback=form_body is None and not files,
+            ),
             body=body,
-            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
+            files=files,
+            redirect_policy=_dataset_redirect_policy(redirect_mode, files),
             max_response_bytes=max_response_bytes,
+            deadline=deadline,
         )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         key = self._admit_request(owning_id, request)
         recorded = [False]
         send = partial(
@@ -3101,12 +1984,12 @@ class SyncUDataClient(_UDataClientCore):
             json_body,
             owning_operation == SET_SITE_OPERATION,
             recorded,
+            form_body if callable(form_body) else None,
         )
         try:
             response = RetryLoop(
                 budget=self._budget,
-                idempotency=idempotency_policy
-                or IdempotencyPolicy(safe=method == "GET", explicit_retry_opt_in=allow_retry),
+                idempotency=_dataset_retry_idempotency(form_body, idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=self._retry_sleep,
@@ -3124,9 +2007,9 @@ class SyncUDataClient(_UDataClientCore):
                 redirect_mode=redirect_mode,
                 raw_text=raw_text,
                 max_response_bytes=max_response_bytes,
-                json_body=json_body,
                 method=method,
                 credential_scope=scope,
+                accept_status=accept_status,
             )
         except Exception as error:
             self._emit_dataset_failure(owning_id, error, emit_success=emit_success)
@@ -3148,7 +2031,6 @@ class SyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
@@ -3165,7 +2047,6 @@ class SyncUDataClient(_UDataClientCore):
             permissions=permissions,
             credential=credential,
             idempotency_policy=idempotency_policy,
-            allow_retry=allow_retry,
             max_response_bytes=max_response_bytes,
             emit_success=emit_success,
         )
@@ -3179,38 +2060,36 @@ class SyncUDataClient(_UDataClientCore):
         credential: object | None = None,
     ) -> RuntimeStreamResponse:
         """Open one guarded no-follow root response without buffering its bytes."""
-        if self._closed:
-            raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        self._require_site_version()
-        resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
-        scope = _credential_scope(resolved_credential)
-        if scope != self._credential_scope:
-            self._capabilities.invalidate()
-            self._site_gate.invalidate()
-            self._credential_scope = scope
-        effective = self._capabilities.resolve(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
-        request_headers = dict(headers or {})
-        request_headers.update(_auth_headers(resolved_credential))
-        request = RuntimeRequest(
-            method="GET",
-            url=self._origin + path,
-            headers=request_headers,
-            redirect_policy=RedirectPolicy.NO_FOLLOW,
-            max_response_bytes=self._root_export_max_bytes,
-        )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        sync_transport = cast(CatalogTransport, self._transport)
-        send_stream = getattr(sync_transport, "send_stream", None)
-        if not callable(send_stream):
-            raise CatalogValidationError(
-                "The uData export requires a streaming catalog transport.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                safe_action="Use the default transport or inject one implementing send_stream.",
+        try:
+            if self._closed:
+                raise RuntimeError(_SYNC_UDATA_CLIENT_CLOSED)
+            self._require_site_version()
+            resolved_credential = credential if credential is not None else _refreshed_credential(self._credentials)
+            scope = _credential_scope(resolved_credential)
+            if scope != self._credential_scope:
+                self._capabilities.invalidate()
+                self._site_gate.invalidate()
+                self._credential_scope = scope
+            effective = self._capabilities.resolve(owning_id, credential_scope=scope)
+            self._require_dispatchable(owning_id, effective)
+            request, deadline, send_stream = _build_stream_request(
+                owning_id=owning_id,
+                origin=self._origin,
+                path=path,
+                headers=headers,
+                resolved_credential=resolved_credential,
+                budget=self._budget,
+                clock=self._clock,
+                transport=self._transport,
             )
+            send = cast("Callable[[RuntimeRequest], RuntimeStreamResponse]", send_stream)
+        except BudgetExhaustedError:
+            self._emit(owning_id, "budget_exhausted")
+            raise
+        except SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, _stream_failure_outcome(error))
+            raise
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -3225,30 +2104,39 @@ class SyncUDataClient(_UDataClientCore):
         try:
             before = self._breakers.inspect(key)
             try:
-                response = cast(RuntimeStreamResponse, send_stream(request))
-            except TransportFailure:
+                response = cast("RuntimeStreamResponse", send(request))
+            except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 settled = True
                 self._emit(owning_id, "failed")
                 raise
             settled = self._record_stream_response(owning_id, key, response.status_code)
-            try:
-                self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
-                    return response
-            except BaseException as error:
-                self._emit(owning_id, "failed")
-                try:
-                    response.close()
-                except Exception as cleanup_error:
-                    raise error from cleanup_error
-                raise error
+            redirected = self._settle_stream_redirect(owning_id, response, scope)
+            if redirected is not None:
+                return redirected
         finally:
             if not settled:
                 self._breakers.release_trial(key)
         return _SyncStreamGuard(self, owning_id, key, response, deadline).response_wrapper()
+
+    def _settle_stream_redirect(
+        self, owning_id: OperationId, response: RuntimeStreamResponse, scope: str
+    ) -> RuntimeStreamResponse | None:
+        """Validate one streamed response; return it when a redirect short-circuits the read."""
+        try:
+            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
+                return response
+        except SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, "failed")
+            try:
+                response.close()
+            except Exception as cleanup_error:
+                raise error from cleanup_error
+            raise error
+        return None
 
     def _dispatch(
         self,
@@ -3270,7 +2158,7 @@ class SyncUDataClient(_UDataClientCore):
             self._site_gate.invalidate()
             self._credential_scope = scope
         effective = self._capabilities.resolve(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        self._require_dispatchable(owning_id, effective)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
         if credential is not None:
@@ -3279,10 +2167,11 @@ class SyncUDataClient(_UDataClientCore):
                 url=request.url,
                 headers=_auth_headers(credential),
                 body=request.body,
+                max_response_bytes=request.max_response_bytes,
             )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        sync_transport = cast(CatalogTransport, self._transport)
+        sync_transport = cast("CatalogTransport", self._transport)
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -3295,17 +2184,23 @@ class SyncUDataClient(_UDataClientCore):
             )
         attempts = 0
 
+        recorded = False
+
         def send() -> RuntimeResponse:
             nonlocal attempts
             attempts += 1
+            nonlocal recorded
+            recorded = False
             before = self._breakers.inspect(key)
             try:
                 response = sync_transport.send(request)
-            except TransportFailure:
+            except TransportError:
+                recorded = True
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 raise
             after = self._breakers.record_response(key, response.status_code)
+            recorded = True
             self._emit_breaker_change(owning_id, before.open, after.open)
             return response
 
@@ -3328,6 +2223,9 @@ class SyncUDataClient(_UDataClientCore):
         except Exception:
             self._emit(owning_id, "failed", retry_count=max(0, attempts - 1))
             raise
+        finally:
+            if not recorded:
+                self._breakers.release_trial(key)
         self._emit(
             owning_id,
             "succeeded",
@@ -3341,7 +2239,7 @@ class SyncUDataClient(_UDataClientCore):
         if not self._closed:
             self._closed = True
             if self._owns_transport:
-                cast(CatalogTransport, self._transport).close()
+                cast("CatalogTransport", self._transport).close()
 
     def __enter__(self) -> Self:
         """Enter the client context."""
@@ -3398,24 +2296,104 @@ class AsyncUDataClient(_UDataClientCore):
             async_gate=True,
         )
 
-    async def site_version(self) -> SiteVersion:
+    async def site_version(self, *, deadline: DeadlineMonitor | None = None) -> SiteVersion:
         """Run (or reuse) the anonymous exact-version site probe."""
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         gate = self._site_gate
         if isinstance(gate, AsyncSiteVersionGate):
-            return await gate.require_current_async(self._credentials)
+            return await gate.require_current_async(self._credentials, deadline=deadline)
         raise RuntimeError("The asynchronous uData client requires an asynchronous site gate.")
 
-    @property
+    @cached_property
     def datasets(self) -> _AsyncDatasetsService:
         """Expose the complete typed dataset service."""
         return AsyncDatasetsService(self)
 
-    @property
+    @cached_property
     def root_profile(self) -> _AsyncRootProfileService:
         """Expose the complete typed root-profile service."""
         return AsyncRootProfileService(self)
+
+    @cached_property
+    def resources(self) -> _AsyncResourcesService:
+        """Expose the complete typed resource service."""
+        return AsyncResourcesService(self)
+
+    @cached_property
+    def dataservices(self) -> _AsyncDataservicesService:
+        """Expose the complete typed dataservice and dataservice-follower service."""
+        return AsyncDataservicesService(self)
+
+    @cached_property
+    def reuses(self) -> _AsyncReusesService:
+        """Expose the complete typed reuse and reuse-follower service."""
+        return AsyncReusesService(self)
+
+    @cached_property
+    def posts_reports(self) -> _AsyncPostsReportsService:
+        """Expose the complete typed post, report, and notification service."""
+        return AsyncPostsReportsService(self)
+
+    @cached_property
+    def spatial(self) -> _AsyncSpatialService:
+        """Expose the complete typed spatial zone and coverage service."""
+        return AsyncSpatialService(self)
+
+    @cached_property
+    def taxonomies(self) -> _AsyncTaxonomiesService:
+        """Expose the complete typed taxonomy service."""
+        return AsyncTaxonomiesService(self)
+
+    @cached_property
+    def topics(self) -> _AsyncTopicsService:
+        """Expose the complete typed topic and topic-element service."""
+        return AsyncTopicsService(self)
+
+    @cached_property
+    def transfers(self) -> _AsyncTransfersService:
+        """Expose the complete typed dataset ownership-transfer service."""
+        return AsyncTransfersService(self)
+
+    @cached_property
+    def activity_discussions(self) -> _AsyncActivityDiscussionsService:
+        """Expose the complete typed activity and discussion service."""
+        return AsyncActivityDiscussionsService(self)
+
+    @cached_property
+    def organizations_memberships(self) -> _AsyncOrganizationsMembershipsService:
+        """Expose the complete typed organization and membership service."""
+        return AsyncOrganizationsMembershipsService(self)
+
+    @cached_property
+    def users_tokens(self) -> _AsyncUsersTokensService:
+        """Expose the typed user, invitation, and API-token service."""
+        return AsyncUsersTokensService(self)
+
+    @cached_property
+    def auth_oauth(self) -> _AsyncAuthOAuthService:
+        """Expose the typed OAuth and authentication service."""
+        return AsyncAuthOAuthService(self)
+
+    @cached_property
+    def harvest_moderation_admin(self) -> _AsyncHarvestService:
+        """Expose the typed harvest source, job, and bounded admin bulk service."""
+        return AsyncHarvestService(self)
+
+    @cached_property
+    def contact_visualization(self) -> _AsyncContactVisualizationService:
+        """Expose the typed contact-point and visualization service."""
+        return AsyncContactVisualizationService(self)
+
+    @cached_property
+    def worker_jobs(self) -> _AsyncWorkerJobsService:
+        """Expose the typed worker job, task, and budgeted task-wait service."""
+        return AsyncWorkerJobsService(self)
+
+    @cached_property
+    def extensions(self) -> _AsyncExtensionsService:
+        """Expose the typed stock extension and deployment-probe service."""
+        return AsyncExtensionsService(self)
 
     async def datasets_list(
         self, operation: CatalogOperationRequest, guard: CatalogOperationGuard
@@ -3444,7 +2422,7 @@ class AsyncUDataClient(_UDataClientCore):
             self._site_gate.invalidate()
             self._credential_scope = scope
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
+        self._require_dispatchable(owning_id, effective)
         params = self._validate_page_params(operation)
         request = _page_request(origin=self._origin, params=params)
         if credential is not None:
@@ -3453,10 +2431,11 @@ class AsyncUDataClient(_UDataClientCore):
                 url=request.url,
                 headers=_auth_headers(credential),
                 body=request.body,
+                max_response_bytes=request.max_response_bytes,
             )
         deadline = DeadlineMonitor(self._budget, clock=self._clock)
         deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        async_transport = cast(AsyncCatalogTransport, self._transport)
+        async_transport = cast("AsyncCatalogTransport", self._transport)
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -3479,7 +2458,7 @@ class AsyncUDataClient(_UDataClientCore):
             before = self._breakers.inspect(key)
             try:
                 response = await async_transport.send(request)
-            except TransportFailure:
+            except TransportError:
                 recorded = True
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
@@ -3528,18 +2507,29 @@ class AsyncUDataClient(_UDataClientCore):
         json_body: object,
         controlled: bool,
         recorded: list[bool],
+        form_body: Callable[[], bytes] | None = None,
         _dispatch_async: Callable[..., Awaitable[RuntimeResponse]] = _controlled_dispatch_gate.dispatch_async,
     ) -> RuntimeResponse:
         recorded[0] = False
         before = self._breakers.inspect(key)
+        if form_body is not None:
+            request = replace(request, body=form_body())
+        if request.deadline is not None:
+            request.deadline.assert_dispatchable()
+        response = None
         try:
             if controlled:
                 response = await _dispatch_async(
                     self, self._transport, request, credential, json_body, origin=self._origin
                 )
             else:
-                response = await cast(AsyncCatalogTransport, self._transport).send(request)
-        except TransportFailure:
+                response = await cast("AsyncCatalogTransport", self._transport).send(request)
+            if request.deadline is not None:
+                request.deadline.assert_dispatchable()
+        except BudgetExhaustedError as error:
+            _settle_dataset_budget_error(error, request, response)
+            raise
+        except TransportError:
             recorded[0] = True
             after = self._breakers.record_transport_failure(key)
             self._emit_breaker_change(owning_id, before.open, after.open)
@@ -3557,37 +2547,58 @@ class AsyncUDataClient(_UDataClientCore):
         owning_operation: str,
         headers: Mapping[str, str] | None = None,
         json_body: object = None,
-        raw_text: bool = False,
-        redirect_mode: bool = False,
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
-        max_response_bytes: int | None = None,
-        emit_success: bool = True,
+        max_response_bytes: int | None = 1_048_576,
+        files: tuple[UploadPart, ...] = (),
+        form_body: bytes | Callable[[], bytes] | None = None,
+        **overrides: Unpack[_DatasetCallOverrides],
     ) -> tuple[int, object, RuntimeResponse]:
         """Run one guarded async dataset request scoped to its owning route operation."""
+        unknown = set(overrides) - set(_DatasetCallOverrides.__annotations__)
+        if unknown:
+            raise TypeError(f"Unknown dataset call overrides: {sorted(unknown)}.")
+        raw_text = overrides.get("raw_text", False)
+        redirect_mode = overrides.get("redirect_mode", False)
+        emit_success = overrides.get("emit_success", True)
+        accept_status = overrides.get("accept_status")
+        omit_credential = overrides.get("omit_credential", False)
+        if max_response_bytes is None:
+            max_response_bytes = 1_048_576
         if self._closed:
             raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        await self.site_version()
-        resolved_credential = (
-            credential if credential is not None else await _refreshed_credential_async(self._credentials)
-        )
+        deadline = overrides.get("deadline") or DeadlineMonitor(self._budget, clock=self._clock)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        await self.site_version(deadline=deadline)
+        if omit_credential:
+            resolved_credential = None
+        elif credential is not None:
+            resolved_credential = credential
+        else:
+            resolved_credential = await _refreshed_credential_async(self._credentials)
         scope = self._refresh_credential_scope(resolved_credential)
         effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective, permissions=permissions).require_allowed()
-        body = self._json_body(json_body, owning_id)
+        self._require_dispatchable(owning_id, effective, permissions)
+        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
+        body = self._dataset_body(json_body, form_body, files, owning_id)
         request = RuntimeRequest(
             method=method,
             url=self._origin + path,
-            headers=self._request_headers(headers, resolved_credential, idempotency_policy, body),
+            headers=self._request_headers(
+                headers,
+                resolved_credential,
+                idempotency_policy,
+                body,
+                json_media_fallback=form_body is None and not files,
+            ),
             body=body,
-            redirect_policy=RedirectPolicy.NO_FOLLOW if redirect_mode else RedirectPolicy.FOLLOW,
+            files=files,
+            redirect_policy=_dataset_redirect_policy(redirect_mode, files),
             max_response_bytes=max_response_bytes,
+            deadline=deadline,
         )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
         key = self._admit_request(owning_id, request)
         recorded = [False]
         send = partial(
@@ -3599,12 +2610,12 @@ class AsyncUDataClient(_UDataClientCore):
             json_body,
             owning_operation == SET_SITE_OPERATION,
             recorded,
+            form_body if callable(form_body) else None,
         )
         try:
             response = await RetryLoop(
                 budget=self._budget,
-                idempotency=idempotency_policy
-                or IdempotencyPolicy(safe=method == "GET", explicit_retry_opt_in=allow_retry),
+                idempotency=_dataset_retry_idempotency(form_body, idempotency_policy, method, files),
                 deadline=deadline,
                 max_attempts=self._max_attempts,
                 sleep=lambda _: None,
@@ -3622,9 +2633,9 @@ class AsyncUDataClient(_UDataClientCore):
                 redirect_mode=redirect_mode,
                 raw_text=raw_text,
                 max_response_bytes=max_response_bytes,
-                json_body=json_body,
                 method=method,
                 credential_scope=scope,
+                accept_status=accept_status,
             )
         except Exception as error:
             self._emit_dataset_failure(owning_id, error, emit_success=emit_success)
@@ -3646,7 +2657,6 @@ class AsyncUDataClient(_UDataClientCore):
         permissions: EffectivePermissions | None = None,
         credential: object | None = None,
         idempotency_policy: IdempotencyPolicy | None = None,
-        allow_retry: bool = False,
         max_response_bytes: int | None = None,
         emit_success: bool = True,
     ) -> tuple[int, object, RuntimeResponse]:
@@ -3663,7 +2673,6 @@ class AsyncUDataClient(_UDataClientCore):
             permissions=permissions,
             credential=credential,
             idempotency_policy=idempotency_policy,
-            allow_retry=allow_retry,
             max_response_bytes=max_response_bytes,
             emit_success=emit_success,
         )
@@ -3677,40 +2686,38 @@ class AsyncUDataClient(_UDataClientCore):
         credential: object | None = None,
     ) -> AsyncRuntimeStreamResponse:
         """Open one guarded no-follow async root response without buffering its bytes."""
-        if self._closed:
-            raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
         owning_id = _operation_id_from(owning_operation)
-        await self.site_version()
-        resolved_credential = (
-            credential if credential is not None else await _refreshed_credential_async(self._credentials)
-        )
-        scope = _credential_scope(resolved_credential)
-        if scope != self._credential_scope:
-            self._capabilities.invalidate()
-            self._site_gate.invalidate()
-            self._credential_scope = scope
-        effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
-        build_catalog_operation_guard(owning_id, effective).require_allowed()
-        request_headers = dict(headers or {})
-        request_headers.update(_auth_headers(resolved_credential))
-        request = RuntimeRequest(
-            method="GET",
-            url=self._origin + path,
-            headers=request_headers,
-            redirect_policy=RedirectPolicy.NO_FOLLOW,
-            max_response_bytes=self._root_export_max_bytes,
-        )
-        deadline = DeadlineMonitor(self._budget, clock=self._clock)
-        deadline.assert_dispatchable(str(owning_id), PLATFORM.value)
-        async_transport = cast(AsyncCatalogTransport, self._transport)
-        send_stream = getattr(async_transport, "send_stream", None)
-        if not callable(send_stream):
-            raise CatalogValidationError(
-                "The uData export requires a streaming catalog transport.",
-                operation=str(owning_id),
-                platform=PLATFORM.value,
-                safe_action="Use the default transport or inject one implementing send_stream.",
+        try:
+            if self._closed:
+                raise RuntimeError(_ASYNC_UDATA_CLIENT_CLOSED)
+            await self.site_version()
+            resolved_credential = (
+                credential if credential is not None else await _refreshed_credential_async(self._credentials)
             )
+            scope = _credential_scope(resolved_credential)
+            if scope != self._credential_scope:
+                self._capabilities.invalidate()
+                self._site_gate.invalidate()
+                self._credential_scope = scope
+            effective = await self._capabilities.resolve_async(owning_id, credential_scope=scope)
+            self._require_dispatchable(owning_id, effective)
+            request, deadline, send_stream = _build_stream_request(
+                owning_id=owning_id,
+                origin=self._origin,
+                path=path,
+                headers=headers,
+                resolved_credential=resolved_credential,
+                budget=self._budget,
+                clock=self._clock,
+                transport=self._transport,
+            )
+            send = cast("Callable[[RuntimeRequest], Awaitable[AsyncRuntimeStreamResponse]]", send_stream)
+        except BudgetExhaustedError:
+            self._emit(owning_id, "budget_exhausted")
+            raise
+        except ASYNC_SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, _stream_failure_outcome(error))
+            raise
         key = _circuit_key(request, self._credentials)
         if not self._breakers.admit(key):
             self._emit(owning_id, "breaker_open")
@@ -3725,37 +2732,46 @@ class AsyncUDataClient(_UDataClientCore):
         try:
             before = self._breakers.inspect(key)
             try:
-                response = cast(AsyncRuntimeStreamResponse, await send_stream(request))
-            except TransportFailure:
+                response = cast("AsyncRuntimeStreamResponse", await send(request))
+            except TransportError:
                 after = self._breakers.record_transport_failure(key)
                 self._emit_breaker_change(owning_id, before.open, after.open)
                 settled = True
                 self._emit(owning_id, "failed")
                 raise
             settled = self._record_stream_response(owning_id, key, response.status_code)
-            try:
-                self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    _decode_redirect_response(owning_id, cast(RuntimeResponse, response))
-                    return response
-            except BaseException as error:
-                self._emit(owning_id, "failed")
-                try:
-                    await response.aclose()
-                except (Exception, asyncio.CancelledError) as cleanup_error:
-                    raise error from cleanup_error
-                raise error
+            redirected = await self._asettle_stream_redirect(owning_id, response, scope)
+            if redirected is not None:
+                return redirected
         finally:
             if not settled:
                 self._breakers.release_trial(key)
         return _AsyncStreamGuard(self, owning_id, key, response, deadline).response_wrapper()
+
+    async def _asettle_stream_redirect(
+        self, owning_id: OperationId, response: AsyncRuntimeStreamResponse, scope: str
+    ) -> AsyncRuntimeStreamResponse | None:
+        """Validate one streamed async response; return it when a redirect short-circuits the read."""
+        try:
+            self._validate_status(owning_id, response, redirect_mode=True, credential_scope=scope)
+            if response.status_code in {301, 302, 303, 307, 308}:
+                _decode_redirect_response(owning_id, cast("RuntimeResponse", response))
+                return response
+        except ASYNC_SETTLEMENT_ERRORS as error:
+            self._emit(owning_id, "failed")
+            try:
+                await response.aclose()
+            except (Exception, asyncio.CancelledError) as cleanup_error:
+                raise error from cleanup_error
+            raise error
+        return None
 
     async def aclose(self) -> None:
         """Close the client and its owned transport exactly once."""
         if not self._closed:
             self._closed = True
             if self._owns_transport:
-                await cast(AsyncCatalogTransport, self._transport).aclose()
+                await cast("AsyncCatalogTransport", self._transport).aclose()
 
     async def __aenter__(self) -> Self:
         """Enter the async client context."""
@@ -3779,7 +2795,7 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
         transport = create_default_sync_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(CatalogTransport, override)
+        transport = cast("CatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], CatalogTransport]", override)
@@ -3804,12 +2820,13 @@ def create_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
 def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
     """Construct one asynchronous uData client from immutable settings."""
     require_extra("udata")
+    transport: AsyncCatalogTransport
     override = settings.async_transport
     if override is None:
         transport = create_default_async_transport(tls_policy=settings.tls_policy, budget=settings.budget)
         owns_transport = True
     elif hasattr(override, "send"):
-        transport = cast(AsyncCatalogTransport, override)
+        transport = cast("AsyncCatalogTransport", override)
         owns_transport = False
     else:
         factory = cast("Callable[[], AsyncCatalogTransport]", override)
@@ -3831,68 +2848,143 @@ def create_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
     )
 
 
-def _require_controlled_settings(settings: UDataClientSettings, controlled_origin: str = _CONTROLLED_ORIGIN) -> None:
-    if settings.base_url != controlled_origin:
-        raise _controlled_error("Controlled uData mutations require the approved loopback origin.")
-    if settings.sync_transport is not None or settings.async_transport is not None:
-        raise _controlled_error("Controlled uData mutations cannot use caller-provided transports.")
-
-
-def _create_controlled_sync_client(settings: UDataClientSettings) -> SyncUDataClient:
-    """Construct a stock synchronous client with a live-verified mutation authority."""
-    require_extra("udata")
-    _require_controlled_settings(settings)
-    transport = _ControlledSyncTransport(tls_policy=settings.tls_policy, budget=settings.budget)
-    client = SyncUDataClient(
-        transport,
-        declared_udata_profile(),
-        origin=settings.base_url,
-        credentials=settings.credential,
-        budget=settings.budget,
-        breakers=settings.breakers,
-        max_attempts=settings.max_attempts,
-        retry_sleep=settings.retry_sleep if settings.retry_sleep is not None else sleep,
-        capability_cache_ttl=settings.capability_cache_ttl,
-        root_export_max_bytes=settings.root_export_max_bytes,
-        owns_transport=True,
-        probe_runner=settings.probe_runner,
-    )
-    _controlled_dispatch_gate.bind_sync_client(client, transport)
-    return client
-
-
-async def _create_controlled_async_client(settings: UDataClientSettings) -> AsyncUDataClient:
-    """Construct a stock asynchronous client with a live-verified mutation authority."""
-    require_extra("udata")
-    _require_controlled_settings(settings)
-    transport = _ControlledAsyncTransport(tls_policy=settings.tls_policy, budget=settings.budget)
-    await transport.verify()
-    client = AsyncUDataClient(
-        transport,
-        declared_udata_profile(),
-        origin=settings.base_url,
-        credentials=settings.credential,
-        budget=settings.budget,
-        breakers=settings.breakers,
-        max_attempts=settings.max_attempts,
-        retry_sleep=settings.async_retry_sleep if settings.async_retry_sleep is not None else asyncio.sleep,
-        capability_cache_ttl=settings.capability_cache_ttl,
-        root_export_max_bytes=settings.root_export_max_bytes,
-        owns_transport=True,
-        async_probe_runner=settings.async_probe_runner,
-    )
-    _controlled_dispatch_gate.bind_async_client(client, transport)
-    return client
-
-
 def _load_services():
+    from datasluice.connectors.catalog.udata.services.activity_discussions import (
+        AsyncActivityDiscussionsService,
+        SyncActivityDiscussionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.auth_oauth import AsyncAuthOAuthService, SyncAuthOAuthService
+    from datasluice.connectors.catalog.udata.services.contact_visualization import (
+        AsyncContactVisualizationService,
+        SyncContactVisualizationService,
+    )
+    from datasluice.connectors.catalog.udata.services.dataservices import (
+        AsyncDataservicesService,
+        SyncDataservicesService,
+    )
     from datasluice.connectors.catalog.udata.services.datasets import AsyncDatasetsService, SyncDatasetsService
+    from datasluice.connectors.catalog.udata.services.extensions import (
+        AsyncExtensionsService,
+        SyncExtensionsService,
+    )
+    from datasluice.connectors.catalog.udata.services.harvest import (
+        AsyncHarvestService,
+        SyncHarvestService,
+    )
+    from datasluice.connectors.catalog.udata.services.jobs import (
+        AsyncWorkerJobsService,
+        SyncWorkerJobsService,
+    )
+    from datasluice.connectors.catalog.udata.services.organizations_memberships import (
+        AsyncOrganizationsMembershipsService,
+        SyncOrganizationsMembershipsService,
+    )
+    from datasluice.connectors.catalog.udata.services.posts_reports import (
+        AsyncPostsReportsService,
+        SyncPostsReportsService,
+    )
+    from datasluice.connectors.catalog.udata.services.resources import AsyncResourcesService, SyncResourcesService
+    from datasluice.connectors.catalog.udata.services.reuses import AsyncReusesService, SyncReusesService
     from datasluice.connectors.catalog.udata.services.root_profile import (
         AsyncRootProfileService,
         SyncRootProfileService,
     )
+    from datasluice.connectors.catalog.udata.services.spatial import (
+        AsyncSpatialService,
+        SyncSpatialService,
+    )
+    from datasluice.connectors.catalog.udata.services.taxonomies import (
+        AsyncTaxonomiesService,
+        SyncTaxonomiesService,
+    )
+    from datasluice.connectors.catalog.udata.services.topics import (
+        AsyncTopicsService,
+        SyncTopicsService,
+    )
+    from datasluice.connectors.catalog.udata.services.transfers import (
+        AsyncTransfersService,
+        SyncTransfersService,
+    )
+    from datasluice.connectors.catalog.udata.services.users_tokens import (
+        AsyncUsersTokensService,
+        SyncUsersTokensService,
+    )
 
-    return AsyncDatasetsService, SyncDatasetsService, AsyncRootProfileService, SyncRootProfileService
+    return (
+        AsyncActivityDiscussionsService,
+        SyncActivityDiscussionsService,
+        AsyncTaxonomiesService,
+        SyncTaxonomiesService,
+        AsyncDatasetsService,
+        SyncDatasetsService,
+        AsyncRootProfileService,
+        SyncRootProfileService,
+        AsyncResourcesService,
+        SyncResourcesService,
+        AsyncReusesService,
+        SyncReusesService,
+        AsyncDataservicesService,
+        SyncDataservicesService,
+        AsyncOrganizationsMembershipsService,
+        SyncOrganizationsMembershipsService,
+        AsyncPostsReportsService,
+        SyncPostsReportsService,
+        AsyncUsersTokensService,
+        SyncUsersTokensService,
+        AsyncSpatialService,
+        SyncSpatialService,
+        AsyncAuthOAuthService,
+        SyncAuthOAuthService,
+        AsyncContactVisualizationService,
+        SyncContactVisualizationService,
+        AsyncTransfersService,
+        SyncTransfersService,
+        AsyncTopicsService,
+        SyncTopicsService,
+        AsyncHarvestService,
+        SyncHarvestService,
+        AsyncWorkerJobsService,
+        SyncWorkerJobsService,
+        AsyncExtensionsService,
+        SyncExtensionsService,
+    )
 
 
-AsyncDatasetsService, SyncDatasetsService, AsyncRootProfileService, SyncRootProfileService = _load_services()
+(
+    AsyncActivityDiscussionsService,
+    SyncActivityDiscussionsService,
+    AsyncTaxonomiesService,
+    SyncTaxonomiesService,
+    AsyncDatasetsService,
+    SyncDatasetsService,
+    AsyncRootProfileService,
+    SyncRootProfileService,
+    AsyncResourcesService,
+    SyncResourcesService,
+    AsyncReusesService,
+    SyncReusesService,
+    AsyncDataservicesService,
+    SyncDataservicesService,
+    AsyncOrganizationsMembershipsService,
+    SyncOrganizationsMembershipsService,
+    AsyncPostsReportsService,
+    SyncPostsReportsService,
+    AsyncUsersTokensService,
+    SyncUsersTokensService,
+    AsyncSpatialService,
+    SyncSpatialService,
+    AsyncAuthOAuthService,
+    SyncAuthOAuthService,
+    AsyncContactVisualizationService,
+    SyncContactVisualizationService,
+    AsyncTransfersService,
+    SyncTransfersService,
+    AsyncTopicsService,
+    SyncTopicsService,
+    AsyncHarvestService,
+    SyncHarvestService,
+    AsyncWorkerJobsService,
+    SyncWorkerJobsService,
+    AsyncExtensionsService,
+    SyncExtensionsService,
+) = _load_services()

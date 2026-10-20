@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from datasluice.exceptions import ChecksumMismatchError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 CHUNK_SIZE = 64 * 1024
 

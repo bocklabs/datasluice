@@ -1,34 +1,20 @@
-"""ContentCache behavior tests.
-
-Covers:
-- CachePort Protocol conformance
-- put/get/delete round-trip + missing-key semantics
-- SHA-256 hexdigest keying
-- ETag/Last-Modified sidecar round-trip
-- Readers skip status='writing' rows
-- Lazy sweep removes stale 'writing' rows + orphaned content files
-- concurrency matrix:
-    * N=10 threads, distinct keys -> all puts succeed, all gets correct
-    * N=10 threads, SAME key -> exactly one payload wins, no corruption
-    * N=5 writers + N=5 readers -> never observe torn reads
-    * Writer crash mid-two-phase -> metadata rolled back, DownloadError raised
-"""
-
 from __future__ import annotations
 
 import concurrent.futures
 import hashlib
 import sqlite3
 import time
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import patch
 
 import pytest
 
 from datasluice.exceptions import DownloadError
-from datasluice.io.content_cache import STALE_WRITING_THRESHOLD_SECONDS, ContentCache
+from datasluice.io.content_cache import STALE_WRITING_THRESHOLD_SECONDS, SWEEP_INTERVAL_SECONDS, ContentCache
 from datasluice.ports.cache import CachePort
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_content_cache_satisfies_cache_port_protocol(tmp_path: Path) -> None:
@@ -77,6 +63,12 @@ def test_key_is_sha256_hexdigest(tmp_path: Path) -> None:
     assert len(sha) == 64
 
 
+def test_key_is_deterministic(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    assert cache._sha("k1") == hashlib.sha256(b"k1").hexdigest()
+    assert cache._sha("k1") != cache._sha("k2")
+
+
 def test_concurrent_writers_configure_busy_timeout_before_database_access(tmp_path: Path) -> None:
     """Connections install busy handling before their first database operation."""
     cache = ContentCache(str(tmp_path / "cache"))
@@ -98,12 +90,6 @@ def test_concurrent_writers_configure_busy_timeout_before_database_access(tmp_pa
         ]
 
     assert [future.exception() for future in futures] == [None] * len(futures)
-
-
-def test_key_is_deterministic(tmp_path: Path) -> None:
-    cache = ContentCache(str(tmp_path / "cache"))
-    assert cache._sha("k1") == hashlib.sha256(b"k1").hexdigest()
-    assert cache._sha("k1") != cache._sha("k2")
 
 
 def test_key_has_no_path_separators(tmp_path: Path) -> None:
@@ -193,14 +179,37 @@ def test_lazy_sweep_skips_fresh_writing(tmp_path: Path) -> None:
 
 
 def test_lazy_sweep_removes_orphaned_content_files(tmp_path: Path) -> None:
-    """Content files with no metadata row are swept."""
+    """Content files seen orphaned on two consecutive sweeps are removed."""
     cache = ContentCache(str(tmp_path / "cache"))
     orphan_sha = "a" * 64
     orphan_path = f"{cache.cache_dir}/{orphan_sha}"
     cache._fs.pipe_file(orphan_path, b"orphan")
     assert cache._fs.exists(orphan_path)
     cache.get("any-key")
+    assert cache._fs.exists(orphan_path), "a first sighting may be an in-flight publication"
+    cache._last_sweep = 0
+    cache.get("any-key")
     assert not cache._fs.exists(orphan_path)
+
+
+def test_orphan_sweep_waits_for_the_interval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now)
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.get("missing")
+    orphan = tmp_path / "cache" / ("b" * 64)
+    orphan.write_bytes(b"orphan")
+
+    cache.get("missing")
+    assert orphan.exists()
+
+    now += SWEEP_INTERVAL_SECONDS
+    cache.get("missing")
+    assert orphan.exists()
+
+    now += SWEEP_INTERVAL_SECONDS
+    cache.get("missing")
+    assert not orphan.exists()
 
 
 def test_concurrent_puts_distinct_keys_no_corruption(tmp_path: Path) -> None:
@@ -235,41 +244,78 @@ def test_concurrent_puts_same_key_one_wins(tmp_path: Path) -> None:
     assert result in payloads, f"corrupted result: {result!r}"
 
 
-def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
-    """N=5 writers + N=5 readers -> readers never observe partial bytes."""
+def _seeded_mixed_cache(tmp_path: Path) -> tuple[ContentCache, list[str], dict[str, bytes]]:
+    """Seed a cache with twenty keys whose payloads each have a distinct length."""
     cache = ContentCache(str(tmp_path / "cache"))
-    keys = [f"mix-key-{i}" for i in range(20)]
-    expected = {key: (b"x" * (i + 1) * 100) for i, key in enumerate(keys)}
+    keys = [f"mix-key-{index}" for index in range(20)]
+    expected = {key: (b"x" * (index + 1) * 100) for index, key in enumerate(keys)}
     for key, data in expected.items():
         cache.put(key, data)
+    return cache, keys, expected
 
-    writer_errors: list[BaseException] = []
-    reader_violations: list[str] = []
 
-    def writer() -> None:
-        try:
-            for _ in range(20):
-                for key, data in expected.items():
-                    cache.put(key, data + b"-rewrite")
-        except BaseException as exc:
-            writer_errors.append(exc)
+def _rewrite_every_key(cache: ContentCache, expected: dict[str, bytes]) -> list[BaseException]:
+    """Rewrite every seeded key twenty times and return any error that escaped the loop."""
+    errors: list[BaseException] = []
+    try:
+        for _ in range(20):
+            for key, data in expected.items():
+                cache.put(key, data + b"-rewrite")
+    except BaseException as exc:
+        errors.append(exc)
+    return errors
 
-    def reader() -> None:
-        try:
-            for _ in range(50):
-                for key in keys:
-                    actual = cache.get(key)
-                    if actual is None:
-                        continue
-                    if actual not in (expected[key], expected[key] + b"-rewrite"):
-                        reader_violations.append(f"torn read for {key}: len={len(actual)}")
-        except BaseException as exc:
-            reader_violations.append(f"reader raised: {exc!r}")
+
+def _torn_read_message(key: str, actual: bytes | None, expected: dict[str, bytes]) -> str | None:
+    """Return a violation message when a read yields an unexpected payload.
+
+    A missing read (``actual is None``) is deliberately tolerated, matching the
+    original ``if actual is None: continue`` behaviour. Nothing here deletes a
+    key: ``_rewrite_every_key`` only calls ``put``, which never removes rows.
+    The miss comes from the two-phase put, which first stores the row as
+    ``status='writing'``, clobbering the previous ``'ready'`` row, and
+    ``ContentCache.get`` reports ``None`` for ``'writing'``. A reader that
+    interleaves with a writer mid-put therefore sees a transient miss, which is
+    the documented reader-skips-in-flight-writes contract rather than a lost row.
+    """
+    if actual is None:
+        return None
+    accepted = (expected[key], expected[key] + b"-rewrite")
+    if actual not in accepted:
+        return f"torn read for {key}: len={len(actual)}"
+    return None
+
+
+def _scan_for_torn_reads(cache: ContentCache, keys: list[str], expected: dict[str, bytes]) -> list[str]:
+    """Read every key fifty times and return one message per torn or failed read."""
+    violations: list[str] = []
+    try:
+        for _ in range(50):
+            for key in keys:
+                message = _torn_read_message(key, cache.get(key), expected)
+                if message is not None:
+                    violations.append(message)
+    except BaseException as exc:
+        violations.append(f"reader raised: {exc!r}")
+    return violations
+
+
+def test_concurrent_writers_and_readers_no_torn_reads(tmp_path: Path) -> None:
+    """N=5 writers + N=5 readers -> readers never observe partial bytes."""
+    cache, keys, expected = _seeded_mixed_cache(tmp_path)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        writer_futures = [executor.submit(writer) for _ in range(5)]
-        reader_futures = [executor.submit(reader) for _ in range(5)]
-        concurrent.futures.wait(writer_futures + reader_futures)
+        writer_futures = [executor.submit(_rewrite_every_key, cache, expected) for _ in range(5)]
+        reader_futures = [executor.submit(_scan_for_torn_reads, cache, keys, expected) for _ in range(5)]
+        concurrent.futures.wait(writer_futures)
+        concurrent.futures.wait(reader_futures)
+
+    writer_errors: list[BaseException] = []
+    for writer in writer_futures:
+        writer_errors.extend(writer.result())
+    reader_violations: list[str] = []
+    for reader in reader_futures:
+        reader_violations.extend(reader.result())
 
     assert writer_errors == [], f"writer errors: {writer_errors}"
     assert reader_violations == [], f"torn-read violations: {reader_violations}"
@@ -279,9 +325,8 @@ def test_writer_crash_mid_two_phase_rolls_back_metadata(tmp_path: Path) -> None:
     """Crash during a (content write) rolls back the 'writing' metadata row."""
     cache = ContentCache(str(tmp_path / "cache"))
 
-    with patch.object(cache._fs, "pipe_file", side_effect=OSError("disk full")):
-        with pytest.raises(DownloadError):
-            cache.put("k", b"data")
+    with patch.object(cache._fs, "pipe_file", side_effect=OSError("disk full")), pytest.raises(DownloadError):
+        cache.put("k", b"data")
 
     conn = sqlite3.connect(cache._db_path)
     try:
@@ -301,10 +346,11 @@ def test_mv_failure_cleans_orphan_temp_file(tmp_path: Path) -> None:
     with (
         patch.object(cache._fs, "pipe_file", wraps=original_pipe),
         patch.object(cache._fs, "mv", side_effect=OSError("injected move failure")),
+        pytest.raises(DownloadError) as raised,
     ):
-        with pytest.raises(DownloadError):
-            cache.put("k", b"data")
+        cache.put("k", b"data")
 
+    assert "'k'" in str(raised.value)
     entries = cache._fs.find(cache.cache_dir)
     orphans = [path for path in entries if ".tmp." in path.rsplit("/", 1)[-1]]
     assert orphans == [], f"orphan temp files left behind: {orphans}"
@@ -351,3 +397,125 @@ def test_ttl_expired_returns_none(tmp_path: Path) -> None:
     finally:
         conn.close()
     assert cache.get("k") is None
+
+
+def test_failed_overwrite_preserves_content_and_metadata(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put_with_metadata("k", b"good", etag='"old"')
+    with patch.object(cache._fs, "pipe_file", side_effect=OSError("disk full")), pytest.raises(DownloadError):
+        cache.put_with_metadata("k", b"bad", etag='"new"')
+    assert cache.get("k") == b"good"
+    metadata = cache.get_metadata("k")
+    assert metadata is not None
+    assert metadata["etag"] == '"old"'
+
+
+def test_expired_metadata_is_a_miss(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"), ttl=-1)
+    cache.put_with_metadata("k", b"good", etag='"old"')
+    assert cache.get_metadata("k") is None
+
+
+def test_lazy_sweep_removes_expired_rows_and_content(tmp_path: Path) -> None:
+    """Expired 'ready' rows and their SHA-named content files are reclaimed by the sweep."""
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("k", b"expired")
+    sha = cache._sha("k")
+    content_path = cache._content_path(sha)
+    conn = sqlite3.connect(cache._db_path)
+    try:
+        conn.execute("UPDATE cache SET fetched_at=? WHERE sha256=?", (time.time() - cache.ttl - 60, sha))
+        conn.commit()
+    finally:
+        conn.close()
+
+    cache._last_sweep = 0
+    assert cache.get("k") is None
+
+    conn = sqlite3.connect(cache._db_path)
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM cache WHERE sha256=?", (sha,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert count == 0
+    assert not cache._fs.exists(content_path)
+
+
+def test_content_files_are_named_by_payload_digest(tmp_path: Path) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("k1", b"first")
+    cache.put("k1", b"second")
+
+    first = hashlib.sha256(b"first").hexdigest()
+    second = hashlib.sha256(b"second").hexdigest()
+    assert cache._fs.exists(cache._content_path(first))
+    assert cache._fs.exists(cache._content_path(second))
+    assert cache.get("k1") == b"second"
+    conn = sqlite3.connect(cache._db_path)
+    try:
+        content_sha = conn.execute("SELECT content_sha FROM cache WHERE sha256=?", (cache._sha("k1"),)).fetchone()[0]
+    finally:
+        conn.close()
+    assert content_sha == second
+
+
+def test_failed_commit_after_publication_preserves_the_previous_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put_with_metadata("k", b"good", etag='"old"')
+    original_connect = cache._connect
+
+    class _FailingCommit:
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self._conn = conn
+            self.in_transaction = False
+
+        def execute(self, sql: str, parameters: Any = ()) -> Any:
+            if sql == "COMMIT":
+                raise sqlite3.OperationalError("injected commit failure")
+            result = self._conn.execute(sql, parameters)
+            self.in_transaction = self._conn.in_transaction
+            return result
+
+        def rollback(self) -> None:
+            self._conn.rollback()
+
+        def close(self) -> None:
+            self._conn.close()
+
+    monkeypatch.setattr(cache, "_connect", lambda: _FailingCommit(original_connect()))
+    with pytest.raises(DownloadError, match="Failed to publish cache content"):
+        cache.put_with_metadata("k", b"bad", etag='"new"')
+    monkeypatch.setattr(cache, "_connect", original_connect)
+
+    assert cache.get("k") == b"good"
+    metadata = cache.get_metadata("k")
+    assert metadata is not None
+    assert metadata["etag"] == '"old"'
+    assert cache._fs.exists(cache._content_path(hashlib.sha256(b"bad").hexdigest()))
+
+
+def test_sweep_listing_runs_outside_the_write_transaction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = ContentCache(str(tmp_path / "cache"))
+    cache.put("k", b"data")
+    cache._last_sweep = 0
+    attempts: list[str] = []
+    original_ls = cache._fs.ls
+
+    def listing_outside_the_lock(path: str, **kwargs: Any) -> list[str]:
+        conn = sqlite3.connect(cache._db_path, timeout=0, isolation_level=None)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("COMMIT")
+            attempts.append("acquired")
+        except sqlite3.OperationalError as exc:
+            attempts.append(str(exc))
+        finally:
+            conn.close()
+        return original_ls(path, **kwargs)
+
+    monkeypatch.setattr(cache._fs, "ls", listing_outside_the_lock)
+    cache.get("k")
+
+    assert attempts == ["acquired"]

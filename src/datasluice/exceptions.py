@@ -38,8 +38,8 @@ class RateLimitError(PortalError):
 class RetryableHTTPError(PortalError):
     """Raised on HTTP 5xx responses, or transport-level failures, that should be retried.
 
-    ``status_code`` defaults to ``0`` for transport-level errors (timeouts, connection
-    failures) that have no HTTP response status.
+    ``status_code`` defaults to ``0`` for transport-level errors (timeouts, connection failures) that have no HTTP
+    response status.
     """
 
     def __init__(self, message: str, status_code: int = 0) -> None:
@@ -80,10 +80,8 @@ class DecompressionError(FormatError):
 class TransformError(FormatError):
     """Raised when a transform step cannot be applied.
 
-        Transform failures are data-shape/decoding failures (an unsafe cast, a
-        missing column, an unsupported nesting), so they hang off
-        :class:`FormatError` — matching the :class:`DecompressionError` precedent
-    . No new exception root.
+    Transform failures are data-shape/decoding failures (an unsafe cast, a missing column, an unsupported nesting), so
+    they hang off :class:`FormatError` — matching the :class:`DecompressionError` precedent. No new exception root.
     """
 
 
@@ -94,37 +92,33 @@ class ConfigError(DataSluiceError):
 class StateStoreError(DataSluiceError):
     """Raised when a state store cannot read or write durable sync state.
 
-    A direct child of :class:`DataSluiceError` because store I/O failures are
-    neither portal, download, nor format errors: a corrupt or wrong-version
-    JSON envelope is a data-integrity failure of the local/remote state file.
-    Fails loud (never silently treats corrupt state as "no state") because
-    staleness is worse than a loud failure.
+    A direct child of :class:`DataSluiceError` because store I/O failures are neither portal, download, nor format
+    errors: a corrupt or wrong-version JSON envelope is a data-integrity failure of the local/remote state file. Fails
+    loud (never silently treats corrupt state as "no state") because staleness is worse than a loud failure.
     """
 
 
 class SyncStateConflictError(StateStoreError):
     """Raised when a state write loses an optimistic compare-and-swap race.
 
-    The version read before the write had already been replaced by a
-    concurrent writer; the caller must re-read and re-apply their mutation
-    rather than silently overwrite another writer's state.
+    The version read before the write had already been replaced by a concurrent writer; the caller must re-read and re-
+    apply their mutation rather than silently overwrite another writer's state.
     """
 
 
 class UnsupportedAccessError(DownloadError):
     """Raised when a resource's access kind has no reader implementation.
 
-    implements HttpDownload, ObjectStorage, and LocalFile readers.
-    QueryAccess raises this error; adds query readers.
+    The bundled readers implement the HttpDownload, ObjectStorage, and LocalFile access kinds. QueryAccess and
+    StreamAccess raise this error: query readers are not yet implemented, and live streaming is out of scope.
     """
 
 
 class StreamClosedError(DataSluiceError):
     """Raised when operating on a closed :class:`BatchStream`.
 
-    A direct child of :class:`DataSluiceError` because it is an operational
-    use-after-close error — the download already succeeded and the format is
-    fine; the caller used the stream after ``__exit__`` or an explicit
+    A direct child of :class:`DataSluiceError` because it is an operational use-after-close error — the download already
+    succeeded and the format is fine; the caller used the stream after ``__exit__`` or an explicit
     :meth:`BatchStream.close`.
     """
 

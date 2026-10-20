@@ -1,5 +1,3 @@
-"""Shared pytest fixtures and configuration for DataSluice tests."""
-
 from __future__ import annotations
 
 from pathlib import Path

@@ -1,32 +1,30 @@
 """IterableBytesIO — adapt an ``Iterable[bytes]`` into a non-seekable BinaryIO.
 
-Subclasses ``io.RawIOBase`` so pyarrow's probes (``.closed``, ``.readable()``,
-``.seekable()``, ``.readinto()``) succeed. Verified against pyarrow 24.0.0:
-``pa.csv.open_csv`` and ``pa.json.read_json`` accept this adapter on chunked
+Subclasses ``io.RawIOBase`` so pyarrow's probes (``.closed``, ``.readable()``, ``.seekable()``, ``.readinto()``)
+succeed. Verified against pyarrow 24.0.0: ``pa.csv.open_csv`` and ``pa.json.read_json`` accept this adapter on chunked
 input.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from io import RawIOBase
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from _typeshed import WriteableBuffer
 
 
 class IterableBytesIO(RawIOBase):
     """Wrap an ``Iterable[bytes]`` into a non-seekable ``BinaryIO``.
 
-    The canonical use case is adapting ``StreamResponse`` (the
-    ``httpx.iter_raw()`` iterable) into a file-like that pyarrow readers can
-    consume without buffering the entire stream.
+    The canonical use case is adapting ``StreamResponse`` (the ``httpx.iter_raw()`` iterable) into a file-like that
+    pyarrow readers can consume without buffering the entire stream.
 
-    Read-only and non-seekable by design — the underlying iterable is a
-    forward-only byte source (HTTP chunked transfer). A small peeked-byte
-    buffer provides one-chunk lookahead needed by compression magic-byte
-    peeking in plan 04-03.
+    Read-only and non-seekable by design — the underlying iterable is a forward-only byte source (HTTP chunked
+    transfer). A small peeked-byte buffer provides one-chunk lookahead needed by compression magic-byte peeking in plan
+    04-03.
     """
 
     def __init__(self, source: Iterable[bytes]) -> None:

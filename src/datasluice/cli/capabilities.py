@@ -9,7 +9,7 @@ from typing import Annotated, Any, cast
 
 import typer
 
-from datasluice.cli._output import render_json, result_console
+from datasluice.cli._output import render_json, result_console, validate_output
 from datasluice.cli._platforms import CATALOG_PLATFORMS
 from datasluice.domain.catalog.operations import (
     Atomicity,
@@ -38,7 +38,7 @@ def list_profiles(
     output: Annotated[str, typer.Option("--output", help="Output format: human or json")] = "human",
 ) -> None:
     """List the canonical connector profiles installed with DataSluice."""
-    _validate_output(output)
+    validate_output(output)
     profiles = [_profile_summary(platform) for platform in CATALOG_PLATFORMS]
     if output == "json":
         render_json({"profiles": profiles})
@@ -53,7 +53,7 @@ def show_profile(
     output: Annotated[str, typer.Option("--output", help="Output format: human or json")] = "human",
 ) -> None:
     """Show declared fallback states for every operation of one platform."""
-    _validate_output(output)
+    validate_output(output)
     profile, entries = _load_profile(platform)
     cache = EffectiveCapabilityCache(profile)
     operations = [
@@ -140,7 +140,7 @@ def _profile_document(platform: str) -> dict[str, Any]:
     document = json.loads(matches[0].read_text(encoding="utf-8"))
     if not isinstance(document, dict):
         raise ValueError("Packaged capability profiles must be JSON objects.")
-    return cast(dict[str, Any], document)
+    return cast("dict[str, Any]", document)
 
 
 def _profile_entries(document: dict[str, Any]) -> list[dict[str, str]]:
@@ -148,7 +148,7 @@ def _profile_entries(document: dict[str, Any]) -> list[dict[str, str]]:
     entries = document.get("operations")
     if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
         raise ValueError("Packaged capability profiles must declare operations.")
-    return [cast(dict[str, str], entry) for entry in entries]
+    return [cast("dict[str, str]", entry) for entry in entries]
 
 
 def _operation_spec(entry: dict[str, str]) -> OperationSpec:
@@ -173,9 +173,3 @@ def _operation_spec(entry: dict[str, str]) -> OperationSpec:
         atomicity=Atomicity.NONE,
         capability_class=capability_class,
     )
-
-
-def _validate_output(output: str) -> None:
-    """Reject unsupported machine-output formats before profile work."""
-    if output not in {"human", "json"}:
-        raise typer.BadParameter("--output must be human or json")

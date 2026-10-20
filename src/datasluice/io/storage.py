@@ -1,17 +1,19 @@
 """Storage abstraction for reading and writing resource files.
 
-Currently supports the local filesystem.  This protocol allows future
-backends (S3, GCS, etc.) to be plugged in without changing the download
-pipeline.
+Currently supports the local filesystem.  This protocol allows future backends (S3, GCS, etc.) to be plugged in without
+changing the download pipeline.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from datasluice.exceptions import DownloadError
 from datasluice.io.local import ensure_dir, save_bytes
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class Storage(ABC):
@@ -43,8 +45,8 @@ class LocalStorage(Storage):
     def _resolve(self, key: str) -> Path:
         """Resolve *key* against the base directory, rejecting path traversal.
 
-        A ``key`` containing ``..`` segments that escapes ``base_dir`` raises
-        ``DownloadError``. Applied uniformly to write/read/exists.
+        A ``key`` containing ``..`` segments that escapes ``base_dir`` raises ``DownloadError``. Applied uniformly to
+        write/read/exists.
         """
         base_resolved = self.base_dir.resolve()
         path = (self.base_dir / key).resolve()

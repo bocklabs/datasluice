@@ -1,5 +1,3 @@
-"""StateStore round-trip tracer: durability across restart + Protocol conformance."""
-
 from __future__ import annotations
 
 from datasluice.domain import SyncState

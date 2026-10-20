@@ -9,5 +9,748 @@
     "response_class": "success",
     "sanitized": true
   },
-  "mutation_evidence": "controlled-environment-only"
+  "mutation_evidence": "controlled-environment-only",
+  "controlled_resource_evidence": {
+    "captured_at": "2026-09-20",
+    "local_only": true,
+    "test_id": "test_controlled_resource_family_mutation_and_read_chain",
+    "response_shape": "record-id-only",
+    "sanitized": true,
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_organization_evidence": {
+    "captured_at": "2026-09-23",
+    "local_only": true,
+    "test_ids": [
+      "test_controlled_organization_family_matches_raw_shapes_and_cleans_up",
+      "test_controlled_async_organization_reads_match_raw_shapes",
+      "test_controlled_organization_read_matrix_matches_raw_routes",
+      "test_controlled_organization_mutations_match_raw_routes_in_both_modes"
+    ],
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.list-organizations",
+        "udata/api-v1.get-organization",
+        "udata/api-v1.organization-datasets-csv",
+        "udata/api-v1.organization-dataservices-csv",
+        "udata/api-v1.organization-discussions-csv",
+        "udata/api-v1.organization-datasets-resources-csv",
+        "udata/api-v1.rdf-organization",
+        "udata/api-v1.rdf-organization-format",
+        "udata/api-v1.available-organization-badges",
+        "udata/api-v1.get-organization-contact-point",
+        "udata/api-v1.suggest-org-contact-points",
+        "udata/api-v1.list-membership-requests",
+        "udata/api-v1.list-organization-assignments",
+        "udata/api-v1.suggest-organizations",
+        "udata/api-v1.list-organization-datasets",
+        "udata/api-v1.list-organization-reuses",
+        "udata/api-v1.list-organization-discussions",
+        "udata/api-v1.org-roles",
+        "udata/api-v2.search-organizations",
+        "udata/api-v2.get-organization-extras",
+        "udata/api-v1.list-organization-followers"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.create-organization",
+        "udata/api-v1.update-organization",
+        "udata/api-v1.delete-organization",
+        "udata/api-v1.membership-request",
+        "udata/api-v1.accept-membership",
+        "udata/api-v1.refuse-membership",
+        "udata/api-v1.cancel-membership",
+        "udata/api-v1.invite-organization-member",
+        "udata/api-v1.update-organization-member",
+        "udata/api-v1.delete-organization-member",
+        "udata/api-v1.sync-member-assignments",
+        "udata/api-v1.add-organization-badge",
+        "udata/api-v1.delete-organization-badge",
+        "udata/api-v1.organization-logo",
+        "udata/api-v1.resize-organization-logo",
+        "udata/api-v2.update-organization-extras",
+        "udata/api-v2.delete-organization-extras",
+        "udata/api-v1.follow-organization",
+        "udata/api-v1.unfollow-organization"
+      ],
+      "assertions": [
+        "raw-and-typed-success-values-match-or-error-statuses-match",
+        "mutation-receipt-operation-and-status-match-raw",
+        "selected-post-state-and-cleanup-verified"
+      ]
+    },
+    "response_shape": "bounded-record-and-status-skeleton",
+    "cleanup": "organization-delete-soft-state-verified",
+    "sanitized": true,
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "reviewed_sha": "1cdb7a33c0c9a88578a3b3c6d8438d647b3a896f",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_taxonomy_evidence": {
+    "captured_at": "2026-09-26",
+    "local_only": true,
+    "stack_version": "17.6.0",
+    "sanitized": true,
+    "test_ids": [
+      "test_controlled_taxonomy_reads_match_raw_routes_in_both_modes",
+      "test_controlled_taxonomy_badge_lifecycle_matches_raw_in_both_modes",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.available-dataset-badges",
+        "udata/api-v1.suggest-formats",
+        "udata/api-v1.suggest-mime",
+        "udata/api-v1.list-licenses",
+        "udata/api-v1.list-frequencies",
+        "udata/api-v1.allowed-extensions",
+        "udata/api-v1.list-dataset-schemas",
+        "udata/api-v2.get-dataset-schemas"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.add-dataset-badge",
+        "udata/api-v1.delete-dataset-badge"
+      ],
+      "assertions": [
+        "raw-and-typed-success-values-match-or-error-statuses-match",
+        "available-badge-kind-and-dataset-post-state-match",
+        "mutation-receipt-operation-and-status-match-raw",
+        "unconfirmed-badge-mutation-is-rejected-before-dispatch",
+        "disposable-dataset-and-badge-targets-are-cleaned"
+      ]
+    },
+    "response_shape": "locale-map-record-list-string-list-and-status-skeleton",
+    "cleanup": "disposable-datasets-deleted-and-badge-kinds-removed",
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "implementation_sha": "c73861d405dd6a4d03542e69bdf1c218e27bbf11",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+    "origin_capture_sha256": "eac6abfa3b7cec65b4806d52820579b0e5fc8904af15a86dc67735575d46f714",
+    "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e",
+    "cleanup_status": "disposable-stack-stopped-and-removed",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_user_evidence": {
+    "captured_at": "2026-09-24",
+    "local_only": true,
+    "test_ids": [
+      "test_controlled_user_reads_match_raw_routes_in_both_modes",
+      "test_controlled_user_mutations_match_raw_routes_in_both_modes",
+      "test_disposable_token_id_is_registered_before_token_validation",
+      "test_created_response_keeps_cleanup_id_when_status_assertion_fails",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.get-me",
+        "udata/api-v1.my-reuses",
+        "udata/api-v1.my-datasets",
+        "udata/api-v1.my-metrics",
+        "udata/api-v1.my-org-datasets",
+        "udata/api-v1.my-org-community-resources",
+        "udata/api-v1.my-org-reuses",
+        "udata/api-v1.my-org-discussions",
+        "udata/api-v1.list-api-tokens",
+        "udata/api-v1.list-org-invitations",
+        "udata/api-v1.list-users",
+        "udata/api-v1.get-user",
+        "udata/api-v1.get-user-contact-point",
+        "udata/api-v1.suggest-users",
+        "udata/api-v1.user-roles",
+        "udata/api-v1.list-user-followers",
+        "udata/api-v2.my-org-topics"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.update-me",
+        "udata/api-v1.delete-me",
+        "udata/api-v1.my-avatar",
+        "udata/api-v1.create-api-token",
+        "udata/api-v1.revoke-api-token",
+        "udata/api-v1.accept-org-invitation",
+        "udata/api-v1.refuse-org-invitation",
+        "udata/api-v1.create-user",
+        "udata/api-v1.user-avatar",
+        "udata/api-v1.update-user",
+        "udata/api-v1.delete-user",
+        "udata/api-v1.rotate-user-password",
+        "udata/api-v1.follow-user",
+        "udata/api-v1.unfollow-user"
+      ],
+      "assertions": [
+        "successful stable read fields match raw by SHA-256 digest; errors match exact status",
+        "server-updated last_login_at is compared by type in both requests",
+        "mutation receipts match raw status, operation, and intended target",
+        "created token plaintext is consumed only at reveal-once boundary",
+        "cleanup identifiers are registered before later setup or assertions",
+        "disposable users, management tokens, and organizations are cleaned"
+      ]
+    },
+    "response_shape": "safe-field-digest-and-status-only",
+    "cleanup": "disposable-users-soft-deleted-management-and-harness-tokens-revoked-organizations-deleted",
+    "sanitized": true,
+    "source_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "implementation_sha": "95f1a0732e20415afe95d7c97dce46129e5f4221",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "udata_image_digest": "sha256:418ce9446add8c0de8aeb1788baad0b64aab046bd433c5898b125a6e4b2c0afe",
+    "origin_digest": "9267d7dc169cf15b5b8d6fe6a0205020ad4603db24ae2014945e7eb5f4b32b0e",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_oauth_evidence": {
+    "captured_at": "2026-09-25",
+    "local_only": true,
+    "stack_version": "17.6.0",
+    "sanitized": true,
+    "test_ids": [
+      "test_controlled_oauth_routes_match_raw_semantics_in_both_modes",
+      "test_controlled_oauth_rejects_unconfirmed_destructive_revocation"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/oauth.access-token",
+        "udata/oauth.client-info",
+        "udata/oauth.authorize",
+        "udata/oauth.oauth-error"
+      ],
+      "mutation_operations": [
+        "udata/oauth.authorize-post",
+        "udata/oauth.revoke-token"
+      ]
+    },
+    "observed_stock_semantics": {
+      "token": "RFC 6749 form-encoded grant; the disposable stack has no registered client, so the typed status equals the raw 400/401.",
+      "revoke": "RFC 7009 answers 200 with an empty body; the typed result never invents a document.",
+      "client_info": "login_required in stock; the typed client omits X-API-KEY and maps the raw 401 without fabricating consent.",
+      "authorize": "login_required in stock; the typed client omits X-API-KEY, sends Accept */*, and follows the redirect like the raw probe.",
+      "authorize_post": "login_required in stock; the consent POST is compared to its raw status in sync and async, and reports the decision that was sent rather than a fabricated consent",
+      "oauth_error": "the 17.6.0 image ships no api/oauth_error.html, so the deployment answers 500 text/html; the typed route returns that page status and media type, never the body"
+    },
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "auth_surface_separation": "Token and revocation forms authenticate from their own body, and the login_required browser routes reject an API key, so only the consent POST carries the uData X-API-KEY header.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_activity_discussion_evidence": {
+    "captured_at": "2026-09-26",
+    "stack_version": "17.6.0",
+    "implementation_sha": "ac575e7c6ff2ba13b34d59f0c7d2ab9c1f0e5a4b",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "test_ids": [
+      "test_controlled_activity_and_discussion_reads_match_raw_routes_in_both_modes",
+      "test_controlled_discussion_lifecycle_matches_raw_routes_and_cleans_up",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "response_shape": "native-envelope-and-status-skeleton",
+    "recaptured": false,
+    "recapture_note": "No stack nonce or admin secret was created for 04-08, so this block records the sanitized shape contract and the current test digests rather than a fresh capture. The prior capture was inspected read-only and the controlled tests run in their normal environment-skipped state without the admin token variable set.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_reuse_evidence": {
+    "captured_at": "2026-09-27",
+    "stack_version": "17.6.0",
+    "implementation_sha": "b41c61572c6d23fb33adb8f5530bf728b29e861d",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "test_ids": [
+      "test_controlled_reuse_reads_match_raw_routes_in_both_modes",
+      "test_controlled_reuse_lifecycle_matches_raw_routes_and_cleans_up",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "response_shape": "native-envelope-and-status-skeleton",
+    "recaptured": true,
+    "recapture_note": "Post-fix reuse reads and lifecycle were recaptured against a fresh loopback 17.6.0 stack. The v2 search returns 500 stack-wide (datasets and discussions too), so the differential asserts the typed error mapping. The reuse badge set is empty in the stock profile, so add_reuse_badge asserts the 400 invalid-kind mapping and delete_reuse_badge asserts the 404 absent-badge mapping. Follow cleanup is tolerant of the absent-follow state. All raw responses are sanitized to status and envelope skeletons.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_spatial_evidence": {
+    "captured_at": "2026-10-01",
+    "stack_version": "17.6.0",
+    "implementation_sha": "496f628b7b164fe7c168e8765d09a477566c985a",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "test_ids": [
+      "test_controlled_spatial_reads_match_raw_routes_in_both_modes",
+      "test_controlled_spatial_zone_list_absent_zone_maps_the_raw_server_error",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.suggest-zones",
+        "udata/api-v1.spatial-zones",
+        "udata/api-v1.spatial-zone-datasets",
+        "udata/api-v1.spatial-zone",
+        "udata/api-v1.spatial-levels",
+        "udata/api-v1.spatial-granularities",
+        "udata/api-v1.spatial-coverage"
+      ],
+      "mutation_operations": [],
+      "mutation_modes": []
+    },
+    "response_shape": "native-envelope-and-status-skeleton",
+    "sanitized": true,
+    "recapture_note": "Captured against a fresh loopback 17.6.0 stack seeded with deterministic local roles. Every assigned row is a public read, so no mutation, upload, or token differential runs for this family. GeoLevel and GeoZone are empty on a fresh stack because the evidence seed creates no spatial rows, so the three routes that resolve a target through GeoZone.objects.get_or_404 or GeoLevel.objects.get_or_404 -- zone, zone_datasets, and spatial_coverage -- each answer 404. The fourth absent-target route is different: zones runs GeoZone.objects.in_bulk and then an unguarded list comprehension over the requested ids, so an absent id raises KeyError and that route answers 500 instead; the differential asserts the typed error mapping for it rather than a body. Granularities is never empty, because spatial_granularities appends the hardcoded BASE_GRANULARITIES literal to the GeoLevel rows, so it answers the two base entries (poi, other). Zone and level identifiers are percent-encoded exactly once by the connector's own wire tests, which emit fr%3A1100001 for fr:1100001.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_posts_report_evidence": {
+    "captured_at": "2026-09-27",
+    "stack_version": "17.6.0",
+    "implementation_sha": "2373233cee7da7fa4465a1747fd41954b3b31ec2",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "test_ids": [
+      "test_controlled_posts_reports_reads_match_raw_routes_in_both_modes",
+      "test_controlled_posts_reports_lifecycle_matches_raw_routes_and_cleans_up",
+      "test_wheel_ships_udata_176_contract_files_and_no_legacy_profile",
+      "test_wheel_import_proves_the_tracer_path_from_installed_content"
+    ],
+    "response_shape": "native-envelope-and-status-skeleton",
+    "recaptured": true,
+    "recapture_note": "Executed on the controlled loopback stack (uData 17.6.0, AIStor storage) at 2373233cee7da7fa4465a1747fd41954b3b31ec2: both-mode reads differential (post list, atom feed, v2 search, report list, report reasons) and the full sync and async lifecycles (create, publish, image, resize, update, report create/get/update, member invitation, notification list/read, cleanup, deletion proof) passed with raw-versus-typed payload equality or matching error status. An async-only resolver regression test covers the async report-create dispatch seam.",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_dataservices_evidence": {
+    "captured_at": "2026-10-11",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "wheel_tracer_sha256": "f8d0427105db1c3bfc903b07596cd9f38d9e77556302bcea648de9765e388864",
+    "test_ids": [
+      "test_controlled_dataservice_reads_match_raw_routes_in_both_modes",
+      "test_controlled_dataservice_lifecycle_matches_raw_routes_and_cleans_up"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "recaptured": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "read_modes": [
+      "sync",
+      "async"
+    ],
+    "mutation_modes": [
+      "sync",
+      "async"
+    ],
+    "recapture_note": "Re-executed both dataservice controlled tests after review fixes. Seven read routes match raw status or bounded shape in sync and async. Each of nine assigned mutations compares typed status and full normalized payload against a separately created raw twin in both modes; only per-record identity and server timestamps are normalized. Creation omits optional base_api_url and uses restricted access audiences. Update clears description and nullable references; deleted_at/archived_at null restores deleted records. Canonical-ID and slug RDF redirects match raw status in both modes. Cleanup protects all known created IDs from the first assertion, attempts each independently, and preserves the original failure. A deliberately incorrect async update payload was rejected. Only sanitized status and shape metadata retained. WR-03 recapture retains caller-controlled archived_at timestamp and null in differential equality, asserts archive and restoration in both modes, and rejects mismatched archive state in a RED/GREEN comparator regression.",
+    "unit_test_sha256": "9cee49d7ad4baeff6905976d81437a66ec71864ebdc0a1768da092afa3ea9f59",
+    "branch_discrimination": [
+      "follower-verb-inversion-detected",
+      "rdf-format-validation-removal-detected",
+      "server-assigned-receipt-target-removal-detected",
+      "incorrect-async-update-payload-rejected-by-raw-differential",
+      "archived-versus-restored-payload-mismatch-rejected"
+    ],
+    "implementation_files_sha256": {
+      "src/datasluice/connectors/catalog/udata/models/dataservices.py": "58d7673262c04e6d40aeaddb9ca6e26ae20c4c65b20da5e9f7b9d32fd1cd80a8",
+      "src/datasluice/connectors/catalog/udata/services/dataservices.py": "b541f427819bcbc4c500a5fb7701a7651b5ce1140495d2512ea3cc2ebf8e8714",
+      "src/datasluice/connectors/catalog/udata/services/datasets.py": "d36f97cbe0225a962e26e77fba4c504d96ede321affee024f8d4b369c99b845a"
+    },
+    "implementation_base_sha": "788a5eab67429b8cfb496845a5534aa6e4536bf4",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.list-dataservices",
+        "udata/api-v1.get-dataservice",
+        "udata/api-v1.recent-dataservices-atom",
+        "udata/api-v1.list-dataservice-followers",
+        "udata/api-v1.rdf-dataservice",
+        "udata/api-v1.rdf-dataservice-format",
+        "udata/api-v2.search-dataservices"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.create-dataservice",
+        "udata/api-v1.update-dataservice",
+        "udata/api-v1.feature-dataservice",
+        "udata/api-v1.unfeature-dataservice",
+        "udata/api-v1.dataservice-datasets-create",
+        "udata/api-v1.dataservice-dataset-delete",
+        "udata/api-v1.follow-dataservice",
+        "udata/api-v1.unfollow-dataservice",
+        "udata/api-v1.delete-dataservice"
+      ]
+    },
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_topic_evidence": {
+    "captured_at": "2026-10-11",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "wheel_tracer_sha256": "f8d0427105db1c3bfc903b07596cd9f38d9e77556302bcea648de9765e388864",
+    "unit_test_sha256": "4280dab205e813cf50b59f1c211695acd56568bdfcfa2fc32387f5d27c2de82a",
+    "test_ids": [
+      "test_controlled_topic_reads_match_raw_routes_in_both_modes",
+      "test_controlled_topic_lifecycle_matches_raw_routes_and_cleans_up"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v2.list-topics",
+        "udata/api-v2.search-topics",
+        "udata/api-v2.get-topic",
+        "udata/api-v2.topic-elements"
+      ],
+      "mutation_operations": [
+        "udata/api-v2.create-topic",
+        "udata/api-v2.update-topic",
+        "udata/api-v2.topic-elements-create",
+        "udata/api-v2.topic-element-update",
+        "udata/api-v2.topic-element-delete",
+        "udata/api-v2.topic-elements-delete",
+        "udata/api-v2.feature-topic",
+        "udata/api-v2.unfeature-topic",
+        "udata/api-v2.delete-topic"
+      ]
+    },
+    "recapture_note": "Captured against the loopback 17.6.0 stack at upstream commit 0546582. All four assigned reads compare raw status and body in sync and async; search answers a stack-wide 500 with no search service and is asserted as the typed error mapping, and the two absent-target routes answer 404. The sync lifecycle drives all nine assigned mutations against a separately created raw twin in both modes; the async lifecycle drives create, update, feature, unfeature, and delete. Element ids are per-topic, so each twin element mutation addresses its own topic's element. The pinned element-collection create answers 201 with a list, which the bounded typed result keeps no record for, so that cell compares status and a non-empty created list rather than the discarded body. A topic slug is server-derived and de-duplicated, so each twin's slug and self-URI are normalized beside its own id and name. Cleanup protects every created id from the first assertion, attempts each independently, and preserves the original failure. Only sanitized status and shape metadata are retained.",
+    "branch_discrimination": [
+      "receipt-resource-kind-dataset-instead-of-topic-detected",
+      "flat-element-reference-body-detected"
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_contact_visualization_evidence": {
+    "captured_at": "2026-10-13",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "udata_image_digest": "sha256:b291747a3a0ebebf470404bd3aa2b92fe6362146b4a33ea8006f3defb6213444",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "wheel_tracer_sha256": "f8d0427105db1c3bfc903b07596cd9f38d9e77556302bcea648de9765e388864",
+    "unit_test_sha256": "d32127550a65489caf82d13f42782b806015336c6e61c736a0d3b3f312c19448",
+    "test_ids": [
+      "test_controlled_contact_visualization_reads_match_raw_routes_in_both_modes",
+      "test_controlled_contact_visualization_lifecycle_matches_raw_routes_and_cleans_up"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.list-visualizations",
+        "udata/api-v1.get-visualization",
+        "udata/api-v1.get-contact-point",
+        "udata/api-v1.contact-point-roles"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.create-visualization",
+        "udata/api-v1.update-visualization",
+        "udata/api-v1.delete-visualization",
+        "udata/api-v1.visualization-image",
+        "udata/api-v1.create-contact-point",
+        "udata/api-v1.update-contact-point",
+        "udata/api-v1.delete-contact-point"
+      ]
+    },
+    "recapture_note": "Captured against the loopback 17.6.0 stack at upstream commit 0546582. All four assigned reads compare raw status and body in sync and async; the two absent-target reads answer 404 and are asserted as the typed error mapping, and the roles list compares every documented id and label. The sync lifecycle drives all seven assigned mutations against separately created raw twins in both modes, including a bounded PNG image upload to each twin; the async lifecycle drives all seven as well. Twin titles, names, slugs, and identifiers are server-owned, so each twin is normalized beside its own values before the bodies compare; timestamps are dropped. A deleted visualization stays readable as a tombstone for its owner, so the post-state check accepts the documented deleted_at marker, while a deleted contact point is hard-deleted and must answer 404. The stock contact-point create answers 201 only when its field mask is new, so each twin carries a distinct name. Cleanup protects every created id from the first assertion, attempts each independently, and preserves the original failure. Only sanitized status and shape metadata are retained.",
+    "branch_discrimination": [
+      "update-body-omission-inversion-detected",
+      "undocumented-role-acceptance-detected",
+      "allowlist-passthrough-detected",
+      "receipt-resource-kind-dataset-instead-of-visualization-detected"
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_jobs_evidence": {
+    "captured_at": "2026-10-14",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "wheel_tracer_sha256": "f8d0427105db1c3bfc903b07596cd9f38d9e77556302bcea648de9765e388864",
+    "unit_test_sha256": "83829dcb27a544c0a8b78654961cb89c6ded7a20c60687e2f4c0018eb47ec5ae",
+    "unit_state_test_sha256": "ee263f80ff75baa2f1c0001c70ea14f4d5ae9e9ea5d958a98f449673dac51260",
+    "test_ids": [
+      "test_controlled_jobs_reads_match_raw_routes_in_both_modes",
+      "test_controlled_jobs_lifecycle_matches_raw_routes_and_cleans_up"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.list-jobs",
+        "udata/api-v1.get-job",
+        "udata/api-v1.get-task",
+        "udata/api-v1.list-schedulable-jobs"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.create-job",
+        "udata/api-v1.update-job",
+        "udata/api-v1.delete-job"
+      ]
+    },
+    "recapture_note": "Captured against a freshly rebuilt loopback 17.6.0 stack at upstream commit 0546582 with roles reseeded and evidence tokens reminted through bootstrap_tokens.sh. All four assigned reads compare raw status and body in sync and async, including the fabricated PENDING task skeleton celery answers for any task identifier, which is compared against the raw document for the same identifier instead of asserting a 404. The lifecycle drives create, get, update, and delete against separately created raw twins in both modes, with hard-delete 404 post-state re-reads and 204 differentials plus cleanup in both passes; twins normalize their own server-owned ids and names before bodies compare, and cleanup protects every created id while preserving the original failure. The stack Dockerfile gained one safe.directory line for /opt/udata because the rebuilt image's git 2.39.5 refused the root-owned clone for the 10001 runtime user, breaking the source-commit identity probe; the pinned Dockerfile digest in clients.py was rebound to the amended file and this record binds the amended digest at its introducing commit. Only sanitized status and shape metadata are retained.",
+    "branch_discrimination": [
+      "undeclared-operation-blocks-dispatch-detected",
+      "unknown-task-status-typed-error-detected",
+      "destructive-delete-unconfirmed-refused-detected",
+      "wrong-confirmation-target-refused-detected",
+      "anonymous-family-dispatch-blocked-detected",
+      "schedule-exclusivity-violation-refused-detected"
+    ],
+    "implementation_sha": "a3e27552b4c22688559c8c4e2f96fef5422796b0",
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_harvest_evidence": {
+    "captured_at": "2026-10-14",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "implementation_sha": "7b1ac5b",
+    "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "wheel_tracer_sha256": "f8d0427105db1c3bfc903b07596cd9f38d9e77556302bcea648de9765e388864",
+    "unit_test_sha256": "20303d9bd5018ca0344e4e749125aca7d5f8893aff2d5a834671ad6fcce8cf7c",
+    "unit_state_test_sha256": "3f0ed8ce7f17f91064b822670783cc2ae24603d8df72170e019aebc9d746c507",
+    "test_ids": [
+      "test_controlled_harvest_reads_match_raw_routes_in_both_modes",
+      "test_controlled_harvest_create_refusal_matches_raw_in_both_modes"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.harvest-moderation-and-admin-operations"
+      ],
+      "mutation_operations": [],
+      "refused_operations": [
+        "udata/api-v1.harvest-moderation-and-admin-operations"
+      ]
+    },
+    "recapture_note": "Captured against the loopback 17.6.0 stack at upstream commit 0546582. The pinned stock image registers zero harvest backends, so no source can be created on the deployment and the mutation lifecycle cannot execute there; the family dispatches under the single aggregate operation id, which the reads drive in both modes and the create path exercises as a typed-versus-raw refusal differential (both answer 400 Unknown backend with the same error document). Reads cover the sources pager, the backends reference, absent source 404s for get and preview, and the absent-job read whose valid-but-unknown ObjectId answers an honest upstream 500, mapped to the typed error exactly like the recorded spatial absent-zone precedent. The mutation lifecycle, waiter lease cells, and bulk semantics are proven by the 101-test unit suite against captured wire semantics; the tracer additionally executes backends, the sources pager, create, and get from installed distribution content in both modes. Roles were reseeded and evidence tokens reminted through bootstrap_tokens.sh. Only sanitized status and shape metadata are retained.",
+    "branch_discrimination": [
+      "aggregate-operation-covers-family-dispatch-detected",
+      "crawl-endpoint-refusal-before-dispatch-detected",
+      "unknown-backend-server-refusal-agrees-with-raw-detected",
+      "absent-job-objectid-upstream-500-mapped-honestly-detected",
+      "harvest-waiter-observation-timeout-inversion-detected"
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_transfers_evidence": {
+    "captured_at": "2026-10-14",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "implementation_sha": "d1fde73f97ce767fb000957f8531bfdd149efaf6",
+    "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "wheel_tracer_sha256": "f8d0427105db1c3bfc903b07596cd9f38d9e77556302bcea648de9765e388864",
+    "unit_test_sha256": "52b1f0aff414dc95a9e3d66db61b8ae83a08a06008b98fa961db4a3339df7cd4",
+    "test_ids": [
+      "test_controlled_transfers_state_machine_matches_raw_routes_and_cleans_up"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [
+        "sync",
+        "async"
+      ],
+      "read_operations": [
+        "udata/api-v1.list-transfers",
+        "udata/api-v1.get-transfer"
+      ],
+      "mutation_operations": [
+        "udata/api-v1.request-transfer",
+        "udata/api-v1.respond-to-transfer"
+      ]
+    },
+    "recapture_note": "The recorded capture used the loopback 17.6.0 stack at upstream commit 0546582. Offline review found gaps in the previous coverage claim: async reads lacked raw comparisons, the async raw twin remained pending, both modes lacked raw list comparisons, and successful execution skipped dataset deletion. Cleanup errors could also replace the primary failure. The helpers now compare reads, refuse both twins, check terminal states, and attempt dataset deletion while preserving the primary failure. Offline regression tests cover these repairs. No live execution occurred during this review. Capture dates and stack hashes retain the earlier provenance. Test hashes bind the current test source and do not imply execution or a fresh capture. Accept changes ownership and remains intentionally untested on the shared stack. Its destructiveness tier is pinned by the unit suite. Absent-transfer coverage uses a raw probe and a synchronous typed call. The prior capture recorded role reseeding and token creation through bootstrap_tokens.sh. Only sanitized status and shape metadata are retained.",
+    "branch_discrimination": [
+      "composite-confirmation-target-binding-detected",
+      "accept-destructive-tier-refusal-detected",
+      "response-choice-vocabulary-detected",
+      "status-transition-pending-to-refused-detected"
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  },
+  "controlled_extensions_evidence": {
+    "captured_at": "2026-10-14",
+    "stack_version": "17.6.0",
+    "upstream_commit": "0546582058d84706812a1c37387576efc4e5ad1f",
+    "implementation_sha": "29ddd797f67fc4c0b73095ad451cb2613d01ce21",
+    "udata_image_digest": "sha256:f3d5c6619f3f4bcbef6db2ddaabd1893ad4b2c406dc3246d8027cda646638719",
+    "compose_sha256": "ca1fc88f7bd25bd0f049ffae245c496fb203cb8b57c2003f76dc93f67fa5fb39",
+    "dockerfile_sha256": "8bb5a8bc32b3c78a5b359b5b567155df5f936b4818eea90d181312814fc0fb28",
+    "controlled_test_sha256": "f8cd54ae49d0fee91175e0c5447149ccfde021e07d48ca6606cef5435d4d2c94",
+    "wheel_test_sha256": "35f595d47c0b01d1419653135dc3f15d561f6e49e882edde6274c30bd05da318",
+    "wheel_tracer_sha256": "f8d0427105db1c3bfc903b07596cd9f38d9e77556302bcea648de9765e388864",
+    "unit_test_sha256": "d981e8676dde78591f5e5542caf2f117bf2b5d40681fafedc61996b73aa17f73",
+    "unit_probe_test_sha256": "62d54606aaa0ec248e2e7feeffe038d81f581aa4f2448a9d081d92fc6087fdce",
+    "test_ids": [
+      "test_controlled_extensions_and_probes_match_raw_routes_in_both_modes"
+    ],
+    "wheel_test_id": "test_wheel_import_proves_the_tracer_path_from_installed_content",
+    "sanitized": true,
+    "local_only": true,
+    "response_shape": "native-envelope-and-status-skeleton",
+    "route_differential": {
+      "read_modes": [
+        "sync",
+        "async"
+      ],
+      "mutation_modes": [],
+      "read_operations": [
+        "udata/api-v1.allowed-extensions",
+        "udata/api-v1.access-type-reason-categories",
+        "udata/api-v1.suggest-tags",
+        "udata/api-v1.avatar",
+        "udata/api-v2.captchetat"
+      ],
+      "mutation_operations": []
+    },
+    "recapture_note": "Captured against the loopback 17.6.0 stock at upstream commit 0546582 in both modes. allowed-extensions, reason-categories, suggest-tags, and the avatar image read answer 200 and are compared against their raw routes (the avatar comparison asserts the bounded metadata record, never image bytes); captchetat decodes as bounded image metadata because upstream 17.6.0 proxies the remote captcha service as raw image bytes and aborts 500 (Catptcha internal error, the stock deployment has no backend) when unavailable; the stock stack's 500 maps to the typed error exactly like the recorded harvest absent-job and spatial absent-zone precedents, and the success contract is proven by the unit cell against real image bytes. The version probe family is proven by the exact-version gate and one dataset read in the shared controlled stack tests; probe caching, capability states, and single-flight evidence are pinned by the 69-test unit suite. Roles were reseeded and evidence tokens reminted through bootstrap_tokens.sh. Only sanitized status and shape metadata are retained.",
+    "branch_discrimination": [
+      "unknown-extension-operation-refused-detected",
+      "deployment-dependent-route-absence-maps-typed-detected",
+      "avatar-unsafe-segment-refusal-detected",
+      "version-gate-blocks-dispatch-on-mismatch-detected",
+      "probe-cache-single-flight-detected"
+    ],
+    "recaptured_at": "2026-10-17",
+    "recapture_reason": "phase-04 security remediation; live controlled suite 42 passed on the locked rebuild"
+  }
 }

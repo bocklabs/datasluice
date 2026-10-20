@@ -20,10 +20,6 @@ if TYPE_CHECKING:
 
 _PARQUET_MEDIA_TYPE = "application/x-parquet"
 
-LegacyArtifactRecord = tuple[str, str, int, str]
-
-_IDEMPOTENT_MATERIALIZE_READY = True
-_ARTIFACT_HEALTH_READY = True
 
 logger = get_logger("sync.materialize")
 
@@ -60,6 +56,34 @@ def materialize_artifact(
     )
 
 
+def _validated_mode(mode: str) -> None:
+    if mode not in {"parquet", "raw"}:
+        raise ValueError(f"Unsupported materialize mode {mode!r}; expected 'parquet' or 'raw'")
+
+
+def _stored_artifact_if_current(
+    stored_artifact: Artifact | None,
+    *,
+    uri: str,
+    media_type: str,
+    size: int,
+    content_digest: str,
+    blob_digest: str,
+    mode: str,
+) -> Artifact | None:
+    if stored_artifact is None or not _is_current_artifact(
+        stored_artifact,
+        uri=uri,
+        media_type=media_type,
+        size=size,
+        content_digest=content_digest,
+        blob_digest=blob_digest,
+        mode=mode,
+    ):
+        return None
+    return stored_artifact
+
+
 def materialize(
     resource: Any,
     *,
@@ -80,96 +104,51 @@ def materialize(
     fs.makedirs(base_uri, exist_ok=True)
     identity = canonical_identity(resource)
 
-    if mode == "parquet":
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        from datasluice.integrations.arrow import to_arrow
-        from datasluice.sync._hashing import logical_sha256
-
-        with reader.open(resource) as stream:
-            table = to_arrow(stream)
-        content_digest = logical_sha256(table)
-        final_uri = f"{base_uri}/{identity}.parquet"
-        media_type = _PARQUET_MEDIA_TYPE
-        existing = _existing_record(fs, final_uri, media_type, content_digest, stored_checksum)
-        if existing is not None:
-            uri, existing_media_type, size, existing_content_digest = existing
-            blob_digest = _blob_digest_from_fs(fs, uri)
-            if _is_current_artifact(
-                stored_artifact,
-                uri=uri,
-                media_type=existing_media_type,
-                size=size,
-                content_digest=existing_content_digest,
-                blob_digest=blob_digest,
-                mode=mode,
-            ):
-                assert stored_artifact is not None
-                return stored_artifact
-            return _artifact(
-                resource,
-                uri=uri,
-                media_type=existing_media_type,
-                size=size,
-                content_digest=existing_content_digest,
-                blob_digest=blob_digest,
-                mode=mode,
-                source_locator=source_locator,
-                created_at=created_at,
-                transforms=transforms,
-            )
-        sink = pa.BufferOutputStream()
-        pq.write_table(table, sink)
-        payload = sink.getvalue().to_pybytes()
-    elif mode == "raw":
-        payload = _read_raw(resource, reader)
-        content_digest = hashlib.sha256(payload).hexdigest()
-        final_uri = f"{base_uri}/{identity}.bin"
-        media_type = _raw_media_type(resource)
-        existing = _existing_record(fs, final_uri, media_type, content_digest, stored_checksum)
-        if existing is not None:
-            uri, existing_media_type, size, existing_content_digest = existing
-            if _is_current_artifact(
-                stored_artifact,
-                uri=uri,
-                media_type=existing_media_type,
-                size=size,
-                content_digest=existing_content_digest,
-                blob_digest=existing_content_digest,
-                mode=mode,
-            ):
-                assert stored_artifact is not None
-                return stored_artifact
-            return _artifact(
-                resource,
-                uri=uri,
-                media_type=existing_media_type,
-                size=size,
-                content_digest=existing_content_digest,
-                blob_digest=existing_content_digest,
-                mode=mode,
-                source_locator=source_locator,
-                created_at=created_at,
-                transforms=transforms,
-            )
-    else:
-        raise ValueError(f"Unsupported materialize mode {mode!r}; expected 'parquet' or 'raw'")
-
-    blob_digest = hashlib.sha256(payload).hexdigest()
-    _atomic_pipe(fs, final_uri, payload)
-    return _artifact(
-        resource,
-        uri=final_uri,
-        media_type=media_type,
-        size=len(payload),
-        content_digest=content_digest,
-        blob_digest=blob_digest,
-        mode=mode,
-        source_locator=source_locator,
-        created_at=created_at,
-        transforms=transforms,
-    )
+    _validated_mode(mode)
+    suffix = "parquet" if mode == "parquet" else "bin"
+    final_uri = f"{base_uri}/{identity}.{suffix}"
+    media_type = _PARQUET_MEDIA_TYPE if mode == "parquet" else _raw_media_type(resource)
+    tmp_uri = _temporary_uri(final_uri)
+    try:
+        if mode == "parquet":
+            with reader.open(resource) as stream:
+                content_digest = _write_parquet(fs, tmp_uri, stream.schema, stream.iter_batches())
+        else:
+            content_digest = _write_raw(fs, tmp_uri, resource, reader)
+        staged_digest = content_digest if mode == "raw" else None
+        existing, published_digest = _existing_record(
+            fs, final_uri, tmp_uri, media_type, content_digest, stored_checksum, staged_digest=staged_digest
+        )
+        uri = final_uri if existing else tmp_uri
+        size = int(fs.info(uri)["size"])
+        blob_digest = _published_blob_digest(fs, uri, mode, content_digest, existing, published_digest)
+        current = _stored_artifact_if_current(
+            stored_artifact,
+            uri=final_uri,
+            media_type=media_type,
+            size=size,
+            content_digest=content_digest,
+            blob_digest=blob_digest,
+            mode=mode,
+        )
+        if current is not None:
+            return current
+        if not existing:
+            fs.mv(tmp_uri, final_uri)
+        return _artifact(
+            resource,
+            uri=final_uri,
+            media_type=media_type,
+            size=size,
+            content_digest=content_digest,
+            blob_digest=blob_digest,
+            mode=mode,
+            source_locator=source_locator,
+            created_at=created_at,
+            transforms=transforms,
+        )
+    finally:
+        safe_remove(fs, tmp_uri)
 
 
 def _materialize_stream(
@@ -184,44 +163,86 @@ def _materialize_stream(
 ) -> Artifact:
     if mode != "parquet":
         raise DataSluiceError("Transformed Artifact materialization supports only parquet mode")
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    from datasluice.integrations.arrow import to_arrow
     from datasluice.io.filesystem import open_filesystem
-    from datasluice.sync._hashing import logical_sha256
 
     base_uri = destination_uri.rstrip("/")
     fs = open_filesystem(base_uri)
     fs.makedirs(base_uri, exist_ok=True)
-    table = to_arrow(stream)
-    content_digest = logical_sha256(table)
-    sink = pa.BufferOutputStream()
-    pq.write_table(table, sink)
-    payload = sink.getvalue().to_pybytes()
     final_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
-    blob_digest = hashlib.sha256(payload).hexdigest()
-    _atomic_pipe(fs, final_uri, payload)
-    return _artifact(
+    return _publish_parquet(
         resource,
-        uri=final_uri,
-        media_type=_PARQUET_MEDIA_TYPE,
-        size=len(payload),
-        content_digest=content_digest,
-        blob_digest=blob_digest,
-        mode=mode,
+        fs,
+        final_uri,
+        stream.schema,
+        stream.iter_batches(),
         source_locator=source_locator,
         created_at=created_at,
         transforms=transforms,
     )
 
 
-def _blob_digest(uri: str) -> str:
-    from datasluice.io.filesystem import open_filesystem
+def _temporary_uri(final_uri: str) -> str:
+    return f"{final_uri}.tmp.{os.getpid()}.{secrets.token_hex(8)}"
 
-    fs = open_filesystem(uri)
-    with fs.open(uri, "rb") as source:
-        return hashlib.sha256(source.read()).hexdigest()
+
+def _write_parquet(fs: Any, uri: str, schema: Any, batches: Any) -> str:
+    import pyarrow.parquet as pq
+
+    from datasluice.sync._hashing import logical_sha256_batches
+
+    with fs.open(uri, "wb") as destination, pq.ParquetWriter(destination, schema) as writer:
+
+        def persisted_batches() -> Any:
+            for batch in batches:
+                writer.write_batch(batch)
+                yield batch
+
+        return logical_sha256_batches(schema, persisted_batches())
+
+
+def _write_raw(fs: Any, uri: str, resource: Any, reader: Any) -> str:
+    import shutil
+    from contextlib import closing
+    from io import BytesIO
+
+    open_bytes = getattr(reader, "open_bytes", None)
+    source = open_bytes(resource) if callable(open_bytes) else BytesIO(_read_raw(resource, reader))
+    with closing(source), fs.open(uri, "wb") as destination:
+        shutil.copyfileobj(source, destination, length=65536)
+    return _blob_digest_from_fs(fs, uri)
+
+
+def _publish_parquet(
+    resource: Any,
+    fs: Any,
+    final_uri: str,
+    schema: Any,
+    batches: Any,
+    *,
+    source_locator: Any | None,
+    created_at: datetime | None,
+    transforms: tuple[str, ...],
+) -> Artifact:
+    tmp_uri = _temporary_uri(final_uri)
+    try:
+        content_digest = _write_parquet(fs, tmp_uri, schema, batches)
+        size = int(fs.info(tmp_uri)["size"])
+        blob_digest = _blob_digest_from_fs(fs, tmp_uri)
+        fs.mv(tmp_uri, final_uri)
+        return _artifact(
+            resource,
+            uri=final_uri,
+            media_type=_PARQUET_MEDIA_TYPE,
+            size=size,
+            content_digest=content_digest,
+            blob_digest=blob_digest,
+            mode="parquet",
+            source_locator=source_locator,
+            created_at=created_at,
+            transforms=transforms,
+        )
+    finally:
+        safe_remove(fs, tmp_uri)
 
 
 def materialize_checkpointed(
@@ -236,11 +257,7 @@ def materialize_checkpointed(
     transforms: tuple[str, ...] = (),
 ) -> Artifact:
     """Stage cursor-bearing Parquet batches and atomically publish one final artifact."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
     from datasluice.io.filesystem import open_filesystem
-    from datasluice.sync._hashing import logical_sha256
 
     if type(start_batch_index) is not int or start_batch_index < 0:
         raise DataSluiceError("Checkpointed materialization requires a non-negative start batch index")
@@ -266,22 +283,13 @@ def materialize_checkpointed(
             next_batch_index = cursor.next_batch_index
 
     _require_checkpoint_shards(fs, partial_uri, next_batch_index, resource.id)
-    table = _read_checkpoint_shards(fs, partial_uri, next_batch_index, stream.schema, pa, pq)
-    checksum = logical_sha256(table)
-    sink = pa.BufferOutputStream()
-    pq.write_table(table, sink)
-    payload = sink.getvalue().to_pybytes()
     final_uri = f"{base_uri}/{identity}.parquet"
-    blob_digest = hashlib.sha256(payload).hexdigest()
-    _atomic_pipe(fs, final_uri, payload)
-    return _artifact(
+    return _publish_parquet(
         resource,
-        uri=final_uri,
-        media_type=_PARQUET_MEDIA_TYPE,
-        size=len(payload),
-        content_digest=checksum,
-        blob_digest=blob_digest,
-        mode="parquet",
+        fs,
+        final_uri,
+        stream.schema,
+        _checkpoint_batches(fs, partial_uri, next_batch_index),
         source_locator=source_locator,
         created_at=created_at,
         transforms=transforms,
@@ -296,14 +304,12 @@ def _require_checkpoint_shards(fs: Any, partial_uri: str, count: int, resource_i
             )
 
 
-def _read_checkpoint_shards(fs: Any, partial_uri: str, count: int, schema: Any, pa: Any, pq: Any) -> Any:
-    if count == 0:
-        return pa.Table.from_batches([], schema=schema)
-    tables = []
+def _checkpoint_batches(fs: Any, partial_uri: str, count: int) -> Any:
+    import pyarrow.parquet as pq
+
     for batch_index in range(count):
         with fs.open(_batch_shard_uri(partial_uri, batch_index), "rb") as source:
-            tables.append(pq.read_table(source))
-    return pa.concat_tables(tables)
+            yield from pq.ParquetFile(source).iter_batches(batch_size=65536)
 
 
 def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
@@ -324,37 +330,23 @@ def cleanup_checkpointed(resource: Any, *, destination_uri: str) -> None:
         )
 
 
-def destination_health(resource: Any, record: Artifact | LegacyArtifactRecord, *, destination_uri: str) -> bool:
+def destination_health(resource: Any, record: Artifact, *, destination_uri: str) -> bool:
     """Verify that a completed artifact exists at the current destination with matching bytes."""
     from datasluice.io.filesystem import open_filesystem
 
     base_uri = destination_uri.rstrip("/")
-    from datasluice.domain import Artifact
-
-    if isinstance(record, Artifact):
-        suffix = "bin" if record.provenance.materialization_mode == "raw" else "parquet"
-        expected_uri = f"{base_uri}/{canonical_identity(resource)}.{suffix}"
-        final_uri = record.uri
-        media_type = record.media_type
-        expected_size = record.size
-        content_digest = record.content_digest.value
-        blob_digest = record.blob_digest.value
-    else:
-        expected_uri = f"{base_uri}/{canonical_identity(resource)}.parquet"
-        final_uri, media_type, expected_size, content_digest = record
-        blob_digest = None
-    if final_uri != expected_uri:
+    suffix = "bin" if record.provenance.materialization_mode == "raw" else "parquet"
+    expected_uri = f"{base_uri}/{canonical_identity(resource)}.{suffix}"
+    if record.uri != expected_uri:
         return False
     try:
         fs = open_filesystem(base_uri)
-        if not fs.exists(final_uri) or int(fs.info(final_uri)["size"]) != expected_size:
+        if not fs.exists(record.uri) or int(fs.info(record.uri)["size"]) != record.size:
             return False
-        return _destination_checksum(fs, final_uri, media_type) == content_digest and (
-            blob_digest is None or _blob_digest_from_fs(fs, final_uri) == blob_digest
-        )
+        return _blob_digest_from_fs(fs, record.uri) == record.blob_digest.value
     except Exception:
         logger.debug(
-            "Destination health check failed for %r (treating as unhealthy)", sanitize_uri(final_uri), exc_info=True
+            "Destination health check failed for %r (treating as unhealthy)", sanitize_uri(record.uri), exc_info=True
         )
         return False
 
@@ -384,42 +376,69 @@ def _atomic_pipe(fs: Any, final_uri: str, payload: bytes) -> None:
         raise DownloadError(f"Failed to atomically publish {sanitize_uri(final_uri)!r}: {exc}") from exc
 
 
+def _published_blob_digest(
+    fs: Any, uri: str, mode: str, content_digest: str, existing: bool, published_digest: str | None
+) -> str:
+    """Return the digest of the bytes the artifact will reference, reusing computed digests."""
+    if mode == "raw" and not existing:
+        return content_digest
+    if published_digest is not None:
+        return published_digest
+    return _blob_digest_from_fs(fs, uri)
+
+
 def _existing_record(
     fs: Any,
     final_uri: str,
+    tmp_uri: str,
     media_type: str,
     checksum: str,
     stored_checksum: str | None,
-) -> tuple[str, str, int, str] | None:
+    *,
+    staged_digest: str | None = None,
+) -> tuple[bool, str | None]:
+    """Return whether the published file matches the staged bytes, plus its digest when read."""
     if stored_checksum != checksum or not fs.exists(final_uri):
-        return None
+        return False, None
     try:
-        size = int(fs.info(final_uri)["size"])
-        if _destination_checksum(fs, final_uri, media_type) != checksum:
-            return None
+        if int(fs.info(final_uri)["size"]) == int(fs.info(tmp_uri)["size"]):
+            published = _blob_digest_from_fs(fs, final_uri)
+            staged = staged_digest if staged_digest is not None else _blob_digest_from_fs(fs, tmp_uri)
+            if published == staged:
+                return True, published
+        if _destination_checksum(fs, final_uri, media_type) == checksum:
+            return True, _blob_digest_from_fs(fs, final_uri)
+        return False, None
     except Exception:
         logger.debug(
             "Existing-materialization probe failed for %r (treating as stale)", sanitize_uri(final_uri), exc_info=True
         )
-        return None
-    return final_uri, media_type, size, checksum
+        return False, None
 
 
 def _destination_checksum(fs: Any, final_uri: str, media_type: str) -> str:
     if media_type == _PARQUET_MEDIA_TYPE:
         import pyarrow.parquet as pq
 
-        from datasluice.sync._hashing import logical_sha256
+        from datasluice.sync._hashing import logical_sha256_batches
 
         with fs.open(final_uri, "rb") as source:
-            return logical_sha256(pq.read_table(source))
+            parquet = pq.ParquetFile(source)
+            return logical_sha256_batches(parquet.schema_arrow, parquet.iter_batches(batch_size=65536))
     with fs.open(final_uri, "rb") as source:
-        return hashlib.sha256(source.read()).hexdigest()
+        return _hash_source(source)
 
 
 def _blob_digest_from_fs(fs: Any, uri: str) -> str:
     with fs.open(uri, "rb") as source:
-        return hashlib.sha256(source.read()).hexdigest()
+        return _hash_source(source)
+
+
+def _hash_source(source: Any) -> str:
+    digest = hashlib.sha256()
+    while chunk := source.read(65536):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _artifact(
@@ -502,19 +521,47 @@ def _raw_media_type(resource: Any) -> str:
 
 
 def _read_raw(resource: Any, reader: Any) -> bytes:
+    from datasluice.data.readers.base import MAX_DOCUMENT_BYTES, read_document
+
     access = resource.access
     if hasattr(reader, "read_bytes"):
-        return bytes(reader.read_bytes(resource))
+        payload = bytes(reader.read_bytes(resource))
+        if len(payload) > MAX_DOCUMENT_BYTES:
+            raise DataSluiceError("Buffered raw readers are limited to 64 MiB; provide open_bytes for streaming")
+        return payload
     if access is not None and access.kind == "local_file":
         with open(access.path, "rb") as source:
-            return source.read()
+            return read_document(source)
     if access is not None and access.kind == "object_storage":
         from datasluice.io.filesystem import open_filesystem
 
         fs = open_filesystem(access.uri)
-        return bytes(fs.cat_file(access.uri))
+        with fs.open(access.uri, "rb") as source:
+            return read_document(source)
     transport = getattr(reader, "transport", None)
     url = getattr(access, "url", None) or getattr(resource, "url", None)
     if transport is not None and url is not None:
-        return bytes(transport.download(url))
+        from datasluice.io._redirects import follow_redirects
+        from datasluice.runtime.transport.base import RedirectPolicy, RuntimeRequest, RuntimeResponse
+
+        def send(hop: str) -> RuntimeResponse:
+            return transport.send(
+                RuntimeRequest(
+                    method="GET",
+                    url=hop,
+                    redirect_policy=RedirectPolicy.NO_FOLLOW,
+                    max_response_bytes=MAX_DOCUMENT_BYTES,
+                )
+            )
+
+        response = follow_redirects(
+            url,
+            allow_private=getattr(reader, "allow_private_http", False),
+            label="Raw download",
+            error=DownloadError,
+            send=send,
+        )
+        if len(response.body) > MAX_DOCUMENT_BYTES:
+            raise DownloadError("Raw download failed or exceeded the buffer limit")
+        return bytes(response.body)
     raise ValueError(f"Resource {resource.id!r} cannot be read in raw mode")

@@ -1,17 +1,3 @@
-"""Build the core candidate and provider wheels and run a test command in a clean venv.
-
-This is the sole local and provider CI entry point. It builds an explicit
-local core candidate wheel (with the real release version rewritten to the
-requested candidate), builds the provider wheel, validates both METADATA
-blocks against the published contract, creates a throwaway venv, installs
-the exact local core/provider wheel paths plus the requested Apache Airflow
-version, rejects any ``datasluice`` that did not come from the local core
-wheel, and then executes the supplied test command.
-
--07 performs the first source-bearing provider build and installed
-run after it creates the ``airflow.providers.datasluice`` source package.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -24,10 +10,13 @@ import sys
 import tempfile
 import tomllib
 import zipfile
-from email.message import Message
 from email.parser import Parser
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
+
+if TYPE_CHECKING:
+    from email.message import Message
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -57,9 +46,8 @@ def _read_core_version() -> str:
 def _normalize_requires(lines: list[str]) -> dict[str, str]:
     """Normalize Requires-Dist lines to a name -> canonical-specifier mapping.
 
-    Wheel METADATA may reorder PEP 508 version specifiers (e.g. ``<2,>=1.0`` vs
-    ``>=1.0,<2``); ``packaging.requirements.Requirement`` canonicalizes them so
-    comparisons are order-independent.
+    Wheel METADATA may reorder PEP 508 version specifiers (e.g. ``<2,>=1.0`` vs ``>=1.0,<2``);
+    ``packaging.requirements.Requirement`` canonicalizes them so comparisons are order-independent.
     """
     from packaging.requirements import Requirement
 

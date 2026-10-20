@@ -4,7 +4,7 @@ The base :class:`StateStore` Protocol is the persistence contract every store
 must satisfy. :class:`AtomicStateStore` is an *additive capability* Protocol:
 stores that support compare-and-swap (CAS) writes opt in by also implementing
 ``read_version`` and ``conditional_put``. Stores that do not need CAS
-(:class:`datasluice.sync.state_store.InMemoryStateStore`, external implementors)
+(:class:`datasluice.sync.state_store.InMemoryStateStore`, external implementers)
 remain structurally valid against :class:`StateStore` alone.
 """
 
@@ -13,6 +13,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from datasluice.domain import SyncState
 
 
@@ -37,9 +39,15 @@ class AtomicStateStore(Protocol):
     as ``expected_prior`` to :meth:`conditional_put`, so a concurrent writer's
     intervening commit is detected (raising
     :class:`datasluice.exceptions.SyncStateConflictError`) rather than silently
-    overwritten. Implementors make the compare-read and the atomic-move
+    overwritten. Implementers make the compare-read and the atomic-move
     indivisible within a single process (per-key lock) and declare which fsspec
     backends provide a true atomic rename.
+
+    Sync additionally requires a :class:`KeyLockStateStore` implementation: a
+    ``key_lock(key)`` context manager spanning artifact publication and
+    conditional state writes. It must coordinate every writer sharing that
+    state and destination; sync refuses an atomic store without this
+    transaction lock before publishing artifacts.
 
     This is a separate Protocol from :class:`StateStore` so stores that do not
     need CAS remain valid without it — following the established capability-
@@ -50,9 +58,8 @@ class AtomicStateStore(Protocol):
     def read_version(self, key: str) -> bytes | None:
         """Return the raw envelope bytes for *key*, or ``None`` if absent.
 
-        The returned bytes are opaque to the caller — they are passed verbatim
-        back into :meth:`conditional_put` as ``expected_prior`` so a concurrent
-        write between the read and the put is detected.
+        The returned bytes are opaque to the caller — they are passed verbatim back into :meth:`conditional_put` as
+        ``expected_prior`` so a concurrent write between the read and the put is detected.
         """
         ...
 
@@ -88,4 +95,17 @@ class AtomicStateStore(Protocol):
             SyncStateConflictError: if the current on-disk version does not match
                 ``expected_prior`` (CAS lost a race).
         """
+        ...
+
+
+@runtime_checkable
+class KeyLockStateStore(Protocol):
+    """Additive capability Protocol for the per-key transaction lock atomic sync needs.
+
+    Sync refuses an :class:`AtomicStateStore` that does not also satisfy this Protocol, before it publishes any
+    artifact.
+    """
+
+    def key_lock(self, key: str) -> AbstractContextManager[object]:
+        """Return a context manager serializing every writer of *key*."""
         ...

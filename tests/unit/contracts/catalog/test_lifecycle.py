@@ -1,9 +1,7 @@
-"""Lifecycle invariants for injected catalog executors and streams."""
-
 from __future__ import annotations
 
 import asyncio
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -14,8 +12,10 @@ from datasluice.contracts.catalog.protocols import (
     CatalogOperationRequest,
     SyncManagedExecutor,
 )
-from datasluice.domain.catalog.models import ResultEnvelope
 from datasluice.domain.catalog.operations import OperationId
+
+if TYPE_CHECKING:
+    from datasluice.domain.catalog.models import ResultEnvelope
 
 
 class SyncRecordingExecutor:
@@ -27,7 +27,7 @@ class SyncRecordingExecutor:
 
     def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
         self.calls.append(str(operation.operation_id))
-        return cast(ResultEnvelope[object], object())
+        return cast("ResultEnvelope[object]", object())
 
     def close(self) -> None:
         self.closed += 1
@@ -42,7 +42,7 @@ class AsyncRecordingExecutor:
 
     async def execute(self, operation: CatalogOperationRequest, guard: CatalogOperationGuard) -> ResultEnvelope[object]:
         self.calls.append(str(operation.operation_id))
-        return cast(ResultEnvelope[object], object())
+        return cast("ResultEnvelope[object]", object())
 
     async def aclose(self) -> None:
         self.closed += 1
@@ -107,7 +107,7 @@ def test_guard_rejection_prevents_executor_dispatch() -> None:
 
     sync_managed_executor = SyncManagedExecutor(context)
     denied_guard = DeniedGuard()
-    typed_value = cast(CatalogOperationGuard, denied_guard)
+    typed_value = cast("CatalogOperationGuard", denied_guard)
     with pytest.raises(RuntimeError, match="blocked"):
         sync_managed_executor.execute(operation, typed_value)
 

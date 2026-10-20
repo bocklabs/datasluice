@@ -1,5 +1,3 @@
-"""Bounded retry, timeout, and circuit-breaker contracts."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

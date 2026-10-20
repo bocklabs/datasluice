@@ -1,35 +1,21 @@
-"""Streaming Parquet reader yielding Arrow ``RecordBatch``.
-
-Migrated from ``datasluice.formats.parquet``. Streams row groups via
-``pq.ParquetFile.iter_batches`` on seekable sources. The Parquet footer
-lives at end-of-file and is read via ``seek()``, so a non-seekable source
-(``HttpDownload`` over ``IterableBytesIO``) MUST be spooled to
-``io.BytesIO`` before reading. This is the unavoidable compromise
-documented: the spool is bounded by total file
-size, not ``batch_size``. The proper fix (HTTP Range requests) is out of
-scope.
-"""
+"""Read Parquet batches, spooling non-seekable sources to temporary disk."""
 
 from __future__ import annotations
 
-import io
-from collections.abc import Iterator
-from typing import Any
+import shutil
+from contextlib import ExitStack
+from tempfile import TemporaryFile
+from typing import TYPE_CHECKING, Any
 
 from datasluice.data.readers.base import BaseFormatReader
 from datasluice.exceptions import FormatError
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 
 class ParquetReader(BaseFormatReader):
-    """Stream a Parquet ``BinaryIO`` source into Arrow ``RecordBatch`` objects.
-
-    On a seekable source (``LocalFile``, ``ObjectStorage``, ``BytesIO``)
-    row groups are streamed via ``ParquetFile.iter_batches``. On a
-    non-seekable source (``HttpDownload`` over ``IterableBytesIO``) the
-    entire body is spooled into ``io.BytesIO`` first — this is required
-    because Parquet footers live at end-of-file and ``ParquetFile``
-    issues a ``seek`` to read them. See.
-    """
+    """Stream seekable or disk-spooled Parquet sources into Arrow batches."""
 
     format_name = "PARQUET"
 
@@ -52,20 +38,19 @@ class ParquetReader(BaseFormatReader):
                 "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
-        seekable = _safe_seekable(source)
-        if not seekable:
-            source = io.BytesIO(source.read())
-
-        try:
-            parquet_file = pq.ParquetFile(source)
-        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
-            raise FormatError(f"Invalid Parquet: {exc}") from exc
-        try:
-            for batch in parquet_file.iter_batches(batch_size=batch_size):
-                if batch.num_rows > 0:
-                    yield batch
-        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
-            raise FormatError(f"Invalid Parquet: {exc}") from exc
+        with ExitStack() as stack:
+            if not _safe_seekable(source):
+                spool = stack.enter_context(TemporaryFile())
+                shutil.copyfileobj(source, spool, length=65536)
+                spool.seek(0)
+                source = spool
+            try:
+                parquet_file = pq.ParquetFile(source)
+                for batch in parquet_file.iter_batches(batch_size=batch_size):
+                    if batch.num_rows > 0:
+                        yield batch
+            except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
+                raise FormatError(f"Invalid Parquet: {exc}") from exc
 
     def read_batches_from_row_group(self, source: Any, *, start_row_group_index: int) -> Iterator[tuple[int, Any]]:
         """Yield ``(row_group_index, batch)`` tuples for each non-empty row group.
@@ -133,6 +118,9 @@ class ParquetReader(BaseFormatReader):
 def _safe_seekable(source: Any) -> bool:
     """Return ``source.seekable()`` if available; ``False`` on any error."""
     try:
-        return bool(source.seekable())
+        if not source.seekable():
+            return False
+        source.seek(source.tell())
+        return True
     except Exception:
         return False

@@ -1,7 +1,7 @@
 """Portal type fingerprints for auto-detection.
 
-Each entry maps a fingerprint (URL path or page signature) to a canonical
-portal type.  The detector checks these against a portal URL.
+Each entry maps a fingerprint (URL path or page signature) to a canonical portal type.  The detector checks these
+against a portal URL.
 """
 
 from __future__ import annotations

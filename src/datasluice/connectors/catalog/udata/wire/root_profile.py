@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import math
 import re
 from codecs import getincrementaldecoder
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Never
+from typing import TYPE_CHECKING, Any, Never
 from urllib.parse import SplitResult, parse_qsl, quote, urlencode, urljoin, urlsplit
 
-from datasluice.domain.catalog.udata import (
+from datasluice.connectors.catalog.udata.models.root_profile import (
     ROOT_OPERATION,
     SET_SITE_OPERATION,
     SiteDataserviceCsvQuery,
@@ -24,11 +23,14 @@ from datasluice.domain.catalog.udata import (
     SiteProfile,
     SiteReuseCsvQuery,
 )
+from datasluice.connectors.catalog.udata.settlement import ASYNC_SETTLEMENT_ERRORS, SETTLEMENT_ERRORS
+from datasluice.connectors.catalog.udata.wire._rdf import RDF_FORMAT_MEDIA_TYPES
 from datasluice.errors.catalog import CatalogValidationError, NativeCatalogError
-from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
+
+if TYPE_CHECKING:
+    from datasluice.runtime.transport.base import AsyncRuntimeStreamResponse, RuntimeStreamResponse
 
 _RDF_XML_MEDIA_TYPE = "application/rdf+xml"
-_TURTLE_MEDIA_TYPE = "application/x-turtle"
 _JSON_LD_MEDIA_TYPE = "application/ld+json"
 _INVALID_UDATA_SITE_UTF8 = "The uData site document is not valid UTF-8."
 
@@ -60,23 +62,12 @@ ROOT_OPERATIONS = {
 }
 
 _SITE_PATH = "/api/1/site/"
-_FORMAT_MEDIA_TYPES = {
-    "xml": _RDF_XML_MEDIA_TYPE,
-    "rdf": _RDF_XML_MEDIA_TYPE,
-    "owl": _RDF_XML_MEDIA_TYPE,
-    "n3": "text/n3",
-    "ttl": _TURTLE_MEDIA_TYPE,
-    "turtle": _TURTLE_MEDIA_TYPE,
-    "nt": "application/n-triples",
-    "json": _JSON_LD_MEDIA_TYPE,
-    "jsonld": _JSON_LD_MEDIA_TYPE,
-    "trig": "application/trig",
-}
+_FORMAT_MEDIA_TYPES = {**RDF_FORMAT_MEDIA_TYPES, "owl": _RDF_XML_MEDIA_TYPE}
 _ACCEPTED_MEDIA_TYPES = {
     _RDF_XML_MEDIA_TYPE,
     "application/xml",
     "text/n3",
-    _TURTLE_MEDIA_TYPE,
+    "application/x-turtle",
     "text/turtle",
     "application/n-triples",
     _JSON_LD_MEDIA_TYPE,
@@ -93,7 +84,6 @@ _CSV_PATHS = {
     "harvests": "/api/1/site/harvests.csv",
     "tags": "/api/1/site/tags.csv",
 }
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FORMAT = re.compile(r"^[A-Za-z0-9-]{1,16}$")
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _MEDIA_TYPE = re.compile(r"^[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+$")
@@ -122,7 +112,7 @@ def _format_extension(value: object) -> str:
             "The uData site document format is unsupported.",
             operation=ROOT_OPERATION,
             platform="udata",
-            safe_action="Use xml, n3, ttl, nt, json, jsonld, or trig.",
+            safe_action="Use xml, rdf, owl, n3, ttl, turtle, nt, json, jsonld, or trig.",
         )
     return extension
 
@@ -491,7 +481,7 @@ async def _digest_stream_chunk_async(
 def _report_sync_stream_failure(response: RuntimeStreamResponse, error: BaseException) -> BaseException | None:
     try:
         response.fail(error)
-    except Exception as report_error:
+    except SETTLEMENT_ERRORS as report_error:
         return report_error
     return None
 
@@ -501,7 +491,7 @@ async def _report_async_stream_failure(
 ) -> BaseException | None:
     try:
         await response.fail(error)
-    except (Exception, asyncio.CancelledError) as report_error:
+    except ASYNC_SETTLEMENT_ERRORS as report_error:
         return report_error
     return None
 
@@ -511,7 +501,7 @@ def _finish_sync_stream_failure(
 ) -> Never:
     try:
         response.close()
-    except Exception as cleanup_error:
+    except SETTLEMENT_ERRORS as cleanup_error:
         raise error from cleanup_error
     if report_error is not None:
         raise error from report_error
@@ -523,7 +513,7 @@ async def _finish_async_stream_failure(
 ) -> Never:
     try:
         await response.aclose()
-    except (Exception, asyncio.CancelledError) as cleanup_error:
+    except ASYNC_SETTLEMENT_ERRORS as cleanup_error:
         raise error from cleanup_error
     if report_error is not None:
         raise error from report_error
@@ -534,7 +524,7 @@ def _finish_sync_stream_success(response: RuntimeStreamResponse) -> None:
     response.close()
     try:
         response.complete()
-    except BaseException as error:
+    except SETTLEMENT_ERRORS as error:
         response.fail(error)
         raise
 
@@ -543,7 +533,7 @@ async def _finish_async_stream_success(response: AsyncRuntimeStreamResponse) -> 
     await response.aclose()
     try:
         await response.complete()
-    except BaseException as error:
+    except ASYNC_SETTLEMENT_ERRORS as error:
         await response.fail(error)
         raise
 
@@ -582,7 +572,7 @@ def digest_stream_document(
             platform="udata",
             status_code=response.status_code,
         )
-    except Exception as error:
+    except SETTLEMENT_ERRORS as error:
         failure = error
     if failure is not None:
         report_error = _report_sync_stream_failure(response, failure)
@@ -636,7 +626,7 @@ async def digest_stream_document_async(
             platform="udata",
             status_code=response.status_code,
         )
-    except (Exception, asyncio.CancelledError) as error:
+    except ASYNC_SETTLEMENT_ERRORS as error:
         failure = error
     if failure is not None:
         report_error = await _report_async_stream_failure(response, failure)

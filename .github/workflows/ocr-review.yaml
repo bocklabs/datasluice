@@ -6,6 +6,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
 
 permissions:
   contents: read
@@ -19,16 +20,28 @@ jobs:
   code-review:
     name: AI code review
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
+    timeout-minutes: 600
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.type != 'Bot'
     steps:
+      - name: Check OCR configuration
+        env:
+          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+          OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+        run: |
+          if [ -z "$OCR_LLM_URL" ] || [ -z "$OCR_LLM_AUTH_TOKEN" ]; then
+            echo "::error::OCR_LLM_URL and OCR_LLM_AUTH_TOKEN must be configured before this workflow can review."
+            exit 1
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
       - name: Configure OCR
-        run: npx -y "@alibaba-group/open-code-review@${OCR_VERSION}" config set max_tokens 1000000
+        env:
+          OCR_VERSION: '1.12.11'
+        run: npx -y "@alibaba-group/open-code-review@${OCR_VERSION}" config set max_tokens 131072
 
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@fabbdb296b0d97e2140ada8d54ca7d6d6d1d7ad4 # v1.12.13
@@ -44,10 +57,10 @@ jobs:
           sticky_summary: 'true'
           incremental: 'true'
           incremental_overlap_threshold: '0.8'
-          upload_artifacts: 'true'
+          upload_artifacts: 'false'
 
           background: >-
-            Review DataSluice as a contract-first Python 3.12+ open-data SDK and CLI.
+            Review DataSluice as a contract-first Python 3.13+ open-data SDK and CLI.
             Treat AGENTS.md, pyproject.toml, the applicable public contracts, and the
             current roadmap/design documentation as context, but review the changed
             implementation and its relevant call paths. The project is a deliberate
@@ -77,5 +90,5 @@ jobs:
             in-scope change, and do not treat a planned namespace as a runtime
             capability. Trace changed code through callers and relevant contracts,
             verify negative paths and error propagation, and report only actionable
-            correctness, security, or maintainability defects; omit style-only findings
-            covered by Ruff or ty.
+            correctness, security, or maintainability defects. Omit findings already
+            handled by Ruff or mypy.

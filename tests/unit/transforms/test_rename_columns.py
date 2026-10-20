@@ -1,9 +1,3 @@
-"""Unit tests for the RenameColumns transform.
-
-Covers renaming, the idempotent self-rename, and the actionable missing-source
-error (naming the missing source AND the available columns).
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -51,7 +45,7 @@ def test_rename_missing_source_raises() -> None:
 
     schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
     rename_columns = RenameColumns({"nonexistent": "x"})
-    batches = iter([])
+    batches: list[Any] = []
     context = _ctx(schema)
     apply = rename_columns.apply(batches, context)
     with pytest.raises(TransformError) as exc_info:

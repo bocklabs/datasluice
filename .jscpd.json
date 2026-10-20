@@ -1,0 +1,8 @@
+{
+  "path": ["src", "tests", "scripts", "providers"],
+  "minLines": 10,
+  "minTokens": 70,
+  "threshold": 1.5,
+  "reporters": ["consoleFull"],
+  "ignore": ["**/node_modules/**", "**/.venv/**"]
+}

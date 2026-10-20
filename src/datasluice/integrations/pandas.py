@@ -1,9 +1,7 @@
 """to_pandas terminal: convert a BatchStream to a pandas DataFrame.
 
-Lazy-imports pandas; zero-copy Arrow interop via the :func:`to_arrow` substrate
-. The v0.1.0
-``resource_to_dataframe`` / ``dataset_to_dataframes`` helpers were removed per
- (they relied on the deleted ``datasluice.formats`` read path);
+Lazy-imports pandas; zero-copy Arrow interop via the :func:`to_arrow` substrate . The v0.1.0 ``resource_to_dataframe`` /
+``dataset_to_dataframes`` helpers were removed per  (they relied on the deleted ``datasluice.formats`` read path);
 rebuilds the terminal over the shared :class:`datasluice.data.BatchStream`.
 """
 

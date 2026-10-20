@@ -89,6 +89,10 @@ ci: add wheel smoke test to CI
 
    If `just` is missing, `make` works as a zero-dependency fallback (same targets).
 
+5. **Node.js** is required only for the duplication gate (`just duplication` locally; the CI
+   `duplication` job runs the same `jscpd` scan). Ordinary commits and pre-commit hooks do not
+   need it.
+
 ---
 
 ## Quality Checks
@@ -98,7 +102,7 @@ ci: add wheel smoke test to CI
 | Full QA (format → lint → typecheck → test) | `just qa` or `make qa` |
 | Format only | `uv run ruff format .` |
 | Lint only | `uv run ruff check . --fix` |
-| Type check | `uv run --all-extras ty check .` |
+| Type check | `uv run --all-extras mypy src scripts tests` |
 | Tests | `uv run pytest` |
 | Build distribution | `uv build` |
 | Validate distribution | `uvx twine check dist/*` |

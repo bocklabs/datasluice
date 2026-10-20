@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from datasluice.connectors.catalog.socrata.connector import SocrataConnector
-from datasluice.contracts.catalog.native.socrata import AsyncSocrataServices, SyncSocrataServices
 from datasluice.contracts.catalog.protocols import (
     AsyncCatalogClient,
     AsyncCatalogOperationExecutor,
@@ -13,7 +12,10 @@ from datasluice.contracts.catalog.protocols import (
     SyncCatalogClient,
     SyncCatalogOperationExecutor,
 )
-from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
+
+if TYPE_CHECKING:
+    from datasluice.contracts.catalog.native.socrata import AsyncSocrataServices, SyncSocrataServices
+    from datasluice.domain.catalog.profiles import EffectiveCapabilityProfile
 
 _SOCRATA_PROFILE_VERSION = "3.0"
 _SOCRATA_API_VERSION = "SODA 3"
@@ -37,10 +39,10 @@ def create_socrata_connector(ctx: CatalogConnectorContext) -> SocrataConnector:
     profile = _require_socrata_profile(ctx.effective_profile)
     return SocrataConnector(
         context=ctx,
-        normalized_sync=cast(SyncCatalogClient, ctx.normalized_sync),
-        normalized_async=cast(AsyncCatalogClient, ctx.normalized_async),
-        native_sync=cast(SyncSocrataServices, ctx.native_sync),
-        native_async=cast(AsyncSocrataServices, ctx.native_async),
+        normalized_sync=cast("SyncCatalogClient", ctx.normalized_sync),
+        normalized_async=cast("AsyncCatalogClient", ctx.normalized_async),
+        native_sync=cast("SyncSocrataServices", ctx.native_sync),
+        native_async=cast("AsyncSocrataServices", ctx.native_async),
         effective_profile=profile,
     )
 

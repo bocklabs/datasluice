@@ -1,5 +1,3 @@
-"""Shared fixtures for datasluice.sync unit tests."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -35,22 +33,28 @@ class FaultInjectingStateStore:
 
 
 class WriteCountingFS:
-    """Count destination writes while delegating filesystem operations."""
+    """Count destination publish renames and content reads while delegating filesystem operations."""
 
     def __init__(self, fs: Any) -> None:
         self.fs = fs
-        self.pipe_file_count = 0
+        self.mv_count = 0
+        self.read_count = 0
 
-    def pipe_file(self, path: str, data: bytes) -> None:
-        self.pipe_file_count += 1
-        self.fs.pipe_file(path, data)
+    def mv(self, source: str, destination: str) -> None:
+        self.mv_count += 1
+        self.fs.mv(source, destination)
+
+    def open(self, path: str, mode: str = "rb", **kwargs: Any) -> Any:
+        if "r" in mode:
+            self.read_count += 1
+        return self.fs.open(path, mode, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.fs, name)
 
 
 def write_counting_fs(fs: Any) -> WriteCountingFS:
-    """Wrap a filesystem with write counting."""
+    """Wrap a filesystem with publish-rename counting."""
     return WriteCountingFS(fs)
 
 

@@ -1,5 +1,3 @@
-"""Tests for catalog create, patch, and mutation receipt values."""
-
 from __future__ import annotations
 
 import dataclasses
@@ -20,6 +18,7 @@ from datasluice.domain.catalog import (
     ResourceKind,
 )
 from datasluice.exceptions import DataSluiceError
+from tests.helpers.immutability import assign_readonly
 
 
 @pytest.mark.parametrize(
@@ -56,7 +55,7 @@ def test_mutation_receipt_preserves_safe_tokens_and_rejects_credential_metadata(
     assert isinstance(receipt.audit_metadata, MappingProxyType)
     assert MutationReceipt.from_dict(receipt.to_dict()) == receipt
     with pytest.raises(dataclasses.FrozenInstanceError):
-        receipt.outcome = "failed"  # ty: ignore[invalid-assignment]: frozen dataclass assertion
+        assign_readonly(receipt, "outcome", "failed")
     with pytest.raises(DataSluiceError):
         MutationReceipt(
             operation="datasets.update",

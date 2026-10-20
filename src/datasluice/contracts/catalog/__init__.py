@@ -4,13 +4,19 @@ from datasluice.contracts.catalog.certification import CatalogCertification, cer
 from datasluice.contracts.catalog.fixtures import ReferenceCase, ReferenceFixtureSet, load_reference_fixture_set
 from datasluice.contracts.catalog.protocols import AsyncCatalogClient, SyncCatalogClient
 from datasluice.contracts.catalog.report import CaseOutcome, ComplianceReport
-from datasluice.contracts.catalog.runner import CatalogContractCase, catalog_contract_cases, run_catalog_contract
+from datasluice.contracts.catalog.runner import (
+    CatalogContractCase,
+    catalog_contract_cases,
+    run_catalog_contract,
+    run_catalog_contract_async,
+)
 from datasluice.domain.catalog.extensions import CertificationRecord, ConnectorId, ConnectorManifest
 from datasluice.domain.catalog.profiles import DeclaredCapabilityProfile
 
 __all__ = [
     "catalog_contract_cases",
     "run_catalog_contract",
+    "run_catalog_contract_async",
     "certify_catalog_report",
     "CatalogContractCase",
     "CaseOutcome",

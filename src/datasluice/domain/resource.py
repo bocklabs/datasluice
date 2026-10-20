@@ -1,5 +1,3 @@
-"""Resource model representing a single downloadable file within a dataset."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

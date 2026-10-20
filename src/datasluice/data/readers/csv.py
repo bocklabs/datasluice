@@ -1,37 +1,27 @@
 """Streaming CSV reader yielding Arrow ``RecordBatch``.
 
-Migrated from ``datasluice.formats.csv`` (v0.1.0 ``list[dict]`` contract) to
-the streaming RecordBatch contract. Delegates decoding to
-``pyarrow.csv.open_csv`` which returns a ``RecordBatchReader`` that streams
-batches without buffering the whole file. The reader honours the
-``batch_size`` row-count hint by re-chunking the upstream batches (pyarrow's
-CSV reader only exposes a byte-level ``block_size`` knob). Verified against
-pyarrow 24.0.0 on both seekable (``io.BytesIO``) and non-seekable
-(``IterableBytesIO``) sources.
+Migrated from ``datasluice.formats.csv`` (v0.1.0 ``list[dict]`` contract) to the streaming RecordBatch contract.
+Delegates decoding to ``pyarrow.csv.open_csv`` which returns a ``RecordBatchReader`` that streams batches without
+buffering the whole file. The reader honours the ``batch_size`` row-count hint by re-chunking the upstream batches
+(pyarrow's CSV reader only exposes a byte-level ``block_size`` knob). Verified against pyarrow 24.0.0 on both seekable
+(``io.BytesIO``) and non-seekable (``IterableBytesIO``) sources.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from datasluice.data.readers.base import BaseFormatReader
 from datasluice.exceptions import FormatError
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 
 class CSVReader(BaseFormatReader):
-    """Stream a CSV ``BinaryIO`` source into Arrow ``RecordBatch`` objects.
-
-    Args:
-        encoding: Text encoding (default ``"utf-8"``).
-        delimiter: Column delimiter (default ``","``).
-    """
+    """Stream a CSV ``BinaryIO`` source into Arrow ``RecordBatch`` objects."""
 
     format_name = "CSV"
-
-    def __init__(self, *, encoding: str = "utf-8", delimiter: str = ",") -> None:
-        self.encoding = encoding
-        self.delimiter = delimiter
 
     def read_batches(self, source: Any, *, batch_size: int = 65536) -> Iterator[Any]:
         """Yield ``RecordBatch`` objects by delegating to ``pyarrow.csv.open_csv``.
@@ -51,10 +41,9 @@ class CSVReader(BaseFormatReader):
                 "Streaming reads require 'pyarrow'. Install with: pip install datasluice[parquet]"
             ) from exc
 
-        read_options = pacsv.ReadOptions(block_size=1 << 20, encoding=self.encoding)
-        parse_options = pacsv.ParseOptions(delimiter=self.delimiter)
+        read_options = pacsv.ReadOptions(block_size=65536, use_threads=False)
         try:
-            reader = pacsv.open_csv(source, read_options=read_options, parse_options=parse_options)
+            reader = pacsv.open_csv(source, read_options=read_options)
         except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError) as exc:
             raise FormatError(f"Invalid CSV: {exc}") from exc
 

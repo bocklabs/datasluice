@@ -1,11 +1,3 @@
-"""Provider discovery and metadata contract tests for apache-airflow-providers-datasluice.
-
-Runs inside the wheel-only candidate venv built by ``run_candidate.py`` so every
-assertion reflects the installed-wheel experience Airflow will encounter. The
-provider declares its runtime hook and operator without registering connections
-or claiming platform actions that await Phases 3-5.
-"""
-
 from __future__ import annotations
 
 import importlib.metadata as importlib_metadata
